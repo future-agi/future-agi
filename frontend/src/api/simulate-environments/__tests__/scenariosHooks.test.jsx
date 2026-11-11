@@ -100,6 +100,25 @@ describe("useHarnessScenarios", () => {
     );
   });
 
+  it("asks for each row's readiness only when told to", async () => {
+    const { result } = renderHook(
+      () => useHarnessScenarios({ jobId: "job-1", readiness: true }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(listScenarios).toHaveBeenLastCalledWith(
+      "job-1",
+      expect.objectContaining({ readiness: 1 }),
+    );
+
+    listScenarios.mockClear();
+    const plain = renderHook(() => useHarnessScenarios({ jobId: "job-2" }), {
+      wrapper,
+    });
+    await waitFor(() => expect(plain.result.current.isSuccess).toBe(true));
+    expect(listScenarios.mock.calls[0][1]).not.toHaveProperty("readiness");
+  });
+
   it("stays disabled without a jobId", () => {
     const { result } = renderHook(() => useHarnessScenarios({ jobId: undefined }), {
       wrapper,

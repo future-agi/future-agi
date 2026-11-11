@@ -118,6 +118,15 @@ describe("scenarioFromApi", () => {
     expect(mapped._raw).toBe(raw);
   });
 
+  it("carries the row's readiness as the server sent it", () => {
+    const readiness = {
+      bucket: "stale",
+      proof: { state: "failed", last_proved: { environment_version: 6 } },
+    };
+    expect(scenarioFromApi({ id: "x", readiness }).readiness).toBe(readiness);
+    expect(scenarioFromApi({ id: "y" }).readiness).toBeNull();
+  });
+
   it("tolerates a persona-less row", () => {
     expect(scenarioFromApi({ id: "x" }).persona).toBeNull();
   });

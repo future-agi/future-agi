@@ -2,15 +2,47 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import CustomTooltip from "src/components/tooltip";
+import Iconify from "src/components/iconify";
 
 import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
+  SCENARIOS_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
+
+// A warning on a scenario whose proof failed on this environment version, as
+// the server reads it for the default versions.
+export function ProofFailedMark({ row }) {
+  const readiness = row?.readiness;
+  if (readiness?.proof?.state !== "failed") return null;
+  return (
+    <CustomTooltip
+      show
+      title={SCENARIOS_COPY.proofFailedDetail(
+        readiness.proof.last_proved,
+        readiness.bucket === "blocked",
+      )}
+      size="small"
+      arrow
+    >
+      <Box
+        component="span"
+        tabIndex={0}
+        aria-label={SCENARIOS_COPY.proofFailed}
+        sx={{ display: "flex", flexShrink: 0, color: "status.warning.solid" }}
+      >
+        <Iconify icon="solar:danger-triangle-bold" width={14} />
+      </Box>
+    </CustomTooltip>
+  );
+}
+
+ProofFailedMark.propTypes = { row: PropTypes.object };
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.

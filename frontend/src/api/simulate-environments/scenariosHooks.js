@@ -59,9 +59,14 @@ export function useHarnessScenarios({
   groupBy,
   ordering,
   filters = {},
+  // Each row's run readiness and proof for the default versions.
+  readiness = false,
 } = {}) {
   return useQuery({
-    queryKey: harnessScenariosKey(jobId, { page, pageSize, search, groupBy, ordering, filters }),
+    queryKey: [
+      ...harnessScenariosKey(jobId, { page, pageSize, search, groupBy, ordering, filters }),
+      readiness,
+    ],
     queryFn: () =>
       listScenarios(jobId, {
         page: page + 1,
@@ -70,6 +75,7 @@ export function useHarnessScenarios({
         group_by: groupBy,
         ordering,
         ...filters,
+        ...(readiness ? { readiness: 1 } : {}),
       }),
     select: toPage,
     placeholderData: keepPreviousData,

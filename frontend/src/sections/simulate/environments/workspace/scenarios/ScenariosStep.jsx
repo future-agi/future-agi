@@ -199,6 +199,7 @@ export default function ScenariosStep({
   const pageSize = isScenarioSampleMode() ? SAMPLE_PAGE_SIZE : PAGE_SIZE;
   const pageData = useScenarioPage({
     jobId: env?.id,
+    readiness: Boolean(env?.versioning?.enabled),
     search: debouncedQuery,
     filters,
     groupBy,
