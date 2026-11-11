@@ -566,7 +566,7 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   const ordinaryReport = steps.find(step => step.name === 'Upload report');
   assert.equal(ordinaryReport.with.path, 'e2e/playwright-report');
   assert.equal(ordinaryReport.with['retention-days'], 7);
-  assert.equal(workflow.jobs.e2e['timeout-minutes'], 90);
+  assert.equal(workflow.jobs.e2e['timeout-minutes'], 120);
   const allow = new Function('github', 'inputs', 'matrix', `return ${proof.if};`);
   const invalid = new Function('github', 'inputs', `return ${validation.if};`);
   for (const event_name of ['pull_request', 'push', 'schedule', 'merge_group', 'workflow_dispatch']) {

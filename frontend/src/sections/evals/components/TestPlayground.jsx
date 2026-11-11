@@ -667,6 +667,7 @@ const TestPlayground = React.forwardRef(
       functionParamsSchema = null,
       configParamsDesc = null,
       codeParams: controlledCodeParams = null,
+      runConfig,
       onCodeParamsChange,
       code = "",
       codeLanguage = "python",
@@ -999,6 +1000,7 @@ const TestPlayground = React.forwardRef(
             ...(evalType !== "code" && model ? { model } : {}),
             error_localizer: errorLocalizerEnabled,
             config: {
+              ...(runConfig ? { run_config: runConfig } : {}),
               mapping,
               ...(evalType === "code" ? { params } : {}),
             },
@@ -1045,6 +1047,7 @@ const TestPlayground = React.forwardRef(
       variables,
       evalType,
       model,
+      runConfig,
       onTestResult,
       errorLocalizerEnabled,
       startErrorLocalizerPoll,
@@ -1390,6 +1393,7 @@ const TestPlayground = React.forwardRef(
                   model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1407,6 +1411,7 @@ const TestPlayground = React.forwardRef(
                   model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1425,6 +1430,7 @@ const TestPlayground = React.forwardRef(
                   model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1850,6 +1856,7 @@ TestPlayground.propTypes = {
   functionParamsSchema: PropTypes.object,
   configParamsDesc: PropTypes.object,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onCodeParamsChange: PropTypes.func,
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
