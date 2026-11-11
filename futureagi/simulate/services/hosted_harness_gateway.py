@@ -3083,12 +3083,19 @@ class HostedHarnessGateway:
             HostedHarnessJob.State.CANCELED,
         }
         from simulate.services.harness_versioning import rebuild
+        from simulate.services.hosted_harness_conversation import (
+            platform_landing_pending,
+            settle_stop_only_queue,
+        )
 
         attempt = None
         wanted = None
         if job.environment_id is None and job.state in terminal_states:
             if rebuild.landing_pending(job):
                 # A rebuild's result is landing; chat restarts once it has.
+                return None
+            if platform_landing_pending(job, conversation):
+                # The build check's files are still publishing; chat starts once they settle.
                 return None
             wanted = rebuild.wanted_agent_version(job, conversation)
         if job.state not in terminal_states:
@@ -3137,6 +3144,11 @@ class HostedHarnessGateway:
                 live = lease
             elif runtime_start_pending(lease, now=now):
                 return lease
+            elif not runtime_is_live(lease, now=now) and settle_stop_only_queue(
+                conversation
+            ):
+                # Nothing is running, so a Stop has nothing to stop.
+                return None
             else:
                 live = None
                 # A chat sandbox of its own is retired here; an attempt's sandbox belongs to
