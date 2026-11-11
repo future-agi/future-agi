@@ -151,3 +151,22 @@ test('recorded GitHub responses preserve bytes and isolate mutable refs from imm
     assert.equal((await send('/scenarios', { namespace: namespace + '-bad', rules: [], github: [{ ...recording, url }] })).status, 400);
   }
 });
+
+test('a rule can name the one skill to load among many whose opaque ids differ per run', async t => {
+  const send = await fixture(t);
+  const many = (ids) => ({ model: 'gpt-4o-mini', messages: [
+    { role: 'system', content: `Available skills:\n${JSON.stringify(ids.map(([id, name]) => ({ id, name, description: 'Fixture' })))}` },
+    { role: 'user', content: 'User request and supplied input\n{"request":"eligible","fixtures":[]}' },
+  ] });
+  const named = { match: { request: 'eligible', turn: 0 }, response: { message: { role: 'assistant', content: null,
+    tool_calls: [{ id: 'load-1', type: 'function', function: { name: 'load_skill', arguments: { skill_id: { $skill_named: 'policy' } } } }] },
+    finish_reason: 'tool_calls' } };
+  await send('/scenarios', { namespace, rules: [named], github: [] });
+  for (const [ids, expected] of [[[['s-aaa', 'other'], ['s-bbb', 'policy']], 's-bbb'], [[['s-ccc', 'policy'], ['s-ddd', 'other']], 's-ccc']]) {
+    const first = await send('/v1/chat/completions', many(ids), 'POST', namespace);
+    assert.deepEqual(JSON.parse(first.body.choices[0].message.tool_calls[0].function.arguments), { skill_id: expected });
+  }
+  // An absent or ambiguous name never guesses a target.
+  assert.equal((await send('/v1/chat/completions', many([['s-eee', 'other']]), 'POST', namespace)).status, 400);
+  assert.equal((await send('/v1/chat/completions', many([['s-fff', 'policy'], ['s-ggg', 'policy']]), 'POST', namespace)).status, 400);
+});

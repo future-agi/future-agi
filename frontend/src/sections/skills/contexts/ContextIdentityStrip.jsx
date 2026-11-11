@@ -19,7 +19,9 @@ export default function ContextIdentityStrip({ viewed, latestVersion, production
         {digest && <Typography variant="s3" display="block" sx={{ fontFamily: "monospace", overflowWrap: "anywhere" }}>{digest}</Typography>}
       </Box>)}
     </Stack>
-    <Typography variant="s3" color="text.secondary">Installed: {observations?.installed || "Not observed"} · Delivered: {observations?.delivered || "Not observed"}. A fetched release does not prove model delivery.</Typography>
+    <Typography variant="s3" color="text.secondary">{observations
+      ? `Installed: ${observations.installed || "Not observed"} · Delivered: ${observations.delivered || "Not observed"}.`
+      : "Installed and delivered observations are listed under Consumers; this header does not report them."} A fetched release does not prove model delivery.</Typography>
   </Stack>;
 }
 ContextIdentityStrip.propTypes = { viewed: PropTypes.object, latestVersion: PropTypes.number, productionVersion: PropTypes.number, draft: PropTypes.object, observations: PropTypes.object };

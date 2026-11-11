@@ -95,7 +95,9 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
     try {
       const saved = await session.flush();
       if (!saved) return;
-      if (isContext) await onReview?.(saved);
+      // The flushed draft is durable but this render may still carry dirty=true; navigating to
+      // the review must not ask the author to confirm losing edits that were just saved.
+      if (isContext) { if (onReview) guard.allow(() => onReview(saved)); }
       else setPublishDraft(saved);
     } catch { setOperationError('The review could not be opened. Your draft is retained; retry without changing its origin.'); }
     finally { setPreparing(false); }

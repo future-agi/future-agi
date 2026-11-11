@@ -40,6 +40,7 @@ import LabelChip from "../components/LabelChip";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildInstallCommand } from "../utils/install";
 import TestsTab from '../tests/TestsTab';
+import ContextDependentsPanel from '../contexts/ContextDependentsPanel';
 import GitHubSourcePanel from '../sources/GitHubSourcePanel';
 import VersionsTab from "../versions/VersionsTab";
 import FilesTab from "./FilesTab";
@@ -47,10 +48,11 @@ import UsageTab from "./UsageTab";
 import UseSkillPanel from "./UseSkillPanel";
 import { resolveViewedVersion } from "./detail-state";
 
-const TABS = ["files", "tests", "versions", "usage", "use"];
+const TABS = ["files", "tests", "dependents", "versions", "usage", "use"];
 const TAB_LABELS = {
   files: "Files",
   tests: "Tests",
+  dependents: "Dependents",
   versions: "Versions",
   usage: "Usage",
   use: "Use",
@@ -212,6 +214,7 @@ function DetailContent({ skill, preview }) {
             <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
+        {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "usage" && <UsageTab skill={skill} />}
         {tab === "use" && <UseSkillPanel skill={skill} />}

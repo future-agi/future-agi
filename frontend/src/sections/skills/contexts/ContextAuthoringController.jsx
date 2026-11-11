@@ -83,7 +83,9 @@ function Editor({ scopeKey, contextId }) {
     readOnlyFileQuery={{ ...readOnlyFile, scopeKey }} onSelectReadOnlyFile={selectReadOnlyFile}
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
-      renderTests: () => <ContextTestsPanel contextId={contextId} canWrite={!detail.isError && detail.data.releaseState.permissions.canPublish === true} />,
+      renderTests: ({ session, onSave }) => <ContextTestsPanel contextId={contextId} canWrite={!detail.isError && detail.data.releaseState.permissions.canPublish === true}
+        openSavedDraftDisabled={Boolean(session.mutationError) || session.pendingMutations}
+        onOpenSavedDraft={async () => { const saved = await onSave(); if (saved) navigate(`${paths.dashboard.skills.contextDetail(contextId)}?tab=tests&draft=1`); }} />,
       availableSkills: skills.isError ? [] : skills.data || [],
       previewDependencies: previewDependencies.mutateAsync,
       applyDependencies: (input, options) => applyDependencies.mutateAsync({ ...input, ...options }),

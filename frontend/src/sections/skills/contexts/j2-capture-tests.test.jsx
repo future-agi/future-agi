@@ -6,7 +6,12 @@ import ContextTestsPanel from './ContextTestsPanel';
 
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
 const state = vi.hoisted(() => ({ identity: 'scope-a', canPublish: true, suiteError: false, runtime: false, capture: vi.fn() }));
-vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ enabled: true, identity: state.identity }) }));
+vi.mock('src/api/skills/testing', () => ({
+  useSkillV11Scope: () => ({ enabled: true, identity: state.identity }),
+  // The unified Tests panel also mounts the whole-context section; it stays idle here.
+  useSkillTestingOptions: () => ({ data: { enabled: true, models: [], limits: { profiles: { quick: { maxTotalTokens: 1000 } } } } }),
+  isActiveSkillJob: () => false,
+}));
 vi.mock('src/api/skills/context-authoring', () => ({
   useContexts: () => ({ data: { totalPages: 1, results: [{ id: 'context', name: 'Refund policy' }] } }),
   useContextDetail: () => ({ data: { releaseState: { permissions: { canPublish: state.canPublish } } } }),
@@ -14,8 +19,9 @@ vi.mock('src/api/skills/context-authoring', () => ({
 vi.mock('src/api/skills/context-testing', () => ({
   useContextTestSuite: () => ({ data: state.suiteError ? undefined : { revision: 3, cases: [] }, isError: state.suiteError, refetch: vi.fn() }),
   useSaveContextTestSuite: () => ({ mutateAsync: vi.fn() }),
-}));
-vi.mock('src/api/skills/context-native', () => ({
+  contextTestCandidate: (draft) => ({ kind: 'draft', revision: draft.revision, digest: draft.digest }),
+  usePreviewContextTest: idle, useCreateContextTest: idle, useCancelContextTest: idle,
+  useContextTestRuns: () => ({ data: { results: [] } }), useContextTestRun: () => ({}), useContextTestResults: () => ({}), useContextTestAttempt: () => ({}),
   useNativeTargets: () => ({ data: { runtime: { available: state.runtime, runtime: 'test-runtime', evidenceClass: 'synthetic fixture' }, targets: [] } }),
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({ data: undefined }), useRuntimeConfiguration: () => ({ data: undefined }),
   useCreateNativeTarget: idle, usePrepareReleasePacket: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle,

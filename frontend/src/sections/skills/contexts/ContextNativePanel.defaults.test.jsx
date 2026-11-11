@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextNativePanel from './ContextNativePanel';
 
 const h = vi.hoisted(() => ({ preview: { data: undefined, plans: [] }, create: vi.fn(), runs: [], detail: undefined }));
-vi.mock('src/api/skills/context-native', () => ({
+vi.mock('src/api/skills/context-testing', () => ({
   useNativeTargets: () => ({ data: { runtime: { available: true, runtime: 'container', evidenceClass: 'synthetic fixture' }, targets: [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: true, configurationDigest: 'sha256:abc' }] } }),
   useNativeRuns: () => ({ data: h.runs }),
   useNativeRun: (_, id) => ({ data: id ? h.detail : undefined, isLoading: false }),

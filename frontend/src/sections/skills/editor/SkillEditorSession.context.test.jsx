@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import SkillEditorSession from './SkillEditorSession';
 
 const legacy = vi.hoisted(() => ({ save: vi.fn(), discard: vi.fn() }));
@@ -67,4 +67,29 @@ it('retains the original operation key after an unknown checkpoint and never del
   expect(checkpointDraft.mock.calls[1]).toEqual(checkpointDraft.mock.calls[0]);
   await screen.findByText(/Deletion was not applied/);
   expect(screen.getByRole('button', { name: 'references/policy.md' })).toBeInTheDocument();
+});
+
+function ReviewRoute(props) {
+  const navigate = useNavigate();
+  return <SkillEditorSession kind="agent_context" scopeKey="org:workspace:user:context" skill={skill} initialDraft={initial} onReview={() => navigate('/review')} {...props} />;
+}
+
+it('opens the review after saving without asking to leave unsaved changes', async () => {
+  const resourceApi = { saveDraft: vi.fn(async (input) => ({ ...initial, ...input, revision: input.revision + 1 })),
+    saveInput: (draft, revision) => ({ revision, baseVersion: draft.baseVersion, files: draft.files, note: draft.note, description: draft.description }), discardDraft: vi.fn() };
+  render(<MemoryRouter initialEntries={['/edit']}><Routes>
+    <Route path="/edit" element={<ReviewRoute resourceApi={resourceApi} refetchDraft={vi.fn()} />} />
+    <Route path="/review" element={<p>Review page</p>} />
+  </Routes></MemoryRouter>);
+  fireEvent.change(screen.getByLabelText('Context file source'), { target: { value: 'Edited policy' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+  expect(await screen.findByText('Review page')).toBeInTheDocument();
+  expect(screen.queryByText('Leave with unsaved changes?')).not.toBeInTheDocument();
+  expect(resourceApi.saveDraft).toHaveBeenCalledOnce();
+});
+
+it('keeps the unsaved-changes guard when no review route is available', async () => {
+  mount({}, { onReview: undefined });
+  fireEvent.change(screen.getByLabelText('Context file source'), { target: { value: 'Edited policy' } });
+  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
 });

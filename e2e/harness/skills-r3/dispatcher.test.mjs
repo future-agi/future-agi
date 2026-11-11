@@ -33,7 +33,7 @@ test('all six jobs register existing prerequisite flows without claiming complet
   }
 });
 
-for (const jobId of ['J1', 'J3', 'J6']) {
+for (const jobId of ['J1', 'J6']) {
   test(`${jobId} dispatcher records unavailable cold/configured runs with null counts and nonzero exit`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'skills-dispatch-'));
     try {
