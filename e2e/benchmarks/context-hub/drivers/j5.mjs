@@ -391,8 +391,9 @@ class CampaignJourney {
 
   /** One review of the candidate release, then one approval bound to exactly that candidate. */
   async publish(revision, baseVersion) {
-    let reviewed;
-    await this.action('review', async () => { reviewed = await this.rollout.reviewRelease({ contextId: this.contextId, revision }); });
+    // Fetching the candidate (release-review) is a command; reading it is the review; publishing is the approval.
+    const reviewed = await this.action('command', () => this.rollout.reviewRelease({ contextId: this.contextId, revision }));
+    await this.action('review', async () => { assert.ok(reviewed.candidate_digest && reviewed.review_fingerprint, 'release_review_packet_missing'); });
     this.releases += 1;
     return this.action('approve', () => this.rollout.publishReviewed({ review: reviewed, baseVersion }));
   }
@@ -410,7 +411,8 @@ class CampaignJourney {
     // Independent oracle for the product's grouped ownership packet: every shared
     // instruction file it groups is byte-identical on disk across the group, and
     // every retained personal file it lists is the repository's actual file.
-    const packet = ownershipPacket(this.inventory);
+    // The ownership-review command is its own counted operator command.
+    const packet = await this.action('command', async () => ownershipPacket(this.inventory));
     for (const group of packet.groups) {
       for (const member of group.members) {
         const project = this.projects.get(member.repository_id);
@@ -768,6 +770,9 @@ class CampaignJourney {
   }
 
   async reverseConflictChecks() {
+    // The standalone SDK restore/apply checks run in the operator's own shell,
+    // which needs the latest rollout's planning credential exported: counted.
+    await this.action('configuration_edit', async () => { assert.ok(this.env.FI_CONTEXT_CREDENTIAL, 'planning_credential_missing'); }, { repos: [this.repos[0]] });
     const repo = this.repos[0]; const project = this.projects.get(repo.id);
     const lockPath = join(project, '.futureagi-context.lock.json');
     const lockBytes = await readFile(lockPath);

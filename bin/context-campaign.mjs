@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -9,6 +9,14 @@ import { CampaignBatch } from './lib/context-campaign-batch.mjs';
 import { ContextRollout, ownershipPacket } from './lib/context-rollout.mjs';
 
 const execute = promisify(execFile);
+
+/** Read the planning credential a previous start/replace stored (CONTEXT_CREDENTIAL_FILE) into the SDK environment. */
+export async function credentialEnv(env) {
+  if (!env.CONTEXT_CREDENTIAL_FILE) return env;
+  const secret = (await readFile(env.CONTEXT_CREDENTIAL_FILE, 'utf8')).trim();
+  if (!secret) throw new Error('empty_credential_file');
+  return { ...env, FI_CONTEXT_CREDENTIAL: secret };
+}
 
 export async function main(args, env = process.env) {
   if (args.length === 1 && args[0] === '--help') {
@@ -35,6 +43,8 @@ export async function main(args, env = process.env) {
     console.log('                                                                  replace first cancels {campaignId} with {reason}; both print a grouped review packet');
     console.log('       node bin/context-campaign.mjs authorize-reviewed PACKET.json ACKNOWLEDGED.json   one approval; refused if anything changed or the');
     console.log('                                                                  acknowledged exception repository ids differ from the packet');
+    console.log('                                                                  {credentialFile} stores the planning credential in a new 0600 file for later');
+    console.log('                                                                  subcommands (CONTEXT_CREDENTIAL_FILE); the secret is never printed');
     console.log('       node bin/context-campaign.mjs status CAMPAIGN_ID pause|resume|cancel REASON');
     console.log('       node bin/context-campaign.mjs install TARGETS.json        after merge-reviewed: record merges, apply and verify each lock (no delivery claim)');
     console.log('       node bin/context-campaign.mjs load-check TARGETS.json     pinned native host per checkout (CONTEXT_NATIVE_HOST, CONTEXT_NATIVE_HOST_SHA256)');
@@ -66,9 +76,9 @@ export async function main(args, env = process.env) {
     };
     return new CampaignBatch({ hub, executor, python: env.CONTEXT_SDK_PYTHON, env });
   };
-  const rollout = () => {
+  const rollout = async () => {
     const runner = batch();
-    return new ContextRollout({ hub: runner.hub, executor: runner.executor, python: env.CONTEXT_SDK_PYTHON, env });
+    return new ContextRollout({ hub: runner.hub, executor: runner.executor, python: env.CONTEXT_SDK_PYTHON, env: await credentialEnv(env) });
   };
   const json = async (path) => JSON.parse(await readFile(path, 'utf8'));
   const print = (value) => { console.log(JSON.stringify(value)); return 0; };
@@ -77,32 +87,36 @@ export async function main(args, env = process.env) {
     console.log(JSON.stringify(packet));
     return packet.individual.length ? 6 : 0;
   }
-  if (args[0] === 'context-create' && args.length === 2) return print(await rollout().createContext(await json(args[1])));
-  if (args[0] === 'context-edit' && args.length === 2) return print(await rollout().editDraft(await json(args[1])));
-  if (args[0] === 'release-review' && args.length === 3) return print(await rollout().reviewRelease({ contextId: args[1], revision: Number(args[2]) }));
+  if (args[0] === 'context-create' && args.length === 2) return print(await (await rollout()).createContext(await json(args[1])));
+  if (args[0] === 'context-edit' && args.length === 2) return print(await (await rollout()).editDraft(await json(args[1])));
+  if (args[0] === 'release-review' && args.length === 3) return print(await (await rollout()).reviewRelease({ contextId: args[1], revision: Number(args[2]) }));
   if (args[0] === 'release-publish' && args.length === 3) {
-    return print(await rollout().publishReviewed({ review: await json(args[1]), baseVersion: args[2] === 'null' ? null : Number(args[2]) }));
+    return print(await (await rollout()).publishReviewed({ review: await json(args[1]), baseVersion: args[2] === 'null' ? null : Number(args[2]) }));
   }
   if ((args[0] === 'start' || args[0] === 'replace') && args.length === 2) {
     const request = await json(args[1]);
-    const started = args[0] === 'start' ? await rollout().start(request) : await rollout().replace(request);
+    const runner = await rollout();
+    const started = args[0] === 'start' ? await runner.start(request) : await runner.replace(request);
+    // Later subcommands run in fresh processes: keep the short-lived planning
+    // credential in an operator-chosen new private file, never on stdout.
+    if (request.credentialFile) await writeFile(request.credentialFile, runner.env.FI_CONTEXT_CREDENTIAL, { flag: 'wx', mode: 0o600 });
     // The planning credential's secret stays in this process; only its id is printed.
     console.log(JSON.stringify({ ...started, review: { ...started.review, patches: Object.fromEntries(started.review.patches) } }));
     return started.packet.individual.length ? 6 : 0;
   }
   if (args[0] === 'authorize-reviewed' && args.length === 3) {
-    return print(await rollout().authorizeReviewed({ packet: await json(args[1]), acknowledgedExceptions: await json(args[2]) }));
+    return print(await (await rollout()).authorizeReviewed({ packet: await json(args[1]), acknowledgedExceptions: await json(args[2]) }));
   }
-  if (args[0] === 'status' && args.length === 4) return print(await rollout().setStatus({ campaignId: args[1], action: args[2], reason: args[3] }));
+  if (args[0] === 'status' && args.length === 4) return print(await (await rollout()).setStatus({ campaignId: args[1], action: args[2], reason: args[3] }));
   if (args[0] === 'install' && args.length === 2) {
     const { campaignId, targets } = await json(args[1]);
-    const result = await rollout().install({ campaignId, targets });
+    const result = await (await rollout()).install({ campaignId, targets });
     console.log(JSON.stringify({ ...result, delivered: false }));
     return result.installed.length === targets.length && result.installed.every((row) => row.state === 'installed' && row.verified === true) ? 0 : 6;
   }
   if (args[0] === 'load-check' && args.length === 2) {
     const { targets } = await json(args[1]);
-    const receipts = await rollout().loadCheck({ host: { executable: env.CONTEXT_NATIVE_HOST, sha256: env.CONTEXT_NATIVE_HOST_SHA256,
+    const receipts = await (await rollout()).loadCheck({ host: { executable: env.CONTEXT_NATIVE_HOST, sha256: env.CONTEXT_NATIVE_HOST_SHA256,
       version: env.CONTEXT_NATIVE_HOST_VERSION ?? null }, targets });
     console.log(JSON.stringify({ receipts }));
     return receipts.every((row) => row.delivery === 'observed') ? 0 : 6;

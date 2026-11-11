@@ -112,3 +112,23 @@ test('one load check returns a receipt per target and never turns a failed probe
   assert.equal(receipts[1].error, 'native_preimage_changed');
   await assert.rejects(rollout.loadCheck({ host: {}, targets: [] }), /native_host_pin_required/);
 });
+
+test('the rollout CLI prints the grouped ownership packet and reads a stored planning credential', async () => {
+  const { main, credentialEnv } = await import('../../../bin/context-campaign.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'j5-cli-'));
+  const inventory = { target_count: 2, targets: [inventoried('1000', { 'AGENTS.md': sha(1) }), { repository_id: '1001', state: 'unavailable' }] };
+  await writeFile(join(dir, 'inventory.json'), JSON.stringify(inventory));
+  const printed = []; const log = console.log; console.log = (line) => printed.push(line);
+  let code;
+  try { code = await main(['ownership-review', join(dir, 'inventory.json')], {}); } finally { console.log = log; }
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(printed[0]).units.map((unit) => unit.kind), ['group', 'held']);
+  // Wrong arity never reaches a hub call.
+  await assert.rejects(main(['status', campaignId, 'pause'], {}), /invalid_arguments/);
+  await assert.rejects(main(['authorize-reviewed', join(dir, 'inventory.json')], {}), /invalid_arguments/);
+  await writeFile(join(dir, 'credential'), 'synthetic-secret\n', { mode: 0o600 });
+  assert.equal((await credentialEnv({ CONTEXT_CREDENTIAL_FILE: join(dir, 'credential') })).FI_CONTEXT_CREDENTIAL, 'synthetic-secret');
+  assert.deepEqual(await credentialEnv({ A: '1' }), { A: '1' });
+  await writeFile(join(dir, 'empty'), '\n');
+  await assert.rejects(credentialEnv({ CONTEXT_CREDENTIAL_FILE: join(dir, 'empty') }), /empty_credential_file/);
+});
