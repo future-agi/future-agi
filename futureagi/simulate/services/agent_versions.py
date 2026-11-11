@@ -4,6 +4,7 @@ version is production; and whether an environment follows it or is pinned."""
 
 from __future__ import annotations
 
+import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,8 @@ from uuid import UUID
 
 import structlog
 from django.db import transaction
+from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     AgentDefinition,
@@ -27,6 +30,7 @@ from simulate.services.harness_agent_versions import (
     environment_owned,
     environment_policy,
     lock_agent_production,
+    next_version_number,
     promote_to_production,
     record_hand_move,
     retry_preflight,
@@ -195,10 +199,49 @@ def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersi
     runtime = _runtime(parent)
     if runtime is not None and runtime.source_kind == SourceKind.PROVIDER:
         return provider_sync(definition, parent, runtime, user=user)
-    source = _github_source(runtime)
-    head_sha = _branch_head(definition, source)
+    head_sha = _branch_head(definition, _github_source(runtime))
+    version, _created = version_at_head(
+        definition, head_sha, trigger=Trigger.SYNC, user=user
+    )
+    return version
+
+
+def live_version_at(definition_id: Any, commit_sha: str) -> AgentVersion | None:
+    """The newest version of the agent made at ``commit_sha`` that still stands for
+    it: a failed check or a discarded version does not."""
+    runtime = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_definition_id=definition_id,
+            source__commit_sha__iexact=commit_sha,
+        )
+        .exclude(preflight_status__in=(Status.FAILED, Status.DISCARDED))
+        .select_related("agent_version")
+        .defer("credential_blob", "diff")
+        .order_by("-created_at")
+        .first()
+    )
+    return runtime.agent_version if runtime is not None else None
+
+
+def version_at_head(
+    definition: AgentDefinition,
+    head_sha: str,
+    *,
+    trigger: str,
+    user: Any = None,
+) -> tuple[AgentVersion, bool]:
+    """The agent's version at ``head_sha`` of its branch, and whether this call made
+    it: the parent when it is already there, a version Sync or the poller already
+    made at it, else a new one. Sync and the poller both come here, so a commit gets
+    one version whichever looks first."""
+    parent = _parent(definition)
+    source = _github_source(_runtime(parent))
     if head_sha.lower() == str(source.get("commit_sha") or "").lower():
-        return parent
+        return parent, False
+    existing = live_version_at(definition.id, head_sha)
+    if existing is not None:
+        return existing, False
+    first_new = next_version_number(definition.id)
     version = create_agent_version(
         definition,
         parent=parent,
@@ -208,10 +251,10 @@ def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersi
             for key, value in {**source, "commit_sha": head_sha}.items()
             if key != "repository_id" and value
         },
-        trigger=Trigger.SYNC,
+        trigger=trigger,
         user=user,
     )
-    return version
+    return version, version.version_number >= first_new
 
 
 def provider_sync(
@@ -355,6 +398,9 @@ def upload_version(
             "The upload expired; upload the folder again",
             status_code=422,
         )
+    existing = _same_upload_version(definition, archive_artifact_id)
+    if existing is not None:
+        return existing
     version = create_agent_version(
         definition,
         parent=parent,
@@ -364,6 +410,63 @@ def upload_version(
         user=user,
     )
     return version
+
+
+_UPLOAD_COMPARE_LIMIT = 5
+
+
+def _same_upload_version(
+    definition: AgentDefinition, archive_artifact_id: Any
+) -> AgentVersion | None:
+    """The newest live upload version of the agent with the same files as this
+    upload, so the same folder again makes no version."""
+    rows = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_definition_id=definition.id, source_kind=SourceKind.ARCHIVE
+        )
+        .exclude(preflight_status__in=(Status.FAILED, Status.DISCARDED))
+        .select_related("agent_version")
+        .defer("credential_blob", "diff")
+        .order_by("-created_at")[:_UPLOAD_COMPARE_LIMIT]
+    )
+    for runtime in rows:
+        if _same_upload(
+            definition.organization_id,
+            (runtime.source or {}).get("archive_artifact_id"),
+            archive_artifact_id,
+        ):
+            return runtime.agent_version
+    return None
+
+
+def _same_upload(organization_id: Any, current_id: Any, new_id: Any) -> bool:
+    """Whether two uploads hold the same files with the same content. Each upload
+    is packed on its own, so their bytes differ even then; an upload that can't be
+    read counts as different."""
+    from simulate.services.harness_versioning.archives import (
+        get_archive,
+        member_digests,
+    )
+    from simulate.services.hosted_harness_gateway import _source_object_key
+
+    if not current_id:
+        return False
+    try:
+        current = member_digests(
+            get_archive(_source_object_key(organization_id, str(current_id)))
+        )
+        uploaded = member_digests(
+            get_archive(_source_object_key(organization_id, str(new_id)))
+        )
+    except (S3Error, HTTPError, tarfile.TarError, OSError, EOFError) as exc:
+        logger.warning(
+            "agent_upload_compare_failed",
+            current_archive=str(current_id),
+            new_archive=str(new_id),
+            error=type(exc).__name__,
+        )
+        return False
+    return current == uploaded
 
 
 def credentials_version(

@@ -107,6 +107,7 @@ class WatchedSource:
     # GitHub's id for the repository: its head is read by id, never by a name a
     # later owner could take.
     repository_id: int | None = None
+    connected: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,8 +157,8 @@ def watched_sources(
     found = []
     private = 0
     for job in jobs.order_by("created_at"):
-        if _busy(job) or agent_definition_owner(job) == "connected":
-            # Connected agents change through their sync only.
+        connected = agent_definition_owner(job) == "connected"
+        if not connected and _busy(job):
             continue
         facts = _facts(job)
         if facts is None or facts.source_kind != SourceKind.GITHUB:
@@ -203,6 +204,7 @@ def watched_sources(
                 ),
                 organization_id=job.organization_id,
                 repository_id=access.get("repository_id") or recorded.get("id"),
+                connected=connected,
             )
         )
     if private:
@@ -554,6 +556,22 @@ def _observe_one(
     return ("created" if version.version_number >= first_new else "reused"), version
 
 
+def _observe_connected(
+    watched: WatchedSource, head: str
+) -> tuple[str, AgentVersion | None]:
+    """A connected agent's version at ``head``, made once for the agent however many
+    environments test it; none when Sync or an earlier look already made it."""
+    from simulate.services.agent_versions import version_at_head
+
+    definition = AgentDefinition.no_workspace_objects.filter(
+        id=watched.definition_id
+    ).first()
+    if definition is None:
+        return "skipped_missing", None
+    version, created = version_at_head(definition, head, trigger=Trigger.PUSH)
+    return ("created" if created else "unchanged"), version
+
+
 def observe_repository_head(
     definition: AgentDefinition | Any,
     *,
@@ -575,6 +593,7 @@ def observe_repository_head(
     only_given = heads is not None
     heads = {} if heads is None else heads
     outcomes: dict[str, str] = {}
+    connected_outcomes: dict[Any, str] = {}
     for watched in watched_sources(repository=repository, definition_id=definition_id):
         pair = _pair(watched)
         head = heads.get(pair)
@@ -592,8 +611,16 @@ def observe_repository_head(
             if head.status in ("rate_limited", "budget"):
                 break
             continue
+        if watched.connected and watched.definition_id in connected_outcomes:
+            outcomes[str(watched.environment_id)] = connected_outcomes[
+                watched.definition_id
+            ]
+            continue
         try:
-            outcome, version = _observe_one(watched, head.sha, purpose)
+            if watched.connected:
+                outcome, version = _observe_connected(watched, head.sha)
+            else:
+                outcome, version = _observe_one(watched, head.sha, purpose)
         except HostedHarnessError as exc:
             outcome, version = f"error:{exc.code}", None
         except Exception as exc:  # noqa: BLE001 - one environment never stops another
@@ -603,6 +630,8 @@ def observe_repository_head(
                 type(exc).__name__,
             )
             outcome, version = "error", None
+        if watched.connected:
+            connected_outcomes[watched.definition_id] = outcome
         outcomes[str(watched.environment_id)] = outcome
         logger.info(
             "harness_agent_head_observed definition=%s environment=%s outcome=%s"
