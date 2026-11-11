@@ -36,9 +36,35 @@ it('carries the retained plans through draft preservation and reloads the same p
   cleanup();
   api.reload.mockResolvedValueOnce([{ ...plan, items: [{ ...item, hasDraft: false, diverged: true }] }]);
   view({ initialPlanIds: ['plan-1'] });
-  await screen.findByRole('combobox', { name: 'Decision for policy' });
+  await screen.findByRole('radiogroup', { name: 'Decision for policy' });
   expect(api.reload).toHaveBeenCalledTimes(2);
   expect(api.reload).toHaveBeenLastCalledWith({ planIds: ['plan-1'] });
   expect(api.preview).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Import and publish 1 item' })).toBeDisabled());
+});
+
+it('previews every source of one inventory packet into one reviewed set', async () => {
+  const exchangePlan = { ...plan, id: 'plan-x', items: [{ ...item, key: 'x', name: 'exchange-skill', sourceResource: 'x', hasDraft: false, destinationId: null }] };
+  const folderPlan = { ...plan, id: 'plan-f', items: [{ ...item, key: 'f', name: 'folder-skill', sourceResource: 'f', hasDraft: false, destinationId: null }] };
+  api.preview.mockResolvedValueOnce(exchangePlan).mockResolvedValueOnce(folderPlan);
+  view();
+  const packet = { schema: 1, kind: 'futureagi-migration-packet', context: { name: 'trial', description: 'Trial', agents_md: 'Root\n' }, sources: [
+    { kind: 'langfuse', export: { format: 'langfuse-skills-v1' } },
+    { kind: 'folder', files: [{ path: 'private/f/SKILL.md', content_base64: btoa('skill') }], source_identities: { key: { resource: 'private/f' } } }] };
+  fireEvent.change(screen.getByLabelText('Inventory migration packet'), { target: { files: [new File([JSON.stringify(packet)], 'packet.json')] } });
+  const table = await screen.findByRole('table', { name: 'Retained migration items' });
+  await waitFor(() => expect(table).toHaveTextContent('folder-skill'));
+  expect(table).toHaveTextContent('exchange-skill');
+  expect(api.preview).toHaveBeenCalledTimes(2);
+  expect(api.preview.mock.calls[0][0]).toEqual({ exportData: { format: 'langfuse-skills-v1' } });
+  const form = api.preview.mock.calls[1][0].form;
+  expect(form.getAll('files')[0].name).toBe('private/f/SKILL.md');
+  expect(JSON.parse(form.get('source_identities'))).toEqual({ key: { resource: 'private/f' } });
+});
+
+it('rejects a file that is not an inventory packet without previewing anything', async () => {
+  view();
+  fireEvent.change(screen.getByLabelText('Inventory migration packet'), { target: { files: [new File(['{"kind":"other"}'], 'x.json')] } });
+  await screen.findByText('Choose a migration packet written by the local inventory.');
+  expect(api.preview).not.toHaveBeenCalled();
 });

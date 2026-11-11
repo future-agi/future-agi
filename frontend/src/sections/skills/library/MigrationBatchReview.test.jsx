@@ -1,6 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import MigrationBatchReview from './MigrationBatchReview';
+
+const context = vi.hoisted(() => ({ prepare: vi.fn(), publish: vi.fn() }));
+vi.mock('src/api/skills/j1-migration-context', async (original) => ({ ...(await original()),
+  usePrepareMigrationContext: () => ({ mutateAsync: context.prepare, isPending: false }),
+  usePublishMigrationContext: () => ({ mutateAsync: context.publish, isPending: false }) }));
+vi.mock('../contexts/ContextPilotCredentials', () => ({ default: ({ snapshot }) => <p>{`Pilot credential for v${snapshot.version}`}</p> }));
 import { classifyMigrationItem, retainPlan } from './migration-batch';
 
 const digest = (c) => `sha256:${c.repeat(64)}`;
@@ -77,8 +83,12 @@ it('blocks the set until each diverged item has an explicit keep or replace deci
   fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
   const submit = screen.getByRole('button', { name: 'Import and publish 2 items' });
   expect(submit).toBeDisabled();
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Decision for both' }));
-  fireEvent.click(screen.getByRole('option', { name: 'Keep Hub content' }));
+  // The exception's differences are open for review and its decision is one click.
+  expect(screen.getByText('Base, Source and Hub differences').closest('details')).toHaveAttribute('open');
+  expect(screen.getByRole('radio', { name: 'Keep Hub content' })).not.toBeChecked();
+  expect(screen.getByRole('radio', { name: 'Replace with reviewed source' })).not.toBeChecked();
+  expect(screen.getByRole('radiogroup', { name: 'Decision for both' })).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: 'Keep Hub content' }));
   fireEvent.click(submit);
   await waitFor(() => expect(keep).toHaveBeenCalledOnce());
   expect(keep.mock.calls[0][0]).toMatchObject({ itemKey: 'both', expectedHeadVersion: 2, rightsConfirmed: true });
@@ -120,4 +130,33 @@ it('lets the owner inspect every defaulted item\'s exact source files inside the
   render(<MigrationBatchReview plans={[plan([item('one', { sourceHubChanges: files })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
   fireEvent.click(screen.getByText('Inspect source files'));
   expect(screen.getByText('SKILL.md · added')).toBeVisible();
+});
+
+it('assembles the packet\'s proposed context from exactly the published versions, then publishes only after acceptance', async () => {
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  const publish = vi.fn(async (input) => ({ resourceId: input.resourceId, version: 1 }));
+  const lock = [{ mount: 'skills/one/', skillId: 'resource-one', version: 1, versionId: 'v-one', digest: digest('1') }, { mount: 'skills/two/', skillId: 'resource-two', version: 1, versionId: 'v-two', digest: digest('2') }];
+  const prepared = { contextId: 'ctx', name: 'trial', links: [], preview: { candidateDigest: digest('c'), resolvedLock: { links: lock }, checks: { summary: { errors: 0, warnings: 0 }, items: [] } } };
+  context.prepare.mockResolvedValueOnce(prepared);
+  context.publish.mockResolvedValueOnce({ contextId: 'ctx', canIssueCredentials: true, receipt: { version: { id: 'ctx-v1', number: 1, digest: digest('c') } } });
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={publish} onCreateContext={vi.fn()} contextProposal={{ name: 'trial', description: 'Private trial', agents: 'Root\n' }} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import and publish 2 items' }));
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  // The proposal replaces the hand-off to another screen; fields stay editable.
+  expect(screen.queryByRole('button', { name: 'Create agent context from these skills' })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Immutable name')).toHaveValue('trial');
+  expect(screen.getByLabelText('AGENTS.md')).toHaveValue('Root\n');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview agent context' }));
+  await screen.findByRole('table', { name: 'Pinned links' });
+  expect(context.prepare.mock.calls[0][0]).toMatchObject({ name: 'trial', description: 'Private trial', agents: 'Root\n',
+    links: [{ skillId: 'resource-one', selector: { version: 1 } }, { skillId: 'resource-two', selector: { version: 1 } }] });
+  const submit = screen.getByRole('button', { name: 'Publish agent context' });
+  expect(submit).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Accept these 2 exact pinned versions and this compiled candidate.' }));
+  fireEvent.click(submit);
+  await screen.findByText('Pilot credential for v1');
+  expect(context.publish.mock.calls[0][0]).toMatchObject({ prepared, acknowledgeWarnings: false });
+  // The same operation keys are kept for an exact retry.
+  expect(context.publish.mock.calls[0][0].keys).toBe(context.prepare.mock.calls[0][0].keys);
 });

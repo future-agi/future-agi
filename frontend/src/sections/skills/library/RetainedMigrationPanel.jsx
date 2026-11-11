@@ -9,6 +9,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import MigrationPlanPanel from './MigrationPlanPanel';
 import MigrationBatchReview from './MigrationBatchReview';
 import { retainPlan } from './migration-batch';
+import { packetSources } from './migration-packet';
 
 
 // Intent: trial a private library as retained drafts, never move production labels.
@@ -23,6 +24,8 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
   const reload = useMigrationPlanReload();
   const folder = useRef(null);
   const upload = useRef(null);
+  const packetInput = useRef(null);
+  const [proposal, setProposal] = useState(null);
   const [kind, setKind] = useState('langfuse');
   const [files, setFiles] = useState([]);
   const [identities, setIdentities] = useState('');
@@ -62,6 +65,22 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     } catch (failure) { setError(failure.message || 'Could not retain this source. No content was imported.'); }
     finally { onBusyChange(false); }
   };
+  // One packet from the local inventory replaces choosing each source again
+  // and copying identity JSON by hand. Every source is previewed into the same
+  // reviewed set; the server re-derives every identity and digest.
+  const previewPacket = async (file) => {
+    setError('');
+    onBusyChange(true);
+    try {
+      const { sources, proposal: next } = await packetSources(file);
+      let retained = [];
+      for (const source of sources) retained = retainPlan(retained, await preview.mutateAsync(source));
+      setPlans((current) => retained.reduce(retainPlan, current));
+      setProposal(next);
+      setReceipts([]);
+    } catch (failure) { setError(failure.message || 'Could not retain this packet. No content was imported.'); }
+    finally { onBusyChange(false); }
+  };
   const openDraft = (resourceId) => { onClose(); navigate(paths.dashboard.skills.edit(resourceId)); };
   const setOperationBusy = useCallback((value) => { setLocked(value); onBusyChange(value); }, [onBusyChange]);
   return <Stack spacing={1.5} sx={{ minWidth: 0, overflowY: 'auto' }}>
@@ -70,10 +89,13 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
       <MenuItem value="langfuse">Versioned Langfuse exchange JSON</MenuItem><MenuItem value="folder">Private folder or ZIP</MenuItem>
     </TextField>
     <Alert severity="info">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Alert>
-    <Stack direction="row" spacing={1}>
+    <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+      <Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose inventory packet</Button>
       <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose source files</Button>
       <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose private folder</Button>
     </Stack>
+    <Typography variant="s3">An inventory packet (skills-inventory --packet) holds every inventoried source, its identities and the proposed context. Choosing it previews them all.</Typography>
+    <input ref={packetInput} type="file" hidden accept="application/json,.json" aria-label="Inventory migration packet" disabled={busy} onChange={(event) => { const [file] = event.target.files; event.target.value = ''; if (file) previewPacket(file); }} />
     <input ref={upload} type="file" hidden multiple={kind === 'folder'} aria-label="Retained source files" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
     {/* Choosing a folder is itself the format choice; no separate selection is needed. */}
     <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { setKind('folder'); selectFiles(event.target.files); event.target.value = ''; }} />
@@ -83,7 +105,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose, initialP
     {error && <Alert severity="error">{error}</Alert>}
     {reload.isPending && <ContentSkeleton variant="rows" rows={3} label="Reloading the retained migration review" />}
     {preview.isPending && <ContentSkeleton variant="rows" rows={3} label="Retaining source and loading exact comparisons" />}
-    {plans.length > 0 && <MigrationBatchReview plans={plans}
+    {plans.length > 0 && <MigrationBatchReview plans={plans} contextProposal={proposal}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
       onPublish={(input) => publish.mutateAsync(input)}

@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Checkbox, FormControlLabel, Radio, RadioGroup, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from "@mui/material";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
 import ChecksList from "../components/ChecksList";
 import { FileChanges } from "../editor/HotfixHeadReview";
 import { classifyMigrationItem } from "./migration-batch";
+import MigrationContextAssembly from "./MigrationContextAssembly";
 
 // Intent: one reviewed decision over every retained item, with each exception
 // still decided explicitly. Nothing here moves production or merges content.
@@ -25,7 +26,7 @@ const outcomeText = (outcome) => {
   return outcome.version ? `Published v${outcome.version}${replay}` : `Draft imported${replay}`;
 };
 
-export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublish, onPreserveDraft, onBusyChange, onCreateContext }) {
+export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublish, onPreserveDraft, onBusyChange, onCreateContext, contextProposal }) {
   const formId = useId();
   const [choices, setChoices] = useState({});
   const [publish, setPublish] = useState(true);
@@ -124,16 +125,17 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
           <TableCell sx={{ overflowWrap: "anywhere" }}><Typography variant="s3">{row.item.destinationId ? `${row.item.destinationId} · v${row.item.expectedHeadVersion ?? "—"}` : "New identity"}</Typography></TableCell>
           <TableCell><Typography variant="s1" display="block">{row.item.fileCount ?? "—"}</Typography><Typography variant="s3" display="block">{row.item.totalBytes ?? "—"} bytes</Typography></TableCell>
           <TableCell sx={{ minWidth: 200 }}>
-            {row.kind === "choice" ? <TextField id={`${formId}-${row.key}`} SelectProps={{ SelectDisplayProps: { "aria-labelledby": `${formId}-${row.key}-label` } }} select size="small" fullWidth label={`Decision for ${row.item.name || row.item.root}`} value={choices[row.key] || ""} disabled={running || Boolean(outcomes[row.key]?.receipt)} onChange={(event) => setChoices((current) => ({ ...current, [row.key]: event.target.value }))}>
-              <MenuItem value="">Choose</MenuItem><MenuItem value="keep">Keep Hub content</MenuItem><MenuItem value="replace">Replace with reviewed source</MenuItem>
-            </TextField> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Left out" : "Held"}</Typography>}
+            {/* One click per exception; nothing is preselected for a diverged item. */}
+            {row.kind === "choice" ? <RadioGroup id={`${formId}-${row.key}`} aria-label={`Decision for ${row.item.name || row.item.root}`} value={choices[row.key] || ""} onChange={(event) => setChoices((current) => ({ ...current, [row.key]: event.target.value }))}>
+              {[["keep", "Keep Hub content"], ["replace", "Replace with reviewed source"]].map(([value, label]) => <FormControlLabel key={value} value={value} label={label} disabled={running || Boolean(outcomes[row.key]?.receipt)} control={<Radio size="small" />} />)}
+            </RadioGroup> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Left out" : "Held"}</Typography>}
             {row.kind !== "default" && <Typography variant="s3" display="block" color="text.secondary">{row.note}</Typography>}
             {row.kind === "held" && row.item.hasDraft && onPreserveDraft && <Button size="small" disabled={running} onClick={() => onPreserveDraft(row.item)}>{`Preserve draft for ${row.item.name || row.item.root}`}</Button>}
             {row.kind === "default" && Array.isArray(row.item.sourceHubChanges) && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect source files</Typography>
               {row.item.destinationId ? <FileChanges files={row.item.sourceHubChanges} beforeTitle="Reviewed source" afterTitle="Current Hub" />
                 : <FileChanges files={row.item.sourceHubChanges.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.fromText }))} beforeTitle="Not in Hub yet" afterTitle="Reviewed source" />}
             </Box>}
-            {row.kind === "choice" && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect Base, Source and Hub differences</Typography>
+            {row.kind === "choice" && <Box component="details" open><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Base, Source and Hub differences</Typography>
               {Array.isArray(row.item.sourceHubChanges) && <FileChanges files={row.item.sourceHubChanges} beforeTitle="New source" afterTitle="Current Hub" />}
               {row.item.basisPayloadAvailable === false ? <Typography variant="s3">No historical source text is available; only Source and Hub are compared.</Typography> : <>
                 <FileChanges files={row.item.sourceChanges} beforeTitle="Accepted source basis" afterTitle="New source" />
@@ -154,9 +156,13 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => setRights(event.target.checked)} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />
     {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
     <Box><Button variant="contained" disabled={!ready || running} onClick={apply}>{label}</Button></Box>
-    {published.length > 0 && !pending.length && <Alert severity="success" action={onCreateContext && <Button disabled={running} onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}>
+    {published.length > 0 && !pending.length && <Alert severity="success" action={onCreateContext && !contextProposal && <Button disabled={running} onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}>
       {published.length} {published.length === 1 ? "version" : "versions"} published without labels. Production was not changed.
     </Alert>}
+    {/* A packet from the local inventory carries the proposed context, so the
+        published set is assembled here instead of on another screen. */}
+    {contextProposal && published.length > 0 && !pending.length && <MigrationContextAssembly proposal={contextProposal} onBusyChange={onBusyChange}
+      published={published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version }))} />}
   </Stack>;
 }
-MigrationBatchReview.propTypes = { plans: PropTypes.array.isRequired, onAccept: PropTypes.func, onKeep: PropTypes.func, onPublish: PropTypes.func, onPreserveDraft: PropTypes.func, onBusyChange: PropTypes.func, onCreateContext: PropTypes.func };
+MigrationBatchReview.propTypes = { contextProposal: PropTypes.shape({ name: PropTypes.string, description: PropTypes.string, agents: PropTypes.string }), plans: PropTypes.array.isRequired, onAccept: PropTypes.func, onKeep: PropTypes.func, onPublish: PropTypes.func, onPreserveDraft: PropTypes.func, onBusyChange: PropTypes.func, onCreateContext: PropTypes.func };
