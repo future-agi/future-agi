@@ -27,6 +27,8 @@ test('a missing target, wrong version or missing artifact cannot qualify load', 
 
 test('empty or duplicated populations cannot qualify native delivery', () => {
   assert.throws(() => requireNativeDelivery([], [], 'synthetic-v1'), /native_delivery_included_population/);
+  // Only 33 followers, or those plus the four pins adopted at their release.
+  assert.throws(() => requireNativeDelivery(installed.slice(1), ids.slice(1), 'synthetic-v1'), /native_delivery_included_population/);
   assert.throws(() => requireNativeDelivery(installed, [...ids.slice(1), ids[1]], 'synthetic-v1'), /native_delivery_duplicate_target/);
 });
 

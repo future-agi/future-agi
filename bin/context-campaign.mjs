@@ -17,10 +17,13 @@ export async function main(args, env = process.env) {
     console.log('       node bin/context-campaign.mjs bind CONTEXT_ID ROWS.json');
     console.log('       node bin/context-campaign.mjs plan-all PLAN_REQUEST.json');
     console.log('       node bin/context-campaign.mjs apply-all PLANS.json');
+    console.log('       node bin/context-campaign.mjs verify-prs|merge-reviewed UNIT.json');
+    console.log('verify-prs/merge-reviewed input: {targets:[{repository_id,repository,pull_request_number,commit,plan,contents}]} for one reviewed unit;');
+    console.log('merge-reviewed re-verifies every PR head, parent and tree, then merges each guarded by its verified head SHA.');
     console.log('Execute input: {targets:[{campaignId,bindingId,repository,idempotencyKey,contents:{path:base64}}]}');
     console.log('plan-all input: {campaignId,selected:[{repository_id,repository,project}],exclusions,mode,name,version,client,restoreLocks,outDir}');
     console.log('plan-all prints review groups (identical managed delta, local bytes proven preserved) and individual exceptions.');
-    console.log('Requires pre-authorized server plans; does not authorize, merge, install or infer delivery.');
+    console.log('Requires pre-authorized server plans; does not authorize, install or infer delivery. Only merge-reviewed merges.');
     console.log('Environment: CONTEXT_HUB_URL, CONTEXT_HUB_HEADERS_JSON (human-bound API headers), GITHUB_TOKEN.');
     console.log('Keep each idempotencyKey for transport retries. A new key reconciles an uncertain prior attempt without repeating Git writes.');
     return 0;
@@ -66,6 +69,13 @@ export async function main(args, env = process.env) {
     const results = await batch().applyAll({ plans: JSON.parse(await readFile(args[1], 'utf8')) });
     console.log(JSON.stringify({ results, delivered: false }));
     return results.every((row) => row.state === 'installed' && row.verified === true) ? 0 : 6;
+  }
+  if (args[0] === 'verify-prs' || args[0] === 'merge-reviewed') {
+    if (args.length !== 2) throw new Error('invalid_arguments');
+    const { targets } = JSON.parse(await readFile(args[1], 'utf8'));
+    const results = args[0] === 'verify-prs' ? await batch().verifyPulls({ targets }) : await batch().mergeAll({ targets });
+    console.log(JSON.stringify({ results, installed: false, delivered: false }));
+    return 0;
   }
   if (args.length !== 2 || args[0] !== 'execute') throw new Error('invalid_arguments');
   const bytes = await readFile(args[1]);

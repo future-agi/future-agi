@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CampaignBatch } from '../../../bin/lib/context-campaign-batch.mjs';
@@ -9,7 +10,7 @@ import { reviewUnits } from '../../benchmarks/context-hub/drivers/j5.mjs';
 const campaignId = '00000000-0000-4000-8000-000000000001';
 const desired = '00000000-0000-4000-8000-0000000000aa';
 const target = (n, extra = {}) => ({ binding_id: `00000000-0000-4000-8000-00000000010${n}`, binding_revision: 1,
-  desired_version_id: desired, selector: { label: 'production' }, plan_digest: null, repository: { repository_id: String(1000 + n) }, ...extra });
+  desired_version: 2, desired_version_id: desired, selector: { label: 'production' }, plan_digest: null, repository: { repository_id: String(1000 + n) }, ...extra });
 
 // Stub SDK interpreter: plan/inspect succeed; the exporter's group is chosen per repository.
 async function stubPython(groups) {
@@ -64,6 +65,73 @@ test('planAll groups only proven-identical deltas and keeps every exception indi
   assert.throws(() => reviewUnits(duplicated, repos), /review_item_count/);
   const omitted = structuredClone(review); omitted.exceptions.pop();
   assert.throws(() => reviewUnits(omitted, repos), /review_item_count/);
+});
+
+test('a deliberate pin is adopted at its own release once, then held without a write', async () => {
+  // Pin to version 2 in a version-2 campaign: no lock yet, so it is planned.
+  const targets = [target(1), target(2, { selector: { version: 2 } }), target(3, { selector: { version: 2 } }), target(4, { selector: { version: 1 } })];
+  const { hub, executor, recorded } = fakes(targets);
+  const python = await stubPython({ 1001: 'sha256:same', 1002: 'sha256:same', 1003: 'sha256:same' });
+  const projects = targets.map((_, i) => join(python.dir, `pin-${i}`));
+  // Repository 1003's checkout already records the pinned release.
+  await mkdir(projects[2], { recursive: true });
+  await writeFile(join(projects[2], '.futureagi-context.lock.json'), JSON.stringify({ version_id: desired }));
+  // Repository 1004 has a lock at a different release; it is pinned elsewhere, so never written.
+  await mkdir(projects[3], { recursive: true });
+  await writeFile(join(projects[3], '.futureagi-context.lock.json'), JSON.stringify({ version_id: 'other' }));
+  const batch = new CampaignBatch({ hub, executor, python: python.path });
+  const selected = targets.map((row, i) => ({ repository_id: row.repository.repository_id, repository: `synthetic/repo-${i + 1}`, project: projects[i] }));
+  const review = await batch.planAll({ campaignId, selected, name: 'n', version: 2, client: 'codex', outDir: python.dir });
+  assert.deepEqual(review.groups.map((group) => group.members.map((row) => row.repository_id)), [['1001', '1002']]);
+  assert.deepEqual(review.exceptions.map((row) => [row.repository_id, row.kind]), [['1003', 'pinned_current'], ['1004', 'pinned_selector']]);
+  assert.equal(review.exceptions[0].observed.lock_version_id, desired);
+  assert.equal(recorded.length, 2, 'held pins upload no plan');
+  // A corrupt lock is refused rather than treated as absent.
+  await writeFile(join(projects[2], '.futureagi-context.lock.json'), JSON.stringify({ schema: 1 }));
+  await assert.rejects(batch.planAll({ campaignId, selected, name: 'n', version: 2, client: 'codex', outDir: python.dir }), /invalid_local_lock/);
+});
+
+function pullFakes({ head = 'c'.repeat(40) } = {}) {
+  const bytes = 'Managed v2\n';
+  const blob = (text) => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+  const plan = { base_commit: 'b'.repeat(40), changes: [{ path: 'AGENTS.md', action: 'replace', before_sha256: 'e'.repeat(64),
+    after_sha256: createHash('sha256').update(bytes).digest('hex') }] };
+  const merges = [];
+  const executor = {
+    request: async (url, options = {}) => {
+      const suffix = url.split('/repos/synthetic/r1')[1];
+      if (suffix === '/pulls/7') return { number: 7, state: 'open', merged: false, head: { sha: head } };
+      if (suffix === `/git/commits/${'b'.repeat(40)}`) return { sha: 'b'.repeat(40), tree: { sha: 't'.repeat(40) } };
+      if (suffix.startsWith('/git/trees/')) return { truncated: false, tree: [{ path: 'AGENTS.md', type: 'blob', mode: '100644', sha: blob('old') }] };
+      if (suffix === '/pulls/7/merge' && options.method === 'PUT') { merges.push(options.body); return { merged: true, sha: 'd'.repeat(40) }; }
+      throw new Error(`unexpected ${suffix}`);
+    },
+    verifyCommit: async (_git, commit, base, baseTree, patch) => {
+      assert.equal(base, 'b'.repeat(40)); assert.equal(baseTree.tree.length, 1);
+      if (commit !== 'c'.repeat(40) || patch[0].content !== bytes) throw new Error('unauthorized_tree_change');
+    },
+  };
+  const targets = [{ repository_id: '1001', repository: 'synthetic/r1', pull_request_number: 7, commit: 'c'.repeat(40), plan,
+    contents: { 'AGENTS.md': Buffer.from(bytes).toString('base64') } }];
+  return { executor, targets, merges };
+}
+
+test('mergeAll merges a verified unit, each guarded by its verified head', async () => {
+  const { executor, targets, merges } = pullFakes();
+  const batch = new CampaignBatch({ hub: async () => null, executor });
+  const merged = await batch.mergeAll({ targets });
+  assert.deepEqual(merged.map((row) => [row.repository_id, row.merge_commit]), [['1001', 'd'.repeat(40)]]);
+  assert.deepEqual(merges, [{ sha: 'c'.repeat(40), merge_method: 'merge' }]);
+});
+
+test('mergeAll refuses a unit whose PR head or reviewed bytes changed before any merge', async () => {
+  const moved = pullFakes({ head: 'f'.repeat(40) });
+  await assert.rejects(new CampaignBatch({ hub: async () => null, executor: moved.executor }).mergeAll({ targets: moved.targets }), /pull_request_head_changed/);
+  assert.equal(moved.merges.length, 0);
+  const tampered = pullFakes();
+  tampered.targets[0].contents['AGENTS.md'] = Buffer.from('Other bytes\n').toString('base64');
+  await assert.rejects(new CampaignBatch({ hub: async () => null, executor: tampered.executor }).mergeAll({ targets: tampered.targets }), /patch_hash_mismatch/);
+  assert.equal(tampered.merges.length, 0);
 });
 
 test('planAll refuses a fixed target that was not selected', async () => {

@@ -26,11 +26,21 @@ export async function observeLocal(project) {
   return { lock: lock === null ? 'absent' : 'present', local_instructions: instructions };
 }
 
+/** The release recorded by a checkout's lock, or null when it has none. */
+export async function lockedVersion(project) {
+  let bytes;
+  try { bytes = await readFile(join(project, LOCK), 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const versionId = JSON.parse(bytes)?.version_id;
+  requireValue(typeof versionId === 'string' && versionId.length > 0, 'invalid_local_lock');
+  return versionId;
+}
+
 /**
  * Campaign-level public commands. Each method is one operator command over the
  * whole fixed campaign; per-target work stays individually checked and keyed.
- * Nothing here authorizes, merges or reports delivery. The caller supplies a
- * human-bound hub transport and the executor that owns the fixed Git host.
+ * Nothing here authorizes or reports delivery. Merging is only the explicit
+ * mergeAll decision over PRs that verifyPulls has just proven exact. The caller
+ * supplies a human-bound hub transport and the executor that owns the fixed Git host.
  */
 export class CampaignBatch {
   constructor({ hub, executor, python, env = process.env, signal }) {
@@ -103,8 +113,19 @@ export class CampaignBatch {
         decisions.push({ binding_id: target.binding_id, plan_digest: target.plan_digest ?? null, decision: 'exclude', reason });
       };
       if (target.selector && Object.hasOwn(target.selector, 'version')) {
-        exclude('pinned_selector', `Deliberate pin to version ${target.selector.version}; no write authorized.`);
-        continue;
+        // A deliberate pin never advances. At its own pinned release it is
+        // adopted like any target until its checkout's lock records that
+        // release; afterwards it needs no write and stays an explicit exception.
+        if (target.selector.version !== target.desired_version) {
+          exclude('pinned_selector', `Deliberate pin to version ${target.selector.version}; no write authorized.`);
+          continue;
+        }
+        const installed = await lockedVersion(row.project);
+        if (installed !== null && installed === target.desired_version_id) {
+          exclude('pinned_current', `Deliberate pin already installed at version ${target.selector.version}; no write needed.`,
+            { lock_version_id: installed });
+          continue;
+        }
       }
       if (Object.hasOwn(exclusions, repositoryId)) {
         exclude('operator_exclusion', exclusions[repositoryId], await observeLocal(row.project));
@@ -177,6 +198,59 @@ export class CampaignBatch {
       if (/Base moved/.test(receipt.reason ?? '')) stopped = 'Stopped after base movement; review a replacement campaign before further writes.';
     }
     return receipts;
+  }
+
+  /**
+   * Independently re-verify one review unit's open PRs before a merge decision:
+   * each is open and unmerged, its head is exactly the commit the authorized
+   * attempt recorded, its only parent is the authorized base and its tree is the
+   * base tree plus exactly the reviewed bytes. Any mismatch refuses the unit.
+   */
+  async verifyPulls({ targets }) {
+    requireValue(Array.isArray(targets) && targets.length > 0 && targets.length <= 100, 'invalid_targets');
+    requireValue(new Set(targets.map((row) => row.repository_id)).size === targets.length, 'duplicate_repository');
+    const verified = [];
+    for (const target of targets) {
+      this.signal?.throwIfAborted();
+      const { repository, pull_request_number: number, commit, plan, contents } = target;
+      requireValue(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) && Number.isInteger(number) && number > 0
+        && /^[0-9a-f]{40}$/.test(commit) && /^[0-9a-f]{40}$/.test(plan?.base_commit) && Array.isArray(plan.changes), 'invalid_merge_target');
+      const git = (suffix) => this.executor.request(`https://api.github.com/repos/${repository}${suffix}`, { github: true, signal: this.signal });
+      const pr = await git(`/pulls/${number}`);
+      requireValue(pr.number === number && pr.state === 'open' && pr.merged === false, 'pull_request_not_open');
+      requireValue(pr.head?.sha === commit, 'pull_request_head_changed');
+      const patch = plan.changes.map((change) => {
+        if (change.action === 'remove') return { path: change.path, content: null };
+        const bytes = Buffer.from(contents?.[change.path] ?? '', 'base64');
+        requireValue(createHash('sha256').update(bytes).digest('hex') === change.after_sha256, 'patch_hash_mismatch');
+        return { path: change.path, content: bytes.toString('utf8') };
+      });
+      const base = await git(`/git/commits/${plan.base_commit}`);
+      requireValue(base.sha === plan.base_commit, 'invalid_base_commit');
+      const baseTree = await git(`/git/trees/${base.tree.sha}?recursive=1`);
+      requireValue(baseTree.truncated === false && Array.isArray(baseTree.tree), 'incomplete_base_tree');
+      await this.executor.verifyCommit(git, commit, plan.base_commit, baseTree, patch);
+      verified.push({ repository_id: target.repository_id, repository, pull_request_number: number, head: commit, base: plan.base_commit });
+    }
+    return verified;
+  }
+
+  /**
+   * One explicit merge decision for one verified review unit. The whole unit is
+   * verified again first; each merge is guarded by its verified head SHA, so a
+   * PR that changes after review is refused by the Git host, never merged.
+   */
+  async mergeAll({ targets }) {
+    const verified = await this.verifyPulls({ targets });
+    const merged = [];
+    for (const row of verified) {
+      this.signal?.throwIfAborted();
+      const result = await this.executor.request(`https://api.github.com/repos/${row.repository}/pulls/${row.pull_request_number}/merge`,
+        { method: 'PUT', body: { sha: row.head, merge_method: 'merge' }, github: true, signal: this.signal });
+      requireValue(result?.merged === true && /^[0-9a-f]{40}$/.test(result.sha) && result.sha !== row.head, 'merge_not_confirmed');
+      merged.push({ ...row, merged: true, merge_commit: result.sha });
+    }
+    return merged;
   }
 
   /** Apply reviewed merged plans to selected checkouts and verify each lock. */

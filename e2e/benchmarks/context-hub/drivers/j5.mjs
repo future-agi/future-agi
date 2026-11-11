@@ -146,6 +146,8 @@ export async function createDriver({ jobId, runId, registration }) {
 
 const ROOT = '/model-hub/skills/contexts/';
 const included = (repo) => ['follower', 'unknown_response'].includes(repo.disposition);
+// Followers and deliberate pins are installed; pins only at their pinned release.
+const adopted = (repo) => included(repo) || repo.disposition === 'pin';
 const LOCK = '.futureagi-context.lock.json';
 
 /**
@@ -155,8 +157,8 @@ const LOCK = '.futureagi-context.lock.json';
  * relabelled as recurring work, and no compatible lock is seeded.
  */
 export const CONFIGURED_PRECONDITION = Object.freeze({
-  schema: 1, population: 40, bindings: 40, installed_release: 1, installed_repositories: 33,
-  lockless_excluded_with_local_instructions: 6, unavailable: 1, deliberate_pins: 4,
+  schema: 1, population: 40, bindings: 40, installed_release: 1, installed_repositories: 37,
+  lockless_excluded_with_local_instructions: 2, unavailable: 1, deliberate_pins: 4, pins_installed_at_pinned_release: 4,
   open_pull_requests: 0, next_release_published: 2, reached_by: 'public interfaces on a separate setup ledger',
 });
 export const COLD_PRECONDITION = Object.freeze({
@@ -201,8 +203,10 @@ export function j5Registration({ label, provenance, python, evidenceDir, native 
 
 /** Synthetic orchestration is useful evidence, but never a native-load receipt. */
 export function requireNativeDelivery(observations, repositoryIds, versionId) {
-  assert.equal(repositoryIds.length, 33, 'native_delivery_included_population');
-  assert.equal(new Set(repositoryIds).size, 33, 'native_delivery_duplicate_target');
+  // The caller derives the planned population from the fixture: 33 followers,
+  // plus the four pins in the round that adopts them at their pinned release.
+  assert.ok([33, 37].includes(repositoryIds.length), 'native_delivery_included_population');
+  assert.equal(new Set(repositoryIds).size, repositoryIds.length, 'native_delivery_duplicate_target');
   assert.deepEqual(observations.map((row) => row.repository_id).sort(), [...repositoryIds].sort(), 'native_delivery_target_set');
   for (const row of observations) {
     assert.equal(row.version_id, versionId, 'native_delivery_version');
@@ -250,6 +254,7 @@ class CampaignJourney {
     this.cohort = registration.cohort;
     this.profile = this.config.native ? 'codex' : 'claude-code';
     this.campaigns = []; this.credentials = []; this.rounds = []; this.setupRounds = []; this.serial = 0; this.releases = 0;
+    this.pinsInstalled = false;
     this.env = { ...process.env };
     this.repos = fixtureRepositories();
     this.git = new J5GitFixture(this.repos);
@@ -280,7 +285,21 @@ class CampaignJourney {
     this.signal.throwIfAborted();
     return this.ledger.measure({ dimension, primitive, actor: 'synthetic-operator', step: this.stage.id,
       phase: this.stage.phase, target, items: repos.map((repo) => `repo-${repo.id}`),
-      exceptionItems: repos.filter((repo) => !included(repo)).map((repo) => `repo-${repo.id}`), decision }, effect);
+      exceptionItems: repos.filter((repo) => !this.planned(repo)).map((repo) => `repo-${repo.id}`), decision }, effect);
+  }
+
+  /**
+   * Fixture-derived expectation for the current round, never the product's
+   * output: followers always; deliberate pins only in a round at their own
+   * pinned release before any has been installed.
+   */
+  expectedPlanned() {
+    return this.repos.filter((repo) => included(repo) || (repo.disposition === 'pin' && !this.pinsInstalled
+      && this.version?.number === this.first?.number));
+  }
+
+  planned(repo) {
+    return this.campaign?.expected ? this.campaign.expected.includes(repo.id) : included(repo);
   }
 
   mutation(method, path, data, primitive = 'command') {
@@ -410,7 +429,8 @@ class CampaignJourney {
     const created = await this.mutation('POST', `${ROOT}campaigns/`, { name: `${this.name}-${label}`,
       parent_campaign_id: this.campaigns.at(-1) ?? null, targets: this.bindings.map((binding) => ({ binding_id: binding.id, version: this.version.number })) });
     this.campaigns.push(created.id);
-    this.campaign = { ...created, root: `${ROOT}campaigns/${created.id}/`, label, patches: new Map(), decisions: [], receipts: new Map() };
+    this.campaign = { ...created, root: `${ROOT}campaigns/${created.id}/`, label, patches: new Map(), decisions: [], receipts: new Map(),
+      expected: this.expectedPlanned().map((repo) => repo.id) };
     const targets = await this.targets();
     assert.deepEqual(targets.map((row) => row.binding_id).sort(), this.bindings.map((row) => row.id).sort());
     return { source: 'api', value: targets };
@@ -424,13 +444,14 @@ class CampaignJourney {
     const index = new Map(this.bindings.map((binding, i) => [binding.id, i]));
     // Independent expectation: exactly the deliberate followers are planned and
     // each exception is the product's own classification of the fixture case.
-    const expectedKind = { pin: 'pinned_selector', local_modification: 'operator_exclusion', unavailable: 'unavailable' };
+    const expectedKind = { pin: this.version.number === this.first.number ? 'pinned_current' : 'pinned_selector',
+      local_modification: 'operator_exclusion', unavailable: 'unavailable' };
     for (const row of review.exceptions) {
       const repo = this.repos[index.get(row.binding_id)];
       assert.equal(row.kind, expectedKind[repo.disposition] ?? 'ungrouped', 'exception_classification');
     }
     assert.deepEqual([...review.patches.keys()].map((id) => this.repos[index.get(id)].id).sort(),
-      this.repos.filter(included).map((repo) => repo.id).sort(), 'planned_population');
+      [...this.campaign.expected].sort(), 'planned_population');
     for (const [bindingId, patch] of review.patches) {
       assert.equal(patch.plan.desired_version_id, this.version.id);
       this.campaign.patches.set(index.get(bindingId), patch);
@@ -457,6 +478,12 @@ class CampaignJourney {
       for (const path of ['AGENTS.md', 'CLAUDE.local.md', 'nested/AGENTS.md']) witnessed[path] = hash(await readFile(join(this.projects.get(repo.id), path)));
       assert.deepEqual(row.observed.local_instructions, witnessed, 'local_instruction_observation');
       assert.deepEqual(witnessed, Object.fromEntries(['AGENTS.md', 'CLAUDE.local.md', 'nested/AGENTS.md'].map((path) => [path, hash(repo.files[path])])), 'local_instructions_changed');
+    }
+    // An installed pin is observed at its pinned release from its own lock.
+    for (const row of review.exceptions.filter((item) => item.kind === 'pinned_current')) {
+      const lock = JSON.parse(await readFile(join(this.projects.get(row.repository_id), LOCK), 'utf8'));
+      assert.equal(row.observed.lock_version_id, this.first.id, 'pinned_current_observation');
+      assert.equal(lock.version_id, this.first.id, 'pin_not_at_pinned_release');
     }
     const unavailable = review.exceptions.filter((row) => row.kind === 'unavailable');
     assert.equal(unavailable.length, 1, 'unavailable_exception');
@@ -513,7 +540,7 @@ class CampaignJourney {
 
   /** Completed PRs for this repository before the current round. */
   prCount(repo) {
-    return included(repo) ? this.setupRounds.length + this.rounds.length : 0;
+    return [...this.setupRounds, ...this.rounds].filter((round) => round.expected.includes(repo.id)).length;
   }
 
   async reconcile() {
@@ -557,24 +584,52 @@ class CampaignJourney {
 
   async install() {
     const indices = [...this.campaign.patches.keys()].sort((a, b) => a - b);
-    const merges = new Map();
+    const byRepo = new Map(indices.map((index) => [this.repos[index].id, index]));
+    const prs = new Map();
     for (const index of indices) {
-      const repo = this.repos[index]; const patch = this.campaign.patches.get(index); const receipt = this.campaign.receipts.get(index);
+      const repo = this.repos[index]; const receipt = this.campaign.receipts.get(index);
       assert.equal(receipt.state, 'pr_open');
       const prUrl = `https://api.github.com/repos/synthetic/${repo.name}/pulls/${receipt.pull_request_number}`;
-      const pr = await this.action('handoff', async () => (await this.git.fetch(prUrl)).json(), { dimension: 'H', repos: [repo], target: 'repository-review' });
-      await this.action('review', async () => {
-        assert.equal(pr.head.sha, receipt.repository_commit); assert.equal(pr.merged, false);
-        const tree = this.git.files(pr.head.sha);
-        for (const change of patch.plan.changes) assert.equal(tree[change.path] === undefined ? null : hash(tree[change.path]), change.after_sha256);
-      }, { repos: [repo] });
-      const merge = await this.action('approve', async () => {
-        const response = await this.git.fetch(`${prUrl}/merge`, { method: 'PUT', body: JSON.stringify({ sha: pr.head.sha, merge_method: 'merge' }) });
-        assert.equal(response.status, 200); return response.json();
-      }, { repos: [repo] });
-      assert.equal(merge.merged, true); assert.notEqual(merge.sha, receipt.repository_commit);
-      merges.set(index, { pr, merge });
+      // Each repository's own review/CI remains a counted handoff.
+      prs.set(index, await this.action('handoff', async () => (await this.git.fetch(prUrl)).json(), { dimension: 'H', repos: [repo], target: 'repository-review' }));
     }
+    // One verification command over every open PR, then one review and one
+    // merge decision per reviewed unit (a proven-identical group or an
+    // individual exception), mirroring plan review. The command re-verifies
+    // every PR's head, parent and tree; the fixture's own trees are checked
+    // independently before each merge decision, and the merge re-verifies.
+    const toTarget = (repo) => {
+      const index = byRepo.get(repo.id); const patch = this.campaign.patches.get(index); const receipt = this.campaign.receipts.get(index);
+      return { repository_id: repo.id, repository: `synthetic/${repo.name}`, pull_request_number: receipt.pull_request_number,
+        commit: receipt.repository_commit, plan: patch.plan, contents: patch.contents };
+    };
+    const planned = indices.map((index) => this.repos[index]);
+    const verified = await this.action('command', () => this.batch().verifyPulls({ targets: planned.map(toTarget) }), { repos: planned });
+    assert.deepEqual(verified.map((row) => row.repository_id), planned.map((repo) => repo.id), 'verified_pull_set');
+    const merges = new Map();
+    for (const unit of this.campaign.units) {
+      const members = unit.repos.filter((repo) => byRepo.has(repo.id));
+      if (!members.length) continue;
+      await this.action('review', async () => {
+        for (const repo of members) {
+          const index = byRepo.get(repo.id); const pr = prs.get(index); const patch = this.campaign.patches.get(index);
+          const row = verified.find((item) => item.repository_id === repo.id);
+          assert.equal(pr.head.sha, row.head); assert.equal(pr.merged, false);
+          const tree = this.git.files(row.head);
+          for (const change of patch.plan.changes) assert.equal(tree[change.path] === undefined ? null : hash(tree[change.path]), change.after_sha256);
+        }
+      }, { repos: members });
+      const merged = await this.action('approve', () => this.batch().mergeAll({ targets: members.map(toTarget) }), { repos: members });
+      assert.deepEqual(merged.map((row) => row.repository_id), members.map((repo) => repo.id), 'merged_unit_membership');
+      for (const row of merged) {
+        const index = byRepo.get(row.repository_id); const repo = this.repos[index];
+        const observed = this.git.pulls(repo.id).find((pr) => pr.number === row.pull_request_number);
+        assert.equal(observed?.merged, true, 'merge_unobserved'); assert.equal(observed.merge_commit_sha, row.merge_commit);
+        assert.notEqual(row.merge_commit, this.campaign.receipts.get(index).repository_commit);
+        merges.set(index, { pr: prs.get(index), merge: { merged: true, sha: row.merge_commit } });
+      }
+    }
+    assert.equal(merges.size, indices.length, 'planned_target_not_merged');
     // One reconciliation command records every merged target; Git merge is
     // never treated as installation or delivery.
     const observed = await this.action('command', () => this.executeTargets(indices), { repos: indices.map((index) => this.repos[index]) });
@@ -594,6 +649,7 @@ class CampaignJourney {
         const actual = await readFile(join(this.projects.get(repo.id), path), 'utf8');
         if (path === 'AGENTS.md') assert.ok(actual.includes(text), 'adopted_local_segment_lost'); else assert.equal(actual, text);
       }
+      if (repo.disposition === 'pin') assert.equal(this.version.id, this.first.id, 'pin_installed_beyond_pinned_release');
       const lockBytes = await readFile(join(this.projects.get(repo.id), LOCK));
       assert.equal(JSON.parse(lockBytes).version_id, this.version.id);
       if (this.rounds.length === 0 && this.setupRounds.length === 0) await writeFile(join(this.scratch, `${repo.id}-original-lock.json`), lockBytes);
@@ -614,9 +670,10 @@ class CampaignJourney {
       installs.push({ repository_id: repo.id, version_id: this.version.id, pr: pr.number, head: pr.head.sha, merge: merge.sha, hashes,
         installed: true, ...native });
     }
+    if (this.campaign.expected.some((id) => this.repos.find((repo) => repo.id === id).disposition === 'pin')) this.pinsInstalled = true;
     await this.checkExcluded();
     const report = { evidence_class: 'synthetic fixture', complete_job: false, label: this.campaign.label, setup: Boolean(this.setup),
-      campaign_id: this.campaign.id, targets: await this.targets(), installs, review_units: this.campaign.units.map((unit) => ({ kind: unit.kind,
+      campaign_id: this.campaign.id, version_number: this.version.number, expected: [...this.campaign.expected], targets: await this.targets(), installs, review_units: this.campaign.units.map((unit) => ({ kind: unit.kind,
         repositories: unit.repos.map((repo) => repo.id) })),
       plans: [...this.campaign.patches].map(([index, patch]) => ({ repository_id: this.repos[index].id,
         binding_id: this.bindings[index].id, plan: patch.plan, contents: patch.contents })) };
@@ -625,7 +682,18 @@ class CampaignJourney {
   }
 
   async checkExcluded() {
-    for (const repo of this.repos.filter((repo) => !included(repo))) {
+    for (const repo of this.repos.filter((repo) => !this.campaign.expected.includes(repo.id))) {
+      if (repo.disposition === 'pin' && this.pinsInstalled) {
+        // An installed pin held in this round: no new PR, its lock still at the
+        // pinned release and its unmanaged local files untouched.
+        assert.equal(this.git.pulls(repo.id).length, this.prCount(repo), 'held_pin_written');
+        assert.equal(JSON.parse(await readFile(join(this.projects.get(repo.id), LOCK), 'utf8')).version_id, this.first.id, 'held_pin_advanced');
+        for (const [path, text] of Object.entries(repo.files)) {
+          const actual = await readFile(join(this.projects.get(repo.id), path), 'utf8');
+          if (path === 'AGENTS.md') assert.ok(actual.includes(text), 'held_pin_local_segment_lost'); else assert.equal(actual, text);
+        }
+        continue;
+      }
       assert.equal(this.git.pulls(repo.id).length, 0, 'excluded_repository_written');
       if (repo.disposition === 'unavailable') { await assert.rejects(lstat(this.projects.get(repo.id)), { code: 'ENOENT' }); continue; }
       for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
@@ -707,13 +775,16 @@ class CampaignJourney {
     this.setupRounds = this.rounds; this.rounds = [];
     const bindings = await this.targets();
     assert.equal(bindings.length, CONFIGURED_PRECONDITION.bindings);
-    let installed = 0; let lockless = 0; let open = 0;
+    let installed = 0; let lockless = 0; let open = 0; let pinsInstalled = 0;
     for (const repo of this.repos) {
       for (const pr of this.git.pulls(repo.id)) if (!pr.merged) open += 1;
       if (repo.disposition === 'unavailable') { await assert.rejects(lstat(this.projects.get(repo.id)), { code: 'ENOENT' }); continue; }
       let lock = null;
       try { lock = JSON.parse(await readFile(join(this.projects.get(repo.id), LOCK))); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (included(repo)) { assert.equal(lock?.version_id, this.first.id, 'configured_release_not_installed'); installed += 1; }
+      if (adopted(repo)) {
+        assert.equal(lock?.version_id, this.first.id, 'configured_release_not_installed'); installed += 1;
+        if (repo.disposition === 'pin') pinsInstalled += 1;
+      }
       else {
         assert.equal(lock, null, 'excluded_repository_has_lock');
         for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
@@ -724,7 +795,7 @@ class CampaignJourney {
     const realised = { schema: 1, population: this.repos.length, bindings: bindings.length, installed_release: this.first.number,
       installed_repositories: installed, lockless_excluded_with_local_instructions: lockless,
       unavailable: this.repos.filter((repo) => repo.disposition === 'unavailable').length, deliberate_pins: pins,
-      open_pull_requests: open, next_release_published: this.version.number, reached_by: CONFIGURED_PRECONDITION.reached_by };
+      pins_installed_at_pinned_release: pinsInstalled, open_pull_requests: open, next_release_published: this.version.number, reached_by: CONFIGURED_PRECONDITION.reached_by };
     assert.deepEqual(realised, { ...CONFIGURED_PRECONDITION }, 'configured_precondition_not_realised');
     const unknown = this.repos.find((repo) => repo.disposition === 'unknown_response');
     this.git.armUnknownResponse(unknown.id);
@@ -751,13 +822,13 @@ class CampaignJourney {
         const report = await this.install();
         // Fail before emitting a completion receipt. Neither the executor's
         // merged state nor the SDK's verify result is native discovery/delivery.
-        requireNativeDelivery(report.installs, this.repos.filter(included).map((repo) => repo.id), this.version.id);
+        requireNativeDelivery(report.installs, report.expected, this.version.id);
         result = { source: 'model_boundary', value: report }; break;
       }
       case 'second-update':
       case 'reverse-plan': {
         const report = await this.update(stage.id === 'reverse-plan');
-        requireNativeDelivery(report.installs, this.repos.filter(included).map((repo) => repo.id), this.version.id);
+        requireNativeDelivery(report.installs, report.expected, this.version.id);
         result = { source: 'model_boundary', value: report }; break;
       }
       default: throw new Error('j5_unknown_stage');
@@ -777,7 +848,9 @@ class CampaignJourney {
       source = 'git'; raw = this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) }));
       assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
       for (const [index, repo] of this.repos.entries()) {
-        const expected = included(repo) ? [...this.setupRounds, ...this.rounds].map((round) => `futureagi/context/${round.campaign_id}/${this.bindings[index].id}`).sort() : [];
+        // Exactly one PR per round that planned this repository (fixture-derived).
+        const expected = [...this.setupRounds, ...this.rounds].filter((round) => round.expected.includes(repo.id))
+          .map((round) => `futureagi/context/${round.campaign_id}/${this.bindings[index].id}`).sort();
         assert.deepEqual(raw[index].pulls.map((pr) => pr.head.ref).sort(), expected, 'pr_branch_accounting');
       }
       value = { duplicates: raw.reduce((count, row) => count + row.pulls.length - new Set(row.pulls.map((pr) => pr.head.ref)).size, 0) };
@@ -806,7 +879,8 @@ class CampaignJourney {
         assert.deepEqual(files, expected, 'unauthorized_tree');
         raw.push({ repository_id: repo.id, branch, commit, files, plan: patch.plan });
       }
-      assert.equal(raw.length, 99, 'authorized_patch_denominator'); value = { unauthorized_effects: 0 };
+      assert.equal(raw.length, this.rounds.reduce((total, round) => total + round.expected.length, 0), 'authorized_patch_denominator');
+      value = { unauthorized_effects: 0 };
     } else if (check.id === 'local-policy-preserved') {
       source = 'filesystem'; value = []; raw = [];
       for (const repo of this.repos.filter((repo) => repo.disposition !== 'unavailable')) for (const [path, original] of Object.entries(repo.files)) {
@@ -815,27 +889,46 @@ class CampaignJourney {
         // The manifest is the original local policy, not the new managed text.
         // Extract the observed original segment, never substitute expected bytes.
         // Exact merged trees are independently checked above and at installation.
-        if (path === 'AGENTS.md' && included(repo)) {
+        if (path === 'AGENTS.md' && adopted(repo)) {
           const start = actual.indexOf(original);
           assert.ok(start >= 0 && actual.indexOf(original, start + original.length) === -1, 'local_segment_missing_or_duplicated');
           value.push({ path: `${repo.id}/${path}`, content: actual.slice(start, start + original.length) });
         } else value.push({ path: `${repo.id}/${path}`, content: actual });
       }
     } else if (check.id === 'pins-retained') {
-      // Derive the count from independent API selector, Git PR and filesystem
-      // lock/instruction observations; a pin that received a PR, a lock, a
-      // changed selector or changed local bytes counts as advanced.
+      // A pin is retained only if it was actually installed at its pinned
+      // release and survived every later round: exactly one adoption PR at that
+      // release, an explicit exclusion in every later round, its lock and its
+      // managed bytes still those of the adoption merge, its selector unchanged
+      // and its local bytes intact. Counts derive from independent API, Git and
+      // filesystem observations; any deviation counts the pin as advanced.
       source = 'filesystem'; const targets = await this.targets(); raw = [];
+      const allRounds = [...this.setupRounds, ...this.rounds];
+      assert.ok(this.rounds.length === 3, 'all_rollout_rounds_required');
       for (const repo of this.repos.filter((repo) => repo.disposition === 'pin')) {
         const project = this.projects.get(repo.id);
         const target = targets.find((row) => row.repository.repository_id === repo.id);
-        let lockPresent = true;
-        try { await lstat(join(project, LOCK)); } catch (error) { if (error.code !== 'ENOENT') throw error; lockPresent = false; }
+        const pulls = this.git.pulls(repo.id);
+        const adoption = allRounds.filter((round) => round.expected.includes(repo.id));
+        const held = allRounds.filter((round) => !round.expected.includes(repo.id))
+          .map((round) => ({ label: round.label, version: round.version_number,
+            decision: round.targets.find((row) => row.repository.repository_id === repo.id)?.decision }));
+        let lock = null;
+        try { lock = JSON.parse(await readFile(join(project, LOCK), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
         const files = Object.fromEntries(await Promise.all(Object.keys(repo.files).map(async (path) => [path, await readFile(join(project, path), 'utf8')])));
-        const advanced = target.decision !== 'exclude' || canonical(target.selector) !== canonical({ version: this.first.number })
-          || this.git.pulls(repo.id).length > 0 || lockPresent || Object.entries(repo.files).some(([path, text]) => files[path] !== text);
-        raw.push({ repository_id: repo.id, decision: target.decision, selector: target.selector, pulls: this.git.pulls(repo.id).length,
-          files, lock_present: lockPresent, advanced });
+        const merged = pulls.length === 1 && pulls[0].merged === true ? this.git.files(pulls[0].merge_commit_sha) : null;
+        const install = adoption[0]?.installs.find((row) => row.repository_id === repo.id);
+        const managedIntact = Boolean(merged) && files['AGENTS.md'] === merged['AGENTS.md'];
+        const localIntact = Object.entries(repo.files).every(([path, text]) => (path === 'AGENTS.md'
+          ? files[path].indexOf(text) >= 0 && files[path].indexOf(text) === files[path].lastIndexOf(text) : files[path] === text));
+        const advanced = adoption.length !== 1 || adoption[0].version_number !== this.first.number || !install
+          || install.version_id !== this.first.id || pulls.length !== 1 || pulls[0].head.ref !== `futureagi/context/${adoption[0].campaign_id}/${target.binding_id}`
+          || lock?.version_id !== this.first.id || !managedIntact || !localIntact
+          || canonical(target.selector) !== canonical({ version: this.first.number })
+          || held.length !== allRounds.length - 1 || held.some((row) => row.decision !== 'exclude');
+        raw.push({ repository_id: repo.id, selector: target.selector, adoption_rounds: adoption.map((round) => round.label),
+          held_rounds: held, pulls: pulls.map((pr) => ({ number: pr.number, ref: pr.head.ref, merged: pr.merged, merge: pr.merge_commit_sha })),
+          lock_version_id: lock?.version_id ?? null, managed_intact: managedIntact, local_intact: localIntact, files, advanced });
       }
       value = { deliberate_pins: raw.length, advanced_pins: raw.filter((row) => row.advanced).length };
     } else if (check.id === 'stage-accounting') {
@@ -850,7 +943,7 @@ class CampaignJourney {
       assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
       for (const round of this.rounds) {
         const version = round.targets[0]?.desired_version_id;
-        requireNativeDelivery(round.installs, this.repos.filter(included).map((repo) => repo.id), version);
+        requireNativeDelivery(round.installs, round.expected, version);
         for (const row of round.installs) {
           assert.ok(row.installed && row.head !== row.merge, 'merge_install_boundary_missing');
           const bytes = await readFile(join(this.config.evidence_dir, `${this.runId}-native-${round.label}-${row.repository_id}.json`));
@@ -901,7 +994,7 @@ class CampaignJourney {
       try { await rm(this.scratch, { recursive: true, force: true }); await assert.rejects(lstat(this.scratch), { code: 'ENOENT' }); }
       catch { qualified = false; }
     }
-    const nativeObserved = this.rounds.length === 3 && this.rounds.every((round) => round.installs.length === 33
+    const nativeObserved = this.rounds.length === 3 && this.rounds.every((round) => round.installs.length === round.expected.length
       && round.installs.every((row) => row.source === 'model_boundary' && row.discovery === 'observed' && row.delivery === 'observed'));
     this.git = null; this.executor = null; this.env = {}; this.headers = {};
     await this.save('teardown', { settled_or_cancelled: qualified, credentials_revoked: qualified, fixture_destroyed: qualified,

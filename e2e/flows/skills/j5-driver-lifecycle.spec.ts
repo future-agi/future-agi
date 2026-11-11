@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -28,10 +28,10 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
       'driver observes local files and deterministic Git PRs rather than product toasts',
       'installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations',
       'review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out',
-      'an advanced pin (lock written into a pinned checkout) is counted from the filesystem and fails pins-retained'],
+      'pins are installed at their pinned release, then held; a pin lock advanced past that release is counted from the filesystem and fails pins-retained'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  test.setTimeout(2_400_000); // Three 33-target rounds (plus configured setup) and public API/storage probes.
+  test.setTimeout(2_400_000); // Three 33-37-target rounds (plus configured setup) and public API/storage probes.
   const python = process.env.CTXHUB_J5_PYTHON;
   if (!python) throw new Error('Select the installed SDK on the approved VM');
   const driverModule = '../../benchmarks/context-hub/drivers/j5.mjs';
@@ -129,12 +129,21 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
           expect(reviews.flatMap((event: any) => event.items)).toHaveLength(40);
           expect(new Set(reviews.flatMap((event: any) => event.items)).size).toBe(40);
           if (stage.id === 'review-plans') {
-            // One proven-identical group for the 33 followers plus seven individual exceptions.
             const review = driver.campaign.review;
-            expect(review.groups.map((group: any) => group.members.length)).toEqual([33]);
-            expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion',
-              'pinned_selector', 'pinned_selector', 'pinned_selector', 'pinned_selector', 'unavailable']);
-            expect(reviews).toHaveLength(8);
+            if (configured) {
+              // Next release: one proven-identical group for the 33 followers;
+              // the four installed pins are held individually at their release.
+              expect(review.groups.map((group: any) => group.members.length)).toEqual([33]);
+              expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion',
+                'pinned_selector', 'pinned_selector', 'pinned_selector', 'pinned_selector', 'unavailable']);
+              expect(reviews).toHaveLength(8);
+            } else {
+              // Cold adoption at the pinned release: the four pins are adopted with
+              // the 33 followers in one proven group; three individual exceptions.
+              expect(review.groups.map((group: any) => group.members.length)).toEqual([37]);
+              expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion', 'unavailable']);
+              expect(reviews).toHaveLength(4);
+            }
           }
         }
       }
@@ -192,24 +201,30 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
       await expect(driver.observe(policyCheck, { signal })).rejects.toThrow('local_segment_missing_or_duplicated');
     } finally { await writeFile(rootPolicy, preservedPolicy); }
     expect(assertObservation(policyCheck, original, await driver.observe(policyCheck, { signal }))).toBe(true);
-    // A pin that silently advanced (a lock written into the pinned checkout)
-    // must be counted from the filesystem, not assumed; removing it restores the pass.
+    // A pin whose installed lock silently advanced to a later release must be
+    // counted from the filesystem, not assumed; restoring its bytes restores the pass.
     const pinsCheck = job.checks.find((check: any) => check.id === 'pins-retained');
     const pinnedLock = join(driver.projects.get(driver.repos.find((repo: any) => repo.disposition === 'pin').id), '.futureagi-context.lock.json');
+    const pinnedLockBytes = await readFile(pinnedLock);
+    const laterRelease = driver.rounds.find((round: any) => round.label === 'second-update').installs[0].version_id;
+    expect(JSON.parse(pinnedLockBytes.toString()).version_id).not.toBe(laterRelease);
     let advancedPin: any;
     try {
-      await writeFile(pinnedLock, '{"schema":1,"advanced":true}\n', { flag: 'wx' });
+      await writeFile(pinnedLock, JSON.stringify({ ...JSON.parse(pinnedLockBytes.toString()), version_id: laterRelease }));
       advancedPin = await driver.observe(pinsCheck, { signal });
       expect(advancedPin.value).toEqual({ deliberate_pins: 4, advanced_pins: 1 });
       expect(() => assertObservation(pinsCheck, expectedChecks[pinsCheck.id], advancedPin)).toThrow();
-    } finally { await rm(pinnedLock, { force: true }); }
+    } finally { await writeFile(pinnedLock, pinnedLockBytes); }
     expect(assertObservation(pinsCheck, expectedChecks[pinsCheck.id], await driver.observe(pinsCheck, { signal }))).toBe(true);
     await writeFile(join(evidence, 'observation-fallibility.json'), JSON.stringify({ evidence_class: 'synthetic fixture',
       changed_git_head: { rejected: 'unauthorized_parent', restored: 'pass' },
       changed_local_policy: { rejected: 'local_segment_missing_or_duplicated', restored: 'pass' },
       advanced_pin_lock: { observed: advancedPin?.value, rejected: true, restored: 'pass' }, qualified_checks: qualifiedChecks }, null, 2));
+    // Pins install only at their pinned release (cold adoption, or the
+    // configured cohort's separate setup round) and are held afterwards.
+    expect(driver.rounds.map((report: any) => report.installs.length)).toEqual(configured ? [33, 33, 33] : [37, 33, 33]);
     for (const report of driver.rounds) {
-      expect(report.installs).toHaveLength(33);
+      expect(report.installs).toHaveLength(report.expected.length);
       const check = () => requireNativeDelivery(report.installs, report.installs.map((row: any) => row.repository_id), report.installs[0].version_id);
       if (native) {
         expect(check).not.toThrow();
@@ -236,7 +251,8 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
     expect(driver.campaigns).toHaveLength(configured ? 5 : 4);
     if (configured) {
       const precondition = JSON.parse(await readFile(join(evidence, `${runId}-configured-precondition.json`), 'utf8'));
-      expect(precondition.realised.installed_repositories).toBe(33);
+      expect(precondition.realised.installed_repositories).toBe(37);
+      expect(precondition.realised.pins_installed_at_pinned_release).toBe(4);
       expect(precondition.setup_ledger.integrity.complete).toBe(true);
       // Setup actions live only on the separate setup ledger.
       expect(ledger.events().filter((event: any) => event.type === 'start' && event.phase === 'cold')).toHaveLength(0);
