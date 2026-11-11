@@ -256,6 +256,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const row = (await pool.query('SELECT origin_number, parent_number FROM model_hub_hubskillversion WHERE skill_id=$1 AND number=$2', [input.contextId, number])).rows[0];
           requireValue(row.origin_number === input.versions.recorded && number > input.versions.head, 'Repair did not start from recorded v4 and publish after head');
           state.repaired = { number, origin: row.origin_number, parent: row.parent_number, id: result.version.id, digest: result.version.digest, inspection: Boolean(inspection), bytes };
+          await expect(page.getByText('POLICY-REFUND: capped-25').first()).toBeVisible({ timeout: 30_000 }).catch(() => {});
           await shot('04-published-repair');
           receipt('pg', await record('repair-published', { evidenceClass: 'synthetic fixture', ...state.repaired }));
           return;
