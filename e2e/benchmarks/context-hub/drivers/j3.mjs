@@ -282,8 +282,8 @@ export async function createDriver({ jobId, runId, registration }) {
             await settle('Test request', prompt, `parent-${index}-test-request`);
             await settle('Expected answer contains', 'approved-response', `parent-${index}-expected-answer`);
             await operator.review(`parent-${index}-case-review`, ['request', 'expected-answer'], [], () => page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check());
-            const modelField = page.getByRole('combobox', { name: 'Task model', exact: true });
-            if (!(await modelField.innerText()).includes('gpt-4o-mini')) { await click('Task model', `parent-${index}-model`, 'combobox'); await click('gpt-4o-mini', `parent-${index}-model-choice`, 'option'); }
+            const modelField = page.getByRole('combobox', { name: /^Task model/ });
+            if (!(await modelField.innerText()).includes('gpt-4o-mini')) { await operator.click(modelField, `parent-${index}-model`); await click('gpt-4o-mini', `parent-${index}-model-choice`, 'option'); }
             await settle('Maximum estimated cost (USD)', '2', `parent-${index}-budget`);
             await settle('Historical reference version (optional)', '1', `parent-${index}-reference`);
             const previewing = watch(res => res.url().endsWith('/test-runs/preview/') && res.request().method() === 'POST');

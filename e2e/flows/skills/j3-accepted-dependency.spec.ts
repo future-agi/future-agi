@@ -185,7 +185,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.getByRole('textbox', { name: 'Test request', exact: true }).fill(prompt);
       await page.getByRole('textbox', { name: 'Expected answer contains', exact: true }).fill('approved-response');
       await page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check();
-      await page.getByRole('combobox', { name: 'Task model', exact: true }).click();
+      await page.getByRole('combobox', { name: /^Task model/ }).click();
       await page.getByRole('option', { name: 'gpt-4o-mini', exact: true }).click();
       await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('2');
       await page.getByRole('textbox', { name: 'Historical reference version (optional)', exact: true }).fill('1');
