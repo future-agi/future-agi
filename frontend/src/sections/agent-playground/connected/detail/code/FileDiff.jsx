@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import React from "react";
-import { Box, Skeleton, Typography } from "@mui/material";
+import { Box, Skeleton, Typography, useTheme } from "@mui/material";
 import { DiffEditor } from "@monaco-editor/react";
 import { useCodeFile } from "src/api/agents/agentDetail";
 import ErrorState from "src/components/error-state";
@@ -15,6 +15,7 @@ const text = (file) => (file && file.kind === "text" ? file.content : "");
  * diffed in the browser; the host is never asked.
  */
 export default function FileDiff({ agentId, versionId, againstId, path }) {
+  const mode = useTheme().palette.mode;
   const current = useCodeFile(agentId, versionId, path);
   const previous = useCodeFile(agentId, againstId, path);
   if (current.isError || previous.isError) {
@@ -67,7 +68,7 @@ export default function FileDiff({ agentId, versionId, againstId, path }) {
         language={file.language}
         original={text(previous.data)}
         modified={text(current.data)}
-        theme={editorTheme()}
+        theme={editorTheme(mode)}
         options={{ ...EDITOR_OPTIONS, renderSideBySide: true }}
       />
     </Box>

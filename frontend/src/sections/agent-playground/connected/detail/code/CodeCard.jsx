@@ -7,6 +7,7 @@ import {
   useCodeFile,
   useCodeTree,
 } from "src/api/agents/agentDetail";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { Card, LineSkeleton } from "../bits";
 import { MONO } from "../format";
 import FileDiff from "./FileDiff";
@@ -170,7 +171,7 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
                 sx={{ p: 2, typography: "s2", color: "text.secondary" }}
                 data-testid="file-viewer-error"
               >
-                Could not load this file.
+                {`Couldn't load this file: ${errorMessage(file.error) || "the request failed."}`}
               </Typography>
             ) : selected && !file.isPending && !file.isLoading && !file.data ? (
               <Typography

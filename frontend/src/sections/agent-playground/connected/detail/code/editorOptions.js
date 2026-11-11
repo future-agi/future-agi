@@ -1,5 +1,4 @@
-export const editorTheme = () =>
-  document.body.getAttribute("data-theme") === "dark" ? "vs-dark" : "light";
+export const editorTheme = (mode) => (mode === "dark" ? "vs-dark" : "light");
 
 export const EDITOR_OPTIONS = {
   readOnly: true,

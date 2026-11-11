@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import React from "react";
-import { Box, Skeleton, Typography } from "@mui/material";
+import { Box, Skeleton, Typography, useTheme } from "@mui/material";
 import { Editor } from "@monaco-editor/react";
 import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
 
@@ -11,6 +11,7 @@ const KIND_TEXT = {
 
 /** One file of a version: text in a read-only editor, else why not. */
 export default function FileViewer({ file, loading }) {
+  const mode = useTheme().palette.mode;
   if (loading) {
     return (
       <Box sx={{ p: 2 }} data-testid="file-viewer-loading">
@@ -45,7 +46,7 @@ export default function FileViewer({ file, loading }) {
         path={file.path}
         language={file.language}
         value={file.content}
-        theme={editorTheme()}
+        theme={editorTheme(mode)}
         options={EDITOR_OPTIONS}
       />
     </Box>
