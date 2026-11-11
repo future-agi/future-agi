@@ -18,6 +18,11 @@ import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadRevie
 // Depth: flat sections. Typography: m3/s1/s3. Spacing: shared 12px groups.
 // Reject a single green run badge as a release verdict, editable identity JSON,
 // and automatically accepted provider consent. Each preview owns a fresh review.
+// Last-used test settings are a per-viewer convenience: a person testing several contexts
+// in a row keeps the same request, model, ceiling and reference. Nothing is pre-attested.
+const LAST_TEST_KEY = 'skills.contextTest.last';
+const readLastTest = () => { try { const value = JSON.parse(window.localStorage.getItem(LAST_TEST_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
+const writeLastTest = (value) => { try { window.localStorage.setItem(LAST_TEST_KEY, JSON.stringify(value)); } catch { /* Storage is optional. */ } };
 const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] });
 
 function Results({ contextId, runId }) {
@@ -59,11 +64,12 @@ function Results({ contextId, runId }) {
 Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired };
 
 function Tests({ contextId, candidate, scopeKey, state }) {
-  const [prompt, setPrompt] = useState('');
-  const [expected, setExpected] = useState('');
-  const [model, setModel] = useState('');
-  const [limit, setLimit] = useState('');
-  const [reference, setReference] = useState('');
+  const [last] = useState(readLastTest);
+  const [prompt, setPrompt] = useState(typeof last.prompt === 'string' ? last.prompt : '');
+  const [expected, setExpected] = useState(typeof last.expected === 'string' ? last.expected : '');
+  const [chosenModel, setModel] = useState(typeof last.model === 'string' ? last.model : '');
+  const [limit, setLimit] = useState(typeof last.limit === 'string' ? last.limit : '');
+  const [reference, setReference] = useState(typeof last.reference === 'string' ? last.reference : '');
   const [reviewedCase, setReviewedCase] = useState(false);
   const [preview, setPreview] = useState(null);
   const [configuration, setConfiguration] = useState(null);
@@ -72,6 +78,9 @@ function Tests({ contextId, candidate, scopeKey, state }) {
   const [runId, setRunId] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
   const options = useSkillTestingOptions();
+  const runnable = (options.data?.models || []).filter((item) => item.canRun);
+  // Preselect the last-used model, else the first model this workspace can run; it stays visible and changeable.
+  const model = runnable.some((item) => item.modelId === chosenModel) ? chosenModel : (runnable[0]?.modelId || '');
   const history = useContextTestRuns(contextId, historyPage);
   const prepare = usePreviewContextTest(contextId);
   const create = useCreateContextTest(contextId);
@@ -97,6 +106,7 @@ function Tests({ contextId, candidate, scopeKey, state }) {
       profile: 'quick', repetitions: 1, limits: { max_total_tokens: options.data.limits.profiles.quick.maxTotalTokens, max_estimated_cost_usd: limit }, purpose: 'regression', parent_run_id: null,
     };
     setConfiguration(config);
+    writeLastTest({ prompt, expected, model, limit, reference });
     try { setPreview(await prepare.mutateAsync(config)); } catch { /* The mutation error is rendered below. */ }
   };
   if (options.isLoading || state === 'loading') return <ContentSkeleton />;

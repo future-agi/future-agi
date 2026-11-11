@@ -118,16 +118,17 @@ export async function createDriver({ jobId, runId, registration }) {
             const created = watch(res => res.url().endsWith('/skills/contexts/') && res.request().method() === 'POST');
             await click('Create draft', `cold-parent-${index}-create`);
             parent.id = (await (await created).json()).result.context_id;
-            for (const [n, leaf] of input.leaves.entries()) {
-              await click('Published leaf skill', `cold-parent-${index}-choose-${n}`, 'combobox');
-              await click(leaf.name, `cold-parent-${index}-skill-${n}`, 'option');
-              if (index === 2 && n <= 1) {
-                await operator.click(page.getByRole('combobox', { name: /^Update policy/ }), `cold-parent-${index}-policy-${n}`);
-                await click(n === 0 ? 'Pin version' : 'Follow label', `cold-parent-${index}-selector-${n}`, 'option');
-                if (n === 0) await fill('Version', '7', 'cold-deliberate-v7-pin');
-              }
-              await click('Add to proposed links', `cold-parent-${index}-add-${n}`);
+            // The deliberate exact pin is the one per-skill exception; every other published
+            // skill follows the default label and is added as one reviewed set.
+            if (index === 2) {
+              await click('Published leaf skill', `cold-parent-${index}-choose-pin`, 'combobox');
+              await click(input.leaves[0].name, `cold-parent-${index}-skill-pin`, 'option');
+              await operator.click(page.getByRole('combobox', { name: /^Update policy/ }), `cold-parent-${index}-policy-pin`);
+              await click('Pin version', `cold-parent-${index}-selector-pin`, 'option');
+              await fill('Version', '7', 'cold-deliberate-v7-pin');
+              await click('Add to proposed links', `cold-parent-${index}-add-pin`);
             }
+            await click(`Add all ${index === 2 ? input.leaves.length - 1 : input.leaves.length} remaining published skills`, `cold-parent-${index}-add-remaining`);
             await click('Preview dependency changes', `cold-parent-${index}-preview`);
             await operator.review(`cold-parent-${index}-dependency-review`, input.leaves.map((_, n) => `linked-skill-${n}`), index === 2 ? ['linked-skill-0'] : [], () => expect(page.getByText(/Compiled candidate/)).toBeVisible());
             await click('Accept these exact resolved versions and selector policies.', `cold-parent-${index}-accept`, 'checkbox');
@@ -174,8 +175,13 @@ export async function createDriver({ jobId, runId, registration }) {
           for (const [index, parent] of input.parents.entries()) {
             const row = active.results.find((item) => item.context_id === parent.id);
             requireValue(row && row.locked_version === 7 && row.update_state === (index === 2 ? 'pinned_as_intended' : 'update_available'), 'Wrong dependent lock or selector');
-            await operator.review('inspect-parent-reference', [`parent-${index}`], index === 2 ? [`parent-${index}`] : [], () => expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` })).toBeVisible());
           }
+          // One review covers the whole inventory; the deliberate pin is the shown exception.
+          await operator.review('inspect-dependent-inventory', input.parents.map((_, index) => `parent-${index}`), ['parent-2'], async () => {
+            for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` })).toBeVisible();
+            for (const parent of followers) await expect(page.getByRole('checkbox', { name: `Select ${parent.name} v1 for update` })).toBeChecked();
+            await expect(page.getByRole('checkbox', { name: `Select ${input.parents[2].name} v1 for update` })).toBeDisabled();
+          });
           await snapshot('dependent-inventory', page);
           await operator.click(page.getByRole('combobox', { name: /Reference scope/ }), 'choose-reference-scope');
           await click('All published history', 'inspect-history', 'option');
@@ -183,29 +189,31 @@ export async function createDriver({ jobId, runId, registration }) {
           await receipt(stage, ledger, observations.dependents); return;
         }
         if (stage.id === 'accept-followers') {
-          for (const [index, parent] of followers.entries()) {
-            await navigate(`/dashboard/skills/contexts/${parent.id}?version=1`, `parent-${index}-viewed-release`);
-            await click('Edit viewed v1', `parent-${index}-edit`);
-            await click('Start selected draft', `parent-${index}-start`);
-            await click(`Review update for ${child.name}`, `parent-${index}-choose-child`, 'checkbox');
-            await click('Preview dependency changes', `parent-${index}-preview`);
-            await operator.review(`parent-${index}-dependency-review`, ['shared-policy-v8'], [], () => expect(page.getByText(/Compiled candidate/)).toBeVisible());
-            if (index === 0) {
-              await command('source-label-aba', operationsArgs('source-aba', '8'));
-              ledger.fault('source-aba', 'source-production-eight-seven-eight');
-              await click('Accept these exact resolved versions and selector policies.', 'stale-plan-accept', 'checkbox');
-              const rejected = watch(res => res.url().endsWith('/dependencies/apply/') && res.request().method() === 'POST');
-              await click('Apply selected updates to draft', 'stale-plan-apply');
-              const response = await rejected;
-              observations.aba = { status: response.status(), body: await response.json(), draft: await read(`contexts/${parent.id}/draft/`, signal) };
-              requireValue(response.status() === 409 && compiled(observations.aba.draft) === 7, 'ABA plan was not rejected without mutation');
-              await operator.recoveryDecision('refresh-rejected-dependency-plan', () => page.reload());
-              await click(`Review update for ${child.name}`, 'renew-child-selection', 'checkbox');
-              await click('Preview dependency changes', 'renew-dependency-preview');
-              await operator.review('renew-dependency-review', ['shared-policy-v8'], [], () => expect(page.getByText(/Compiled candidate/)).toBeVisible());
-            }
-            await click('Accept these exact resolved versions and selector policies.', `parent-${index}-accept-v8`, 'checkbox');
-            await click('Apply selected updates to draft', `parent-${index}-apply`);
+          // One reviewed update over the preselected followers, started from the dependents inventory.
+          await navigate(`/dashboard/skills/${child.id}?tab=dependents`, 'follower-update-inventory');
+          await click(`Preview updates for ${followers.length} selected contexts`, 'followers-preview');
+          await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
+          const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByText('Compiled candidate')).toHaveCount(followers.length));
+          await reviewPlans('followers-dependency-review');
+          await command('source-label-aba', operationsArgs('source-aba', '8'));
+          ledger.fault('source-aba', 'source-production-eight-seven-eight');
+          await click(`Accept these exact resolved versions and selector policies for all ${followers.length} contexts.`, 'stale-plan-accept', 'checkbox');
+          const rejected = [];
+          const onResponse = (res) => { if (res.url().endsWith('/dependencies/apply/') && res.request().method() === 'POST') rejected.push(res); };
+          page.on('response', onResponse);
+          await click(`Apply selected updates to ${followers.length} context drafts`, 'stale-plan-apply');
+          await expect.poll(() => rejected.length, { timeout: 60_000 }).toBe(followers.length);
+          page.off('response', onResponse);
+          const statuses = rejected.map(res => res.status());
+          observations.aba = { status: statuses[0], statuses, body: await rejected[0].json(), draft: await read(`contexts/${followers[0].id}/draft/`, signal) };
+          requireValue(statuses.every(status => status === 409) && compiled(observations.aba.draft) === 7, 'ABA plan was not rejected without mutation');
+          await expect(page.getByRole('button', { name: `Preview again for ${followers.length} contexts that did not update`, exact: true })).toBeVisible();
+          await operator.recoveryDecision('preview-rejected-plans-again', () => page.getByRole('button', { name: `Preview again for ${followers.length} contexts that did not update`, exact: true }).click());
+          await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
+          await reviewPlans('renew-dependency-review');
+          await click(`Accept these exact resolved versions and selector policies for all ${followers.length} contexts.`, 'followers-accept-v8', 'checkbox');
+          await click(`Apply selected updates to ${followers.length} context drafts`, 'followers-apply');
+          for (const parent of followers) {
             await expect.poll(async () => compiled(await read(`contexts/${parent.id}/draft/`, signal)), { timeout: 60_000 }).toBe(8);
             observations.accepted.push(await read(`contexts/${parent.id}/draft/`, signal));
           }
@@ -265,14 +273,18 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'test-complete-contexts') {
           providerId = (await command('configure-synthetic-provider', operationsArgs('provider', namespace))).id;
           for (const [index, parent] of followers.entries()) {
-            const prompt = `${runId}-parent-${index}: explain a purchasing request`;
+            const prompt = `${runId}: explain a purchasing request`;
             await navigate(`/dashboard/skills/contexts/${parent.id}?tab=tests&draft=1`, `parent-${index}-whole-context-tests`);
-            await fill('Test request', prompt, `parent-${index}-test-request`);
-            await fill('Expected answer contains', 'approved-response', `parent-${index}-expected-answer`);
+            // The panel keeps the last-used request, model, ceiling and reference visible. A person
+            // edits only what differs from what they see; nothing is pre-attested.
+            const settle = async (name, value, target) => { if (await page.getByRole('textbox', { name, exact: true }).inputValue() !== value) await fill(name, value, target); };
+            await settle('Test request', prompt, `parent-${index}-test-request`);
+            await settle('Expected answer contains', 'approved-response', `parent-${index}-expected-answer`);
             await operator.review(`parent-${index}-case-review`, ['request', 'expected-answer'], [], () => page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check());
-            await click('Task model', `parent-${index}-model`, 'combobox'); await click('gpt-4o-mini', `parent-${index}-model-choice`, 'option');
-            await fill('Maximum estimated cost (USD)', '2', `parent-${index}-budget`);
-            await fill('Historical reference version (optional)', '1', `parent-${index}-reference`);
+            const modelField = page.getByRole('combobox', { name: 'Task model', exact: true });
+            if (!(await modelField.innerText()).includes('gpt-4o-mini')) { await click('Task model', `parent-${index}-model`, 'combobox'); await click('gpt-4o-mini', `parent-${index}-model-choice`, 'option'); }
+            await settle('Maximum estimated cost (USD)', '2', `parent-${index}-budget`);
+            await settle('Historical reference version (optional)', '1', `parent-${index}-reference`);
             const previewing = watch(res => res.url().endsWith('/test-runs/preview/') && res.request().method() === 'POST');
             await click('Preview whole-context test', `parent-${index}-test-preview`);
             const preview = (await (await previewing).json()).result;

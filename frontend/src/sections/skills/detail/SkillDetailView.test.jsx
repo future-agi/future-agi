@@ -323,3 +323,4 @@ it('mounts Tests without losing immutable result deep links or competing primary
 });
 
 vi.mock("src/api/skills/testing", () => ({ useSkillV11Scope: () => ({ identity: "org:ws:user" }) }));
+vi.mock("src/api/skills/context-follower-update", () => ({ useFollowerUpdates: () => ({ prepare: vi.fn(), apply: vi.fn() }) }));
