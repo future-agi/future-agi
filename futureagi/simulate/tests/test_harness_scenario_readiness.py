@@ -227,6 +227,29 @@ class TestScenarioListField:
         assert rows
         assert {row["readiness"]["bucket"] for row in rows} == {"eligible"}
 
+    def test_an_environment_with_no_versions_yet_lists_its_scenarios_without_flags(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _ten_certified(user, workspace, storage, "sr-api-unversioned")
+        # A build that failed or is still running has no versions to pair yet.
+        type(environment).objects.filter(id=environment.id).update(
+            environment_version=None, suite_version=None
+        )
+
+        asked = auth_client.get(
+            f"{SCENARIOS}/{environment.id}/scenarios/", {"readiness": "1"}
+        )
+
+        assert asked.status_code == 200
+        rows = [
+            row
+            for group in asked.json()["results"]
+            for row in (group.get("rows") or [group])
+            if isinstance(row, dict) and "scenario_key" in row
+        ]
+        assert rows
+        assert all(row.get("readiness") is None for row in rows)
+
     def test_a_bad_version_id_is_refused(self, user, workspace, storage, auth_client):
         environment = _ten_certified(user, workspace, storage, "sr-api-bad")
 
