@@ -338,47 +338,44 @@ export async function createDriver({ jobId, runId, registration }) {
         const stale = await latestRequest();
         requireValue(stale, 'The submitted rollback request is not in the reviewer inbox');
         const eventsBefore = await labelEvents();
-        // ABA: another releaser moves production away and back before this packet is reviewed.
-        for (const target of [v4, v3]) await moveProduction({ api: apiOk(signal), author, reviewer, contextId: input.contextId, version: target });
+        // The independent reviewer approves the packet before production moves (an approval is a person's act, injected here
+        // as a fault precondition exactly as the hops are): only the current-state check can now stop the stale approval.
+        const staleApproval = await call(reviewer, 'POST', `release-requests/${stale.id}/decisions/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint, decision: 'approve', comment: 'Synthetic J6 reviewer approval before the ABA hop' }, signal);
+        requireValue(staleApproval.status >= 200 && staleApproval.status < 300, 'The reviewer approval of the soon-stale packet failed');
+        // ABA: another releaser (the second administrator, a different author) moves production away and back before execution.
+        for (const target of [v4, v3]) await moveProduction({ api: apiOk(signal), author: reviewer, reviewer: author, contextId: input.contextId, version: target });
         const afterAba = await labelEvents();
         requireValue(afterAba.length === eventsBefore.length + 2
           && JSON.stringify(afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version])) === JSON.stringify([[3, 4], [4, 3]]), 'The ABA hop must record exactly v3 to v4 and back');
-        // Reviewer opens the stale request: the UI refuses it, and an independent execute is rejected with no event.
-        await operator.handoff('release-reviewer', async () => {});
-        await navigate(admin, ledger, stage, reviewerPage, '/dashboard/skills', 'open-skills-area');
-        await admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews-inbox');
-        // Rows share the context name; the request id in the link selects the exact packet.
-        await openPending(reviewerPage, admin, 'stale-request', stale.id, signal);
-        const staleAlert = reviewerPage.getByText('Review is stale or unavailable.', { exact: false });
-        await expect(staleAlert).toBeVisible();
-        await staleAlert.scrollIntoViewIfNeeded();
-        await shot(reviewerPage, '03-stale-aba-review');
+        // An independent execute of the approved, stale packet is refused by the current-state check and writes no label event.
         const rejected = await call(reviewer, 'POST', `release-requests/${stale.id}/execute/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint }, signal);
         const afterReject = await labelEvents();
         requireValue(rejected.status === 409 && afterReject.length === afterAba.length, 'The stale ABA packet must be rejected without a label event');
+        requireValue(/review_stale|release_conflict/.test(JSON.stringify(rejected.body)), 'The approved stale packet must be refused by the current-state check, not by its status');
         state.stalePacket = { id: stale.id, revision: stale.revision, fingerprint: stale.fingerprint };
-        state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]) };
-        // The reviewer closes the stale request so it cannot linger as a pending approval.
-        await admin.fill(reviewerPage.getByRole('textbox', { name: 'Review comment' }), 'Production moved while this was pending; request a new packet.', 'comment-decline-stale-request');
-        await admin.click(reviewerPage.getByRole('button', { name: 'Request changes', exact: true }), 'decline-stale-request');
-        await expect.poll(async () => (await read(`release-requests/${stale.id}/`, signal)).status).toBe('changes_requested');
-        const declined = await read(`release-requests/${stale.id}/`, signal);
-        requireValue(declined.status === 'changes_requested', 'The stale request must be closed as changes requested');
-        state.stale.request_status = declined.status;
-        const afterDecline = await labelEvents();
-        requireValue(afterDecline.length === afterAba.length, 'Declining a stale packet must not move a label');
-        const abaHash = await record('aba-rejection', state.stale);
-        faultSeen(ledger, 'aba', abaHash, state.stale);
+        state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]), approved_before_hop: true };
         // Operator starts a fresh review against the moved release revision.
-        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-recovery-facts');
-        await operator.click(authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }), 'acknowledge-complete-review-again');
+        // The recovery view follows the moved release on its own; the review restarts against the new revision.
+        const reack = authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ });
+        await expect(reack).toBeEnabled({ timeout: 30_000 });
+        await expect(reack).not.toBeChecked();
+        await operator.click(reack, 'acknowledge-complete-review-again');
         await submit(2);
         const fresh = await latestRequest();
         requireValue(fresh && fresh.id !== stale.id, 'The fresh rollback request is not in the reviewer inbox');
+        // The fresh packet closed the stale approved request, so no reviewer opens and declines it.
+        const superseded = await read(`release-requests/${stale.id}/`, signal);
+        requireValue(superseded.status === 'superseded', 'The stale request must be superseded by the fresh packet');
+        const afterSupersede = await labelEvents();
+        requireValue(afterSupersede.length === afterAba.length, 'Superseding a stale packet must not move a label');
+        state.stale.request_status = superseded.status;
+        const abaHash = await record('aba-rejection', state.stale);
+        faultSeen(ledger, 'aba', abaHash, state.stale);
         const detail = await read(`release-requests/${fresh.id}/`, signal);
         const decision = decisionFor({ packet: detail.fingerprint }, { candidate: v1.id, from_version: 3, release_revision: (await read(`${context}release-state/`, signal)).release_revision });
         await operator.handoff('release-reviewer', async () => {});
-        await admin.transition('reviews-inbox', () => admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'reopen-reviews-inbox'));
+        await navigate(admin, ledger, stage, reviewerPage, '/dashboard/skills', 'open-skills-area');
+        await admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews-inbox');
         await openPending(reviewerPage, admin, 'fresh-request', fresh.id, signal);
         await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
         const ack = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
@@ -407,8 +404,7 @@ export async function createDriver({ jobId, runId, registration }) {
       if (stage.id === 'locked-local-restore') {
         // The operator is an organization administrator: issue the replacement credential here and hand
         // its one-time secret to the application's secret store (manual information transfer).
-        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-after-rollback');
-        await expect(authorPage.getByText('v1 is in production.', { exact: false })).toBeVisible();
+        await expect(authorPage.getByText('v1 is in production.', { exact: false })).toBeVisible({ timeout: 30_000 });
         await operator.click(authorPage.getByRole('button', { name: 'Issue replacement credential', exact: true }), 'issue-replacement-credential');
         const secretBox = authorPage.getByRole('textbox', { name: 'New credential (shown once)' });
         await expect(secretBox).toBeVisible();
@@ -535,11 +531,8 @@ export async function createDriver({ jobId, runId, registration }) {
         for (const [key, binding, order, thread] of [['e', 'E', input.orders.o2, t.t2], ['l', 'L', input.orders.o3, t.t3]]) {
           const started = performance.now();
           const fields = { case_id: `reconstructed-${key}`, order_id: order, request: VERIFY_REQUEST };
-          for (const [field, value] of Object.entries(fields)) {
-            await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: `reconstruct-${key}-${field}` }, async () => { fields[field] = value; });
-          }
-          await guest.put(`/state/requests/review-${key}.json`, JSON.stringify({ schema: 1, case: fields, reconstruction_reviewed: true }) + '\n');
-          await guestCommand(stage, ledger, 'incident-operator', `prepare-clean-thread-${key}`, await guestEnv(state.appCredential, reports[binding].secret, binding), ['python', '-m', 'ctxhub_support.recovery', `/state/requests/review-${key}.json`, '--output', `/state/requests/clean-${key}.json`]);
+          // The reviewed reconstruction is typed once, as the three flags of one command.
+          await guestCommand(stage, ledger, 'incident-operator', `prepare-clean-thread-${key}`, await guestEnv(state.appCredential, reports[binding].secret, binding), ['python', '-m', 'ctxhub_support.recovery', '--case-id', fields.case_id, '--order-id', fields.order_id, '--request', fields.request, '--output', `/state/requests/clean-${key}.json`]);
           const cleanEnv = await guestEnv(state.appCredential, reports[binding].secret, binding);
           await guestCommand(stage, ledger, 'incident-operator', `run-clean-thread-${key}`, cleanEnv, entrypoint(`/state/requests/clean-${key}.json`, `/state/clean-${key}.sqlite`, `/state/out/clean-${key}.json`), [0]);
           clean[key] = { output: await guestJson(`/state/out/clean-${key}.json`), request: JSON.parse(await guest.read(`/state/requests/clean-${key}.json`)), elapsed_ms: Math.round(performance.now() - started), abandoned_thread: thread };
@@ -572,9 +565,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const oldEnv = await guestEnv(state.appCredential, reports.A.secret, 'A');
         await guestCommand(stage, ledger, 'incident-operator', 'close-incident-thread', oldEnv, ['python', '-m', 'ctxhub_support.lifecycle', 'close', '--state', '/state/t0.sqlite', '--thread', input.threads.t0, '--reason', 'incident_superseded', '--output', '/state/out/t0-closed.json']);
         const fields = { case_id: 'original-case-recheck', order_id: input.orders.o0, request: REFUND_REQUEST };
-        for (const field of Object.keys(fields)) await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: `reconstruct-original-${field}` }, async () => {});
-        await guest.put('/state/requests/review-o0.json', JSON.stringify({ schema: 1, case: fields, reconstruction_reviewed: true }) + '\n');
-        await guestCommand(stage, ledger, 'incident-operator', 'prepare-original-case-thread', oldEnv, ['python', '-m', 'ctxhub_support.recovery', '/state/requests/review-o0.json', '--output', '/state/requests/clean-o0.json']);
+        await guestCommand(stage, ledger, 'incident-operator', 'prepare-original-case-thread', oldEnv, ['python', '-m', 'ctxhub_support.recovery', '--case-id', fields.case_id, '--order-id', fields.order_id, '--request', fields.request, '--output', '/state/requests/clean-o0.json']);
         await guestCommand(stage, ledger, 'incident-operator', 'run-original-case-thread', oldEnv, entrypoint('/state/requests/clean-o0.json', '/state/clean-o0.sqlite', '/state/out/clean-o0.json'), [0]);
         const out = await guestJson('/state/out/clean-o0.json');
         const business = await guest.business();
@@ -588,7 +579,6 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'inspect-declared-cohort') {
-        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-final-cohort');
         const cohort = await consumers(signal);
         const table = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(table).toBeVisible();

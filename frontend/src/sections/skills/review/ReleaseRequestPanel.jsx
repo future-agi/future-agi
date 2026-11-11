@@ -187,10 +187,14 @@ function PacketActions({
     current &&
     permissions.canDecide &&
     request &&
-    request.status !== "released";
+    request.status !== "released" &&
+    request.status !== "superseded";
   // Declining grants nothing, so a reviewer can close a packet that went stale.
   const canRequestChanges =
-    permissions.canDecide && request && request.status !== "released";
+    permissions.canDecide &&
+    request &&
+    request.status !== "released" &&
+    request.status !== "superseded";
   const canExecute =
     current && permissions.canExecute && request?.status === "approved";
   const actionInput = request

@@ -41,6 +41,7 @@ def list_review_inbox(
         "approved",
         "changes_requested",
         "released",
+        "superseded",
     }:
         raise SkillsHubError(
             "invalid_selector", "Choose a supported request status.", status=400

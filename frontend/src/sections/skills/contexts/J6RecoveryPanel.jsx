@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -540,9 +540,22 @@ LocalRecovery.propTypes = {
   canIssue: PropTypes.bool,
 };
 
+const RECOVERY_FACTS_REFRESH_MS = 5000;
+
 export default function J6RecoveryPanel({ contextId, contextName }) {
   const query = useContextRecovery(contextId);
   const refreshFacts = useRefreshContextFacts(contextId);
+  // The recovery facts follow a release or consumer change made elsewhere (a
+  // reviewer moving production, a consumer reporting) while this tab is visible,
+  // so the operator never decides from a view that has already moved.
+  const latestRefresh = useRef(refreshFacts);
+  latestRefresh.current = refreshFacts;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") latestRefresh.current();
+    }, RECOVERY_FACTS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
   const [chosen, setChosen] = useState(null);
   const data = query.data;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);

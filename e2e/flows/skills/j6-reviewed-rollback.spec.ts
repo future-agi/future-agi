@@ -61,24 +61,24 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     draft = await api(author, 'PUT', `${root}draft/`, { revision: draft.revision, base_version: number - 1, description: 'Synthetic recovery release fixture', note: '', files: [{ path: 'AGENTS.md', content: `Synthetic policy revision ${number}. Reconcile completed business operations.\n` }] });
     versions.push(await publish(number - 1));
   }
-  const packet = async (version: any) => api(author, 'POST', 'release-requests/preview/', {
+  const packet = async (version: any, actor: any = author) => api(actor, 'POST', 'release-requests/preview/', {
     resource_id: created.context_id, kind: 'agent_context', candidate_version_id: version.id,
     label: 'production', target: null, evidence: [], external_pipeline: null,
   });
-  const submit = async (preview: any) => api(author, 'POST', 'release-requests/', {
+  const submit = async (preview: any, actor: any = author) => api(actor, 'POST', 'release-requests/', {
     packet: preview.packet, expected_fingerprint: preview.fingerprint, recipient_ids: [reviewer.userId], revision: 0,
   });
-  const approve = async (preview: any, submitted: any) => api(reviewer, 'POST', `release-requests/${submitted.id}/decisions/`, {
+  const approve = async (preview: any, submitted: any, actor: any = reviewer) => api(actor, 'POST', `release-requests/${submitted.id}/decisions/`, {
     revision: submitted.revision, expected_fingerprint: preview.fingerprint, decision: 'approve', comment: 'Synthetic recovery prerequisite review',
   });
-  const execute = async (preview: any, submitted: any) => api(reviewer, 'POST', `release-requests/${submitted.id}/execute/`, {
+  const execute = async (preview: any, submitted: any, actor: any = reviewer) => api(actor, 'POST', `release-requests/${submitted.id}/execute/`, {
     revision: submitted.revision, expected_fingerprint: preview.fingerprint,
   });
-  const move = async (version: any) => {
-    const preview = await packet(version);
-    const submitted = await submit(preview);
-    await approve(preview, submitted);
-    return execute(preview, submitted);
+  const move = async (version: any, requester: any = author, approver: any = reviewer) => {
+    const preview = await packet(version, requester);
+    const submitted = await submit(preview, requester);
+    await approve(preview, submitted, approver);
+    return execute(preview, submitted, approver);
   };
   await move(versions[1]);
   const binding = await api(author, 'POST', `${root}bindings/`, { name: `${name}-unobserved`, kind: 'runtime', selector: { label: 'production' }, update_mode: 'new_thread', profile: 'ctxhub-support', profile_version: '0.1.0', repository: null, expected_report_interval_seconds: 3600 });
@@ -96,15 +96,20 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
   const stalePreview = await packet(versions[0]);
   const staleRequest = await submit(stalePreview);
   await approve(stalePreview, staleRequest);
-  await move(versions[0]);
-  await move(versions[1]);
+  // Another releaser moves production away and back. The hops are requested by the second administrator so the
+  // author's own stale request stays approved and only the compare-and-swap check can refuse it.
+  await move(versions[0], reviewer, author);
+  await move(versions[1], reviewer, author);
   const eventCount = async () => (await probe.pg<any>('SELECT count(*)::int AS count FROM model_hub_hubskilllabelevent WHERE skill_id=$1', [created.context_id]))[0].count;
   const before = await eventCount();
   const stale = await send(reviewer, 'POST', `release-requests/${staleRequest.id}/execute/`, { revision: staleRequest.revision, expected_fingerprint: stalePreview.fingerprint });
   expect(stale.response.status(), 'ABA must reject the stale reviewed release revision').toBe(409);
+  expect(JSON.stringify(stale.body), 'the approved stale packet is refused by the current-state check, not by its status').toMatch(/review_stale|release_conflict/);
   expect(await eventCount()).toBe(before);
   const freshPreview = await packet(versions[0]);
   const fresh = await submit(freshPreview);
+  // The fresh packet from the same author closes the stale approved request, so no reviewer has to open and decline it.
+  expect((await api(reviewer, 'GET', `release-requests/${staleRequest.id}/`)).status).toBe('superseded');
   const context = await browser.newContext({ baseURL: E2E.appUrl, viewport: { width: 1440, height: 900 } });
   await context.addInitScript(authInitScript, { access: reviewer.tokens.access, refresh: reviewer.tokens.refresh, organizationId: reviewer.organizationId, workspaceId: reviewer.workspaceId });
   await context.addInitScript(id => sessionStorage.setItem('workspaceOrgId', id), reviewer.organizationId);

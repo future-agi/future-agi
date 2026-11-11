@@ -57,6 +57,7 @@ function InboxRows({
             ["approved", "Approved"],
             ["changes_requested", "Changes requested"],
             ["released", "Released"],
+            ["superseded", "Superseded"],
           ].map(([value, label]) => (
             <MenuItem key={value} value={value}>
               {label}

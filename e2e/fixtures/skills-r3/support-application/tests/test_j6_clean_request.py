@@ -103,3 +103,32 @@ def test_reset_cannot_transfer_messages_or_replay_completed_refund(harness):
     assert store.load("original") == original_state
     # completed is not a native/business verification result.
     assert result["evidence_class"] == "synthetic fixture"
+
+
+def test_reconstruction_flags_equal_the_reviewed_file_and_cannot_mix_or_be_partial(
+    tmp_path, capsys
+):
+    output = tmp_path / "request.json"
+    flags = [
+        "--case-id",
+        CASE["case_id"],
+        "--order-id",
+        CASE["order_id"],
+        "--request",
+        CASE["request"],
+    ]
+    assert main([*flags, "--output", str(output)]) == 0
+    value = json.loads(output.read_text())
+    assert value["case"] == CASE and set(value) == {"schema", "case", "thread"}
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert json.loads(capsys.readouterr().out)["executed"] is False
+    review = tmp_path / "review.json"
+    review.write_text(json.dumps({"schema": 1, "case": CASE, "reconstruction_reviewed": True}))
+    for argv in (
+        [*flags, str(review), "--output", str(tmp_path / "mixed.json")],
+        ["--case-id", "x", "--output", str(tmp_path / "partial.json")],
+        ["--output", str(tmp_path / "none.json")],
+    ):
+        with pytest.raises(SystemExit):
+            main(argv)
+        assert not (tmp_path / argv[-1].split("/")[-1]).exists()

@@ -405,6 +405,31 @@ describe("exact decisions and retry safety", () => {
     expect(screen.getByText("Pointer state after the move")).toBeVisible();
     expect(execute.mock.calls[0][0]).not.toHaveProperty("packet");
   });
+  it("offers no decision or release on a request replaced by a fresh packet", () => {
+    const decide = vi.fn();
+    const execute = vi.fn();
+    render(
+      <ReleaseRequestPanel
+        {...panelProps}
+        request={{ ...request, status: "superseded" }}
+        onDecide={decide}
+        onExecute={execute}
+      />,
+    );
+    acknowledge();
+    fireEvent.change(screen.getByLabelText("Review comment"), {
+      target: { value: "Closing" },
+    });
+    for (const name of [
+      "Approve exact packet",
+      "Request changes",
+      "Release approved packet",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(decide).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
   it("hides previous-scope private material and ignores a late completion", async () => {
     const d = deferred();
     const decide = vi.fn(() => d.promise);

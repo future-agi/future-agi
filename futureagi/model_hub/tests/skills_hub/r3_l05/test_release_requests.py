@@ -381,6 +381,49 @@ def test_stale_packet_can_be_declined_but_never_approved(
         execute(reviewer, request, review)
 
 
+def test_fresh_packet_supersedes_the_authors_stale_request_only(
+    actors, hub_skill, candidate, hub_actor
+):
+    author, reviewer = actors
+    review = preview(author, hub_skill, candidate[0])
+    current = submit(author, reviewer, review)
+    set_label(
+        skill=hub_skill,
+        actor=hub_actor,
+        name="production",
+        version_number=candidate[1].number,
+    )
+    set_label(
+        skill=hub_skill,
+        actor=hub_actor,
+        name="production",
+        version_number=candidate[0].number,
+    )
+    # Production returned to the reviewed version (ABA): the old packet is stale.
+    fresh_review = preview(author, hub_skill, candidate[0])
+    assert fresh_review["fingerprint"] != review["fingerprint"]
+    fresh = submit(author, reviewer, fresh_review)
+    assert HubSkillReleaseRequest.objects.get(pk=current["id"]).status == "superseded"
+    assert HubSkillReleaseRequest.objects.get(pk=fresh["id"]).status == "pending"
+    # A superseded request can never be approved or executed.
+    with pytest.raises(SkillsHubError):
+        approve(reviewer, current, review)
+    with pytest.raises(SkillsHubError):
+        execute(reviewer, current, review)
+    assert approve(reviewer, fresh, fresh_review)["status"] == "approved"
+    inbox = list_review_inbox(principal=reviewer, status="superseded")
+    assert [row["id"] for row in inbox["results"]] == [current["id"]]
+
+
+def test_a_still_current_request_is_not_superseded(actors, hub_skill, candidate):
+    author, reviewer = actors
+    first_review = preview(author, hub_skill, candidate[1])
+    first = submit(author, reviewer, first_review)
+    second = submit(author, reviewer, preview(author, hub_skill, candidate[1]))
+    assert second["id"] != first["id"]
+    assert HubSkillReleaseRequest.objects.get(pk=first["id"]).status == "pending"
+
+
 def test_supplied_authoritative_claims_cannot_be_forged(actors, hub_skill, candidate):
     author, reviewer = actors
     run = text_run(author, hub_skill, candidate[1])

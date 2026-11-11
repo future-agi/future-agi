@@ -517,12 +517,57 @@ def submit_release_request(
         HubSkillReleaseRecipient.objects.get_or_create(
             request=request, recipient_id=user_id, defaults=_scope(principal)
         )
+    _supersede_stale_requests(principal=principal, skill=skill, keep=request)
     return _receipt(
         lookup,
         digest,
         request.pk,
         {"id": str(request.pk), "revision": request.revision, "status": request.status},
     )
+
+
+_STALE_PACKET_CODES = frozenset(
+    {
+        "review_stale",
+        "release_conflict",
+        "impact_changed",
+        "target_configuration_changed",
+        "version_not_found",
+    }
+)
+
+
+def _supersede_stale_requests(
+    *, principal: SkillPrincipal, skill: HubSkill, keep: HubSkillReleaseRequest
+) -> None:
+    """Close the author's other open requests on this skill whose packet went stale.
+
+    A fresh packet from the same author replaces a request that can no longer be
+    approved or executed, so no reviewer has to open and decline it. Only a packet
+    that fails the current-state check is closed; a still-current request, a
+    released one and another author's request are untouched. Closing grants and
+    moves nothing: the status only records why the request cannot proceed.
+    """
+    for other in (
+        HubSkillReleaseRequest.objects.select_for_update()
+        .filter(
+            **_scope(principal),
+            skill=skill,
+            author_id=principal.user_id,
+            status__in=("pending", "approved"),
+        )
+        .exclude(pk=keep.pk)
+    ):
+        packet = other.hub_skill_packets.filter(revision=other.revision).first()
+        if packet is None:
+            continue
+        try:
+            _validate_packet(principal, packet.packet, lock=True)
+        except SkillsHubError as exc:
+            if exc.code not in _STALE_PACKET_CODES:
+                continue
+            other.status = "superseded"
+            other.save(update_fields=["status", "updated_at"])
 
 
 def _request_packet(
@@ -629,7 +674,7 @@ def decide_release_request(
     if (
         request.revision != revision
         or packet.fingerprint != expected_fingerprint
-        or request.status == "released"
+        or request.status in {"released", "superseded"}
     ):
         raise _error("review_conflict", "The release request changed.")
     if decision == "approve":
