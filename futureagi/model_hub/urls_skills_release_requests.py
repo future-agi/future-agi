@@ -19,6 +19,7 @@ urlpatterns = [
     ),
     path("release-requests/<uuid:request_id>/execute/", v.RequestExecuteView.as_view()),
     path("release-requests/<uuid:request_id>/receipt/", v.RequestReceiptView.as_view()),
+    path("release-requests/<uuid:request_id>/renewal/", v.RequestRenewalView.as_view()),
     path("review-inbox/", v.ReviewInboxView.as_view()),
     path("review-inbox/<uuid:request_id>/seen/", v.ReviewSeenView.as_view()),
 ]

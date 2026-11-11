@@ -187,3 +187,29 @@ class ReviewSeenView(ReviewView):
             **request.validated_data,
         )
         return Response(status=204)
+
+
+# --- J4: explicit reviewer renewal ------------------------------------------
+class RequestRenewalView(ReviewView):
+    @contract(s.RenewalPreview)
+    def get(self, request, request_id):
+        return self.output(
+            request,
+            s.RenewalPreview,
+            service.release_renewal_preview(
+                principal=request.skill_principal, request_id=request_id
+            ),
+        )
+
+    @contract(s.RenewalReceipt, body=s.Renew, manual_parameters=[IDEMPOTENCY])
+    def post(self, request, request_id):
+        return self.output(
+            request,
+            s.RenewalReceipt,
+            service.renew_release_request(
+                principal=request.skill_principal,
+                request_id=request_id,
+                idempotency_key=header_uuid(request, "Idempotency-Key"),
+                **request.validated_data,
+            ),
+        )

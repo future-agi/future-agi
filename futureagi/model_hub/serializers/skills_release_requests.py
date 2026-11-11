@@ -165,6 +165,8 @@ class InboxItem(RequestReceipt):
     fingerprint = ctx.Digest()
     candidate_version_id = s.UUIDField()
     updated_at = s.DateTimeField()
+    # J4: evidence retention expired; the assigned reviewer must renew explicitly.
+    renewal_required = s.BooleanField()
 
 
 class Inbox(Page):
@@ -209,3 +211,39 @@ class AuthoredItem(RequestReceipt):
 class AuthoredPage(Page):
     results = AuthoredItem(many=True)
     unread_count = Integer(min_value=0)
+
+
+# --- J4: explicit reviewer renewal ------------------------------------------
+class RenewalChange(ctx.ContextSerializer):
+    item = s.CharField(max_length=255)
+    before = s.JSONField(allow_null=True)
+    after = s.JSONField(allow_null=True)
+
+
+class RemovedEvidence(ctx.ContextSerializer):
+    source_id = s.UUIDField()
+    reason = s.ChoiceField(choices=["evidence_expired", "resource_not_found"])
+
+    def get_fields(self):
+        return {**super().get_fields(), "source": s.CharField()}
+
+
+class RenewalPreview(Packet):
+    request_id = s.UUIDField()
+    revision = Integer(min_value=1)
+    status = s.CharField()
+    subject_id = s.UUIDField()
+    previous_fingerprint = ctx.Digest()
+    changes = RenewalChange(many=True)
+    removed_evidence = RemovedEvidence(many=True)
+
+
+class Renew(Revision):
+    expected_fingerprint = ctx.Digest()
+
+
+class RenewalReceipt(RequestReceipt):
+    renewed_by = s.UUIDField()
+    from_revision = Integer(min_value=1)
+    changes = RenewalChange(many=True)
+    removed_evidence = RemovedEvidence(many=True)

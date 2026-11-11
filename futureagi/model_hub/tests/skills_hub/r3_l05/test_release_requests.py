@@ -276,9 +276,15 @@ def test_new_evidence_or_target_invalidates_approval(
     with pytest.raises(SkillsHubError):
         execute(reviewer, request, review)
     assert hub_skill.labels.get(name="production").version_id == candidate[0].pk
-    if change in {"expire", "visibility"}:
+    if change == "visibility":
         assert list_review_inbox(principal=reviewer)["count"] == 0
         assert list_review_inbox(principal=reviewer)["unread_count"] == 0
+    if change == "expire":
+        # J4: retention expiry is not visibility loss. The assigned reviewer
+        # keeps a metadata-only row that requires explicit renewal.
+        inbox = list_review_inbox(principal=reviewer)
+        assert inbox["count"] == 1
+        assert inbox["results"][0]["renewal_required"] is True
 
 
 def test_role_loss_invalidates_approval_without_granting_release(
