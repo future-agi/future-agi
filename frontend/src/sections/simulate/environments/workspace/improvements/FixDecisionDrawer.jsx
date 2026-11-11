@@ -12,6 +12,7 @@ import {
   headline,
   pct,
   pts,
+  describeChecks,
   rejectionChecks,
   winnerOf,
 } from "./fixRunView";
@@ -43,12 +44,12 @@ const gain = (r) => {
 function CheckRows({ check, sx }) {
   return (
     <>
-      <CheckLine check={check} nameWidth={90} sx={sx} />
+      <CheckLine check={check} nameWidth={120} sx={sx} />
       {(check.parts || []).map((part) => (
         <CheckLine
           key={part.name}
           check={part}
-          nameWidth={90}
+          nameWidth={120}
           sx={{ pl: 3, mt: 0.5 }}
         />
       ))}
@@ -215,7 +216,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   {checksLine(v.tiers)}
                 </Typography>
               </Box>
-              {v.tiers.map((t, i) => (
+              {describeChecks(v.tiers, fix.request).map((t, i) => (
                 <Box key={t.name} sx={rowSx(i + 1)}>
                   <CheckRows check={t} />
                 </Box>
@@ -237,7 +238,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                     sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
                   >{`Trial ${c.attempt}`}</Typography>
                   {c.verdict.tiers?.length > 0 ? (
-                    rejectionChecks(c.verdict.tiers).map((t) => (
+                    rejectionChecks(c.verdict.tiers, fix.request).map((t) => (
                       <CheckRows key={t.name} check={t} sx={{ mt: 0.25 }} />
                     ))
                   ) : (

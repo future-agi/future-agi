@@ -125,7 +125,7 @@ describe("FixVerdict", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks a check the fix could not measure as not verified in the decision drawer", () => {
+  it("marks a check the fix could not measure as Couldn't measure, with its own icon", () => {
     const fix = fixOf("fix-ready-archive");
     const winner = fix.candidates.find((c) => c.outcome === "winner");
     winner.verdict.tiers = [
@@ -139,11 +139,13 @@ describe("FixVerdict", () => {
     renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
 
     expect(
-      screen.getByText("Checks · 5 of 5 passed · 1 not verified"),
+      screen.getByText("Checks · 5 of 5 passed · 1 couldn't measure"),
     ).toBeInTheDocument();
-    const row = screen.getByText("model-lock").parentElement;
-    expect(within(row).getByText("not verified")).toBeInTheDocument();
-    expect(screen.getAllByText("not verified")).toHaveLength(1);
+    const row = screen.getByText("Model unchanged").parentElement;
+    expect(within(row).getByText("Couldn't measure")).toBeInTheDocument();
+    expect(row.getAttribute("data-check")).toBe("unmeasured");
+    expect(screen.getAllByText("Couldn't measure")).toHaveLength(1);
+    expect(screen.queryByText("model-lock")).toBeNull();
   });
 
   const withCeilingParts = () => {
@@ -181,11 +183,11 @@ describe("FixVerdict", () => {
 
     const latency = screen.getByText("reply latency").parentElement;
     const cost = screen.getByText("agent cost").parentElement;
-    expect(within(latency).queryByText("not verified")).toBeNull();
+    expect(within(latency).queryByText("Couldn't measure")).toBeNull();
     expect(
       within(latency).getByText("median 1.1 s, baseline 1 s: within"),
     ).toBeInTheDocument();
-    expect(within(cost).getByText("not verified")).toBeInTheDocument();
+    expect(within(cost).getByText("Couldn't measure")).toBeInTheDocument();
   });
 
   it("shows each ceiling's own status in the decision drawer", () => {
@@ -215,13 +217,13 @@ describe("FixVerdict", () => {
 
     const latency = screen.getByText("reply latency").parentElement;
     const cost = screen.getByText("agent cost").parentElement;
-    expect(within(latency).queryByText("not verified")).toBeNull();
+    expect(within(latency).queryByText("Couldn't measure")).toBeNull();
     expect(
       within(latency).getByText("median 1.1 s, baseline 1 s: within"),
     ).toBeInTheDocument();
-    expect(within(cost).getByText("not verified")).toBeInTheDocument();
+    expect(within(cost).getByText("Couldn't measure")).toBeInTheDocument();
     // The tier and its unmeasured cost; the measured latency reads verified.
-    expect(screen.getAllByText("not verified")).toHaveLength(2);
+    expect(screen.getAllByText("Couldn't measure")).toHaveLength(2);
   });
 
   it("renders a verdict without tiers, here and in the decision drawer", () => {
@@ -297,10 +299,52 @@ describe("FixVerdict", () => {
   });
 });
 
+describe("FixFinishedView, no safe improvement", () => {
+  it("says what stopped the trials in one sentence, the numbers behind a toggle", async () => {
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-no-improvement")}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "No safe improvement: neither trial improved the target cases.",
+      ),
+    ).toBeInTheDocument();
+    // The engine's summary is not the headline any more.
+    expect(
+      screen.queryByText(
+        "No safe improvement: every candidate broke a must-pass scenario.",
+      ),
+    ).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Show the numbers" }));
+    const numbers = within(screen.getByTestId("no-safe-numbers"));
+    expect(
+      numbers.getByText(
+        "Trial 1 · Target cases: 0 of 1 target scenarios passed",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      numbers.getByText(
+        "Engine's note: No safe improvement: every candidate broke a must-pass scenario.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("FixDecisionDrawer without a kept trial", () => {
   const checkNames = (trial) =>
     trial
-      .getAllByText(/^(static|target|held-back|must-pass)$/)
+      .getAllByText(
+        /^(Static checks|Target cases|Held-back set|Must-pass set)$/,
+      )
       .map((el) => el.textContent);
 
   it("shows each rejected trial with the check that rejected it first", () => {
@@ -316,14 +360,18 @@ describe("FixDecisionDrawer without a kept trial", () => {
     for (const attempt of [1, 2]) {
       const trial = within(screen.getByTestId(`rejected-${attempt}`));
       expect(trial.getByText(`Trial ${attempt}`)).toBeInTheDocument();
-      expect(checkNames(trial)).toEqual(["target", "static", "must-pass"]);
+      expect(checkNames(trial)).toEqual([
+        "Target cases",
+        "Static checks",
+        "Must-pass set",
+      ]);
       expect(
         trial.getByText("0 of 1 target scenarios passed"),
       ).toBeInTheDocument();
     }
   });
 
-  it("says a check after the rejecting one was not run, never passed or unverified", () => {
+  it("says why a check after the rejecting one was not run, never passed or unmeasured", () => {
     renderUi(
       <FixDecisionDrawer
         fix={fixOf("fix-no-improvement")}
@@ -333,9 +381,12 @@ describe("FixDecisionDrawer without a kept trial", () => {
     );
 
     const trial = within(screen.getByTestId("rejected-1"));
-    const row = trial.getByText("must-pass").parentElement;
-    expect(within(row).getByText("not run")).toBeInTheDocument();
-    expect(trial.queryByText("not verified")).toBeNull();
+    const row = trial.getByText("Must-pass set").parentElement;
+    expect(
+      within(row).getByText("not run — an earlier check failed: Target cases"),
+    ).toBeInTheDocument();
+    expect(row.getAttribute("data-check")).toBe("not-run");
+    expect(trial.queryByText("Couldn't measure")).toBeNull();
     expect(within(row).queryByText(/passed|held/)).toBeNull();
   });
 
@@ -363,7 +414,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
       trial.getByText("target: 0 of 1 target scenarios passed"),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("rejected-2")).getByText("target"),
+      within(screen.getByTestId("rejected-2")).getByText("Target cases"),
     ).toBeInTheDocument();
   });
 });

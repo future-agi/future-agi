@@ -423,7 +423,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             >
               {marginSteps(latencyMargin).map((n) => (
                 <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                  {`Up to ${n}% slower than now`}
+                  {n === 0 ? "No increase" : `Up to ${n}% slower than now`}
                 </MenuItem>
               ))}
             </Select>
@@ -439,7 +439,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               >
                 {marginSteps(costMargin).map((n) => (
                   <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                    {`Up to ${n}% more than now`}
+                    {n === 0 ? "No increase" : `Up to ${n}% more than now`}
                   </MenuItem>
                 ))}
               </Select>

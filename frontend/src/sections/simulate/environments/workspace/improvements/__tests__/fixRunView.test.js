@@ -9,7 +9,10 @@ import {
   heldToRows,
   identityLine,
   isShipped,
-  markNotRun,
+  checkIcon,
+  checkLabel,
+  describeChecks,
+  noSafeNumbers,
   outcomeLabel,
   rejectionChecks,
   STATE_LABEL,
@@ -60,10 +63,66 @@ describe("headline", () => {
   });
 
   it("uses the report for other endings", () => {
-    expect(headline(byId("fix-no-improvement"))).toBe(
+    expect(headline(byId("fix-stopped"))).toBeNull();
+    const old = { ...byId("fix-no-improvement"), candidates: [] };
+    // A no-safe fix whose trials hold no checks falls back to the engine's summary.
+    expect(headline(old)).toBe(
       "No safe improvement: every candidate broke a must-pass scenario.",
     );
-    expect(headline(byId("fix-stopped"))).toBeNull();
+  });
+
+  it("says in one sentence what stopped the trials of a no-safe fix", () => {
+    // Both fixture trials were rejected at the target check.
+    expect(headline(byId("fix-no-improvement"))).toBe(
+      "No safe improvement: neither trial improved the target cases.",
+    );
+    const atHeldBack = (attempt) => ({
+      attempt,
+      outcome: "rejected",
+      verdict: {
+        tiers: [
+          { name: "target", status: "passed", detail: "62% vs 12%" },
+          {
+            name: "held-back",
+            status: "failed",
+            detail: "50% pass vs baseline 39% (p = 0.500)",
+          },
+        ],
+      },
+    });
+    const real = {
+      ...byId("fix-no-improvement"),
+      candidates: [atHeldBack(1), atHeldBack(2)],
+    };
+    const said = headline(real);
+    expect(said).toBe(
+      "No safe improvement: both trials improved the target cases but not the held-back set.",
+    );
+    // No numbers, p-values, pipes or case keys in the headline itself.
+    expect(said).not.toMatch(/\d|p =|\|/);
+    expect(noSafeNumbers(real)).toEqual({
+      trials: [
+        {
+          attempt: 1,
+          label: "Held-back set",
+          detail: "50% pass vs baseline 39% (p = 0.500)",
+        },
+        {
+          attempt: 2,
+          label: "Held-back set",
+          detail: "50% pass vs baseline 39% (p = 0.500)",
+        },
+      ],
+      engineNote:
+        "No safe improvement: every candidate broke a must-pass scenario.",
+    });
+    const mixed = {
+      ...real,
+      candidates: [atHeldBack(1), byId("fix-no-improvement").candidates[1]],
+    };
+    expect(headline(mixed)).toBe(
+      "No safe improvement: no trial passed every check (Trial 1 at Held-back set, Trial 2 at Target cases).",
+    );
   });
 
   it("leads a failed fix with why it failed, not the report's summary", () => {
@@ -110,33 +169,69 @@ describe("verdict", () => {
       { name: "ceilings", status: "skipped" },
       { name: "model-lock", status: "skipped" },
     ];
-    expect(checksLine(tiers)).toBe("Checks · 1 of 1 passed · 2 not verified");
+    expect(checksLine(tiers)).toBe(
+      "Checks · 1 of 1 passed · 2 couldn't measure",
+    );
     // After a failed check the rest were not run, not unverified.
     expect(
       checksLine([{ name: "target", status: "failed" }, ...tiers.slice(1)]),
     ).toBe("Checks · 0 of 1 passed");
   });
 
-  it("marks a skipped check as not run only when an earlier check failed", () => {
+  it("names each check in words, never by the engine's id", () => {
+    const names = [
+      "static",
+      "target",
+      "held-back",
+      "must-pass",
+      "repeats",
+      "ceilings",
+      "model-lock",
+    ];
+    expect(names.map((n) => checkLabel(n))).toEqual([
+      "Static checks",
+      "Target cases",
+      "Held-back set",
+      "Must-pass set",
+      "Repeat runs",
+      "Cost and latency",
+      "Model unchanged",
+    ]);
+    expect(
+      checkLabel("model-lock", { allowed_models: ["model-a", "model-b"] }),
+    ).toBe("Approved models");
+    // A check this page does not know yet is still said in words.
+    expect(checkLabel("new-check_kind")).toBe("New check kind");
+  });
+
+  it("gives a check that could not measure its own icon, apart from one not run", () => {
+    const unmeasured = checkIcon({ status: "skipped" });
+    const notRun = checkIcon({ status: "skipped", notRun: true });
+    expect(unmeasured).not.toBe(notRun);
+    expect([unmeasured, notRun]).not.toContain(checkIcon({ status: "passed" }));
+  });
+
+  it("says which earlier check stopped a check that was not run", () => {
     const tiers = [
       { name: "repeats", status: "passed" },
       { name: "ceilings", status: "skipped" },
       { name: "model-lock", status: "failed" },
     ];
-    expect(markNotRun(tiers).map((t) => t.notRun)).toEqual([
+    // Skipped before any failure: it ran and could not measure.
+    expect(describeChecks(tiers).map((t) => t.notRun)).toEqual([
       false,
       false,
       false,
     ]);
     expect(
-      markNotRun([
+      describeChecks([
         { name: "held-back", status: "failed" },
         ...tiers.slice(1),
-      ]).map((t) => [t.name, t.notRun]),
+      ]).map((t) => [t.label, t.notRun, t.notRunBecause]),
     ).toEqual([
-      ["held-back", false],
-      ["ceilings", true],
-      ["model-lock", false],
+      ["Held-back set", false, undefined],
+      ["Cost and latency", true, "Held-back set"],
+      ["Model unchanged", false, undefined],
     ]);
   });
 
@@ -304,7 +399,7 @@ describe("held to", () => {
     expect(valueOf(traced, "Model")).toBeUndefined();
   });
 
-  it("says the lock and the cost limit are not verified for an untraced agent", () => {
+  it("says the lock and the cost limit can't be measured for an untraced agent", () => {
     const untraced = {
       allowed_models: [],
       observes_models: false,
@@ -313,17 +408,19 @@ describe("held to", () => {
       cost_margin_pct: 25,
       cost_limit_usd: null,
     };
-    expect(valueOf(untraced, "Models")).toBe("not verified: agent not traced");
+    expect(valueOf(untraced, "Models")).toBe(
+      "can't measure: the agent isn't traced",
+    );
     expect(valueOf(untraced, "Reply time")).toBe("+25%");
     expect(valueOf(untraced, "Agent's cost")).toBe(
-      "+25% · not verified: agent not traced",
+      "+25% · can't measure: the agent isn't traced",
     );
   });
 
   it("still lists what a fix from before these limits is held to", () => {
     const rows = heldToRows(byId("fix-search"));
     expect(rows.find((r) => r.label === "Models")?.value).toBe(
-      "not verified: agent not traced",
+      "can't measure: the agent isn't traced",
     );
     expect(rows.some((r) => r.label === "Model")).toBe(false);
     expect(rows.find((r) => r.label === "Must-pass")).toBeDefined();

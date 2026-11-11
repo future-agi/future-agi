@@ -8,6 +8,7 @@ import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import {
   checksLine,
+  describeChecks,
   headline,
   pct,
   verdictCards,
@@ -92,7 +93,7 @@ function Checks({ tiers }) {
             minWidth: 0,
           }}
         >
-          {failed.map((t) => t.name).join(" · ")}
+          {failed.map((t) => t.label || t.name).join(" · ")}
         </Typography>
         <Button
           size="small"
@@ -351,7 +352,7 @@ export default function FixVerdict({ fix }) {
         ))}
       </Box>
       {winner.verdict.tiers?.length > 0 && (
-        <Checks tiers={winner.verdict.tiers} />
+        <Checks tiers={describeChecks(winner.verdict.tiers, fix.request)} />
       )}
       <MustPassBreaks verdict={winner.verdict} />
       {fix.eval_warnings?.length > 0 && (

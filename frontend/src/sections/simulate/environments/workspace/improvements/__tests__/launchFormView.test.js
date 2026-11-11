@@ -199,8 +199,10 @@ describe("constraints", () => {
   });
 
   it("offers the margins with the default among them", () => {
-    expect(marginSteps(25)).toEqual([10, 25, 50, 100]);
-    expect(marginSteps(40)).toEqual([10, 25, 40, 50, 100]);
+    expect(marginSteps(25)).toEqual([0, 10, 25, 50, 100]);
+    expect(marginSteps(40)).toEqual([0, 10, 25, 40, 50, 100]);
+    // No increase is a choice of its own, offered once even when it is the value.
+    expect(marginSteps(0)).toEqual([0, 10, 25, 50, 100]);
   });
 
   it("tells an unreadable run's traces from an untraced agent", () => {

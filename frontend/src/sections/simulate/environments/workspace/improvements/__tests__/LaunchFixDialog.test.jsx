@@ -497,6 +497,25 @@ describe("LaunchFixDialog", () => {
     ]);
   });
 
+  it("lets the reply time and the agent's cost allow no increase at all", async () => {
+    const options = fixtureLaunchOptions("te-run-6");
+    options.defaults.allowed_models = ["vertex_ai/gemini-3.8-flash"];
+    pinOptions(options);
+    const user = userEvent.setup();
+    renderDialog();
+    await screen.findByTestId("allowed-models");
+
+    await pickOption(user, "Reply time margin", "No increase");
+    await pickOption(user, "Agent's cost margin", "No increase");
+    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect([body.reply_latency_margin_pct, body.cost_margin_pct]).toEqual([
+      0, 0,
+    ]);
+  });
+
   it("disables Start when a traced agent may call no model, or the cost limit is not a price", async () => {
     const options = fixtureLaunchOptions("te-run-6");
     options.defaults.allowed_models = ["gpt-5-mini"];

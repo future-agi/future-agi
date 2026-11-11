@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Tab, Typography } from "@mui/material";
+import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -11,7 +11,7 @@ import RetryButton from "./RetryButton";
 import ShipButton from "./ShipButton";
 import TrialChart from "./TrialChart";
 import TrialsTable from "./TrialsTable";
-import { winnerOf } from "./fixRunView";
+import { headline, noSafeNumbers, winnerOf } from "./fixRunView";
 
 // The header actions of a finished fix: how it was decided, the winner's
 // changes, and Ship.
@@ -70,12 +70,44 @@ const TABS = [
   { id: "cost", label: "Cost" },
 ];
 
+// What the no-safe headline rests on, behind a toggle: each trial's rejecting check as
+// measured, and the engine's own summary word for word.
+function NoSafeNumbers({ fix }) {
+  const [open, setOpen] = useState(false);
+  const { trials, engineNote } = noSafeNumbers(fix);
+  if (!trials.length && !engineNote) return null;
+  const line = { typography: "s3", color: "text.secondary" };
+  return (
+    <Box sx={{ mt: 0.5 }}>
+      <Button size="small" onClick={() => setOpen((o) => !o)} sx={{ px: 0 }}>
+        {open ? "Hide the numbers" : "Show the numbers"}
+      </Button>
+      {open && (
+        <Stack spacing={0.5} sx={{ mt: 0.5 }} data-testid="no-safe-numbers">
+          {trials.map((t) => (
+            <Typography key={t.attempt} sx={line}>
+              {`Trial ${t.attempt} · ${t.label}: ${t.detail}`}
+            </Typography>
+          ))}
+          {engineNote && (
+            <Typography sx={line}>{`Engine's note: ${engineNote}`}</Typography>
+          )}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+NoSafeNumbers.propTypes = { fix: PropTypes.object.isRequired };
+
 // Screen 3: a finished fix. A ready fix leads with its verdict; any other
 // ending says why it ended, and nothing ships.
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
-  const ending = fix.failure?.message || fix.report?.summary;
+  const noSafe = fix.state === "no_improvement";
+  const ending = noSafe
+    ? headline(fix)
+    : fix.failure?.message || fix.report?.summary;
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
@@ -98,6 +130,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
               {ending}
             </Typography>
+            {noSafe && <NoSafeNumbers fix={fix} />}
           </Box>
         )
       )}

@@ -5,11 +5,12 @@ import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
-import { tierIcon } from "./fixRunView";
+import { checkIcon } from "./fixRunView";
 
-// One check of a verdict: its status, name and detail. A check that could not
-// measure reads skipped, which is said as "not verified"; one skipped because an
-// earlier check failed (`notRun`, from markNotRun) is said as "not run".
+// One check of a verdict: its label, status and detail (see describeChecks). A check
+// that ran but could not measure reads "Couldn't measure", with its own icon; one
+// skipped because an earlier check failed (`notRun`) says which check that was.
+
 export default function CheckLine({
   check,
   variant = "s3",
@@ -19,13 +20,20 @@ export default function CheckLine({
 }) {
   return (
     <Stack
+      data-check={
+        check.status === "skipped"
+          ? check.notRun
+            ? "not-run"
+            : "unmeasured"
+          : check.status
+      }
       direction="row"
       spacing={variant === "s2" ? 0.75 : 1}
       alignItems="center"
       sx={{ minWidth: 0, ...sx }}
     >
       <Iconify
-        icon={tierIcon(check.status)}
+        icon={checkIcon(check)}
         width={14}
         sx={{
           color: check.status === "failed" ? BUILD_TONES.red : "text.secondary",
@@ -41,7 +49,7 @@ export default function CheckLine({
           ...(nameWidth && { width: nameWidth }),
         }}
       >
-        {check.name}
+        {check.label || check.name}
       </Typography>
       {check.status === "skipped" && (
         <Typography
@@ -53,7 +61,9 @@ export default function CheckLine({
             flexShrink: 0,
           }}
         >
-          {check.notRun ? "not run" : "not verified"}
+          {check.notRun
+            ? `not run — an earlier check failed: ${check.notRunBecause}`
+            : "Couldn't measure"}
         </Typography>
       )}
       {/* A check that was not run has nothing to add beyond saying so. */}

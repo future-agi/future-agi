@@ -98,8 +98,11 @@ export const minuteSteps = (value, limits) =>
 const MARGIN_STEPS = [10, 25, 50, 100];
 const MARGIN_MAX = 1000;
 
-export const marginSteps = (value) =>
-  stepsWithin(MARGIN_STEPS, value, MARGIN_MAX);
+// 0 holds a candidate to the current version's reply time or spend: no increase.
+export const marginSteps = (value) => [
+  0,
+  ...stepsWithin(MARGIN_STEPS, value, MARGIN_MAX),
+];
 
 // The models the run's spans show the agent called: the lock a fix starts from.
 export const seesModels = (options) =>
@@ -110,7 +113,7 @@ export const isTraced = (options) =>
   seesModels(options) || options.defaults.agent_cost_metered;
 
 export const UNTRACED_NOTE =
-  "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will read as not verified.";
+  "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will read as Couldn't measure.";
 
 // Shown when the platform could not read the run's traces: the launch is refused
 // until it can, so the form does not call the agent untraced.
@@ -118,7 +121,7 @@ export const tracesUnreadable = (options) =>
   options.blocked?.code === "fix_traces_unreadable";
 
 export const NO_MODELS_NOTE =
-  "This agent's traces name no model, so the model lock will read as not verified. Its cost is still checked.";
+  "This agent's traces name no model, so the model lock will read as Couldn't measure. Its cost is still checked.";
 
 // The limit on the agent's spend per conversation, in US dollars: null when
 // left empty, NaN when it is not a number above 0.

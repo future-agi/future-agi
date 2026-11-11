@@ -89,6 +89,9 @@ const brokeText = (n) => (n ? String(n) : "none");
 
 export function headline(fix) {
   const winner = winnerOf(fix);
+  if (fix.state === "no_improvement") {
+    return noSafeHeadline(fix) || fix.report?.summary || null;
+  }
   if (fix.state !== "ready" || !winner || !fix.plan) {
     return fix.failure?.message || fix.report?.summary || null;
   }
@@ -139,28 +142,132 @@ export function checksLine(tiers = []) {
   const counted = tiers.filter((t) => t.status !== "skipped");
   const passed = counted.filter((t) => t.status === "passed").length;
   const line = `Checks · ${passed} of ${counted.length} passed`;
-  const unverified = tiers.length - counted.length;
-  if (!unverified || counted.some((t) => t.status === "failed")) return line;
-  return `${line} · ${unverified} not verified`;
+  const unmeasured = tiers.length - counted.length;
+  if (!unmeasured || counted.some((t) => t.status === "failed")) return line;
+  return `${line} · ${unmeasured} couldn't measure`;
 }
 
-// Each check with `notRun` set when it was skipped because an earlier one failed. The verdict
-// marks both kinds of skip the same way, so the order tells them apart, as in checksLine.
-export function markNotRun(tiers = []) {
-  return tiers.map((t, i) => ({
-    ...t,
-    notRun:
-      t.status === "skipped" &&
-      tiers.slice(0, i).some((earlier) => earlier.status === "failed"),
-  }));
+const CHECK_LABELS = {
+  static: "Static checks",
+  target: "Target cases",
+  "held-back": "Held-back set",
+  "must-pass": "Must-pass set",
+  repeats: "Repeat runs",
+  ceilings: "Cost and latency",
+};
+
+// A check's name as the page says it; the engine's ids are never shown. The model
+// lock reads as approved models once the fix allows more than one.
+export function checkLabel(name, request) {
+  if (name === "model-lock") {
+    return (request?.allowed_models?.length ?? 0) > 1
+      ? "Approved models"
+      : "Model unchanged";
+  }
+  if (CHECK_LABELS[name]) return CHECK_LABELS[name];
+  const words = String(name).replace(/[-_]+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Each check with its label, and `notRun` with the check that stopped it when it was
+// skipped because an earlier one failed. The verdict marks both kinds of skip the same
+// way, so the order tells them apart, as in checksLine.
+export function describeChecks(tiers = [], request = null) {
+  const failed = tiers.findIndex((t) => t.status === "failed");
+  return tiers.map((t, i) => {
+    const notRun = t.status === "skipped" && failed >= 0 && i > failed;
+    return {
+      ...t,
+      label: checkLabel(t.name, request),
+      notRun,
+      ...(notRun && {
+        notRunBecause: checkLabel(tiers[failed].name, request),
+      }),
+    };
+  });
 }
 
 // A rejected trial's checks with the one that rejected it first.
-export function rejectionChecks(tiers = []) {
-  const marked = markNotRun(tiers);
-  const rejecting = marked.findIndex((t) => t.status === "failed");
-  if (rejecting < 0) return marked;
-  return [marked[rejecting], ...marked.filter((_, i) => i !== rejecting)];
+export function rejectionChecks(tiers = [], request = null) {
+  const described = describeChecks(tiers, request);
+  const rejecting = described.findIndex((t) => t.status === "failed");
+  if (rejecting < 0) return described;
+  return [described[rejecting], ...described.filter((_, i) => i !== rejecting)];
+}
+
+// What stopped the trials, by the check that rejected them, for the no-safe headline:
+// `did` follows "both trials"; `missed` follows "neither trial" and `one` the only trial.
+const NO_SAFE_WHY = {
+  static: { did: "failed the static checks" },
+  target: {
+    missed: "improved the target cases",
+    one: "didn't improve the target cases",
+  },
+  "held-back": { did: "improved the target cases but not the held-back set" },
+  "must-pass": { did: "broke a must-pass case" },
+  repeats: {
+    missed: "held up over repeat runs",
+    one: "didn't hold up over repeat runs",
+  },
+  ceilings: { did: "went over the cost or latency limit" },
+  "model-lock": { did: "called a model outside the approved list" },
+};
+
+const whyClause = (name, count, request) => {
+  const why = NO_SAFE_WHY[name] || {
+    did: `failed the ${checkLabel(name, request).toLowerCase()} check`,
+  };
+  if (why.did) {
+    const who =
+      count === 1
+        ? "the only trial"
+        : count === 2
+          ? "both trials"
+          : `all ${count} trials`;
+    return `${who} ${why.did}`;
+  }
+  if (count === 1) return `the only trial ${why.one}`;
+  return `${count === 2 ? "neither trial" : "no trial"} ${why.missed}`;
+};
+
+const rejectedTrials = (fix) =>
+  (fix.candidates || [])
+    .filter((c) => c.outcome === "rejected")
+    .map((c) => ({
+      attempt: c.attempt,
+      check: (c.verdict?.tiers || []).find((t) => t.status === "failed"),
+    }))
+    .filter((r) => r.check)
+    .sort((a, b) => a.attempt - b.attempt);
+
+// One plain sentence from the trials' own verdicts: what stopped each one. No numbers;
+// those are in noSafeNumbers.
+export function noSafeHeadline(fix) {
+  const trials = rejectedTrials(fix);
+  if (!trials.length) return null;
+  const names = [...new Set(trials.map((t) => t.check.name))];
+  if (names.length === 1) {
+    return `No safe improvement: ${whyClause(names[0], trials.length, fix.request)}.`;
+  }
+  const each = trials
+    .map(
+      (t) => `Trial ${t.attempt} at ${checkLabel(t.check.name, fix.request)}`,
+    )
+    .join(", ");
+  return `No safe improvement: no trial passed every check (${each}).`;
+}
+
+// The numbers behind the no-safe headline: each trial's rejecting check as the engine
+// measured it, and the engine's own summary, word for word.
+export function noSafeNumbers(fix) {
+  return {
+    trials: rejectedTrials(fix).map((t) => ({
+      attempt: t.attempt,
+      label: checkLabel(t.check.name, fix.request),
+      detail: t.check.detail || "",
+    })),
+    engineNote: fix.report?.summary || "",
+  };
 }
 
 export const tierIcon = (status) =>
@@ -170,6 +277,13 @@ export const tierIcon = (status) =>
     pending: "solar:clock-circle-linear",
     skipped: "solar:minus-circle-linear",
   })[status] || "solar:question-circle-linear";
+
+// A check's icon. One that ran but could not measure has its own, apart from one that
+// was not run because an earlier check failed.
+export const checkIcon = (check) =>
+  check.status === "skipped" && !check.notRun
+    ? "solar:eye-closed-linear"
+    : tierIcon(check.status);
 
 // A trial still being scored has no target rate yet.
 export const hasTargetRate = (c) => Array.isArray(c.verdict?.target_pass_rate);
@@ -285,7 +399,7 @@ export function heldToRows(fix) {
   return [...rows, ...constraintRows(request)];
 }
 
-const NOT_TRACED = "not verified: agent not traced";
+const NOT_TRACED = "can't measure: the agent isn't traced";
 
 // The model lock and the ceilings set at launch. Without the agent's traces the lock and
 // the cost limit cannot be checked, so they say so rather than read as held.
