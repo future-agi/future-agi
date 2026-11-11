@@ -213,7 +213,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       </Box>
     </Box>
     {isContext && <Stack spacing={2} sx={{ flexShrink: 0 }}>
-      <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} readOnly={locked} />
+      <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} proposedLinks={contextControls.proposedLinks} readOnly={locked} />
       <HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
     </Stack>}
     {assistKind && !publishDraft && <Stack spacing={1.5}><Box><Button size="small" onClick={closeAssist}>Close assistance</Button></Box><AssistPanel skill={skill} draft={session} kind={assistKind} sourceRunId={sourceRunId} isDirty={session.dirty} onSave={session.flush} onApplied={session.reload} /></Stack>}

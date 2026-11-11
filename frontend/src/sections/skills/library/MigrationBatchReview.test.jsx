@@ -1,0 +1,94 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import MigrationBatchReview from './MigrationBatchReview';
+import { classifyMigrationItem, retainPlan } from './migration-batch';
+
+const digest = (c) => `sha256:${c.repeat(64)}`;
+const item = (key, extra = {}) => ({ key, name: key, sourceOrigin: 'origin', sourceProject: 'project', sourceResource: key, sourceRevision: 'v1',
+  sourceHubChanges: [], basisPayloadAvailable: false, expectedHeadVersion: null, expectedHeadDigest: null, fileCount: 1, totalBytes: 10, ...extra });
+const plan = (items, id = 'plan') => ({ id, fingerprint: digest('a'), expiresAt: '2099-01-01T00:00:00Z', items });
+const receipt = (key) => ({ resourceId: `resource-${key}`, draftRevision: 1, digest: digest('b'), decision: 'replace' });
+afterEach(cleanup);
+
+it('classifies only unambiguous items as defaults and keeps every exception explicit', () => {
+  expect(classifyMigrationItem(item('new')).kind).toBe('default');
+  expect(classifyMigrationItem(item('bad', { blocked: true, blockers: ['bin: file_not_text'] })).kind).toBe('excluded');
+  expect(classifyMigrationItem(item('mine', { hasDraft: true, diverged: true })).kind).toBe('held');
+  expect(classifyMigrationItem(item('none', { sourceHubChanges: undefined })).kind).toBe('held');
+  expect(classifyMigrationItem(item('both', { diverged: true, destinationId: 'd' })).kind).toBe('choice');
+});
+
+it('requires the blocked-member acknowledgment and rights before one decision imports and publishes the set', async () => {
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  const publish = vi.fn(async (input) => ({ resourceId: input.resourceId, version: 1, digest: input.digest }));
+  const create = vi.fn();
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two'), item('bad', { blocked: true })])]} onAccept={accept} onPublish={publish} onCreateContext={create} />);
+  const submit = screen.getByRole('button', { name: 'Import and publish 2 items' });
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights to copy all 2 items/ }));
+  expect(submit).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Leave out 1 blocked member/ }));
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  expect(accept.mock.calls.map(([input]) => input.itemKey)).toEqual(['one', 'two']);
+  expect(accept.mock.calls.every(([input]) => input.rightsConfirmed === true && input.mode === 'snapshot')).toBe(true);
+  // Publication is bound to the exact imported revision and digest.
+  expect(publish.mock.calls[0][0]).toEqual({ resourceId: 'resource-one', revision: 1, digest: digest('b') });
+  fireEvent.click(screen.getByRole('button', { name: 'Create agent context from these skills' }));
+  expect(create).toHaveBeenCalledWith([{ skillId: 'resource-one', version: 1 }, { skillId: 'resource-two', version: 1 }]);
+});
+
+it('settles a lost response by replaying the exact body and operation key once', async () => {
+  const accept = vi.fn().mockRejectedValueOnce(new Error('connection lost')).mockImplementation(async (input) => receipt(input.itemKey));
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={async (input) => ({ version: 1, resourceId: input.resourceId })} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import and publish 2 items' }));
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  expect(accept).toHaveBeenCalledTimes(3);
+  expect(accept.mock.calls[1]).toEqual(accept.mock.calls[0]);
+  expect(accept.mock.calls[2][1].idempotencyKey).not.toBe(accept.mock.calls[0][1].idempotencyKey);
+  expect(screen.getAllByText(/lost response settled by exact replay/)).toHaveLength(1);
+});
+
+it('never replays a definite rejection and retries the remaining items with their original keys', async () => {
+  const rejection = Object.assign(new Error('Accept the exact destination reviewed in this plan.'), { statusCode: 409 });
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  accept.mockImplementationOnce(async (input) => receipt(input.itemKey)).mockRejectedValueOnce(rejection);
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={async (input) => ({ version: 1, resourceId: input.resourceId })} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import and publish 2 items' }));
+  const retry = await screen.findByRole('button', { name: 'Retry 1 remaining with the same decisions' });
+  expect(accept).toHaveBeenCalledTimes(2);
+  fireEvent.click(retry);
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  expect(accept).toHaveBeenCalledTimes(3);
+  expect(accept.mock.calls[2]).toEqual(accept.mock.calls[1]);
+});
+
+it('blocks the set until each diverged item has an explicit keep or replace decision and holds personal drafts out', async () => {
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  const keep = vi.fn(async (input) => receipt(input.itemKey));
+  const preserve = vi.fn();
+  const diverged = item('both', { diverged: true, destinationId: 'd', expectedHeadVersion: 2, basisPayloadAvailable: true, sourceChanges: [], hubChanges: [] });
+  render(<MigrationBatchReview plans={[plan([diverged, item('other', { destinationId: 'o', expectedHeadVersion: 1 }), item('mine', { hasDraft: true, destinationId: 'm' })])]} onAccept={accept} onKeep={keep} onPublish={async (input) => ({ version: 2, resourceId: input.resourceId })} onPreserveDraft={preserve} />);
+  expect(screen.getByText('1 held item is not part of this decision. Resolve it, then preview again.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Preserve draft for mine' }));
+  expect(preserve).toHaveBeenCalledWith(expect.objectContaining({ key: 'mine' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  const submit = screen.getByRole('button', { name: 'Import and publish 2 items' });
+  expect(submit).toBeDisabled();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Decision for both' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Keep Hub content' }));
+  fireEvent.click(submit);
+  await waitFor(() => expect(keep).toHaveBeenCalledOnce());
+  expect(keep.mock.calls[0][0]).toMatchObject({ itemKey: 'both', expectedHeadVersion: 2, rightsConfirmed: true });
+  expect(accept.mock.calls.map(([input]) => input.itemKey)).toEqual(['other']);
+});
+
+it('reviews distinct sources together and replaces an older preview of the same source identity', () => {
+  const exchange = plan([item('one')], 'exchange');
+  const folder = plan([item('two')], 'folder');
+  const again = plan([item('one', { sourceRevision: 'v2' })], 'exchange-v2');
+  expect(retainPlan(retainPlan([], exchange), folder).map((p) => p.id)).toEqual(['exchange', 'folder']);
+  expect(retainPlan([exchange, folder], again).map((p) => p.id)).toEqual(['folder', 'exchange-v2']);
+});

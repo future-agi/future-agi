@@ -2,6 +2,7 @@ import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { idempotencyHeaders, skillV11Result, useSkillV11Mutation } from './testing';
 import { retainedPlanAcceptanceInput, retainedPlanKeepInput } from './r3-intake';
+import { isDefiniteRejection } from './operation-errors';
 
 const reviewPath = (plan_id) => apiPath('/model-hub/skills/intake/{plan_id}/review/', { plan_id });
 const changes = (comparison) => comparison?.files.map((file) => ({
@@ -63,5 +64,26 @@ export function useMigrationDecision() {
       migrationDecisionInput(input), { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } }));
     return { resourceId: result.resource_id, decision: result.decision, published: result.published,
       draftRevision: result.draft_revision, digest: result.digest, receiptId: `${input.planId}/${input.itemKey}` };
+  }, invalidate: () => [['migration']], invalidateLegacy: () => [['skills', 'list']] });
+}
+
+// Batch migration publication: one reviewed decision publishes each imported
+// draft as an unlabelled version bound to the exact imported revision and digest.
+// Publication has no idempotency key, so an unknown outcome is settled by reading
+// the published versions for that exact digest before one exact resend.
+const publishedWithDigest = async (resourceId, digest, config) => {
+  const page = skillV11Result(await axios.get(apiPath('/model-hub/skills/{skill_id}/versions/', { skill_id: resourceId }), config));
+  return (page.results || []).find((version) => version.digest === digest) || null;
+};
+export function useMigrationPublish() {
+  return useSkillV11Mutation({ send: async ({ resourceId, revision, digest }, config) => {
+    const body = { labels: [], acknowledge_warnings: false, revision, expected_digest: digest };
+    const post = async () => skillV11Result(await axios.post(apiPath('/model-hub/skills/{skill_id}/draft/publish/', { skill_id: resourceId }), body, config)).version;
+    let version;
+    try { version = await post(); } catch (error) {
+      if (isDefiniteRejection(error)) throw error;
+      version = await publishedWithDigest(resourceId, digest, config) || await post();
+    }
+    return { resourceId, version: version.number, digest: version.digest };
   }, invalidate: () => [['migration']], invalidateLegacy: () => [['skills', 'list']] });
 }

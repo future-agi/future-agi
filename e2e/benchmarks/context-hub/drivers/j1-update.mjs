@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { unzipSync } from 'fflate';
 import { digest, requireValue, sha256 } from '../../../lib/skills-r3/canonical.mjs';
 
-const filesDigest = files => `sha256:${sha256(JSON.stringify(files.map(file => [file.path, sha256(file.content)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)))}`;
+export const filesDigest = files => `sha256:${sha256(JSON.stringify(files.map(file => [file.path, sha256(file.content)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)))}`;
 
 /** Compare downloaded bytes AND mapping identity with an independently read
  * immutable version. A ZIP header or UI success toast is never an oracle. */
@@ -67,21 +67,21 @@ export async function performUpdate(stage, tools, state) {
     });
     await expect(async () => assert.deepEqual((await read(`${id}/draft/`, signal)).files, files)).toPass({ timeout: 60_000 });
   };
-  const preview = async page => {
-    await go(page, '/dashboard/skills', 'second-migration-library');
+  // Retained-migration preview in the import dialog. The exchange format is the
+  // preselected default; the owner opens the dialog unless already on the library.
+  const preview = async (page, { navigate }) => {
+    if (navigate) await go(page, '/dashboard/skills', 'second-migration-library');
     await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
     await click(page, 'tab', 'Retained migration');
-    await choose(page, 'Retained source format', 'Versioned Langfuse exchange JSON');
     await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-revision-two' }, () => page.getByLabel('Retained source files', { exact: true }).setInputFiles(input.update.exchange));
     const response = page.waitForResponse(res => res.url().endsWith('/intake/langfuse/preview/') && res.request().method() === 'POST');
     await click(page, 'button', 'Preview retained migration');
     const result = await response;
     assert.equal(result.status(), 200);
     const plan = await read(`intake/${(await result.json()).result.id}/`, signal);
-    await expect(page.getByRole('heading', { name: 'Review retained migration plan', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Review all items', exact: true })).toBeVisible();
     assert.deepEqual(plan.inventory.items.map(item => item.name).sort(), Object.keys(input.update.files).sort());
     for (const item of plan.inventory.items) assert.equal(item.destination_id, imported.find(member => member.name === item.name)?.result.resource_id);
-    await choose(page, 'Review item', row.name);
     return plan;
   };
   if (stage.id === 'second-import') {
@@ -90,15 +90,16 @@ export async function performUpdate(stage, tools, state) {
     await publish(page, id, 2);
     await edit(page, input.update.personal);
     ledger.fault('hub-divergence', 'published-hub-change-and-personal-draft');
-    state.plan = await preview(page);
+    state.plan = await preview(page, { navigate: true });
     const changed = state.plan.inventory.items.filter(item => item.migration.hub_diverged);
     assert.deepEqual(changed.map(item => item.destination_id), [id]);
     state.personal = await read(`${id}/draft/`, signal);
     assert.deepEqual(state.personal.files, input.update.personal);
-    await choose(page, 'Source update decision', 'Replace with reviewed source');
-    await expect(page.getByRole('button', { name: 'Import reviewed item as draft', exact: true })).toBeDisabled();
-    await expect(page.getByText('Source and Hub both changed. Replacement is not a semantic merge; review both differences.', { exact: true })).toBeVisible();
-    await page.screenshot({ path: resolve(output, 'shots', 'second-source-divergence.png') });
+    // The personal draft is an exception the batch cannot decide: it is held
+    // out of the reviewed set until it is explicitly preserved and suspended.
+    await expect(page.getByText('Your personal draft blocks replacement. Preserve it, then preview again.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Import and publish 1 item', exact: true })).toBeDisabled();
+    await page.screenshot({ path: resolve(output, 'shots', 'second-source-divergence.png'), fullPage: true });
     state.page = page;
     await receipt('api', { plan: state.plan, personal: state.personal });
     return true;
@@ -108,7 +109,7 @@ export async function performUpdate(stage, tools, state) {
     const page = state.page;
     const decision = { packet_sha256: digest(state.plan), preconditions_sha256: digest(state.personal) };
     await operator.recoveryDecision('preserve-before-source-switch', async () => {
-      await operator.transition('draft-preservation', () => click(page, 'button', 'Preserve draft'));
+      await operator.transition('draft-preservation', () => click(page, 'button', `Preserve draft for ${row.name}`));
       await expect(page.getByRole('heading', { name: 'Preserve your draft', exact: true })).toBeVisible();
       const download = page.waitForEvent('download');
       await click(page, 'button', 'Download unsent edits');
@@ -120,28 +121,35 @@ export async function performUpdate(stage, tools, state) {
       await click(page, 'button', 'Preserve and suspend draft');
       await expect(page).toHaveURL(/\/dashboard\/skills$/);
     }, decision);
-    const fresh = await preview(page);
+    // Suspension returns to the library, so the second preview needs no navigation.
+    const fresh = await preview(page, { navigate: false });
+    const names = fresh.inventory.items.map(item => item.name);
+    // The diverged item is an exception: the owner inspects Base/Source/Hub and
+    // chooses replacement explicitly; the unchanged-Hub item has the safe default.
+    await expect(page.getByText('Source and Hub both changed. Choose keep or replace; nothing is merged.', { exact: true })).toBeVisible();
+    await operator.review('base-source-hub-differences', names, [row.name], async () => {
+      await page.getByText('Inspect Base, Source and Hub differences', { exact: true }).click();
+      await expect(page.getByRole('table', { name: 'Retained migration items' }).getByText(/^SKILL\.md · /).first()).toBeVisible();
+    }, { packet_sha256: digest(fresh), preconditions_sha256: digest(state.personal) });
+    await choose(page, `Decision for ${row.name}`, 'Replace with reviewed source');
+    await operator.click(page.getByRole('checkbox', { name: /^I confirm my rights to copy all 2 items/ }), 'confirm-source-rights');
+    await ledger.measure({ dimension: 'A', primitive: 'approve', actor: 'owner', step: stage.id, phase: stage.phase, target: 'replace-and-publish-reviewed-set',
+      items: names, exceptionItems: [row.name], decision: { packet_sha256: digest(fresh), preconditions_sha256: digest(fresh.fingerprint) } }, async () => {
+      await page.getByRole('button', { name: 'Import and publish 2 items', exact: true }).click();
+      await expect(page.getByText('2 versions published without labels. Production was not changed.', { exact: true })).toBeVisible({ timeout: 120_000 });
+    });
+    const receipts = await read(`intake/${fresh.id}/receipts/?page_size=100`, signal);
+    assert.equal(receipts.count, fresh.inventory.items.length);
+    assert.equal(new Set(receipts.results.map(item => item.result.resource_id)).size, receipts.count);
     const updated = [];
     for (const item of fresh.inventory.items) {
-      await choose(page, 'Review item', item.name);
-      await choose(page, 'Source update decision', 'Replace with reviewed source');
-      await operator.click(page.getByRole('checkbox', { name: /I have reviewed source rights/ }), 'review-source-rights');
-      await operator.click(page.getByRole('checkbox', { name: /Apply this exact decision/ }), 'confirm-source-update');
-      const response = page.waitForResponse(res => res.url().endsWith(`/intake/${fresh.id}/accept/`) && res.request().method() === 'POST');
-      await click(page, 'button', 'Import reviewed item as draft');
-      assert.equal((await response).status(), 200);
-      await expect(page.getByText(/Decision recorded for this item/)).toBeVisible();
-      const draft = await read(`${item.destination_id}/draft/`, signal);
-      assert.deepEqual(draft.files, input.update.files[item.name]);
-      updated.push({ id: item.destination_id, name: item.name, draft });
+      const versions = await read(`${item.destination_id}/versions/`, signal);
+      assert.equal(versions.count, item.destination_id === id ? 3 : 2);
+      assert.equal(versions.results.find(version => version.number === versions.count).digest, filesDigest(input.update.files[item.name]));
+      assert.deepEqual(await read(`${item.destination_id}/labels/`, signal), []);
+      updated.push({ id: item.destination_id, name: item.name });
     }
-    const receipts = await read(`intake/${fresh.id}/receipts/?page_size=100`, signal);
-    assert.equal(receipts.count, updated.length);
-    assert.equal(new Set(receipts.results.map(item => item.result.resource_id)).size, updated.length);
-    for (const item of updated) {
-      await go(page, `/dashboard/skills/${item.id}/edit`, 'source-replacement-editor');
-      await publish(page, item.id, item.id === id ? 3 : 2);
-    }
+    await page.screenshot({ path: resolve(output, 'shots', 'second-source-published.png'), fullPage: true });
     state.updated = updated;
     state.fresh = fresh;
     state.receipts = receipts;
@@ -149,35 +157,41 @@ export async function performUpdate(stage, tools, state) {
     return true;
   }
   requireValue(state.updated?.length && state.downloaded, 'Reviewed update and preserved personal draft must precede export');
+  // One export of every linked skill's current version from the exact context,
+  // each nested archive byte-identical to its single-version export.
+  const contextId = tools.contextId();
+  requireValue(contextId, 'Published pilot context must precede export');
+  const page = await newPage();
+  await go(page, `/dashboard/skills/contexts/${contextId}?version=1`, 'exact-context-exit');
+  await click(page, 'tab', 'Use');
+  const download = page.waitForEvent('download');
+  await click(page, 'button', 'Export 14 linked skills with mapping receipts');
+  const bundlePath = resolve(output, 'migration-export.zip');
+  await (await download).saveAs(bundlePath);
+  const bundle = unzipSync(await readFile(bundlePath));
+  const summary = JSON.parse(Buffer.from(bundle['migration-export.json']).toString('utf8'));
+  assert.equal(summary.items.length, 14);
   const exports = [];
   for (const member of imported) {
-    const page = await newPage();
     const destination = member.result.resource_id;
     const wasUpdated = state.updated.some(item => item.id === destination);
     const number = destination === id ? 3 : wasUpdated ? 2 : 1;
     const expected = wasUpdated ? input.update.files[member.name] : input.files[member.name];
-    await operator.reconcile('export-destination-identity', () => go(page, `/dashboard/skills/${destination}?version=${number}`, 'view-exact-export-version'));
-    await click(page, 'button', `Prepare v${number} migration export`);
-    await expect(page.getByRole('button', { name: 'Download exact ZIP', exact: true })).toBeVisible();
-    const archiveDownload = page.waitForEvent('download');
-    await click(page, 'button', 'Download exact ZIP');
-    const archivePath = resolve(output, `export-${exports.length}.zip`);
-    await (await archiveDownload).saveAs(archivePath);
-    const mappingDownload = page.waitForEvent('download');
-    await click(page, 'button', 'Download mapping receipt');
-    const mappingPath = resolve(output, `export-${exports.length}-mapping.json`);
-    await (await mappingDownload).saveAs(mappingPath);
-    const mapping = JSON.parse(await readFile(mappingPath, 'utf8'));
+    const entry = summary.items.find(item => item.resource_id === destination);
+    requireValue(entry && entry.version === number, 'Export must contain the current version of every linked skill');
+    const archive = Buffer.from(bundle[entry.archive]);
+    const mapping = JSON.parse(Buffer.from(bundle[entry.mapping]).toString('utf8'));
+    await writeFile(resolve(output, `export-${exports.length}.zip`), archive, { mode: 0o600 });
+    await writeFile(resolve(output, `export-${exports.length}-mapping.json`), JSON.stringify(mapping, null, 2), { mode: 0o600 });
     const version = await read(`${destination}/versions/${number}/`, signal);
     const original = plans.flatMap(plan => plan.plan.inventory.items).find(item => item.name === member.name);
     requireValue(original, 'Original retained source identity must be available');
-    const manifest = assertMigrationExport({ archive: await readFile(archivePath), mapping, version, row: member, files: expected,
+    const manifest = assertMigrationExport({ archive, mapping, version, row: member, files: expected,
       source: { relation: 'identical', source_revision: wasUpdated ? 'v2' : 'v1' } });
-    // Cross-check initial/updated source identity against the original plan, not
-    // a name-derived replacement. The v2 preview separately binds destinations.
     exports.push({ destination, version, mapping, manifest });
-    await page.close();
   }
+  state.exitPage = page;
+  await page.screenshot({ path: resolve(output, 'shots', 'pilot-export.png'), fullPage: true });
   state.exports = exports;
   await record('roundtrip-manifest', exports.flatMap(item => item.manifest));
   await receipt('filesystem', exports);

@@ -8,9 +8,15 @@ import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadRevie
 // Palette/depth/surfaces: existing neutral/divider and uncertainty roles, flat groups.
 // Typography/spacing: m3/s1/s3 and compact 12px spacing; no dependency graph.
 const selectorLabel = (selector) => selector?.version ? `Pin v${selector.version}` : `Follow ${selector?.label}`;
-function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPreview, onApply, readOnly = false }) {
+// Proposals only seed an empty draft's unaccepted set; nothing is applied until
+// the owner previews the exact resolution and explicitly accepts it.
+const seedLinks = (accepted, proposed) => (accepted.length || !Array.isArray(proposed) ? accepted
+  : proposed.filter((link, index) => typeof link?.skillId === "string" && Number.isSafeInteger(link.version) && link.version > 0 && proposed.findIndex((other) => other.skillId === link.skillId) === index)
+    .slice(0, 20).map((link) => ({ skillId: link.skillId, selector: { version: link.version } })));
+function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPreview, onApply, proposedLinks, readOnly = false }) {
   const accepted = session.contextSpec?.links || [];
-  const [links, setLinks] = useState(accepted);
+  const [links, setLinks] = useState(() => seedLinks(accepted, proposedLinks));
+  const proposed = !accepted.length && links.length > 0 && Array.isArray(proposedLinks);
   const [refresh, setRefresh] = useState([]);
   const [selected, setSelected] = useState("");
   const [policy, setPolicy] = useState("label");
@@ -49,6 +55,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setLinks(result.contextSpec.links); setRefresh([]); invalidate(); } }}>Retry dependency update</Button>}
     {!links.length && <Typography variant="s3">No linked skills. AGENTS.md remains standing context.</Typography>}
+    {proposed && !readOnly && <Alert severity="info">{links.length} skills from your migration are proposed, each pinned to its published version. Preview the dependency changes and accept them explicitly.</Alert>}
     {links.map((link) => {
       const included = lock.find((entry) => entry.skillId === link.skillId);
       const skill = availableSkills.find((entry) => entry.id === link.skillId);
@@ -87,6 +94,6 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
     </>}
   </Stack>;
 }
-Links.propTypes = { scopeKey: PropTypes.string.isRequired, session: PropTypes.object.isRequired, availableSkills: PropTypes.array, upstream: PropTypes.object, onPreview: PropTypes.func, onApply: PropTypes.func, readOnly: PropTypes.bool };
+Links.propTypes = { proposedLinks: PropTypes.array, scopeKey: PropTypes.string.isRequired, session: PropTypes.object.isRequired, availableSkills: PropTypes.array, upstream: PropTypes.object, onPreview: PropTypes.func, onApply: PropTypes.func, readOnly: PropTypes.bool };
 export default function ContextLinksPanel(props) { return <Links key={`${props.scopeKey}:${JSON.stringify(props.session.contextSpec?.links)}:${JSON.stringify(props.session.resolvedLock)}`} {...props} />; }
 ContextLinksPanel.propTypes = Links.propTypes;

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Stack } from '@mui/material';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { contextAuthoringReady, useContexts, useCreateContext, useContextDetail, useContextDraft, useStartContextDraft, useSaveContextDraft, useDiscardContextDraft, usePreviewContextDependencies, useApplyContextDependencies } from 'src/api/skills/context-authoring';
@@ -20,9 +20,10 @@ function Library({ scopeKey, state }) {
   const query = useContexts(filters);
   const create = useCreateContext();
   const navigate = useNavigate();
+  const proposedLinks = useLocation().state?.proposedLinks;
   return <ContextLibraryView scopeKey={scopeKey} query={{ ...query, scopeKey }} filters={filters} onFilterChange={setFilters} state={state}
     onSkills={() => navigate(paths.dashboard.skills.root)} onOpen={(context) => navigate(paths.dashboard.skills.contextDetail(context.id))}
-    importActions={{ onCreate: (input, { idempotencyKey }) => create.mutateAsync({ ...input, idempotencyKey }), onCreated: (receipt) => { if (receipt.contextId) navigate(paths.dashboard.skills.contextEdit(receipt.contextId)); } }} />;
+    importActions={{ proposedLinks: Array.isArray(proposedLinks) ? proposedLinks : undefined, onCreate: (input, { idempotencyKey }) => create.mutateAsync({ ...input, idempotencyKey }), onCreated: (receipt) => { if (receipt.contextId) navigate(paths.dashboard.skills.contextEdit(receipt.contextId), Array.isArray(proposedLinks) ? { state: { proposedLinks } } : undefined); } }} />;
 }
 Library.propTypes = { scopeKey: PropTypes.string.isRequired, state: PropTypes.string };
 
@@ -48,6 +49,7 @@ function Editor({ scopeKey, contextId }) {
   const [switchDraft, setSwitchDraft] = useState(null);
   const operation = useAuthoringOperation(scopeKey);
   const [params] = useSearchParams();
+  const proposedLinks = useLocation().state?.proposedLinks;
   const from = params.get('from');
   const origin = from === null ? null : /^[1-9]\d*$/.test(from) && Number.isSafeInteger(Number(from)) ? Number(from) : undefined;
   // Initialization alone owns latching. Background query refetches cannot replace
@@ -80,6 +82,7 @@ function Editor({ scopeKey, contextId }) {
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
       availableSkills: skills.isError ? [] : skills.data || [],
+      proposedLinks: Array.isArray(proposedLinks) ? proposedLinks : undefined,
       previewDependencies: previewDependencies.mutateAsync,
       applyDependencies: (input, options) => applyDependencies.mutateAsync({ ...input, ...options }),
       previewHead: contextReviewReady() ? previewHead.mutateAsync : undefined,
