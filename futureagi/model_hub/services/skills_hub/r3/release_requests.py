@@ -477,6 +477,14 @@ def submit_release_request(
             "External decisions must be attributed to their recorder.",
             400,
         )
+    # Close the author's stale requests first so the fresh request is the newest row in every inbox.
+    _supersede_stale_requests(
+        principal=principal,
+        skill=skill,
+        keep_id=request_id,
+        candidate_id=packet["candidate_version_id"],
+        label=actual["transition"]["label"],
+    )
     request: HubSkillReleaseRequest | None
     if request_id is None:
         if revision != 0:
@@ -517,13 +525,6 @@ def submit_release_request(
         HubSkillReleaseRecipient.objects.get_or_create(
             request=request, recipient_id=user_id, defaults=_scope(principal)
         )
-    _supersede_stale_requests(
-        principal=principal,
-        skill=skill,
-        keep=request,
-        candidate_id=packet["candidate_version_id"],
-        label=actual["transition"]["label"],
-    )
     return _receipt(
         lookup,
         digest,
@@ -547,7 +548,7 @@ def _supersede_stale_requests(
     *,
     principal: SkillPrincipal,
     skill: HubSkill,
-    keep: HubSkillReleaseRequest,
+    keep_id: UUID | None,
     candidate_id: object,
     label: str,
 ) -> None:
@@ -568,7 +569,7 @@ def _supersede_stale_requests(
             author_id=principal.user_id,
             status__in=("pending", "approved"),
         )
-        .exclude(pk=keep.pk)
+        .exclude(pk=keep_id)
     ):
         packet = other.hub_skill_packets.filter(revision=other.revision).first()
         if (
