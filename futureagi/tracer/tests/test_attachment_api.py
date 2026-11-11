@@ -13,7 +13,7 @@ class (SDK design 0.5 / BR-6).
 
 import io
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -467,6 +467,85 @@ def test_initialize_issues_capability_and_renews_on_replay(api):
     assert_error(post(api, f"{base(api)}/uploads", body, capability_as_identity), 401)
 
 
+def travel(monkeypatch, seconds):
+    """Moves ``django.utils.timezone.now`` forward; JWT checks use wall time."""
+    start = timezone.now()
+    monkeypatch.setattr(timezone, "now", lambda: start + timedelta(seconds=seconds))
+
+
+def test_expired_capability_is_renewed_and_the_upload_finishes(api, monkeypatch):
+    """T-RN-05/T-RN-07: 401 after capability expiry -> one replay -> fresh one."""
+    reply, body, _, headers = initialize(api)
+    first = ok(reply, 201, "UploadResponse")
+    row = AttachmentUpload.objects.get(pk=first["upload_id"])
+    # The job outlives its first 300 s capability.
+    assert row.expires_at > datetime.fromisoformat(first["expires_at"])
+    travel(monkeypatch, 301)
+    assert_error(put_content(api, first), 401, "expired")
+    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    same = ("upload_id", "attachment_id", "occurrence_id", "reserved_bytes")
+    assert {k: renewed[k] for k in same} == {k: first[k] for k in same}
+    assert renewed["write_capability"] != first["write_capability"]
+    assert renewed["expires_at"] > first["expires_at"]
+    # The old capability stays dead; the renewed one carries the transfer.
+    assert_error(put_content(api, first), 401, "expired")
+    ok(put_content(api, renewed), 200, "StatusResponse")
+    assert ok(complete(api, renewed), 202, "StatusResponse")["state"] == "validating"
+    status = api.client.get(
+        f"{base(api)}/uploads/{renewed['upload_id']}/status",
+        HTTP_AUTHORIZATION=f"Bearer {renewed['write_capability']}",
+    )
+    assert ok(status, 200, "StatusResponse")["state"] == "validating"
+    assert AttachmentUpload.objects.filter(scope=api.scope).count() == 1
+
+
+def test_expired_capability_upload_can_still_be_aborted(api, monkeypatch):
+    """A stuck pending segment is renewed, aborted, and its index is reused."""
+    reply, session_body = bootstrap(api)
+    ok(reply, 200, "BootstrapResponse")
+    recording_id = str(uuid.uuid4())
+    reply, body, _, headers = initialize(
+        api, session_body=session_body, recording_id=recording_id, segment_index=0
+    )
+    first = ok(reply, 201, "UploadResponse")
+    travel(monkeypatch, 301)
+    assert_error(complete(api, first, path="abort"), 401, "expired")
+    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    aborted = ok(complete(api, renewed, path="abort"), 200, "StatusResponse")
+    assert aborted["state"] == "deleted"
+    assert AttachmentUpload.objects.get(pk=first["upload_id"]).state == "deleted"
+    # BR-4: the segment index is free for a new occurrence of the recording.
+    again, _, _, _ = initialize(
+        api, session_body=session_body, recording_id=recording_id, segment_index=0
+    )
+    ok(again, 201, "UploadResponse")
+    # A settled job is never renewed again.
+    assert_error(post(api, f"{base(api)}/uploads", body, headers), 409, "conflict")
+
+
+def test_renewal_stops_at_the_upload_horizon(api, monkeypatch):
+    reply, body, _, headers = initialize(api)
+    first = ok(reply, 201, "UploadResponse")
+    travel(monkeypatch, 301)
+    # Session still live; only the job's own lifetime has passed.
+    AttachmentUpload.objects.filter(pk=first["upload_id"]).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert_error(post(api, f"{base(api)}/uploads", body, headers), 409, "expired")
+    assert AttachmentUpload.objects.get(pk=first["upload_id"]).state == (
+        "pending_upload"
+    )
+
+
+def test_renewed_capability_never_outlives_the_upload_horizon(api):
+    reply, body, _, headers = initialize(api)
+    first = ok(reply, 201, "UploadResponse")
+    horizon = timezone.now() + timedelta(seconds=30)
+    AttachmentUpload.objects.filter(pk=first["upload_id"]).update(expires_at=horizon)
+    renewed = ok(post(api, f"{base(api)}/uploads", body, headers), 201, "UploadResponse")
+    assert datetime.fromisoformat(renewed["expires_at"]) == horizon
+
+
 @pytest.mark.parametrize(
     "scope_change,overrides,status,code",
     [
@@ -565,6 +644,83 @@ def test_tenant_and_role_isolation_on_writes(api):
     )
     reply, _ = bootstrap(api, token=issue_tokens(viewer)["access"])
     assert_error(reply, 403, "credential_scope_unsupported")
+
+
+def viewer_token(a):
+    viewer = User.objects.create_user(
+        email=f"viewer-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Viewer",
+        organization=a.project.organization,
+        organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+    )
+    member(
+        viewer,
+        a.project.organization,
+        a.project.workspace,
+        role=OrganizationRoles.MEMBER_VIEW_ONLY,
+    )
+    assert not viewer.can_write_to_workspace(a.project.workspace)
+    return issue_tokens(viewer)["access"]
+
+
+def test_read_only_bootstrap_creates_no_rows(api):
+    token = viewer_token(api)
+    projects = Project.no_workspace_objects.count()
+    scopes = AttachmentScope.objects.count()
+    # A new project name: refused before ingestion's project creation runs.
+    name = f"viewer-made-{uuid.uuid4().hex[:6]}"
+    reply, _ = bootstrap(api, token=token, project_name=name)
+    assert_error(reply, 403, "credential_scope_unsupported")
+    # An existing project without an attachment scope: no scope row either.
+    bare = Project.no_workspace_objects.create(
+        name=f"bare-{uuid.uuid4().hex[:6]}",
+        trace_type=api.project.trace_type,
+        organization=api.project.organization,
+        workspace=api.project.workspace,
+        model_type=api.project.model_type,
+    )
+    reply, _ = bootstrap(api, token=token, project_name=bare.name)
+    assert_error(reply, 403, "credential_scope_unsupported")
+    assert Project.no_workspace_objects.count() == projects + 1  # only ``bare``
+    assert not Project.no_workspace_objects.filter(name=name).exists()
+    assert AttachmentScope.objects.count() == scopes
+    assert not CaptureSession.objects.exists()
+
+
+def test_ungranted_ingest_key_bootstrap_creates_no_rows(api):
+    ingest = OrgApiKey.no_workspace_objects.create(
+        type="ingest",
+        organization_id=api.scope.organization_id,
+        workspace_id=api.scope.workspace_id,
+        simulation_agent_id=uuid.uuid4(),
+        api_key=uuid.uuid4().hex,
+        secret_key=uuid.uuid4().hex,
+    )
+    name = f"ingest-made-{uuid.uuid4().hex[:6]}"
+    body = {
+        "schema_versions": [1],
+        "project_name": name,
+        "project_type": api.project.trace_type,
+        "capture_session_id": str(uuid.uuid4()),
+        "correlation_nonce": str(uuid.uuid4()),
+    }
+    headers = {"HTTP_X_API_KEY": ingest.api_key, "HTTP_X_SECRET_KEY": ingest.secret_key}
+    reply = post(api, "/tracer/v1/attachment-sessions", body, {**headers, **key()})
+    assert_error(reply, 403, "credential_scope_unsupported")
+    assert not Project.no_workspace_objects.filter(name=name).exists()
+    assert not AttachmentScope.objects.filter(project__name=name).exists()
+
+
+def test_writer_bootstrap_of_a_new_name_creates_a_disabled_scope(api):
+    """Positive control: an eligible writer still gets ingestion's project."""
+    name = f"writer-made-{uuid.uuid4().hex[:6]}"
+    reply, _ = bootstrap(api, project_name=name)
+    assert_error(reply, 403, "policy_denied")
+    project = Project.no_workspace_objects.get(name=name)
+    scope = AttachmentScope.objects.get(project=project)
+    assert scope.enabled is False
+    assert not CaptureSession.objects.filter(scope=scope).exists()
 
 
 def test_ingest_key_needs_explicit_grant(api):

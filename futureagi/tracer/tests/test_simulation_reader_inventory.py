@@ -3082,8 +3082,9 @@ ROW_TYPES = {
     "model_hub.AnnotationQueue.project": USER_MADE,
     "model_hub.AnnotationsLabels.project": USER_MADE,
     "prism.AgentccProject.tracer_project": USER_MADE,
-    # Only the attachment session bootstrap makes one, after an explicit owner
-    # opt-in, and it refuses the reserved simulation project names.
+    # Only the attachment session bootstrap makes one: a disabled row
+    # (enabled=False), for a writer allowed to write to the workspace, never
+    # for a read-only member. It refuses the reserved simulation project names.
     "tracer.AttachmentScope.project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,

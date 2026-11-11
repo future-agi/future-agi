@@ -137,15 +137,23 @@ def upload_body(scope, current, **overrides):
 
 
 def initialized(setup, *, current=None, key=None, **overrides):
-    """Returns (upload, write capability, writer, {"body", "key", "session"})."""
+    """Returns (upload, write capability, writer, {"body", "key", "session",
+    "expires_at"}); ``expires_at`` is the capability's, not the upload's."""
     scope, writer = setup
     scope.refresh_from_db()
     if current is None:
         current, _ = session(setup)
     body = upload_body(scope, current, **overrides)
     key = key or f"up-{uuid.UUID(body['occurrence_id']).hex}"
-    upload, token, _ = uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
-    return upload, token, writer, {"body": body, "key": key, "session": current}
+    upload, token, expires_at = uploads.initialize(
+        writer, scope_id=scope.id, body=body, key=key
+    )
+    return (
+        upload,
+        token,
+        writer,
+        {"body": body, "key": key, "session": current, "expires_at": expires_at},
+    )
 
 
 @pytest.mark.parametrize(
@@ -460,7 +468,7 @@ def test_upload_idempotency_and_conflict(setup):
         writer, scope_id=scope.id, body=args["body"], key=args["key"]
     )
     assert first.id == second.id and renewed != token
-    assert expires_at >= first.expires_at
+    assert expires_at >= args["expires_at"]
     assert UploadReservation.objects.count() == 1
     broker.authorize(renewed, operation="status", scope_id=scope.id, upload_id=first.id)
     with pytest.raises(AttachmentError, match="idempotency_conflict"):
@@ -473,6 +481,29 @@ def test_upload_idempotency_and_conflict(setup):
     # A different key cannot claim the same occurrence.
     with pytest.raises(AttachmentError, match="idempotency_conflict"):
         uploads.initialize(writer, scope_id=scope.id, body=args["body"], key="up-other")
+
+
+def test_upload_lifetime_is_separate_from_its_capability(setup):
+    """BR-1 after expiry needs a job that outlives its 300 s capability."""
+    upload, _, _, args = initialized(setup)
+    reservation = UploadReservation.objects.get(upload=upload)
+    capability_expiry = args["expires_at"]
+    assert upload.expires_at == reservation.expires_at
+    assert capability_expiry < upload.expires_at <= upload.occurrence.expires_at
+    assert abs(
+        (capability_expiry - timezone.now()).total_seconds() - broker.CAPABILITY_SECONDS
+    ) < 5
+    assert abs(
+        (upload.expires_at - timezone.now()).total_seconds() - uploads.UPLOAD_SECONDS
+    ) < 5
+    # Renewal mints a capability but never moves the job or its reservation.
+    scope, writer = setup
+    _, _, renewed = uploads.initialize(
+        writer, scope_id=scope.id, body=args["body"], key=args["key"]
+    )
+    reservation.refresh_from_db()
+    upload.refresh_from_db()
+    assert renewed < upload.expires_at == reservation.expires_at
 
 
 @pytest.mark.parametrize(

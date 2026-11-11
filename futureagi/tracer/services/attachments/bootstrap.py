@@ -90,6 +90,16 @@ def check_writer(writer, scope):
         deleted=False,
     ).exists():
         raise AttachmentError("not_found", 404)
+    _check_identity(writer, scope.workspace, scope)
+
+
+def _check_identity(writer, workspace, scope=None):
+    """Write eligibility of the authenticated identity for ``workspace``.
+
+    ``scope`` is None before the project has an attachment scope. A restricted
+    key's grant names a scope, so without one it is refused here; that keeps a
+    read-only member or an ungranted key from creating any row (``resolve_scope``).
+    """
     if writer.kind == "api_key":
         key = OrgApiKey.no_workspace_objects.filter(
             pk=writer.id,
@@ -103,7 +113,9 @@ def check_writer(writer, scope):
             raise AttachmentError("credential_scope_unsupported", 403)
         if key.type in {"ingest", "coding_agent"}:
             grant = (
-                AttachmentWriteGrant.objects.filter(
+                None
+                if scope is None
+                else AttachmentWriteGrant.objects.filter(
                     scope=scope,
                     api_key=key,
                     enabled=True,
@@ -115,27 +127,27 @@ def check_writer(writer, scope):
             if (
                 grant is None
                 or not grant.granted_by.is_active
-                or not grant.granted_by.can_write_to_workspace(scope.workspace)
+                or not grant.granted_by.can_write_to_workspace(workspace)
             ):
                 raise AttachmentError("credential_scope_unsupported", 403)
             if key.type == "coding_agent" and (
                 not key.minted_by
                 or not key.minted_by.is_active
-                or not key.minted_by.can_write_to_workspace(scope.workspace)
+                or not key.minted_by.can_write_to_workspace(workspace)
             ):
                 raise AttachmentError("credential_scope_unsupported", 403)
         elif key.type == "user":
             if (
                 not key.user
                 or not key.user.is_active
-                or not key.user.can_write_to_workspace(scope.workspace)
+                or not key.user.can_write_to_workspace(workspace)
             ):
                 raise AttachmentError("permission_denied", 403)
         elif key.type != "system":
             raise AttachmentError("credential_scope_unsupported", 403)
     elif writer.kind == "user":
         user = User.objects.filter(pk=writer.id, is_active=True).first()
-        if user is None or not user.can_write_to_workspace(scope.workspace):
+        if user is None or not user.can_write_to_workspace(workspace):
             raise AttachmentError("permission_denied", 403)
     else:
         raise AttachmentError("credential_scope_unsupported", 403)
@@ -169,7 +181,9 @@ def resolve_scope(writer, *, project_name, project_type):
     The writer's workspace was resolved by authentication: an invalid explicit
     workspace never falls back to a default. ``project_type`` is checked before
     ingestion's helper, which would otherwise coerce unknown types to experiment.
-    A missing project is created exactly as an OTLP export would create it.
+    A missing project is created exactly as an OTLP export would create it, and
+    a missing scope as a disabled row, but only after the writer is shown to be
+    eligible to write here. A refused writer leaves no Project or scope row.
     """
     from tracer.services.simulation_project import agent_id_in_simulation_project_name
     from tracer.utils.otel import get_or_create_project
@@ -195,33 +209,45 @@ def resolve_scope(writer, *, project_name, project_type):
         "trace_type": project_type,
     }
     project = Project.no_workspace_objects.filter(**lookup, deleted=False).first()
-    if project is None:
-        if Project.no_workspace_objects.filter(**lookup).exists():
-            # A deleted project with this identity is never adopted or revived.
-            raise AttachmentError("scope_unresolved", 404)
-        creator = _creator_user_id(writer)
-        if creator is None:
-            raise AttachmentError("scope_unresolved", 404)
-        try:
-            project = get_or_create_project(
-                project_name,
-                str(writer.organization_id),
-                project_type,
-                str(creator),
-                workspace_id=str(writer.workspace_id),
-            )
-        except Exception:
-            raise AttachmentError("scope_unresolved", 404) from None
-        if project is None or project.deleted:
-            raise AttachmentError("scope_unresolved", 404)
-    scope, _ = AttachmentScope.objects.get_or_create(
-        project=project,
-        defaults={
-            "organization_id": writer.organization_id,
-            "workspace_id": writer.workspace_id,
-        },
+    if project is None and Project.no_workspace_objects.filter(**lookup).exists():
+        # A deleted project with this identity is never adopted or revived.
+        raise AttachmentError("scope_unresolved", 404)
+    scope = (
+        AttachmentScope.objects.filter(project=project).first()
+        if project is not None
+        else None
     )
-    check_writer(writer, scope)
+    if scope is not None:
+        check_writer(writer, scope)
+        return scope
+    # Nothing is created for a writer that may not write here.
+    _check_identity(writer, workspace)
+    with transaction.atomic():
+        # One unit: a later denial rolls back the project and the scope row.
+        if project is None:
+            creator = _creator_user_id(writer)
+            if creator is None:
+                raise AttachmentError("scope_unresolved", 404)
+            try:
+                project = get_or_create_project(
+                    project_name,
+                    str(writer.organization_id),
+                    project_type,
+                    str(creator),
+                    workspace_id=str(writer.workspace_id),
+                )
+            except Exception:
+                raise AttachmentError("scope_unresolved", 404) from None
+            if project is None or project.deleted:
+                raise AttachmentError("scope_unresolved", 404)
+        scope, _ = AttachmentScope.objects.get_or_create(
+            project=project,
+            defaults={
+                "organization_id": writer.organization_id,
+                "workspace_id": writer.workspace_id,
+            },
+        )
+        check_writer(writer, scope)
     return scope
 
 

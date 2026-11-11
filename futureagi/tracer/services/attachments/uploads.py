@@ -8,7 +8,10 @@ service. Completion queues validation and cannot make any occurrence ready.
 Backend requirements implemented here (SDK design section 11):
 - BR-1: replaying ``POST .../uploads`` with the same key and identical body
   for a live pending upload returns the same identifiers, the remaining
-  reservation and a freshly minted capability with a later expiry.
+  reservation and a freshly minted capability with a later expiry. The upload
+  job has its own fixed lifetime (``UPLOAD_SECONDS`` from admission), separate
+  from its 300 s capabilities, so a capability that expired mid-transfer can be
+  renewed (SDK design 3.2(b)) until the job's own horizon.
 - BR-3: ``PUT .../content`` may be replayed in full until ``complete``. A
   partial transfer is discarded. After a snapshot is persisted, a byte-identical
   replay succeeds and any other body conflicts (409).
@@ -58,6 +61,10 @@ from tracer.services.attachments.contract import (
 CHUNK_BYTES = 256 * 1024
 MAX_UPLOAD_BYTES = LIMITS["max_upload_bytes"]
 TRANSFER_SECONDS = LIMITS["transfer_timeout_seconds"]
+# Lifetime of one upload job and its reservation, fixed at admission and never
+# extended. Capabilities are CAPABILITY_SECONDS slices of it. The SDK renews at
+# most 3 times per upload (SDK design 3.2), so this outlives its useful range.
+UPLOAD_SECONDS = 30 * 60
 LIVE_STATES = (
     AttachmentState.PENDING,
     AttachmentState.VALIDATING,
@@ -128,25 +135,28 @@ def _check_generation(scope, body):
 
 
 def _renew(upload, session):
-    """BR-1: same job, same reservation, fresh capability and later expiry."""
+    """BR-1: same job, same reservation, fresh capability and later expiry.
+
+    Works whether or not the previous capability has expired: the job stays
+    renewable while it is pending, its reservation is unsettled and neither the
+    occurrence nor the job's own horizon has passed. The horizon is never moved.
+    """
     if upload.state != AttachmentState.PENDING:
         # UploadResponse.state is pending_upload by contract; a completed job is
         # not re-issued. Its existing capability stays valid until it expires.
         raise AttachmentError("idempotency_conflict", 409)
     occurrence = upload.occurrence
+    now = timezone.now()
     if (
         occurrence.deleted_at
-        or occurrence.expires_at <= timezone.now()
-        or upload.expires_at <= timezone.now()
+        or occurrence.expires_at <= now
+        or upload.expires_at <= now
+        or not UploadReservation.objects.filter(
+            upload=upload, scope_id=upload.scope_id, settled_at__isnull=True
+        ).exists()
     ):
         raise AttachmentError("expired", 409)
-    expires_at = max(_capability_expiry(session), upload.expires_at)
-    expires_at = max(expires_at, timezone.now() + timedelta(microseconds=1))
-    upload.expires_at = expires_at
-    upload.save(update_fields=["expires_at"])
-    UploadReservation.objects.filter(
-        upload=upload, scope_id=upload.scope_id, settled_at__isnull=True
-    ).update(expires_at=expires_at)
+    expires_at = min(_capability_expiry(session), upload.expires_at)
     return upload, capability(session, upload, expires_at=expires_at), expires_at
 
 
@@ -238,7 +248,9 @@ def initialize(writer, *, scope_id, body, key):
             "deletion_generation": scope.deletion_generation,
         }
         now = timezone.now()
-        expiry = _capability_expiry(session)
+        occurrence_expiry = now + timedelta(hours=24)
+        horizon = min(occurrence_expiry, now + timedelta(seconds=UPLOAD_SECONDS))
+        expiry = min(_capability_expiry(session), horizon)
         try:
             with transaction.atomic():
                 attachment = Attachment.objects.create(
@@ -258,7 +270,7 @@ def initialize(writer, *, scope_id, body, key):
                     direction=body["direction"],
                     purpose=body.get("purpose", ""),
                     recording=recording,
-                    expires_at=now + timedelta(hours=24),
+                    expires_at=occurrence_expiry,
                 )
                 upload = AttachmentUpload.objects.create(
                     **common,
@@ -271,7 +283,7 @@ def initialize(writer, *, scope_id, body, key):
                     mime_type=body["mime_type"],
                     recording=recording,
                     segment_index=body.get("segment_index"),
-                    expires_at=expiry,
+                    expires_at=horizon,
                 )
         except IntegrityError:
             raise AttachmentError("idempotency_conflict", 409) from None
@@ -280,7 +292,7 @@ def initialize(writer, *, scope_id, body, key):
             upload=upload,
             reserved_bytes=expected_bytes,
             decoded_bytes=MAX_UPLOAD_BYTES,
-            expires_at=expiry,
+            expires_at=horizon,
         )
         for row in budgets:
             row.active_transfers += 1
