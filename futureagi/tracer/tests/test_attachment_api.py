@@ -1038,3 +1038,43 @@ def test_routes_are_dark_when_disabled(api, settings):
             f"/tracer/v1/attachment-media/{uuid.uuid4()}/{'a' * 43}", secure=True
         )
         assert reply.status_code == 404
+
+
+def test_abort_never_deletes_a_completed_segment(api):
+    reply, session_body = bootstrap(api)
+    ok(reply, 200, "BootstrapResponse")
+    recording_id = str(uuid.uuid4())
+    upload, body, _, occurrence = ready_occurrence(
+        api, session_body=session_body, recording_id=recording_id, segment_index=0
+    )
+    # A failed renewal must not let the SDK's abort erase a manifest segment.
+    assert_error(complete(api, upload, path="abort"), 409, "conflict")
+    row = AttachmentUpload.objects.get(pk=upload["upload_id"])
+    assert row.state == "ready"
+    assert not AttachmentOccurrence.objects.get(pk=occurrence.pk).deleted_at
+
+
+def test_saml_session_revocation_ends_media_access(api, monkeypatch):
+    from accounts.saml_credential import SamlCredentialInvalid
+    from tracer.services.attachments.occurrences import Viewer
+
+    token = AuthToken.objects.filter(user=api.user, auth_type="access").first()
+    viewer = Viewer(
+        api.user.id,
+        token.id,
+        api.scope.organization_id,
+        api.scope.workspace_id,
+        api.scope.project_id,
+    )
+    authority = LiveAuthority(span_double(api.state))
+    assert authority.session_is_live(viewer)
+    AuthToken.objects.filter(pk=token.pk).update(auth_origin="saml")
+    calls = []
+
+    def revoked(row, user_id, *, now, transport):
+        calls.append(row["id"])
+        raise SamlCredentialInvalid("idp_generation")
+
+    monkeypatch.setattr("accounts.saml_credential.validate_saml_credential", revoked)
+    assert not authority.session_is_live(viewer)
+    assert calls == [token.pk]

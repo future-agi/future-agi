@@ -24,6 +24,7 @@ from accounts.models import User
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
+    AuthTokenOrigin,
     AuthTokenType,
 )
 from tracer.services.attachments.occurrences import SourceState
@@ -69,18 +70,53 @@ class LiveAuthority:
         self.span_reader = span_reader
 
     def session_is_live(self, viewer):
-        threshold = timezone.now() - timedelta(
-            minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES
+        """The same live checks ``decode_token`` applies, minus its side effects.
+
+        SAML-origin sessions are re-validated against the IdP binding and
+        generation, so an IdP-side revocation also ends media access.
+        """
+        from accounts.saml_credential import (
+            SamlCredentialInvalid,
+            validate_saml_credential,
         )
+
+        now = timezone.now()
+        threshold = now - timedelta(minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES)
         if not User.objects.filter(pk=viewer.user_id, is_active=True).exists():
             return False
-        return AuthToken.objects.filter(
-            pk=viewer.application_session_id,
-            user_id=viewer.user_id,
-            auth_type=AuthTokenType.ACCESS.value,
-            is_active=True,
-            last_used_at__gte=threshold,
-        ).exists()
+        row = (
+            AuthToken.objects.filter(
+                pk=viewer.application_session_id, user_id=viewer.user_id
+            )
+            .values(
+                "id",
+                "user_id",
+                "auth_type",
+                "is_active",
+                "last_used_at",
+                "auth_origin",
+                "scoped_organization_id",
+                "origin_idp_id",
+                "origin_idp_generation",
+            )
+            .first()
+        )
+        if (
+            row is None
+            or row["auth_type"] != AuthTokenType.ACCESS.value
+            or not row["is_active"]
+            or row["last_used_at"] is None
+            or row["last_used_at"] < threshold
+        ):
+            return False
+        if row["auth_origin"] == AuthTokenOrigin.SAML:
+            try:
+                validate_saml_credential(
+                    row, str(viewer.user_id), now=now, transport="http"
+                )
+            except SamlCredentialInvalid:
+                return False
+        return True
 
     def source(self, viewer, scope, parent):
         try:

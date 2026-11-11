@@ -562,9 +562,18 @@ def settle(upload_id, *, scope_id, outcome):
 
 
 def abort(token, *, scope_id, upload_id, body=None):
-    """Releases this job exactly once; repeating it reports the same state."""
+    """Releases a pending job exactly once; repeating it reports the same state.
+
+    A completed upload (validating or ready) is never aborted: its occurrence
+    may already be a manifest segment, and deleting it is an occurrence
+    deletion, not a transfer abort. That conflicts (409) and changes nothing.
+    """
     upload = _live_upload(token, scope_id, upload_id, "abort")
     _check_request(upload, body)
+    if upload.state == AttachmentState.DELETED:
+        return upload
+    if upload.state != AttachmentState.PENDING:
+        raise AttachmentError("transfer_conflict", 409)
     settle(upload_id, scope_id=scope_id, outcome=AttachmentState.DELETED)
     return AttachmentUpload.objects.get(pk=upload_id, scope_id=scope_id)
 

@@ -221,8 +221,9 @@ class AttachmentView(APIView):
     def body(self, request, name):
         """The strictly parsed JSON body, validated against the F01 schema.
 
-        Authentication always runs before this, so the body's shape never
-        tells an unauthenticated caller anything.
+        F01 schema validation runs after authentication. Transport-level parse
+        errors (content type, duplicate members, size) can surface earlier as
+        a 400 with a fixed code; they reveal nothing about stored state.
         """
         content_type = request.META.get("CONTENT_TYPE", "").split(";")[0].strip()
         if content_type != "application/json":
