@@ -2969,15 +2969,15 @@ class EvalTemplateCreateV2View(APIView):
                         )
                         return self._gm.bad_request("Instructions are required.")
 
+            from evaluations.decision_models import is_decision_model
             from model_hub.utils.jev_templates import validate_jev_template_save
-            from tfc.ee_gates import is_jev_model
 
             # 5. Validate scoring fields. A Jev model reports missing choices
             # with its own typed code (validate_jev_template_save below); the
             # scores themselves are checked the same for every model.
             if req.output_type == "deterministic":
                 if not req.choice_scores:
-                    if not is_jev_model(req.model):
+                    if not is_decision_model(req.model):
                         return self._gm.bad_request(
                             "choice_scores is required when output_type is 'deterministic'."
                         )
@@ -3156,7 +3156,7 @@ class EvalTemplateCreateV2View(APIView):
             config["choice_scores"] = req.choice_scores
             config["error_localizer_enabled"] = bool(req.error_localizer_enabled)
 
-            if is_jev_model(req.model) or "jev_mapping" in request.validated_data:
+            if is_decision_model(req.model) or "jev_mapping" in request.validated_data:
                 if "jev_mapping" in request.validated_data:
                     config["jev_mapping"] = req.jev_mapping
                 for key in (
