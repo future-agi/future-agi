@@ -32,6 +32,7 @@ def _fake_urllib3_response(status, headers=None):
         "100.64.0.1",  # RFC 6598 CGNAT — not covered by ipaddress.is_private
         "::ffff:169.254.169.254",
         "fd12:3456:789a::1",
+        "168.63.129.16",  # Azure WireServer, in public address space
     ],
 )
 def test_reject_unsafe_ip_blocks_internal_ranges(ip_str):

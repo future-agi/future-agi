@@ -34,8 +34,8 @@ function CustomTabPanel(props) {
           width: "6px",
         },
         "&::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(0, 0, 0, 0.3)",
-          borderRadius: "3px",
+          backgroundColor: "border.strong",
+          borderRadius: "4px",
         },
         "&::-webkit-scrollbar-track": {
           backgroundColor: "transparent",
@@ -121,6 +121,7 @@ const DrawerBottom = ({
   showAnnotation,
   observationSpan,
   observationSpanLoading,
+  projectId,
 }) => {
   const theme = useTheme();
   const [value, setValue] = React.useState(0);
@@ -140,19 +141,22 @@ const DrawerBottom = ({
 
   // Fetch scores at both span and trace level — annotations may be stored
   // on either source depending on how they were created (inline vs queue).
+  // The same trace / span id can exist in several projects; read the copy
+  // this drawer shows.
   const { data: spanScoresData } = useScoresForSource(
     "observation_span",
     selectedNode?.id,
-    { refetchOnWindowFocus: true },
+    { projectId, refetchOnWindowFocus: true },
   );
 
   const { data: spanNotes } = useSpanNotes(selectedNode?.id || rootSpanId, {
+    projectId,
     refetchOnWindowFocus: true,
   });
   const { data: traceScoresData } = useScoresForSource(
     "trace",
     traceData?.trace?.id,
-    { refetchOnWindowFocus: true },
+    { projectId, refetchOnWindowFocus: true },
   );
 
   const scoresData = React.useMemo(() => {
@@ -283,24 +287,11 @@ const DrawerBottom = ({
           aria-label="basic tabs example"
           textColor="primary"
           indicatorColor="primary"
-          sx={{
+          sx={{ boxShadow: "none",
             marginLeft: "2%",
-            "& .Mui-selected": {
-              color: "primary.main",
-            },
-            "& .MuiTabs-indicator": {
-              backgroundColor: "primary.main",
-            },
             marginRight: 1,
-            minHeight: 0,
             "& .MuiTab-root": {
               margin: "0 !important",
-              fontWeight: "600",
-              typography: "s1",
-              "&:not(.Mui-selected)": {
-                color: "text.secondary",
-                fontWeight: "500",
-              },
             },
           }}
         >
@@ -342,15 +333,6 @@ const DrawerBottom = ({
                 {...a11yProps(index)}
                 sx={{
                   margin: theme.spacing(0),
-                  px: theme.spacing(1.875),
-                  "&.MuiTab-root": {
-                    color: "text.secondary",
-                    fontWeight: 500,
-                  },
-                  "&.Mui-selected": {
-                    color: "primary.main",
-                    fontWeight: 600,
-                  },
                 }}
               />
             );
@@ -443,6 +425,7 @@ DrawerBottom.propTypes = {
   showAnnotation: PropTypes.bool,
   observationSpan: PropTypes.object,
   observationSpanLoading: PropTypes.bool,
+  projectId: PropTypes.string,
 };
 
 export default DrawerBottom;

@@ -54,6 +54,10 @@ func NewEngine(plugins ...Plugin) *Engine {
 		}
 	}
 
+	sort.SliceStable(seq, func(i, j int) bool {
+		return postPriority(seq[i]) < postPriority(seq[j])
+	})
+
 	if len(par) > 0 {
 		parNames := make([]string, len(par))
 		for i, p := range par {
@@ -105,7 +109,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
+			if err := e.RunPostPlugins(ctx, rc); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -126,7 +132,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"request_id", rc.RequestID,
 			"provider", rc.Provider,
 			"model", rc.Model,
-			"error", err,
+			"error", loggedError(rc, err),
 			"elapsed", providerElapsed,
 		)
 		e.RunPostPlugins(ctx, rc)
@@ -137,9 +143,21 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		if err := e.RunPostPlugins(ctx, rc); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// loggedError is what the failure log records. A decision vendor's error
+// text can quote the content being judged, so decision calls log only the
+// error code and status, as the request log and span do.
+func loggedError(rc *models.RequestContext, err error) any {
+	if rc.EndpointType == "decision" {
+		return models.LoggedError(rc.EndpointType, err)
+	}
+	return err
 }
 
 // RunPostPlugins runs post-processing plugins with optimized execution:
@@ -149,12 +167,19 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+//
+// It returns the first error a sequential plugin reported: an output
+// guardrail's block, which Process hands to the handler so a non-streamed
+// response is refused instead of sent. The error is also recorded on rc, so
+// the plugins after it, logging among them, see the request as refused. A
+// streamed response is already sent, so its caller has nothing to refuse.
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) *models.APIError {
 	// Streaming handlers can invoke RunPostPlugins directly after Process returns,
 	// so reattach RequestContext here as well.
 	ctx = models.WithRequestContext(ctx, rc)
 
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
+	var blocked *models.APIError
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {
@@ -174,29 +199,48 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 				"error", result.Error.Message,
 				"request_id", rc.RequestID,
 			)
+			rc.AddError(result.Error)
+			if blocked == nil {
+				blocked = result.Error
+			}
 		}
 	}
 
 	// Phase 2: Parallel post-plugins (logging, audit, metrics, alerting, otel).
+	//
+	// All of them read the same RequestContext, whose Metadata and Timings are
+	// plain maps. Nothing may write to rc inside this window: a concurrent map
+	// read and write is a Go runtime fatal, not a recoverable panic, and takes
+	// the process down along with every in-flight request. Locking the writes
+	// would not help either — the readers are unsynchronized by design, and the
+	// race detector fires on read-versus-write regardless of which side holds a
+	// mutex. So each goroutine times itself into its own slot, and the timings
+	// are recorded once the window has closed and execution is serial again.
 	if len(e.postParallel) == 0 {
-		return
+		return blocked
 	}
 
-	var wg sync.WaitGroup
-	for _, p := range e.postParallel {
-		if isCacheHit {
+	toRun := e.postParallel
+	if isCacheHit {
+		toRun = make([]Plugin, 0, len(e.postParallel))
+		for _, p := range e.postParallel {
 			if skipper, ok := p.(SkipOnCacheHit); ok && skipper.ShouldSkipOnCacheHit() {
 				continue
 			}
+			toRun = append(toRun, p)
 		}
+	}
 
+	durations := make([]time.Duration, len(toRun))
+	var wg sync.WaitGroup
+	for i, p := range toRun {
 		wg.Add(1)
-		go func(plug Plugin) {
+		go func(slot int, plug Plugin) {
 			defer wg.Done()
 
 			start := time.Now()
 			result := plug.ProcessResponse(ctx, rc)
-			rc.RecordTiming("post_"+plug.Name(), time.Since(start))
+			durations[slot] = time.Since(start)
 
 			if result.Error != nil {
 				slog.Warn("post-plugin error",
@@ -205,9 +249,23 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 					"request_id", rc.RequestID,
 				)
 			}
-		}(p)
+		}(i, p)
 	}
 	wg.Wait()
+
+	for i, p := range toRun {
+		rc.RecordTiming("post_"+p.Name(), durations[i])
+	}
+	return blocked
+}
+
+// postPriority is where p's response-side work runs among the sequential
+// post-plugins.
+func postPriority(p Plugin) int {
+	if pp, ok := p.(PostPriority); ok {
+		return pp.PostPriority()
+	}
+	return p.Priority()
 }
 
 // PluginCount returns the number of registered plugins.

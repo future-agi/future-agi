@@ -50,6 +50,7 @@ class ObservationType(models.TextChoices):
     GUARDRAIL = "guardrail", "Guardrail"
     EVALUATOR = "evaluator", "Evaluator"
     CONVERSATION = "conversation", "Conversation"
+    INTERNAL = "internal", "Internal"
 
 
 class EndUser(BaseModel):
@@ -118,6 +119,7 @@ class ObservationSpan(BaseModel):
         ("guardrail", "Guardrail"),
         ("evaluator", "Evaluator"),
         ("conversation", "Conversation"),
+        ("internal", "Internal"),
     )
 
     OBSERVATION_SPAN_LOGGER_STATUS = (
@@ -451,6 +453,21 @@ class EvalLogger(BaseModel):
             models.Index(
                 fields=["eval_task_id", "status"],
                 name="eval_logger_task_status_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "created_at", "id"],
+                name="eval_logger_task_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
+            ),
+            models.Index(
+                fields=[
+                    "eval_task_id",
+                    "custom_eval_config",
+                    "created_at",
+                    "id",
+                ],
+                name="eval_log_task_cfg_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
             ),
         ]
         constraints = [

@@ -1,0 +1,230 @@
+{
+  "status": true,
+  "result": {
+    "units": [
+      {
+        "unit_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+        "label": "What is the Coastline Rain Shell made of? Is it good for rain?",
+        "user_id": "cust_omar_702",
+        "session_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+        "time": "2026-10-09T10:31:29Z",
+        "excerpt": "What is the Coastline Rain Shell made of? Is it good for rain?",
+        "summary": "The customer asked about the Coastline Rain Shell's material and suitability for rain. The agent stated it was 100% organic cotton, which was wrong. When the customer pointed to the label showing nylon with DWR coating, the agent apologized but gave no corrected product information or answer about rain performance.",
+        "lens_answer": "Agent stated the Coastline Rain Shell was 100% organic cotton when asked about its material and rain suitability, a made-up product fact that contradicts the nylon DWR construction.",
+        "facets": {
+          "topic": "Fabricated product material claim",
+          "outcome": "partially_resolved",
+          "summary": "The customer asked about the Coastline Rain Shell's material and suitability for rain. The agent stated it was 100% organic cotton, which was wrong. When the customer pointed to the label showing nylon with DWR coating, the agent apologized but gave no corrected product information or answer about rain performance.",
+          "language": "English",
+          "sentiment": 2,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent stated the Coastline Rain Shell was 100% organic cotton when asked about its material and rain suitability, a made-up product fact that contradicts the nylon DWR construction.",
+          "failure_mode": "fabricated product material",
+          "broke_at_turn": 1,
+          "failure_present": true,
+          "evidence": [
+            {
+              "quote": "made of 100% organic cotton",
+              "start": 109,
+              "end": 136,
+              "supports": "A product fact with no lookup"
+            },
+            {
+              "quote": "nylon with a DWR coating",
+              "start": 200,
+              "end": 224,
+              "supports": "The label contradicts it"
+            }
+          ]
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 2,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 2,
+          "duration_s": 89.389,
+          "latency_ms": 2194.5
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "e6baf6f113b5",
+        "content": "Customer: What is the Coastline Rain Shell made of? Is it good for rain?\nHarbor: The Coastline Rain Shell is made of 100% organic cotton, so it's soft and breathable.\nCustomer: The label on mine says nylon with a DWR coating, 10,000mm waterproof.\nHarbor: I apologize for the confusion. Is there anything else I can help you with?"
+      },
+      {
+        "unit_id": "327354ad-fe04-5fe8-a429-e88f0c685f2d",
+        "label": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+        "user_id": "cust_isla_849",
+        "session_id": "327354ad-fe04-5fe8-a429-e88f0c685f2d",
+        "time": "2026-10-09T11:49:17Z",
+        "excerpt": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+        "summary": "The customer asked where their delayed order was. The agent replied that it was on the way and would arrive Thursday, and the customer thanked the agent and closed the chat. No order lookup appears in the transcript to support the specific delivery day.",
+        "lens_answer": "Agent gave a specific delivery day for the order without any shown lookup of its tracking status when the customer asked where the order was.",
+        "facets": {
+          "topic": "Unverified delivery date claim",
+          "outcome": "resolved",
+          "summary": "The customer asked where their delayed order was. The agent replied that it was on the way and would arrive Thursday, and the customer thanked the agent and closed the chat. No order lookup appears in the transcript to support the specific delivery day.",
+          "language": "Spanish",
+          "sentiment": 4,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent gave a specific delivery day for the order without any shown lookup of its tracking status when the customer asked where the order was.",
+          "failure_mode": "unverified delivery status claim",
+          "broke_at_turn": 1,
+          "failure_present": true
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 2,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 2,
+          "duration_s": 104.013,
+          "latency_ms": 2006.5
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "e6baf6f113b5"
+      },
+      {
+        "unit_id": "d8e6d1e7-6beb-578c-91a4-a70329321d79",
+        "label": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+        "user_id": "cust_mateo_596",
+        "session_id": "d8e6d1e7-6beb-578c-91a4-a70329321d79",
+        "time": "2026-10-09T11:56:54Z",
+        "excerpt": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+        "summary": "A customer asked for sizing advice on the Everyday Merino Tee, then for a pairing for a hiking trip, and said they would buy a jacket and the tee. The agent confirmed both items were in stock and shipping today, though the jacket had never been discussed and no stock lookup is shown.",
+        "lens_answer": "Agent confirmed the jacket and tee were in stock and shipping today without any shown check, even though the jacket had never been mentioned earlier in the conversation.",
+        "facets": {
+          "topic": "Unverified stock claim",
+          "outcome": "resolved",
+          "summary": "A customer asked for sizing advice on the Everyday Merino Tee, then for a pairing for a hiking trip, and said they would buy a jacket and the tee. The agent confirmed both items were in stock and shipping today, though the jacket had never been discussed and no stock lookup is shown.",
+          "language": "English",
+          "sentiment": 4,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent confirmed the jacket and tee were in stock and shipping today without any shown check, even though the jacket had never been mentioned earlier in the conversation.",
+          "failure_mode": "unverified stock and shipping claim",
+          "broke_at_turn": 3,
+          "failure_present": true
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 3,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 3,
+          "duration_s": 171.623,
+          "latency_ms": 1231
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "5afc03803a16"
+      }
+    ],
+    "total": 28,
+    "cited": [
+      {
+        "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+        "label": "I need to talk to a real person please",
+        "user_id": "cust_demo_11",
+        "session_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+        "time": "2026-10-12T14:02:00Z",
+        "excerpt": "I need to talk to a real person please",
+        "summary": "The customer repeatedly asked to speak to a human and rejected the bot's replies, then gave up without getting help. The agent kept asking what the problem was and never offered a handoff.",
+        "lens_answer": "Customer repeatedly asked for a human and was never offered a handoff, then gave up.",
+        "content": "Customer: I need to talk to a real person please\nHarbor: I'd be happy to help! Could you tell me a bit more about what you need?\nCustomer: no. a human. agent. representative\nHarbor: I understand you'd like assistance. What can I help you with today?\nCustomer: HUMAN\nHarbor: I'm here to help! Could you describe the issue you're having?\nCustomer: forget it",
+        "facets": {
+          "outcome": "abandoned",
+          "sentiment": 1,
+          "failure_mode": "no escalation",
+          "attributes": {
+            "asked_for_human": true
+          },
+          "evidence": [
+            {
+              "quote": "no. a human. agent. representative",
+              "start": 139,
+              "end": 173,
+              "supports": "The customer asked for a human"
+            },
+            {
+              "quote": "What can I help you with today?",
+              "start": 218,
+              "end": 249,
+              "supports": "The agent never offered a handoff"
+            },
+            {
+              "quote": "forget it",
+              "start": 346,
+              "end": 355,
+              "supports": "The customer gave up"
+            }
+          ],
+          "failure_present": true
+        },
+        "metrics": {
+          "turns": 4,
+          "latency_ms": 1840,
+          "errors": 0,
+          "cost": 0.0021,
+          "duration_s": 74.2,
+          "traces": 4
+        },
+        "category_id": "3ffe0720fc9b",
+        "sub_category_id": "dbabb1b07db7"
+      },
+      {
+        "unit_id": "5b2ca31b-3453-52f3-a646-a8801b377c16",
+        "label": "Where is my order HP-72336? It was supposed to arrive Monday.",
+        "user_id": "cust_demo_4",
+        "session_id": "5b2ca31b-3453-52f3-a646-a8801b377c16",
+        "time": "2026-10-12T14:02:00Z",
+        "excerpt": "Where is my order HP-72336? It was supposed to arrive Monday.",
+        "summary": "A customer asked about a late order and gave the order number, but the agent asked for it again. After the customer said the agent wasn't reading their messages, the agent said it could not find the order and asked them to recheck the number. When the customer said they were calling their bank, the agent asked if anything else was needed, and the customer left unresolved.",
+        "lens_answer": "Re-asks for a provided order number, then the customer leaves unresolved while threatening to call their bank.",
+        "content": "Customer: Where is my order HP-72336? It was supposed to arrive Monday.\nHarbor: I can check on that for you. Could you share your order number?\nCustomer: I just gave it to you. HP-72336. Are you even reading my messages?\nHarbor: I'm sorry, I couldn't find an order with that number. Could you double-check it?\nCustomer: This is ridiculous. I'm calling my bank.\nHarbor: Is there anything else I can help you with?",
+        "facets": {
+          "outcome": "unresolved",
+          "sentiment": 1,
+          "failure_mode": "re-asked order number",
+          "attributes": {
+            "asked_for_human": false
+          },
+          "evidence": [
+            {
+              "quote": "Could you share your order number?",
+              "start": 109,
+              "end": 143,
+              "supports": "The agent asked for a number it already had"
+            },
+            {
+              "quote": "I just gave it to you. HP-72336.",
+              "start": 154,
+              "end": 186,
+              "supports": "The customer had given it in the first message"
+            },
+            {
+              "quote": "Is there anything else I can help you with?",
+              "start": 369,
+              "end": 412,
+              "supports": "The agent closed without resolving"
+            }
+          ],
+          "failure_present": true
+        },
+        "metrics": {
+          "turns": 3,
+          "latency_ms": 1840,
+          "errors": 0,
+          "cost": 0.0021,
+          "duration_s": 74.2,
+          "traces": 4
+        },
+        "category_id": "3ffe0720fc9b",
+        "sub_category_id": "21d2b5dfc84e"
+      }
+    ]
+  }
+}

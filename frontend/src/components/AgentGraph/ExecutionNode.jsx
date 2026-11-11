@@ -49,7 +49,7 @@ const ExecutionNode = ({ data }) => {
       <Box
         sx={{
           minWidth: 200,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           borderStyle: isRunning ? "none" : "solid",
           borderWidth: isRunning ? 0 : "1px",
           borderColor,
@@ -106,7 +106,7 @@ const ExecutionNode = ({ data }) => {
             sx={{
               width: 20,
               height: 20,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               border: "1px solid",
               borderColor: "divider",
               display: "flex",
@@ -120,7 +120,7 @@ const ExecutionNode = ({ data }) => {
               sx={{
                 width: 16,
                 height: 16,
-                bgcolor: config.color ?? "orange.500",
+                bgcolor: config.color ?? "status.warning.solid",
               }}
             />
           </Box>

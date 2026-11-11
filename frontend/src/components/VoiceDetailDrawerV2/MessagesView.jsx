@@ -13,10 +13,10 @@ import NestedJsonTable from "./NestedJsonTable";
 
 const ROLE_CONFIG = {
   system: { label: "SYS", accent: "neutral" },
-  user: { label: "USER", color: "#0ea5e9" },
+  user: { label: "USER", accent: "info" },
   assistant: { label: "AI", accent: "brand" },
-  tool: { label: "TOOL", color: "#f59e0b" },
-  function: { label: "FN", color: "#f59e0b" },
+  tool: { label: "TOOL", accent: "tool" },
+  function: { label: "FN", accent: "tool" },
   developer: { label: "DEV", accent: "violet" },
 };
 
@@ -127,7 +127,7 @@ const ValueCell = ({ value }) => {
       <Typography
         component="span"
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           fontFamily: "monospace",
         }}
@@ -141,7 +141,7 @@ const ValueCell = ({ value }) => {
       <Typography
         component="span"
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: value ? "success.main" : "error.main",
           fontFamily: "monospace",
           fontWeight: 600,
@@ -156,7 +156,7 @@ const ValueCell = ({ value }) => {
       <Typography
         component="span"
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: "text.primary",
           fontFamily: "monospace",
         }}
@@ -169,7 +169,7 @@ const ValueCell = ({ value }) => {
     <Typography
       component="span"
       sx={{
-        fontSize: 11,
+        fontSize: 12,
         color: "text.primary",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
@@ -219,7 +219,7 @@ const ObjectArrayTable = ({ rows }) => {
         sx={{
           width: "100%",
           borderCollapse: "collapse",
-          fontSize: 11,
+          fontSize: 12,
         }}
       >
         <Box component="thead" sx={{ position: "sticky", top: 0 }}>
@@ -233,10 +233,10 @@ const ObjectArrayTable = ({ rows }) => {
                   px: 1,
                   py: 0.5,
                   fontWeight: 600,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: "text.secondary",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   bgcolor: "background.default",
                   borderBottom: "1px solid",
                   borderColor: "divider",
@@ -289,7 +289,7 @@ const KeyValueTable = ({ data, depth = 0 }) => {
   if (entries.length === 0) {
     return (
       <Typography
-        sx={{ fontSize: 11, color: "text.disabled", fontStyle: "italic" }}
+        sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}
       >
         (empty)
       </Typography>
@@ -301,7 +301,7 @@ const KeyValueTable = ({ data, depth = 0 }) => {
       sx={{
         width: "100%",
         borderCollapse: "collapse",
-        fontSize: 11,
+        fontSize: 12,
       }}
     >
       <Box component="tbody">
@@ -329,10 +329,10 @@ const KeyValueTable = ({ data, depth = 0 }) => {
                   px: 1,
                   py: 0.5,
                   fontWeight: 600,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: "text.secondary",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   borderBottom: "1px solid",
                   borderColor: "divider",
                   verticalAlign: "top",
@@ -358,7 +358,7 @@ const KeyValueTable = ({ data, depth = 0 }) => {
                   depth >= 2 ? (
                     <Typography
                       sx={{
-                        fontSize: 11,
+                        fontSize: 12,
                         fontFamily: "monospace",
                         color: "text.secondary",
                         whiteSpace: "pre-wrap",
@@ -373,7 +373,7 @@ const KeyValueTable = ({ data, depth = 0 }) => {
                 ) : isPrimitiveArray ? (
                   <Typography
                     sx={{
-                      fontSize: 11,
+                      fontSize: 12,
                       fontFamily: "monospace",
                       color: "text.primary",
                       wordBreak: "break-word",
@@ -416,15 +416,15 @@ const MessageRow = ({ message, index, isExpanded, onToggle }) => {
           cursor: "pointer",
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: isExpanded ? "rgba(123, 86, 219, 0.04)" : "transparent",
+          bgcolor: isExpanded ? "action.hover" : "transparent",
           "&:hover": {
-            bgcolor: isExpanded ? "rgba(123, 86, 219, 0.06)" : "action.hover",
+            bgcolor: isExpanded ? "action.selected" : "action.hover",
           },
           minHeight: 30,
         }}
       >
         <Iconify
-          icon="mdi:chevron-right"
+          icon="solar:alt-arrow-right-linear"
           width={14}
           sx={{
             color: "text.disabled",
@@ -441,7 +441,7 @@ const MessageRow = ({ message, index, isExpanded, onToggle }) => {
             alignItems: "center",
             px: 0.5,
             py: "1px",
-            borderRadius: "3px",
+            borderRadius: "4px",
             bgcolor: `${cfg.color}14`,
             border: "1px solid",
             borderColor: `${cfg.color}30`,
@@ -450,7 +450,7 @@ const MessageRow = ({ message, index, isExpanded, onToggle }) => {
         >
           <Typography
             sx={{
-              fontSize: 9,
+              fontSize: 12,
               fontWeight: 600,
               color: cfg.color,
               letterSpacing: "0.02em",
@@ -463,7 +463,7 @@ const MessageRow = ({ message, index, isExpanded, onToggle }) => {
 
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.disabled",
             width: 34,
             flexShrink: 0,
@@ -478,7 +478,7 @@ const MessageRow = ({ message, index, isExpanded, onToggle }) => {
           sx={{
             flex: 1,
             minWidth: 0,
-            fontSize: 11.5,
+            fontSize: 12,
             color: "text.primary",
             lineHeight: 1.35,
           }}
@@ -620,7 +620,11 @@ const MessagesView = ({ messages }) => {
             bgcolor: "background.paper",
           }}
         >
-          <Iconify icon="mdi:magnify" width={14} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={14}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search messages"
@@ -631,7 +635,7 @@ const MessagesView = ({ messages }) => {
               border: "none",
               outline: "none",
               bgcolor: "transparent",
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               py: 0.25,
               fontFamily: "inherit",
@@ -643,18 +647,15 @@ const MessagesView = ({ messages }) => {
           size="small"
           onClick={handleExpandAll}
           sx={{
-            width: 24,
-            height: 24,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "4px",
           }}
         >
           <Iconify
             icon={
               allExpanded
-                ? "mdi:unfold-less-horizontal"
-                : "mdi:unfold-more-horizontal"
+                ? "solar:chevrons-down-up-linear"
+                : "solar:chevrons-up-down-linear"
             }
             width={14}
           />
@@ -670,7 +671,7 @@ const MessagesView = ({ messages }) => {
               textAlign: "center",
             }}
           >
-            <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               No matching messages
             </Typography>
           </Box>

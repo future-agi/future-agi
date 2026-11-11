@@ -149,7 +149,7 @@ const SimulationEvaluationPage = ({
           All Evaluations
         </Typography>
         <IconButton onClick={onClose} sx={{ p: 0.5, color: "text.primary" }}>
-          <Iconify icon="mingcute:close-line" width={20} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Box>
       <Typography
@@ -185,7 +185,7 @@ const SimulationEvaluationPage = ({
             borderColor="divider"
             borderRadius={1}
           >
-            <Typography fontSize={15} fontWeight={600} mb={0.5}>
+            <Typography fontSize={13} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
             <Typography fontSize={12} color="text.secondary" mb={2}>
@@ -194,14 +194,8 @@ const SimulationEvaluationPage = ({
             <Button
               size="small"
               variant="contained"
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={handleAddEvaluationClick}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                px: 2,
-                fontWeight: 500,
-              }}
             >
               Add Evaluation
             </Button>
@@ -263,13 +257,6 @@ const SimulationEvaluationPage = ({
             variant="outlined"
             size="small"
             onClick={onClose}
-            sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              fontWeight: 500,
-              borderRadius: "6px",
-              px: 2,
-            }}
           >
             Cancel
           </Button>
@@ -292,15 +279,8 @@ const SimulationEvaluationPage = ({
                 }
                 onClick={() => setOpenConfirmRunEvaluations(true)}
                 startIcon={
-                  <Iconify icon="mdi:play-circle-outline" width={16} />
+                  <Iconify icon="solar:play-circle-linear" width={16} />
                 }
-                sx={{
-                  textTransform: "none",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  borderRadius: "6px",
-                  px: 2,
-                }}
               >
                 Run Evaluation
               </LoadingButton>

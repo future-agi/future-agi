@@ -41,7 +41,7 @@ export const IOSSwitch = styled((props) => (
     backgroundColor: "action.hover",
     opacity: 1,
     transition: theme.transitions.create(["background-color"], {
-      duration: 300,
+      duration: 200,
     }),
   },
 }));
