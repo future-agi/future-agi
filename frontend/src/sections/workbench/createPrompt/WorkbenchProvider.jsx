@@ -12,6 +12,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
 import { useSnackbar } from "src/components/snackbar";
+import { RESPONSE_CODES } from "src/utils/constants";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { DefaultMessages } from "../constant";
@@ -74,6 +75,10 @@ const buildPromptRunOutput = (runStatus) => {
 
 const WorkbenchProvider = ({ children }) => {
   const { id } = useParams();
+  const promptIdRef = useRef(id);
+  promptIdRef.current = id;
+  const mountedRef = useRef(false);
+  const pendingRunTargetsRef = useRef(new Set());
 
   const unsavedDrafts = useRef({});
   const streamingIds = useRef({});
@@ -146,7 +151,9 @@ const WorkbenchProvider = ({ children }) => {
 
   // Close all active sockets on unmount to prevent leaks
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       Object.values(activeSocketsRef.current).forEach((s) => s?.close());
       activeSocketsRef.current = {};
     };
@@ -370,6 +377,11 @@ const WorkbenchProvider = ({ children }) => {
   }, []);
 
   const closeSocketByIndex = useCallback((index) => {
+    // Stop Generating closes run-/compare- sockets; that also cancels a run that
+    // is still waiting for its save and has no socket yet.
+    const pendingTarget = /^(?:run|compare)-(\d+)$/.exec(index);
+    if (pendingTarget)
+      pendingRunTargetsRef.current.delete(Number(pendingTarget[1]));
     const socket = activeSocketsRef.current[index];
     if (socket) {
       socket.onerror = null;
@@ -987,7 +999,7 @@ const WorkbenchProvider = ({ children }) => {
     [applyPromptRunStatus, getSaveTemplatePayload, id, pollPromptRunStatus],
   );
 
-  const { mutate: saveOrRunPromptTemplate } = useMutation({
+  const { mutateAsync: saveOrRunPromptTemplate } = useMutation({
     /**
      *
      * @param {Object} data
@@ -995,6 +1007,12 @@ const WorkbenchProvider = ({ children }) => {
      */
     mutationFn: (data) => {
       const { isRun, index } = data;
+      // A delayed or retried autosave only saves drafts. If the column now holds
+      // a committed version (e.g. one restored from history), the backend would
+      // write this content into the prompt's latest draft instead.
+      if (!isRun && !selectedVersions[index]?.isDraft) {
+        return Promise.resolve(null);
+      }
       const url = endpoints.develop.runPrompt.runTemplatePrompt(id);
       const payload = getSaveTemplatePayload(index, isRun);
 
@@ -1558,7 +1576,57 @@ const WorkbenchProvider = ({ children }) => {
     unsavedDrafts.current[index] = null;
   };
 
-  const saveAndRun = (index) => {
+  const saveAndRun = async (index) => {
+    const promptId = id;
+    const targets =
+      index === undefined ? selectedVersions.map((_, idx) => idx) : [index];
+    if (index === undefined) {
+      setLoadingStatus(selectedVersions.map(() => true));
+    } else {
+      setLoadingStatusByIndex(index, true);
+    }
+
+    // Runs carry only a version: the backend must have the latest saved model.
+    const pending = pendingRunTargetsRef.current;
+    targets.forEach((target) => pending.add(target));
+    let saveError = null;
+    try {
+      // Edits typed while a save is in flight queue another save of the same
+      // draft; flush those too, so the run includes what the user sees.
+      for (let round = 0; round < 5; round += 1) {
+        const busy = targets.filter((target) =>
+          debouncedSaveOrRunPromptTemplate.isPending(target),
+        );
+        if (!busy.length) break;
+        await Promise.all(
+          busy.map((target) => debouncedSaveOrRunPromptTemplate.flush(target)),
+        );
+      }
+    } catch (error) {
+      saveError = error;
+    }
+    const stoppedTargets = targets.filter((target) => !pending.has(target));
+    targets.forEach((target) => pending.delete(target));
+    if (!mountedRef.current || promptIdRef.current !== promptId) return;
+    if (saveError || stoppedTargets.length) {
+      // Stop cancels the whole pending run; clear every target's spinner.
+      targets.forEach((target) => setLoadingStatusByIndex(target, false));
+    }
+    if (stoppedTargets.length) return;
+    if (saveError) {
+      // The app's MutationCache handler already toasts HTTP errors with a body,
+      // except a rate limit, which it leaves to the caller.
+      if (
+        !saveError?.result ||
+        saveError?.statusCode == RESPONSE_CODES.LIMIT_REACHED
+      ) {
+        enqueueSnackbar(saveError?.message || "Prompt save failed.", {
+          variant: "error",
+        });
+      }
+      return;
+    }
+
     // If no index we run all
     if (index === undefined) {
       runningVersionIndexMapping.current = selectedVersions.reduce(
@@ -1568,9 +1636,9 @@ const WorkbenchProvider = ({ children }) => {
         },
         {},
       );
-      setLoadingStatus(selectedVersions?.map(() => true));
-      setSelectedVersions(
-        selectedVersions?.map((version) => {
+      // Functional update: do not revert column changes made during the save.
+      setSelectedVersions((current) =>
+        current.map((version) => {
           if (!version.isDraft) {
             return { ...version };
           }
@@ -1591,7 +1659,6 @@ const WorkbenchProvider = ({ children }) => {
       return;
     }
 
-    setLoadingStatusByIndex(index, true);
     setResultsByIndex(index, {
       output: [],
       isAnimating: true,
@@ -1608,7 +1675,6 @@ const WorkbenchProvider = ({ children }) => {
       return { ...pre, isDraft: false };
     });
 
-    // saveOrRunPromptTemplate({ index, isRun: "prompt" });
     runPromptTemplate({ isRun: true, index });
   };
 

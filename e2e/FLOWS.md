@@ -2393,21 +2393,21 @@
 
 **Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI
 
-**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:38`
 
 **Tags:** —
 
 **User steps:**
 
 1. create and name a prompt from scratch and select the local mock model
-2. Run Prompt and wait for real stored output before opening the Evaluation tab
+2. immediately Run Prompt after selecting the model while autosave is held, then release it and open Evaluation after real stored output
 3. Add Evaluation mapped to model_output and inspect its current catalog choices
 4. edit mapping to model_input with the same binding ID and name and wait for completion
 5. delete the binding and reload to verify current discovery excludes it
 
 **Backend state verified:**
 
-- real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results
+- no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
 
