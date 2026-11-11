@@ -203,6 +203,26 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     });
   });
 
+  it("sends one save for a double click, so the second click is never refused as someone else's edit", async () => {
+    await openEdit();
+    let answer;
+    axios.put.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(axios.put).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answer({ data: cast([MANAGER], { revision: 4 }) });
+    await waitFor(() => expect(screen.queryByText("Save to draft")).toBeNull());
+    expect(axios.put).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+  });
+
   it("saves on top of a document uploaded from the open form, in one request at the upload's revision", async () => {
     const uploaded = cast([MANAGER], {
       revision: 4,
@@ -635,7 +655,9 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
     // A live or speaking actor is given these; the form never says they are unused.
     expect(
-      screen.getByText(/Given to them as background whenever they speak or decide in the moment/),
+      screen.getByText(
+        /Given to them as background whenever they speak or decide in the moment/,
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });

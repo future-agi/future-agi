@@ -36,7 +36,7 @@ export default function ActorRelations({ cast }) {
   );
   return (
     <SectionCard title={R.title} subtitle={R.subtitle}>
-      <Stack spacing={1.25}>
+      <Stack spacing={1.25} sx={{ px: 1.5, py: 1.25 }}>
         {cast.map((actor) => {
           const reaches = contactsOf(actor, cast).map(
             (one) => one.name || one.id,

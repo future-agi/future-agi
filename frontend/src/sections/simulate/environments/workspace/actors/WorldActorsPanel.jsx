@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -55,6 +55,19 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
+  // A double click lands before the pending state disables the button: one request at a time, or the second is
+  // refused as an edit made elsewhere.
+  const sending = useRef(false);
+  const once = (mutation, variables, options = {}) => {
+    if (sending.current) return;
+    sending.current = true;
+    mutation.mutate(variables, {
+      ...options,
+      onSettled: () => {
+        sending.current = false;
+      },
+    });
+  };
   const [settings, setSettings] = useState(false);
   const upload = useUploadEnvironmentFile(envId);
   const [inUse, setInUse] = useState(null);
@@ -223,7 +236,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             busy={limits.isPending}
             error={limits.error}
             onSave={(next, done) =>
-              limits.mutate({ limits: next, revision }, { onSuccess: done })
+              once(limits, { limits: next, revision }, { onSuccess: done })
             }
           />
         </Stack>
@@ -246,7 +259,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         onSave={(actor, shareActions) => {
           // A new save clears the refusal, so what it refreshed has to stay.
           setEditing(form);
-          edit.mutate(
+          once(
+            edit,
             {
               op: form.actor.id ? "replace" : "create",
               actor,
@@ -269,7 +283,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             variant="contained"
             color="error"
             onClick={() => {
-              edit.mutate({ op: "delete", actorId: removing.id, revision });
+              once(edit, { op: "delete", actorId: removing.id, revision });
               setConfirmRemove(false);
             }}
           >
