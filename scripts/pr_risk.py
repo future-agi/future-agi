@@ -913,6 +913,10 @@ def protection(api, policy):
     # Require positive strictness evidence from an active ruleset instead; never
     # infer it from mergeability, contexts alone, or an administrator's variable.
     strict = False
+    # The bot's approval names one head, but GitHub counts it for the PR. Only
+    # an active rule that dismisses stale approvals on push stops a later push
+    # from being merged on it, by a person, after the bot approved.
+    stale_dismissed = False
     if classic is not None:
         contexts = classic.get("requiredStatusCheckContexts")
         if not isinstance(contexts, list) or any(
@@ -935,6 +939,10 @@ def protection(api, policy):
                 if old not in (None, -1) and identity not in (None, -1, old):
                     raise PolicyError("conflicting required-check App identities")
                 requirements[name] = identity if identity not in (None, -1) else old
+        elif rule["type"] == "pull_request":
+            stale_dismissed = stale_dismissed or (
+                rule["parameters"].get("dismiss_stale_reviews_on_push") is True
+            )
         elif rule["type"] in {"workflows", "required_workflows", "merge_queue"}:
             raise PolicyError(
                 "required workflow or merge queue rules need a separate integration"
@@ -944,6 +952,11 @@ def protection(api, policy):
         raise PolicyError(
             "an active dev ruleset with strict required checks is needed; "
             "classic strictness is not visible to GITHUB_TOKEN"
+        )
+    if not stale_dismissed:
+        raise PolicyError(
+            "an active dev ruleset must dismiss stale approvals on push; "
+            "classic protection settings are not visible to GITHUB_TOKEN"
         )
     return requirements
 

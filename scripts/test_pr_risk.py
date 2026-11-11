@@ -179,7 +179,16 @@ class FakeGitHub:
                     "strict_required_status_checks_policy": True,
                     "required_status_checks": [{"context": "Backend Tests Pass"}],
                 },
-            }
+            },
+            # dev's organisation pull_request rule (read-only check, 11 Nov).
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_approving_review_count": 1,
+                    "dismiss_stale_reviews_on_push": True,
+                    "require_last_push_approval": False,
+                },
+            },
         ]
         self.classic_present = True
         self.classic_checks = ["Backend Tests Pass"]
@@ -781,7 +790,8 @@ class EvidenceTests(unittest.TestCase):
                         {"context": "extra-org", "integration_id": 77}
                     ],
                 },
-            }
+            },
+            FakeGitHub().rules[1],
         ]
         names = risk.protection(api, POLICY)
         self.assertEqual(
@@ -831,6 +841,24 @@ class EvidenceTests(unittest.TestCase):
             del api.permissions["statuses"]
             with self.assertRaisesRegex(risk.PolicyError, "commit-status"):
                 risk.ci_evidence(api, pr(), POLICY)
+
+    def test_dev_rules_must_dismiss_stale_approvals_on_push(self):
+        # The same rules call: an active pull_request rule with the setting.
+        self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None})
+        for change in (
+            lambda rules: rules[1]["parameters"].update(dismiss_stale_reviews_on_push=False),
+            lambda rules: rules[1]["parameters"].pop("dismiss_stale_reviews_on_push"),
+            lambda rules: rules.pop(1),
+        ):
+            api = FakeGitHub()
+            change(api.rules)
+            with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
+                risk.protection(api, POLICY)
+        # A second pull_request rule with the setting is enough.
+        api = FakeGitHub()
+        api.rules[1]["parameters"]["dismiss_stale_reviews_on_push"] = False
+        api.rules.append({"type": "pull_request", "parameters": {"dismiss_stale_reviews_on_push": True}})
+        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None})
 
     def test_classic_contexts_alone_cannot_establish_strictness(self):
         api = FakeGitHub()
@@ -2261,6 +2289,17 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.api.comments), comments)
         self.assertEqual(len(self.api.approver.calls), 1)
         self.assertFalse(self.api.writes("pulls/42/merge"))
+
+    def test_no_stale_approval_dismissal_on_dev_reserves_and_approves_nothing(self):
+        context = self.passing_review()
+        self.api.rules[1]["parameters"]["dismiss_stale_reviews_on_push"] = False
+        with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertFalse(self.api.approver.calls)
+        self.new_head("1" * 40, "another change")
+        with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
+            self.prepare()
+        self.assertEqual(len(self.reservations()), 1)
 
     def test_stats_mismatch_and_stale_policy_checkout_stop_automation(self):
         self.api.pr["additions"] = 2
