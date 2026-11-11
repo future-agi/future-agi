@@ -12,9 +12,11 @@ from datetime import timedelta
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
 from django.utils import timezone
 
 from tfc.temporal.eval_tasks import client as workflow_client
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 from tracer.services.eval_tasks.recovery import recover_stranded_tasks, recover_task
 
@@ -174,3 +176,90 @@ def test_recovery_keeps_coverage_already_accepted(
     assert restarts == [
         (EvalTaskStatus.RUNNING, expected, fields.get("continuous_cursor"))
     ]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    ["fresh_run", "selection_edit_rerun", "eval_set_edit_rerun"],
+)
+def test_cursor_resetting_rerun_persists_its_floor_before_dispatch(
+    auth_client, project, custom_eval_config, clock, restarts, monkeypatch, edit
+):
+    activated = clock["value"] - timedelta(days=60)
+    task = stored_task(
+        project,
+        custom_eval_config,
+        status=EvalTaskStatus.PAUSED,
+        start_time=activated,
+        continuous_cursor=clock["value"] - timedelta(minutes=10),
+        last_run=clock["value"] - timedelta(minutes=5),
+    )
+    payload = {"eval_task_id": str(task.pk), "edit_type": "edit_rerun"}
+    if edit == "fresh_run":
+        payload["edit_type"] = "fresh_run"
+    elif edit == "selection_edit_rerun":
+        payload["sampling_rate"] = 50
+    else:
+        added = CustomEvalConfig.objects.create(
+            name="synthetic added eval",
+            project=project,
+            eval_template=custom_eval_config.eval_template,
+            config={},
+            mapping={"input": "input"},
+            filters={},
+        )
+        payload["evals"] = [str(custom_eval_config.pk), str(added.pk)]
+    rerun = clock["value"]
+    persisted = []
+
+    def unavailable(current, **kwargs):
+        assert not connection.in_atomic_block
+        row = EvalTask.no_workspace_objects.get(pk=current.pk)
+        persisted.append((row.status, row.start_time, row.continuous_cursor))
+        raise RuntimeError("synthetic dispatch outage")
+
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync", unavailable
+    )
+    response = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/", payload, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    # The rerun re-activates coverage in its own transaction, so whoever
+    # dispatches it later floors at the rerun, not at the first activation.
+    assert persisted == [(EvalTaskStatus.PENDING, rerun, None)]
+    clock["value"] = rerun + timedelta(hours=1)
+    assert recover_task(task, stale_running_seconds=7200)["restarted"]
+    assert restarts == [(EvalTaskStatus.RUNNING, rerun, None)]
+
+
+def test_rerun_that_keeps_the_cursor_keeps_the_floor(
+    auth_client, project, custom_eval_config, clock, monkeypatch
+):
+    activated = clock["value"] - timedelta(days=60)
+    cursor = clock["value"] - timedelta(minutes=10)
+    task = stored_task(
+        project,
+        custom_eval_config,
+        status=EvalTaskStatus.PAUSED,
+        start_time=activated,
+        continuous_cursor=cursor,
+    )
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync",
+        lambda current, **kwargs: None,
+    )
+    response = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/",
+        {
+            "eval_task_id": str(task.pk),
+            "edit_type": "edit_rerun",
+            "name": "renamed synthetic task",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    task.refresh_from_db()
+    assert (task.start_time, task.continuous_cursor) == (activated, cursor)
