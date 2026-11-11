@@ -1125,7 +1125,9 @@ def resolve_escalation(api, comments, context):
 def ensure_labels(api, names):
     existing = {label["name"] for label in api.pages("labels")}
     for name in names:
-        if name not in existing:
+        if name in existing:
+            continue
+        try:
             api.request(
                 "POST",
                 "labels",
@@ -1135,6 +1137,10 @@ def ensure_labels(api, names):
                     "description": "PR autopilot policy and audit trail",
                 },
             )
+        except ApiError as exc:
+            # Another run created it between the read and this request.
+            if exc.status != 422 or name not in {label["name"] for label in api.pages("labels")}:
+                raise
 
 
 def add_label(api, number, label):
@@ -1237,14 +1243,13 @@ def tier_label(pr, policy):
     )
 
 
-def worth_dispatching(pr, tier, policy, settings, repository):
-    """Only a PR whose dispatch run can act: one with no tier label yet (a
-    one-time backfill), or a trusted author's LOW PR without a hold."""
+def same_repo_ready(pr, repository):
     head_repo = (pr.get("head") or {}).get("repo") or {}
-    if head_repo.get("full_name") != repository or pr.get("draft") is not False:
-        return False
-    if tier is None:
-        return True
+    return head_repo.get("full_name") == repository and pr.get("draft") is False
+
+
+def actionable(pr, tier, policy, settings):
+    """A trusted author's LOW PR without a hold: its dispatch run can merge."""
     labels = {label.get("name") for label in pr.get("labels") or []}
     author = ((pr.get("user") or {}).get("login") or "").lower()
     return (
@@ -1252,6 +1257,14 @@ def worth_dispatching(pr, tier, policy, settings, repository):
         and policy["labels"]["hold"] not in labels
         and author in trusted_authors(policy, settings.get("authors", ""))
     )
+
+
+def worth_dispatching(pr, tier, policy, settings, repository):
+    """Only a PR whose dispatch run can act: one with no tier label yet (a
+    one-time backfill), or a trusted author's LOW PR without a hold."""
+    if not same_repo_ready(pr, repository):
+        return False
+    return tier is None or actionable(pr, tier, policy, settings)
 
 
 def dispatch(api, number):
@@ -1262,22 +1275,112 @@ def dispatch(api, number):
     )
 
 
+# The schedule's period. Each sweep looks at a different slice of the PRs.
+SWEEP_SECONDS = 900
+# Classification dispatches (backfill and re-tier) per sweep. Each run adds a
+# label and a tier comment, and GitHub limits content-creating requests to
+# about 80 a minute; the first sweep in this repository found about 280 PRs.
+CLASSIFY_PER_SWEEP = 25
+# Labelled PRs whose last tier audit one sweep reads (one request each).
+AUDIT_READS_PER_SWEEP = 50
+# GitHub asks for a pause of about a second between mutating requests.
+DISPATCH_PAUSE_SECONDS = 1
+# A secondary rate limit answers 403 or 429: stop dispatching for this sweep.
+THROTTLED = frozenset({403, 429})
+AUDITED_HEAD = re.compile(r"Head: `([0-9a-f]{40})`")
+
+
+def rotation(items, limit, slot):
+    """At most `limit` items, from an offset that moves each sweep, so PRs whose
+    runs keep failing cannot hold every slot."""
+    if len(items) <= limit:
+        return list(items)
+    start = (slot * limit) % len(items)
+    return (items + items)[start : start + limit]
+
+
+def audited_head(api, number):
+    """The head the bot's tier comment recorded at the PR's last tier audit."""
+    for item in api.pages(f"issues/{number}/comments"):
+        body = item.get("body") or ""
+        if bot_comment(item) and body.startswith(TIER_MARKER):
+            match = AUDITED_HEAD.search(body)
+            return match[1] if match else None
+    return None
+
+
 def sweep(api, policy, settings):
     """Scheduled runs come from the default branch. Dispatch a run on dev for
-    each PR that can act, so all later policy and workflow code comes from dev."""
-    failed, sent = [], 0
+    each PR that can act, so all later policy and workflow code comes from dev.
+
+    First every trusted LOW PR without a hold, uncapped. Then, capped and
+    rotated, PRs to classify: those with no tier label yet (the one-time
+    backfill) and labelled PRs whose head moved since their last tier audit.
+    The second kind keeps classification working, more slowly, if GitHub
+    blocks this workflow's pull_request_target runs.
+    """
+    act, backfill, labelled = [], [], []
     for pr in api.pages("pulls?state=open&base=dev"):
-        if not worth_dispatching(pr, tier_label(pr, policy), policy, settings, api.repository):
+        if not same_repo_ready(pr, api.repository):
             continue
-        try:
-            dispatch(api, pr["number"])
-            sent += 1
-        except PolicyError:
-            # One refused dispatch must not skip the older PRs later in the list.
-            failed.append(str(pr["number"]))
-    summary(f"Scheduled dev PR sweep dispatched {sent} run(s); no PR content was executed.")
+        tier = tier_label(pr, policy)
+        if tier is None:
+            backfill.append(pr)
+        elif actionable(pr, tier, policy, settings):
+            act.append(pr)
+        else:
+            labelled.append(pr)
+    slot = int(now_utc().timestamp() // SWEEP_SECONDS)
+    failed, sent, throttled = [], 0, False
+
+    def send(prs):
+        nonlocal sent, throttled
+        for index, pr in enumerate(prs):
+            if sent or failed:
+                time.sleep(DISPATCH_PAUSE_SECONDS)
+            try:
+                dispatch(api, pr["number"])
+                sent += 1
+            except PolicyError as exc:
+                # One failed dispatch must not skip the PRs after it, unless
+                # GitHub is throttling: then every further request makes it worse.
+                failed.append(str(pr["number"]))
+                if isinstance(exc, ApiError) and exc.status in THROTTLED:
+                    failed.extend(str(item["number"]) for item in prs[index + 1 :])
+                    throttled = True
+                    return
+
+    send(act)
+    moved, unread = [], []
+    if not throttled:
+        for pr in rotation(labelled, AUDIT_READS_PER_SWEEP, slot):
+            try:
+                if audited_head(api, pr["number"]) != pr["head"]["sha"]:
+                    moved.append(pr)
+            except PolicyError:
+                unread.append(str(pr["number"]))
+        classify = rotation(moved + backfill, CLASSIFY_PER_SWEEP, slot)
+        if classify:
+            try:
+                # Once, before the runs start, so they do not race to create them.
+                ensure_labels(api, policy["labels"].values())
+            except PolicyError:
+                summary("The autopilot labels could not be checked; each run creates its own.")
+        send(classify)
+    summary(
+        f"Scheduled dev PR sweep dispatched {sent} run(s). Trusted LOW PRs: {len(act)}. "
+        f"PRs to classify: {len(backfill)} unlabelled, {len(moved)} pushed since their "
+        "tier audit. No PR content was executed."
+    )
+    problems = []
     if failed:
-        raise PolicyError("dispatch failed for PR(s) " + ", ".join(failed))
+        problems.append("dispatch failed for PR(s) " + ", ".join(failed))
+    if throttled:
+        problems.append("GitHub throttled the dispatches; the next sweep continues")
+    if unread:
+        problems.append("the tier audit of PR(s) " + ", ".join(unread) + " could not be read")
+    if problems:
+        raise PolicyError("; ".join(problems))
 
 
 def resolve_number(api, event, event_name):

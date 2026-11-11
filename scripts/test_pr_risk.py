@@ -205,7 +205,10 @@ class FakeGitHub:
         self.push_log = [(risk.ZERO_SHA, HEAD, "trusted-author")]
         self.activity = None
         self.open_prs = None
-        self.failing_dispatches = set()
+        # Comments of PRs other than #42, by number (the sweep reads them).
+        self.pr_comments = {}
+        # PR number (string) -> HTTP status its dispatch fails with.
+        self.failing_dispatches = {}
         self.dev_tip = BASE
         self.behind = 1
         self.behind_override = None
@@ -277,6 +280,9 @@ class FakeGitHub:
             return copy.deepcopy(self.files)
         if base == "issues/42/comments":
             return copy.deepcopy(self.comments)
+        other = re.fullmatch(r"issues/(\d+)/comments", base)
+        if other:
+            return copy.deepcopy(self.pr_comments.get(int(other[1]), []))
         if base == "pulls/42/reviews":
             return copy.deepcopy(self.reviews)
         if base == "labels":
@@ -370,6 +376,8 @@ class FakeGitHub:
         if method == "GET" and re.fullmatch(r"actions/runs/\d+", route):
             return copy.deepcopy(self.runs[self.known_run(route.split("/")[-1])])
         if method == "POST" and route == "labels":
+            if data["name"] in {label["name"] for label in self.labels}:
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 422)", 422)
             self.labels.append(data)
             return data
         if method == "POST" and route == "issues/42/labels":
@@ -424,8 +432,9 @@ class FakeGitHub:
             self.pr["state"] = "closed"
             return {"merged": True, "sha": "c" * 40}
         if method == "POST" and route.endswith("/dispatches"):
-            if (data.get("inputs") or {}).get("pr_number") in self.failing_dispatches:
-                raise risk.PolicyError("GitHub API denied or failed a request (HTTP 403)")
+            status = self.failing_dispatches.get((data.get("inputs") or {}).get("pr_number"))
+            if status:
+                raise risk.ApiError(f"GitHub API denied or failed a request (HTTP {status})", status)
             return None
         raise AssertionError(f"unexpected API call {method} {route}")
 
@@ -2632,13 +2641,32 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(dispatch[0][2], {"ref": "dev", "inputs": {"pr_number": "42"}})
         self.assertFalse(self.reservations())
 
-    def test_sweep_dispatches_only_prs_that_can_act(self):
-        def open_pr(number, labels=(), author="trusted-author", **changes):
-            item = {**pr(), "number": number, "labels": [{"name": n} for n in labels],
-                    "user": {"login": author}}
-            item.update(changes)
-            return item
+    @staticmethod
+    def open_pr(number, labels=(), author="trusted-author", **changes):
+        item = {**pr(), "number": number, "labels": [{"name": n} for n in labels],
+                "user": {"login": author}}
+        item.update(changes)
+        return item
 
+    def tier_comment(self, number, head):
+        """The bot's tier comment as tier_audit writes it, naming `head`."""
+        self.api.pr_comments.setdefault(number, []).append({
+            "id": 1000 + number,
+            "body": f"{risk.TIER_MARKER}\nRisk tier: **MEDIUM**. One human review is needed.\n\nHead: `{head}`. Policy: `.github/pr-autopilot.yml` on dev.",
+            "user": {"login": "github-actions[bot]", "type": "Bot"},
+        })
+
+    def sweep(self, config=None):
+        before = len(self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches"))
+        try:
+            risk.prepare(self.api, POLICY, config or settings(), {}, "schedule")
+        finally:
+            sent = [w[2]["inputs"]["pr_number"] for w in self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches")]
+            self.sent = sent[before:]
+        return self.sent
+
+    def test_sweep_dispatches_only_prs_that_can_act(self):
+        open_pr = self.open_pr
         self.api.open_prs = [
             open_pr(1),
             open_pr(2, ["autopilot-low"]),
@@ -2650,20 +2678,110 @@ class ControllerTests(unittest.TestCase):
             open_pr(8, head={"ref": "gone", "sha": HEAD, "repo": None}),
             open_pr(9, head={"ref": "fork", "sha": HEAD, "repo": {"full_name": "fork/project"}}),
         ]
-        risk.prepare(self.api, POLICY, settings(), {}, "schedule")
-        sent = [w[2]["inputs"]["pr_number"] for w in self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches")]
-        self.assertEqual(sent, ["1", "2"])
-        risk.prepare(self.api, POLICY, settings(authors=""), {}, "schedule")
-        sent = [w[2]["inputs"]["pr_number"] for w in self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches")]
-        self.assertEqual(sent, ["1", "2", "1"])
+        # Their last tier audits saw the current head.
+        for number in (2, 3, 4, 5, 6):
+            self.tier_comment(number, HEAD)
+        # Trusted LOW first, then the PR to classify.
+        self.assertEqual(self.sweep(), ["2", "1"])
+        self.assertEqual(self.sweep(settings(authors="")), ["1"])
+        self.assertFalse(any(r[1].startswith(("issues/7/", "issues/8/", "issues/9/")) for r in self.api.requests))
+
+    def test_sweep_re_tiers_a_labelled_pr_whose_head_moved_since_its_tier_audit(self):
+        # pull_request_target runs may be blocked: the sweep notices the push.
+        open_pr = self.open_pr
+        self.api.open_prs = [
+            open_pr(4, ["autopilot-medium"]),
+            open_pr(5, ["autopilot-high"]),
+            open_pr(6, ["autopilot-low"], author="someone-else"),
+            open_pr(7, ["autopilot-medium", "autopilot-hold"]),
+            open_pr(8, ["autopilot-medium"], draft=True),
+            open_pr(9, ["autopilot-medium"], head={"ref": "fork", "sha": HEAD, "repo": {"full_name": "fork/project"}}),
+        ]
+        self.tier_comment(4, OTHER)   # pushed since the audit
+        self.tier_comment(5, HEAD)    # audited at this head
+        self.tier_comment(7, OTHER)   # a hold does not stop classification
+        self.tier_comment(8, OTHER)
+        self.tier_comment(9, OTHER)
+        # 6 has no tier comment (deleted, or never written): classify it.
+        self.assertEqual(self.sweep(), ["4", "6", "7"])
+        # The re-tier runs record the current head, so the next sweep is quiet.
+        for number in (4, 6, 7):
+            self.api.pr_comments[number] = []
+            self.tier_comment(number, HEAD)
+        self.assertEqual(self.sweep(), [])
+        # A person's comment that copies the marker is not the bot's audit.
+        self.api.pr_comments[5][0]["user"] = {"login": "someone", "type": "User"}
+        self.assertEqual(self.sweep(), ["5"])
+
+    def test_sweep_caps_and_rotates_classification_after_trusted_low_prs(self):
+        trusted_low = [self.open_pr(n, ["autopilot-low"]) for n in range(1, 31)]
+        unlabelled = [self.open_pr(n) for n in range(100, 140)]
+        self.api.open_prs = trusted_low + unlabelled
+        sent = self.sweep()
+        # Every trusted LOW PR, uncapped and first; then at most 25 to classify.
+        self.assertEqual(sent[:30], [str(n) for n in range(1, 31)])
+        self.assertEqual(len(sent), 30 + risk.CLASSIFY_PER_SWEEP)
+        self.assertTrue(set(sent[30:]) <= {str(n) for n in range(100, 140)})
+        # A pause before every dispatch but the first.
+        self.assertEqual(self.sleep.call_count, len(sent) - 1)
+        self.sleep.assert_called_with(risk.DISPATCH_PAUSE_SECONDS)
+        # The next sweep takes the next slice, so failing PRs cannot hold the slots.
+        first = set(sent[30:])
+        with patch.object(risk, "now_utc", return_value=NOW + dt.timedelta(minutes=15)):
+            second = set(self.sweep()[30:])
+        self.assertTrue(second - first)
+        self.assertEqual(first | second, {str(n) for n in range(100, 140)})
+        # The labels exist before the classification runs start.
+        self.assertEqual({label["name"] for label in self.api.labels}, set(POLICY["labels"].values()))
+
+    def test_sweep_reads_at_most_a_bounded_slice_of_tier_audits(self):
+        self.api.open_prs = [self.open_pr(n, ["autopilot-medium"]) for n in range(1, 121)]
+        for number in range(1, 121):
+            self.tier_comment(number, HEAD)
+        self.sweep()
+        reads = [r for r in self.api.requests if re.fullmatch(r"issues/\d+/comments.*", r[1])]
+        self.assertEqual(len(reads), risk.AUDIT_READS_PER_SWEEP)
 
     def test_one_failed_dispatch_does_not_stop_the_sweep(self):
         self.api.open_prs = [{**pr(), "number": n} for n in (1, 2, 3)]
-        self.api.failing_dispatches = {"1"}
+        self.api.failing_dispatches = {"1": 502}
         with self.assertRaisesRegex(risk.PolicyError, "PR\\(s\\) 1"):
-            risk.prepare(self.api, POLICY, settings(), {}, "schedule")
-        sent = [w[2]["inputs"]["pr_number"] for w in self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches")]
-        self.assertEqual(sent, ["1", "2", "3"])
+            self.sweep()
+        self.assertEqual(self.sent, ["1", "2", "3"])
+
+    def test_throttled_dispatch_stops_the_sweep(self):
+        for status in (403, 429):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                self.api.open_prs = [self.open_pr(1, ["autopilot-low"]), self.open_pr(2, ["autopilot-low"]),
+                                     self.open_pr(3)]
+                self.api.failing_dispatches = {"1": status}
+                with self.assertRaisesRegex(risk.PolicyError, "PR\\(s\\) 1, 2.*throttled"):
+                    self.sweep()
+                self.assertEqual(self.sent, ["1"])
+                self.assertFalse(any(r[1] == "labels" for r in self.api.requests))
+
+    def test_concurrent_runs_creating_the_same_label_do_not_fail(self):
+        # Another run created the labels after this run listed them.
+        self.api.labels = [{"name": name} for name in POLICY["labels"].values()]
+        original = self.api.pages
+        listed = []
+
+        def pages(route, key=None):
+            if route.startswith("labels") and not listed:
+                listed.append(route)
+                original(route, key)
+                return []
+            return original(route, key)
+
+        self.api.pages = pages
+        risk.ensure_labels(self.api, POLICY["labels"].values())
+        self.assertEqual(len(self.api.labels), len(POLICY["labels"]))
+        # A refusal that is not "already exists" still fails.
+        self.api = FakeGitHub()
+        self.failing(lambda m, r, d: m == "POST" and r == "labels", 1, status=403)
+        with self.assertRaises(risk.ApiError):
+            risk.ensure_labels(self.api, POLICY["labels"].values())
 
     def test_dispatch_rejects_wrong_branch_and_shell_text(self):
         with (
