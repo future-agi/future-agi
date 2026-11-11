@@ -579,6 +579,8 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'inspect-declared-cohort') {
+        // The recovery view has been idle for minutes and the browser throttles an idle tab's timers; the operator refreshes the facts once.
+        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-final-cohort');
         const cohort = await consumers(signal);
         const table = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(table).toBeVisible();
