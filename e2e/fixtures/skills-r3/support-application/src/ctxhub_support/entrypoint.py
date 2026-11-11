@@ -129,6 +129,23 @@ def main():
             provider=provider,
             business=business,
         )
+        # J6: optional authenticated delivery receipts (report credential only).
+        if os.environ.get("CTXHUB_REPORT_CREDENTIAL"):
+            from .reporting import report_deliveries
+
+            reporter = Client(
+                base_url=os.environ["CTXHUB_REGISTRY_URL"],
+                auth=ContextAuth(os.environ["CTXHUB_REPORT_CREDENTIAL"]),
+                max_retries=0,
+            )
+            stack.callback(reporter.close)
+            try:
+                result["reported"] = report_deliveries(
+                    store, request["thread"], reporter, os.environ["CTXHUB_BINDING_ID"]
+                )
+            except Exception as exc:  # never claim delivery reporting on failure
+                result["reported"] = 0
+                result["report_error"] = type(exc).__name__
         result["events"] = store.events(request["thread"])
         args.output.parent.mkdir(parents=True, exist_ok=True)
         # Raw transcript remains in the private state DB, not stdout or ingestion receipts.

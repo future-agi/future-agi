@@ -27,7 +27,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
   const manifest = versionQuery.data?.files || [];
   const selected = manifest.find((file) => file.path === selectedPath);
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
-  const tabs = [["context", "Context"], ["links", "Linked skills"], ["tests", "Tests"], ["versions", "Versions"], ["consumers", "Consumers"], ["use", "Use"]];
+  const tabs = [["context", "Context"], ["links", "Linked skills"], ["tests", "Tests"], ["versions", "Versions"], ["consumers", "Consumers"], ["recovery", "Recovery"], ["use", "Use"]];
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <PageHeader title={context.name} description={descriptor?.description || context.description} />

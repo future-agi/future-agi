@@ -9,6 +9,7 @@ import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
 import ContextCaptureController from './ContextCaptureController';
+import J6RecoveryPanel from './J6RecoveryPanel';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -53,6 +54,8 @@ function Detail() {
       sections={{
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
+        // J6: incident recovery choice and local/application recovery guidance.
+        recovery: query.data?.context ? <J6RecoveryPanel contextId={contextId} contextName={query.data.context.name} /> : null,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
       }} />
     <ContextCaptureController contextId={contextId} canCapture={!query.isError && query.data?.releaseState.permissions.canPublish === true} />

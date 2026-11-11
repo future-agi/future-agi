@@ -1,0 +1,131 @@
+import axios from 'src/utils/axios';
+import { apiPath } from 'src/api/contracts/api-surface';
+import { useSkillV11Query, useSkillV11Mutation, skillV11Result, idempotencyHeaders } from './testing';
+import { mapContextBinding } from './context-consumers';
+
+// J6 recovery: one read model over existing contracted endpoints. Eligibility is
+// derived from server facts (labels, quarantine, distribution blocks); the page
+// never infers delivery or recovery from a pointer move.
+const paths = {
+  releaseState: (context_id) => apiPath('/model-hub/skills/contexts/{context_id}/release-state/', { context_id }),
+  versions: (context_id) => apiPath('/model-hub/skills/contexts/{context_id}/versions/', { context_id }),
+  consumers: (context_id) => apiPath('/model-hub/skills/contexts/{context_id}/consumers/', { context_id }),
+  inspection: (context_id, number) => apiPath('/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/', { context_id, number }),
+  safety: (version_id) => apiPath('/model-hub/skills/version-safety/{version_id}/', { version_id }),
+  skill: (skill_id) => apiPath('/model-hub/skills/{skill_id}/', { skill_id }),
+  preview: () => apiPath('/model-hub/skills/release-requests/preview/'),
+  requests: () => apiPath('/model-hub/skills/release-requests/'),
+  credentials: () => apiPath('/model-hub/skills/contexts/credentials/'),
+  members: () => apiPath('/accounts/organization/members/'),
+};
+const status = (error) => error?.response?.status ?? error?.statusCode ?? error?.status;
+
+const fact = (value) => (value ? {
+  versionId: value.version_id, digest: value.digest, observedAt: value.observed_at,
+  instanceId: value.instance_id, sessionId: value.session_id,
+  ...(value.diagnostic_codes ? { diagnosticCodes: value.diagnostic_codes, traceRef: value.trace_ref } : {}),
+} : null);
+
+export function deriveCandidates({ versions, productionVersionId, rows }) {
+  const production = versions.find((version) => version.id === productionVersionId) ?? null;
+  return versions.map((version) => {
+    const row = rows[version.id];
+    const reasons = [];
+    if (version.id === productionVersionId) reasons.push('current_production');
+    if (row.quarantined) reasons.push('quarantined');
+    if (row.distributionBlocked) reasons.push(row.blockReason ?? 'distribution_blocked');
+    return {
+      ...version, ...row,
+      isProduction: version.id === productionVersionId,
+      lowerThanProduction: Boolean(production) && version.number < production.number,
+      eligible: reasons.length === 0,
+      reasons,
+    };
+  });
+}
+
+export async function loadRecovery(contextId, config) {
+  const [state, versionPage, consumerPage] = await Promise.all([
+    axios.get(paths.releaseState(contextId), config).then(skillV11Result),
+    axios.get(paths.versions(contextId), { ...config, params: { page: 1, page_size: 100 } }).then(skillV11Result),
+    axios.get(paths.consumers(contextId), { ...config, params: { page: 1, page_size: 100, window_days: 30 } }).then(skillV11Result),
+  ]);
+  if (versionPage.total_pages > 1 || consumerPage.total_pages > 1) throw new Error('This recovery view covers at most 100 releases and 100 declared consumers.');
+  const versions = versionPage.results.map((value) => ({ id: value.id, number: value.number, digest: value.digest })).sort((a, b) => b.number - a.number);
+  const production = state.labels.find((label) => label.name === 'production') ?? null;
+  const rows = {};
+  const unavailable = new Map();
+  await Promise.all(versions.map(async (version) => {
+    const [inspection, safety] = await Promise.all([
+      axios.get(paths.inspection(contextId, version.number), { ...config, params: { file_offset: 0, file_limit: 1 } }).then(skillV11Result),
+      axios.get(paths.safety(version.id), config).then(skillV11Result),
+    ]);
+    const links = inspection.descriptor?.links ?? [];
+    rows[version.id] = {
+      quarantined: safety.quarantined === true, quarantineReason: safety.reason || null,
+      replacementVersionId: safety.replacement_version_id ?? null,
+      distributionBlocked: inspection.distribution_blocked === true, blockReason: inspection.reason ?? null,
+      fileCount: inspection.manifest.file_count,
+      children: links.map((link) => ({ skillId: link.skill_id, mount: link.mount, versionId: link.version_id })),
+    };
+    links.forEach((link) => unavailable.set(link.skill_id, null));
+  }));
+  // A child whose source is no longer readable keeps its exact bytes in every
+  // release that retained it. Report it; never substitute the current source.
+  await Promise.all([...unavailable.keys()].map(async (skillId) => {
+    try { await axios.get(paths.skill(skillId), config); unavailable.set(skillId, false); }
+    catch (error) { if (status(error) === 404) unavailable.set(skillId, true); else throw error; }
+  }));
+  Object.values(rows).forEach((row) => { row.unavailableChildren = row.children.filter((child) => unavailable.get(child.skillId) === true); });
+  return {
+    releaseRevision: state.release_revision,
+    latestVersion: state.latest_version,
+    canPromote: state.permissions.can_promote === true,
+    canIssueCredentials: state.permissions.can_issue_credentials === true,
+    productionVersionId: production?.version_id ?? null,
+    candidates: deriveCandidates({ versions, productionVersionId: production?.version_id ?? null, rows }),
+    asOf: consumerPage.as_of,
+    cohort: consumerPage.results.map((row) => ({
+      binding: mapContextBinding(row.binding), desired: fact(row.desired), loaded: fact(row.loaded),
+      installed: fact(row.installed), latestFailure: fact(row.latest_failure ?? null),
+      states: row.states, nextActionCode: row.next_action_code, observationsComplete: row.observations_complete,
+    })),
+  };
+}
+
+export function useContextRecovery(contextId) {
+  return useSkillV11Query({ parts: ['agent_context', contextId, 'j6-recovery'], enabled: Boolean(contextId), load: (config) => loadRecovery(contextId, config) });
+}
+
+export function useRecoveryReviewers() {
+  return useSkillV11Query({ parts: ['j6-recovery-reviewers'], load: async (config) => {
+    const value = (await axios.get(paths.members(), { ...config, params: { page: 1, limit: 100 } })).data?.result ?? {};
+    return (value.results ?? []).filter((row) => row.type !== 'invite' && row.status !== 'Pending' && row.id)
+      .map((row) => ({ id: row.id, name: row.name || row.email, email: row.email }));
+  } });
+}
+
+export function usePreviewRecoveryRelease() {
+  return useSkillV11Mutation({ send: async ({ contextId, candidateVersionId }, config) => skillV11Result(await axios.post(paths.preview(), {
+    resource_id: contextId, kind: 'agent_context', candidate_version_id: candidateVersionId,
+    label: 'production', target: null, evidence: [], external_pipeline: null,
+  }, config)) });
+}
+
+export function useSubmitRecoveryRequest(contextId) {
+  return useSkillV11Mutation({
+    send: async ({ preview, reviewerId, idempotencyKey }, config) => skillV11Result(await axios.post(paths.requests(), {
+      packet: preview.packet, expected_fingerprint: preview.fingerprint, recipient_ids: [reviewerId], revision: 0,
+    }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } })),
+    invalidate: () => [['agent_context', contextId, 'j6-recovery'], ['review-inbox']],
+  });
+}
+
+export function useIssueRecoveryCredential(contextId) {
+  return useSkillV11Mutation({
+    send: async ({ label, versionIds = [], expiresAt, idempotencyKey }, config) => skillV11Result(await axios.post(paths.credentials(), {
+      purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: [label], version_ids: versionIds }],
+      binding_ids: [], expires_at: expiresAt,
+    }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } })),
+  });
+}

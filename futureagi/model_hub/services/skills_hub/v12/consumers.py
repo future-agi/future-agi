@@ -880,6 +880,27 @@ def _fact(row: HubSkillContextReceipt) -> dict:
     }
 
 
+# --- J6 recovery: retained incident evidence (separated block) ---------------
+def _j6_latest_failure(active: list[HubSkillContextReceipt]) -> dict | None:
+    """The newest unsuperseded failed receipt: an incident pointer, never a verdict.
+
+    Only bounded codes and the physical trace reference are exposed. A later
+    closed receipt for the same instance already removed it from ``active``.
+    """
+    failures = [row for row in active if row.stage == "failed"]
+    if not failures:
+        return None
+    row = max(failures, key=lambda item: (item.created_at, item.sequence))
+    return {
+        **_fact(row),
+        "diagnostic_codes": list(row.details.get("diagnostic_codes") or []),
+        "trace_ref": row.details.get("trace_ref"),
+    }
+
+
+# --- end J6 recovery block ----------------------------------------------------
+
+
 class _ExactJSONMember(Func):
     """PostgreSQL JSON array membership, not JSONB subset containment."""
 
@@ -1106,6 +1127,7 @@ def _observation(
         "binding": binding_output(binding),
         "desired": desired,
         **facts,
+        "latest_failure": _j6_latest_failure(active),
         "observation_age_seconds": age,
         "states": sorted(states),
         "next_action_code": action,

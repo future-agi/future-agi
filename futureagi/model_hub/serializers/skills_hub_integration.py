@@ -112,6 +112,12 @@ class ConsumerFact(VersionIdentity):
     session_id = s.UUIDField(allow_null=True)
 
 
+class ConsumerFailure(ConsumerFact):
+    # J6: incident pointer only. Codes and the physical trace reference, no text.
+    diagnostic_codes = s.ListField(child=s.CharField(max_length=64), max_length=20)
+    trace_ref = s.JSONField(allow_null=True)
+
+
 class ConsumerObservation(ContextSerializer):
     binding = BindingOut()
     desired = VersionIdentity(allow_null=True)
@@ -123,6 +129,7 @@ class ConsumerObservation(ContextSerializer):
     states = s.ListField(child=s.CharField())
     next_action_code = s.CharField()
     observations_complete = s.BooleanField()
+    latest_failure = ConsumerFailure(allow_null=True)
 
 
 class ConsumerPage(ContextSerializer):
