@@ -398,6 +398,26 @@ def trusted_run(api, run_id, number):
     )
 
 
+# The publish step in the workflow carries this name, rendered from the trusted
+# prepare job's output, and succeeds only when it published a passing verdict.
+VERDICT_STEP = "Publish review verdict: head {head} base {base}"
+
+
+def run_vouches(api, run_id, context):
+    """The cited run itself passed this exact head and base.
+
+    Anyone who can create a check run can cite a genuine run ID; nobody can add a
+    successful step to a finished run of the trusted workflow.
+    """
+    name = VERDICT_STEP.format(head=context["head"], base=context["base"])
+    jobs = api.pages(f"actions/runs/{int(run_id)}/jobs", "jobs")
+    return any(
+        step.get("name") == name and step.get("conclusion") == "success"
+        for job in jobs
+        for step in job.get("steps") or []
+    )
+
+
 def review_ledger(api, number, comments):
     rounds = []
     for comment in comments:
@@ -578,9 +598,18 @@ def review_check_passes(api, checks, context, policy):
         return False
     try:
         record = json.loads(check.get("external_id", ""))
-        return all(
-            record[k] == context[k] for k in ("pr", "head", "base")
-        ) and trusted_run(api, record["run_id"], context["pr"])
+        if not (
+            all(record[k] == context[k] for k in ("pr", "head", "base"))
+            and trusted_run(api, record["run_id"], context["pr"])
+        ):
+            return False
+        # In the run that reserved this check, the merge step only runs after the
+        # verdict step succeeded. Any other run must show that step's success.
+        same_run = (
+            str(record["run_id"]) == os.environ.get("GITHUB_RUN_ID")
+            and check["id"] == context.get("check_id")
+        )
+        return same_run or run_vouches(api, record["run_id"], context)
     except (ValueError, KeyError, TypeError):
         return False
 
@@ -1048,7 +1077,7 @@ def post_merge_plan(policy, files, settings):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["classify", "prepare", "finish"])
+    parser.add_argument("command", choices=["classify", "prepare", "publish", "merge"])
     parser.add_argument(
         "--files",
         type=Path,
@@ -1074,14 +1103,19 @@ def main():
         else:
             require_initial_attempt()
             context = json.loads(os.environ["PR_CONTEXT"])
-            if "check_id" in context and not publish_verdict(
-                api,
-                policy,
-                context,
-                os.environ.get("AI_VERDICT", ""),
-                os.environ.get("AI_JOB_RESULT", ""),
-            ):
-                return 1
+            if args.command == "publish":
+                # Exit 0 only for a passing verdict: the step's success is the
+                # durable record later runs check (VERDICT_STEP).
+                if "check_id" not in context:
+                    raise PolicyError("no review reservation to publish")
+                passed = publish_verdict(
+                    api,
+                    policy,
+                    context,
+                    os.environ.get("AI_VERDICT", ""),
+                    os.environ.get("AI_JOB_RESULT", ""),
+                )
+                return 0 if passed else 1
             merge(api, policy, settings, context)
         return 0
     except (PolicyError, ValueError, KeyError, TypeError, OSError) as exc:

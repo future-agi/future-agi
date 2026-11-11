@@ -183,7 +183,12 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - name: Publish head-bound PR Autopilot review check, then re-read every merge gate
+      # Publishes the head-bound PR Autopilot review check. The step name is
+      # rendered from the trusted prepare output and must match
+      # VERDICT_STEP in scripts/pr_risk.py. The step succeeds only for a passing
+      # verdict, so later runs can check this run really passed this head and base.
+      - name: "Publish review verdict: head ${{ fromJSON(needs.prepare.outputs.context).head }} base ${{ fromJSON(needs.prepare.outputs.context).base }}"
+        if: fromJSON(needs.prepare.outputs.context).check_id
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -198,4 +203,17 @@ jobs:
         # Model output is parsed as JSON from the environment, never shell code.
         run: |
           set -euo pipefail
-          python3 -I scripts/pr_risk.py finish
+          python3 -I scripts/pr_risk.py publish
+      - name: Re-read every merge gate, then approve and merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
+          PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
+          AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+          REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
+          PR_CONTEXT: ${{ needs.prepare.outputs.context }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/pr_risk.py merge

@@ -138,8 +138,12 @@ number of human approvals.
    files, rules, current-head CI, hold/draft/author state, time, and review result.
    Outstanding human change requests block it. A cached AI pass must match both
    head and base and come from this trusted workflow's run **for this PR number**
-   (the run name is `PR autopilot #N`). If any review check on the same revision
-   is not a success, the pass is not used. It labels and comments
+   (the run name is `PR autopilot #N`). That run must also show a successful
+   step named `Publish review verdict: head <head> base <base>`. The workflow
+   renders that name from the trusted prepare output, and the step succeeds only
+   for a passing verdict. Anyone who can create a check run can cite a real run
+   ID, but nobody can add a step to a finished run. If any review check on the
+   same revision is not a success, the pass is not used. It labels and comments
    each automated approval, refreshes every gate **after** the audit writes and
    existing-approval lookup, then approves with `GITHUB_TOKEN`. Existing matching
    bot approvals are not duplicated. An audit label/comment without a submitted

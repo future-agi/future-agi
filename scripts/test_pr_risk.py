@@ -149,6 +149,9 @@ class FakeGitHub:
         self.run_event = "workflow_dispatch"
         self.run_path = f".github/workflows/{risk.WORKFLOW}"
         self.run_title = "PR autopilot #42"
+        # The earlier run's publish step, as the jobs API reports it.
+        self.jobs = [{"name": "review-gate-and-merge", "steps": [
+            {"name": risk.VERDICT_STEP.format(head=HEAD, base=BASE), "conclusion": "success"}]}]
         self.dev_tip = BASE
         self.behind = 1
 
@@ -176,6 +179,8 @@ class FakeGitHub:
             return copy.deepcopy(self.rules)
         if base == "pulls":
             return [copy.deepcopy(self.pr)]
+        if base.startswith("actions/runs/") and base.endswith("/jobs"):
+            return copy.deepcopy(self.jobs)
         raise AssertionError(f"unexpected pagination route {route}")
 
     def request(self, method, route, data=None, *, graphql=False):
@@ -1070,6 +1075,41 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(
             risk.review_check_passes(self.api, self.api.checks, context, POLICY)
         )
+
+    def forged_check(self, head):
+        record = {"pr": 42, "head": head, "base": BASE, "run_id": 10, "round": 1}
+        return {"id": 900, "name": POLICY["review_check"], "head_sha": head,
+                "status": "completed", "conclusion": "success",
+                "app": {"slug": "github-actions"}, "external_id": json.dumps(record)}
+
+    def test_forged_check_on_a_new_head_citing_a_real_run_is_not_trusted(self):
+        self.passing_review()
+        self.api.checks.append(self.forged_check(OTHER))
+        context = {"pr": 42, "head": OTHER, "base": BASE}
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": "12"}):
+            self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+
+    def test_later_run_reuses_a_pass_only_when_the_run_shows_it(self):
+        self.passing_review()
+        context = {"pr": 42, "head": HEAD, "base": BASE}
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": "12"}):
+            self.assertTrue(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+            self.api.jobs[0]["steps"][0]["conclusion"] = "failure"
+            self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+            self.api.jobs = []
+            self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+
+    def test_workflow_verdict_step_name_matches_the_controller(self):
+        text = WORKFLOW_TEXT
+        expected = risk.VERDICT_STEP.format(
+            head="${{ fromJSON(needs.prepare.outputs.context).head }}",
+            base="${{ fromJSON(needs.prepare.outputs.context).base }}")
+        self.assertIn(f'- name: "{expected}"', text)
+        publish = text.split(f'- name: "{expected}"', 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: fromJSON(needs.prepare.outputs.context).check_id", publish)
+        self.assertIn("python3 -I scripts/pr_risk.py publish", publish)
+        self.assertIn("python3 -I scripts/pr_risk.py merge", text)
+        self.assertNotIn("pr_risk.py finish", text)
 
     def test_review_evidence_from_a_run_for_another_pr_is_not_trusted(self):
         context = self.passing_review()
