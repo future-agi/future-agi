@@ -1,6 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query';
 import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
-import { useSkillV11Query, useSkillV11Mutation, skillV11Result, idempotencyHeaders } from './testing';
+import { useSkillV11Query, useSkillV11Mutation, useSkillV11Scope, skillV11Result, idempotencyHeaders } from './testing';
+import { skillsKeys } from './keys';
 import { mapContextBinding } from './context-consumers';
 import { readContextText } from './context-production';
 import { lineDiff } from 'src/sections/skills/contexts/closureDiff';
@@ -184,4 +186,12 @@ export function useRecoveryClosure(contextId, candidate, production) {
     parts: ['agent_context', contextId, 'j6-closure', candidate?.id, production?.id],
     enabled: Boolean(contextId && candidate), load: (config) => loadClosureReview({ contextId, candidate, production }, config),
   });
+}
+
+// One refresh for everything the page shows about this context: the recovery
+// view and the release header must never disagree about production.
+export function useRefreshContextFacts(contextId) {
+  const access = useSkillV11Scope();
+  const client = useQueryClient();
+  return () => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, 'agent_context', contextId) });
 }

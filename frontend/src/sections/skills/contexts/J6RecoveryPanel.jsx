@@ -27,6 +27,7 @@ import {
   usePreviewRecoveryRelease,
   useRecoveryClosure,
   useRecoveryReviewers,
+  useRefreshContextFacts,
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
 import { IdentityValue } from "../review/ReleaseReviewBody";
@@ -551,6 +552,7 @@ LocalRecovery.propTypes = {
 
 export default function J6RecoveryPanel({ contextId, contextName }) {
   const query = useContextRecovery(contextId);
+  const refreshFacts = useRefreshContextFacts(contextId);
   const [chosen, setChosen] = useState(null);
   const data = query.data;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
@@ -614,7 +616,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           canIssue={data.canIssueCredentials}
         />
       )}
-      <Button variant="text" onClick={() => query.refetch()}>
+      <Button variant="text" onClick={refreshFacts}>
         Refresh recovery facts
       </Button>
     </Stack>

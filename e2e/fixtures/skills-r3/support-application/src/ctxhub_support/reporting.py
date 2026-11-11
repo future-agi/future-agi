@@ -31,11 +31,15 @@ def root_text(state: dict) -> str:
     return text
 
 
-def _receipt(state: dict, stage: str, event_key: str, *, path=None, text=None, codes=()):
+def _receipt(
+    state: dict, stage: str, event_key: str, *, path=None, text=None, codes=()
+):
     session = state["session"]
     identity = state["lock"]["identity"]
     return {
-        "event_id": str(uuid5(NAMESPACE_URL, f"ctxhub-support:{session['session_id']}:{event_key}")),
+        "event_id": str(
+            uuid5(NAMESPACE_URL, f"ctxhub-support:{session['session_id']}:{event_key}")
+        ),
         "session_id": session["session_id"],
         "instance_id": state["incarnation"],
         # Monotonic per instance; later closure always supersedes earlier delivery.
@@ -47,7 +51,9 @@ def _receipt(state: dict, stage: str, event_key: str, *, path=None, text=None, c
         "observed_at": datetime.now(UTC).isoformat(),
         "details": {
             "path": path,
-            "sha256": hashlib.sha256(text.encode()).hexdigest() if text is not None else None,
+            "sha256": hashlib.sha256(text.encode()).hexdigest()
+            if text is not None
+            else None,
             "ranges": [[0, len(text)]] if text is not None else [],
             "runtime_version": RUNTIME,
             "adapter_version": ADAPTER,
@@ -71,15 +77,24 @@ def report_deliveries(store, thread: str, client, binding_id: str) -> int:
     if not state or not state.get("session") or not state.get("lock"):
         return 0
     events = store.events(thread)
-    reported = {e["body"]["session_id"] for e in events if e["kind"] == "delivery_reported"}
+    reported = {
+        e["body"]["session_id"] for e in events if e["kind"] == "delivery_reported"
+    }
     delivered = any(e["kind"] == "root_delivery" for e in events)
     session_id = state["session"]["session_id"]
     if not delivered or session_id in reported:
         return 0
     text = root_text(state)
-    post(client, binding_id, _receipt(state, "instructions_delivered", "root",
-                                      path="AGENTS.md", text=text))
-    store.event(thread, "delivery_reported", {"session_id": session_id, "stage": "instructions_delivered"})
+    post(
+        client,
+        binding_id,
+        _receipt(state, "instructions_delivered", "root", path="AGENTS.md", text=text),
+    )
+    store.event(
+        thread,
+        "delivery_reported",
+        {"session_id": session_id, "stage": "instructions_delivered"},
+    )
     return 1
 
 
@@ -88,5 +103,9 @@ def report_closed(store, thread: str, client, binding_id: str, reason: str) -> d
     if not state or not state.get("session"):
         raise ReportError("thread_has_no_session_to_close")
     post(client, binding_id, _receipt(state, "closed", "closed", codes=[reason]))
-    store.event(thread, "closed_reported", {"session_id": state["session"]["session_id"], "reason": reason})
+    store.event(
+        thread,
+        "closed_reported",
+        {"session_id": state["session"]["session_id"], "reason": reason},
+    )
     return state

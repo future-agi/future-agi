@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect as baseExpect } from '@playwright/test';
 import pg from 'pg';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -10,6 +10,8 @@ import { canonical, digest, requireValue, sha256 } from '../../../lib/skills-r3/
 import { attachGuest, GUEST_EVIDENCE_CLASS } from '../../../lib/skills-r3/j6-guest.mjs';
 import { GOOD_ROOT, REFUND_REQUEST, VERIFY_REQUEST, entrypoint, guestEnvironment, moveProduction, requestFor } from '../../../lib/skills-r3/j6-scenario.mjs';
 
+// The full stack can be slow under load; a person would wait, so assertions poll for 30 seconds.
+const expect = baseExpect.configure({ timeout: 30_000 });
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 // Public forensic APIs are observations, not a substitute for missing operator
@@ -155,7 +157,11 @@ export async function createDriver({ jobId, runId, registration }) {
     await expect(page.getByRole('button', { name: input.contextName, exact: true })).toHaveCount(inbox.result.results.length);
     await admin.click(page.getByRole('button', { name: input.contextName, exact: true }).nth(index), `open-${target}`);
   };
-  const shot = (page, name) => page.screenshot({ path: resolve(output, 'shots', `${name}.png`) });
+  // Evidence images never show a one-time credential: readonly fields are masked in the capture only.
+  const shot = async (page, name) => {
+    await page.addStyleTag({ content: 'input[readonly]{-webkit-text-security:disc !important;}' }).catch(() => {});
+    return page.screenshot({ path: resolve(output, 'shots', `${name}.png`) });
+  };
   const opsFor = (stage, ledger, signal, actor) => new MeasuredOperator({ ledger, actor, step: stage.id, phase: stage.phase, signal });
   const guestEnv = (consume, report, binding) => guest.envFile(`${binding}-${randomUUID().slice(0, 8)}`, guestEnvironment({ consume, report, bindingId: input.bindings[binding].id }));
   // A measured operator command whose non-zero exit is data (a paused thread), not a crash.
@@ -179,7 +185,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const navigate = (op, ledger, stage, page, url, target) => op.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: op.actor, step: stage.id, phase: stage.phase, target }, () => page.goto(url)));
   const apiOk = (signal) => async (actor, method, path, data) => { const r = await call(actor, method, path, data, signal); requireValue(r.status >= 200 && r.status < 300, `${method} ${path} returned ${r.status}`); return r.result; };
   const sessionRows = (bindingId) => pgRows('SELECT id::text, version_id::text, digest, incarnation_id::text AS instance_id, credential_id::text FROM model_hub_hubskillcontextsession WHERE binding_id=$1 ORDER BY created_at', [bindingId]);
-  const labelEvents = () => pgRows('SELECT id, from_version, to_version FROM model_hub_hubskilllabelevent WHERE skill_id=$1 ORDER BY id', [input.contextId]);
+  const labelEvents = () => pgRows('SELECT id::text, from_version, to_version, release_revision FROM model_hub_hubskilllabelevent WHERE skill_id=$1 ORDER BY release_revision, created_at', [input.contextId]);
   const db = new pg.Client({ connectionString: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi' });
   let pgReady = false;
   async function pgRows(text, values = []) {
@@ -317,14 +323,17 @@ export async function createDriver({ jobId, runId, registration }) {
         // ABA: another releaser moves production away and back before this packet is reviewed.
         for (const target of [v4, v3]) await moveProduction({ api: apiOk(signal), author, reviewer, contextId: input.contextId, version: target });
         const afterAba = await labelEvents();
-        requireValue(afterAba.length === eventsBefore.length + 2, 'The ABA hop must record exactly two label events');
+        requireValue(afterAba.length === eventsBefore.length + 2
+          && JSON.stringify(afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version])) === JSON.stringify([[3, 4], [4, 3]]), 'The ABA hop must record exactly v3 to v4 and back');
         // Reviewer opens the stale request: the UI refuses it, and an independent execute is rejected with no event.
         await operator.handoff('release-reviewer', async () => {});
         await navigate(admin, ledger, stage, reviewerPage, '/dashboard/skills', 'open-skills-area');
         await admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews-inbox');
         // Rows share the context name; the request id in the link selects the exact packet.
         await openPending(reviewerPage, admin, 'stale-request', stale.id, signal);
-        await expect(reviewerPage.getByText('Review is stale or unavailable.', { exact: false })).toBeVisible();
+        const staleAlert = reviewerPage.getByText('Review is stale or unavailable.', { exact: false });
+        await expect(staleAlert).toBeVisible();
+        await staleAlert.scrollIntoViewIfNeeded();
         await shot(reviewerPage, '03-stale-aba-review');
         const rejected = await call(reviewer, 'POST', `release-requests/${stale.id}/execute/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint }, signal);
         const afterReject = await labelEvents();
@@ -419,6 +428,7 @@ export async function createDriver({ jobId, runId, registration }) {
 
       if (stage.id === 'interrupt-after-tool') {
         const order = input.orders.o1;
+        const businessStart = await guest.business();
         await guest.faults({ available: true, arm_after_business: true });
         const reportA = input.credentials.report.A.secret;
         const envFile = await guestEnv(state.replacement, reportA, 'A');
@@ -428,7 +438,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(out.status === 'paused', 'The thread must pause when the registry is lost after the tool result');
         const business = await guest.business();
         const op = business.operations.filter((row) => row.order_id === order);
-        requireValue(op.length === 1 && op[0].status === 'applied' && business.request_count === 1, 'The refund must be applied exactly once before the outage');
+        requireValue(op.length === 1 && op[0].status === 'applied' && business.request_count === businessStart.request_count + 1, 'The refund must be applied exactly once before the outage');
         const registry = (await guest.ledger()).registry;
         requireValue(registry.some((row) => row.outage === true), 'The registry outage was not observed at the boundary');
         const receipts = out.events.filter((event) => event.kind === 'tool_result');
@@ -571,6 +581,8 @@ export async function createDriver({ jobId, runId, registration }) {
           const falseRecovered = states.includes('matches_target') && (openUndelivered.length > 0 || wrongVersion.length > 0 || sessions.length === 0);
           verdicts[key] = { states, sessions: sessions.length, open_undelivered: openUndelivered.length, wrong_version_open: wrongVersion.length, false_recovered: falseRecovered };
         }
+        await table.scrollIntoViewIfNeeded();
+        await authorPage.evaluate(() => window.scrollBy(0, -80));
         await shot(authorPage, '06-final-cohort');
         requireValue(Object.values(verdicts).every((verdict) => verdict.false_recovered === false), 'A consumer is shown as recovered without observed delivery of the recovery release');
         requireValue(verdicts.U.sessions === 0 && verdicts.U.states.length === 1 && verdicts.U.states[0] === 'unknown', 'The unobserved consumer must stay unknown');

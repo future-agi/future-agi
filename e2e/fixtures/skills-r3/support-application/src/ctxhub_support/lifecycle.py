@@ -52,23 +52,38 @@ def classify(status: int | None) -> str:
 def inspect(store, thread, client, binding_id):
     state = store.load(thread)
     if state is None:
-        return {"thread": thread, "known": False, "resumable": False, "reason": "thread_state_missing"}
+        return {
+            "thread": thread,
+            "known": False,
+            "resumable": False,
+            "reason": "thread_state_missing",
+        }
     session = state.get("session") or {}
     receipts = [
         {"call_id": row[0], "result_digest": digest(json.loads(row[1]))}
-        for row in store.db.execute("SELECT call_id, body FROM receipts WHERE thread=? ORDER BY call_id", (thread,))
+        for row in store.db.execute(
+            "SELECT call_id, body FROM receipts WHERE thread=? ORDER BY call_id",
+            (thread,),
+        )
     ]
     pending = [
         call["id"]
-        for message in state["messages"] if message.get("role") == "assistant"
+        for message in state["messages"]
+        if message.get("role") == "assistant"
         for call in message.get("tool_calls") or []
         if not any(m.get("tool_call_id") == call["id"] for m in state["messages"])
     ]
     result = {
-        "thread": thread, "known": True, "phase": state["phase"], "checkpoint": state["checkpoint"],
-        "session_id": session.get("session_id"), "version_id": session.get("version_id"),
-        "version": session.get("version"), "durable_receipts": receipts,
-        "pending_tool_calls": pending, "case_digest": digest(state["case"]),
+        "thread": thread,
+        "known": True,
+        "phase": state["phase"],
+        "checkpoint": state["checkpoint"],
+        "session_id": session.get("session_id"),
+        "version_id": session.get("version_id"),
+        "version": session.get("version"),
+        "durable_receipts": receipts,
+        "pending_tool_calls": pending,
+        "case_digest": digest(state["case"]),
     }
     if state["phase"] == "closed":
         return {**result, "resumable": False, "reason": "thread_closed"}
@@ -83,9 +98,17 @@ def inspect(store, thread, client, binding_id):
         )
         status = 200
     except Exception as exc:  # typed SDK errors; never echo a response body
-        status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+        status = getattr(exc, "status_code", None) or getattr(
+            getattr(exc, "response", None), "status_code", None
+        )
     if status == 200:
-        return {**result, "resumable": state["phase"] != "completed", "reason": "completed" if state["phase"] == "completed" else "original_identity_available"}
+        return {
+            **result,
+            "resumable": state["phase"] != "completed",
+            "reason": "completed"
+            if state["phase"] == "completed"
+            else "original_identity_available",
+        }
     return {**result, "resumable": False, "reason": classify(status)}
 
 
@@ -117,12 +140,25 @@ def main(argv=None):
                 report_closed(store, args.thread, client, binding_id, args.reason)
                 state["phase"] = "closed"
                 store.save(args.thread, state, "thread_closed")
-                result = {"thread": args.thread, "closed": True, "reason": args.reason,
-                          "session_id": state["session"]["session_id"], "checkpoint": state["checkpoint"]}
+                result = {
+                    "thread": args.thread,
+                    "closed": True,
+                    "reason": args.reason,
+                    "session_id": state["session"]["session_id"],
+                    "checkpoint": state["checkpoint"],
+                }
         fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(canonical(result) + "\n")
-        print(canonical({k: result.get(k) for k in ("thread", "resumable", "reason", "closed") if k in result}))
+        print(
+            canonical(
+                {
+                    k: result.get(k)
+                    for k in ("thread", "resumable", "reason", "closed")
+                    if k in result
+                }
+            )
+        )
     return 0
 
 
