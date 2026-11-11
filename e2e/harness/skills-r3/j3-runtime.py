@@ -50,7 +50,12 @@ def main():
                     "labels": ["production"], "version_ids": [version["version_id"]]}], "binding_ids": [],
                     "expires_at": (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()},
                     options=RequestOptions(idempotency_key=str(uuid4())))
-                state = {"binding": binding, "credential": credential}
+                # The application reports what its model actually received.
+                reporter = api.request("POST", root + "credentials/", body={
+                    "purpose": "report", "grants": [], "binding_ids": [binding["id"]],
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()},
+                    options=RequestOptions(idempotency_key=str(uuid4())))
+                state = {"binding": binding, "credential": credential, "reporter": reporter, "sequence": 0}
                 save(state_path, state)
                 print(json.dumps({"binding": binding["id"], "credential_id": credential["id"]}))
             elif args.operation == "follow":
@@ -62,8 +67,15 @@ def main():
                 save(state_path, state)
                 print(json.dumps({"binding": state["binding"]["id"], "revision": state["binding"]["revision"]}))
             else:
-                api.request("DELETE", root + "credentials/" + state["credential"]["id"] + "/")
-                print(json.dumps({"revoked": True}))
+                # Remove every owned runtime resource and verify it is gone.
+                for key in ("credential", "reporter"):
+                    if key in state:
+                        api.request("DELETE", root + "credentials/" + state[key]["id"] + "/")
+                for binding in [state["binding"], *state.get("unrelated_bindings", [])]:
+                    api.request("DELETE", root + "bindings/" + binding["id"] + "/", body={"revision": binding["revision"]})
+                remaining = {row["id"] for row in api.request("GET", root + parent["id"] + "/bindings/").get("results", [])}
+                assert state["binding"]["id"] not in remaining, "Runtime binding was not destroyed"
+                print(json.dumps({"revoked": True, "bindings_removed": True}))
         return
 
     from deepagents import create_deep_agent
@@ -124,12 +136,31 @@ def main():
             graph.invoke({"messages": [{"role": "user", "content": "Explain the approved purchase policy; consult its linked skill."}]}, invocation)
             after = graph.get_state(invocation)
             assert after.values.get("messages")
+        # Report standing-instruction delivery only when the actual native model
+        # input contained the complete AGENTS.md of this exact session version.
+        agents = verified.files["AGENTS.md"]
+        def text_of(content):
+            # Native messages carry either a string or a list of content blocks.
+            if isinstance(content, str):
+                return content
+            return "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content or [])
+        system_text = "\n".join(text_of(message.get("content")) for row in boundary for message in row if message.get("type") == "system")
+        assert agents.strip() and agents in system_text, "Standing root absent at the native model boundary"
+        sha = next(item.sha256 for item in verified.manifest.files if item.path == "AGENTS.md")
+        state["sequence"] = state.get("sequence", 0) + 1
+        with Client(auth=ContextAuth(state["reporter"]["secret"]), base_url=config["apiUrl"], max_retries=0) as reporter:
+            receipt = reporter.request("POST", f"/model-hub/skills/contexts/bindings/{state['binding']['id']}/receipts/", body={
+                "event_id": str(uuid4()), "session_id": session["session_id"], "instance_id": request["incarnation_id"],
+                "sequence": state["sequence"], "stage": "instructions_delivered", "version_id": session["version_id"],
+                "digest": session["digest"], "materialization_digest": None, "observed_at": datetime.now(timezone.utc).isoformat(),
+                "details": {"path": "AGENTS.md", "sha256": sha, "ranges": [[0, len(agents)]], "runtime_version": "deepagents-0.4.11",
+                    "adapter_version": "j3-synthetic-1", "diagnostic_codes": [], "trace_ref": None}})
         if args.operation == "initial":
             state.update(initial_request=request, initial_session=session)
-            save(state_path, state)
+        save(state_path, state)
         evidence = {"evidence_class": "synthetic fixture", "runtime": "deepagents-0.4.11", "mode": args.operation,
             "session_id": session["session_id"], "version_id": session["version_id"], "digest": session["digest"],
-            "had_checkpoint": bool(before.values.get("messages")), "boundary": boundary,
+            "had_checkpoint": bool(before.values.get("messages")), "boundary": boundary, "receipt": receipt["id"],
             "descriptor": json.loads(verified.files[".futureagi/context.json"])}
         directory = Path(config["outputDir"]) / "runtime"
         directory.mkdir(parents=True, exist_ok=True)

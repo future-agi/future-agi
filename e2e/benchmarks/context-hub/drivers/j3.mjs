@@ -355,14 +355,24 @@ export async function createDriver({ jobId, runId, registration }) {
           await receipt(stage, ledger, observations.releases, decision, 'pg'); return;
         }
         if (stage.id === 'inspect-sessions') {
-          for (const [index] of input.parents.entries()) {
+          for (const [index, parent] of input.parents.entries()) {
             if (index < 2) await command(`runtime-${index}-follow-approved-production`, runtimeArgs('follow', index));
-            await command(`runtime-${index}-fresh`, runtimeArgs('fresh', index));
+            // The application resumes its existing thread, then starts a clean one;
+            // each run reports only what its native model input actually contained.
             await command(`runtime-${index}-resume`, runtimeArgs('resume', index));
+            await command(`runtime-${index}-fresh`, runtimeArgs('fresh', index));
             const boundaries = {};
             for (const mode of ['initial', 'fresh', 'resume']) boundaries[mode] = JSON.parse(await readFile(resolve(input.outputDir, 'runtime', `${index}-${mode}.json`), 'utf8'));
+            requireValue(boundaries.resume.had_checkpoint && !boundaries.fresh.had_checkpoint, 'Fresh/resumed checkpoints differ from requested modes');
             observations.runtime.push(boundaries);
-            await operator.review(`runtime-${index}-delivery-inspection`, ['fresh-model-boundary', 'resumed-model-boundary', 'retained-checkpoint'], [], () => Promise.resolve(requireValue(boundaries.resume.had_checkpoint && !boundaries.fresh.had_checkpoint, 'Fresh/resumed checkpoints differ from requested modes')));
+            // The operator inspects delivery through the product, not driver JSON.
+            await navigate(`/dashboard/skills/contexts/${parent.id}?tab=consumers`, `parent-${index}-consumers`);
+            const row = page.getByRole('table', { name: 'Context delivery observations' }).getByRole('row').filter({ hasText: `${parent.name}-runtime` });
+            const expected = index < 2 ? ['Old thread retained', 'v2'] : ['Pinned as intended', 'v1'];
+            await operator.review(`runtime-${index}-delivery-inspection`, ['fresh-session-delivery', 'resumed-thread-retention'], index < 2 ? [] : ['deliberate-pin'], async () => {
+              for (const text of expected) await expect(row.getByText(text, { exact: true }).first()).toBeVisible();
+            });
+            await snapshot(`parent-${index}-sessions`, page);
           }
           await receipt(stage, ledger, observations.runtime, null, 'model_boundary'); return;
         }
@@ -399,11 +409,18 @@ export async function createDriver({ jobId, runId, registration }) {
         const delivered = (runtime, mode) => {
           const observed = runtime[mode];
           const latestBoundary = observed.boundary.at(-1);
-          requireValue(latestBoundary.some(message => message.type === 'system' && JSON.stringify(message.content).includes('Synthetic policy') || message.type === 'system' && JSON.stringify(message.content).includes('Reviewed synthetic policy')), 'Standing root absent at native model boundary');
+          const text = (content) => typeof content === 'string' ? content : (content ?? []).map(block => typeof block === 'string' ? block : block?.text ?? '').join('');
+          const system = latestBoundary.filter(message => message.type === 'system').map(message => text(message.content)).join('\n');
+          const reviewedRoot = system.includes('# Reviewed synthetic policy\nUse explicitly accepted policy, never upstream latest.\n');
+          const initialRoot = system.includes('# Synthetic policy\nConsult approved linked skills.\n');
+          requireValue(reviewedRoot !== initialRoot, 'Exactly one complete standing root must reach the native model boundary');
           const lastHuman = latestBoundary.findLastIndex(message => message.type === 'human');
           const toolText = latestBoundary.slice(lastHuman + 1).filter(message => message.type === 'tool').map(message => JSON.stringify(message.content)).join('\n');
           const match = toolText.match(/policy revision (\d+)\./);
           requireValue(match, 'Linked policy bytes absent at native model boundary');
+          // Root and child must come from one immutable parent: reviewed root with v8,
+          // initial root with v7. A mixed pair is a hidden substitution.
+          requireValue(reviewedRoot === (Number(match[1]) === 8), 'Standing root and linked child come from different parent releases');
           return Number(match[1]);
         };
         value = { fresh: evidence.map(row => delivered(row, 'fresh')), resumed: evidence.map(row => delivered(row, 'resume')) };
@@ -423,10 +440,8 @@ export async function createDriver({ jobId, runId, registration }) {
           qualified = false;
         }
       }
-      for (const index of ownedRuntimes) {
-        try { await promisify(execFile)(process.env.J3_PYTHON, runtimeArgs('cleanup', index), { timeout: 15_000, maxBuffer: 1024 * 1024 }); }
-        catch { qualified = false; }
-      }
+      const cleaned = await Promise.allSettled(ownedRuntimes.map(index => promisify(execFile)(process.env.J3_PYTHON, runtimeArgs('cleanup', index), { timeout: 15_000, maxBuffer: 1024 * 1024 })));
+      if (cleaned.some(result => result.status !== 'fulfilled')) qualified = false;
       if (providerId) {
         const response = await fetch(`${input.apiUrl}/model-hub/api-keys/${providerId}/`, { method: 'DELETE', headers: headers(input.owner) });
         qualified &&= response.ok;

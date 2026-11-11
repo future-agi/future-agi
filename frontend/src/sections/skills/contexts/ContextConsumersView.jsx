@@ -43,12 +43,23 @@ const stateNames = {
   unknown: "Runtime loading not observed",
   quarantined: "Quarantined",
 };
-function Stage({ stage }) {
+// J3: show the release number beside the immutable ID so an operator need not
+// reconcile UUIDs by hand. Unknown IDs stay IDs; nothing is inferred.
+function Stage({ stage, versionNumbers = {} }) {
+  const number = stage ? versionNumbers[stage.versionId] : undefined;
   return stage ? (
     <Stack spacing={0.25}>
-      <Typography variant="s1" sx={{ overflowWrap: "anywhere" }}>
+      {number !== undefined && (
+        <Typography variant="s1">{`v${number}`}</Typography>
+      )}
+      <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
         {stage.versionId}
       </Typography>
+      {stage.sessionId && (
+        <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
+          {`Session ${stage.sessionId}`}
+        </Typography>
+      )}
       <Typography variant="s3">{stage.observedAt ?? "Time unknown"}</Typography>
       <Typography variant="s3">
         {stage.origin ?? "Provenance unknown"}
@@ -58,8 +69,14 @@ function Stage({ stage }) {
     <Typography variant="s3">Not observed</Typography>
   );
 }
-Stage.propTypes = { stage: PropTypes.object };
-function ConsumerRows({ data, windowDays, onWindowChange, onPageChange }) {
+Stage.propTypes = { stage: PropTypes.object, versionNumbers: PropTypes.object };
+function ConsumerRows({
+  data,
+  windowDays,
+  onWindowChange,
+  onPageChange,
+  versionNumbers,
+}) {
   const [selectedId, setSelectedId] = useState(null);
   const selected = data.results.find((item) => item.binding.id === selectedId);
   return (
@@ -126,7 +143,10 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange }) {
                         key={stage}
                         sx={{ minWidth: "18ch", maxWidth: "24ch" }}
                       >
-                        <Stage stage={row[stage]} />
+                        <Stage
+                          stage={row[stage]}
+                          versionNumbers={versionNumbers}
+                        />
                       </TableCell>
                     ))}
                     <TableCell>
@@ -188,7 +208,10 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange }) {
               />
               {Object.entries(stageNames).map(([key, label]) => (
                 <Section key={key} title={label}>
-                  <Stage stage={selected[key]} />
+                  <Stage
+                    stage={selected[key]}
+                    versionNumbers={versionNumbers}
+                  />
                   {selected[key] && (
                     <IdentityValue
                       label="Digest"
@@ -221,6 +244,7 @@ ConsumerRows.propTypes = {
   windowDays: PropTypes.number.isRequired,
   onWindowChange: PropTypes.func.isRequired,
   onPageChange: PropTypes.func.isRequired,
+  versionNumbers: PropTypes.object,
 };
 export default function ContextConsumersView({
   scopeKey,
@@ -230,13 +254,14 @@ export default function ContextConsumersView({
   onWindowChange,
   onPageChange,
   onRetry,
+  versionNumbers,
 }) {
   return (
     <Section title="Consumers">
       {scopeKey && state === "ready" && data ? (
         <ConsumerRows
           key={scopeKey}
-          {...{ data, windowDays, onWindowChange, onPageChange }}
+          {...{ data, windowDays, onWindowChange, onPageChange, versionNumbers }}
         />
       ) : (
         <ReviewState
@@ -255,4 +280,5 @@ ContextConsumersView.propTypes = {
   onWindowChange: PropTypes.func,
   onPageChange: PropTypes.func,
   onRetry: PropTypes.func,
+  versionNumbers: PropTypes.object,
 };

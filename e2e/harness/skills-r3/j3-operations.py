@@ -38,13 +38,15 @@ def main():
             index = int(args.value)
             state = json.loads((args.input.parent / f"runtime-{index}.json").read_text())
             binding, session = state["binding"], state["initial_session"]
+            # A receipt names the session's own incarnation and a fresh sequence.
+            state["sequence"] = state.get("sequence", 0) + 1
             credential = api.request("POST", root + "contexts/credentials/", body={"purpose": "report", "grants": [],
                 "binding_ids": [binding["id"]], "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()},
                 options=RequestOptions(idempotency_key=str(uuid4())))
             try:
                 with Client(auth=ContextAuth(credential["secret"]), base_url=config["apiUrl"], max_retries=0) as reporter:
                     receipt = reporter.request("POST", root + f"contexts/bindings/{binding['id']}/receipts/", body={
-                        "event_id": str(uuid4()), "session_id": session["session_id"], "instance_id": str(uuid4()), "sequence": 0,
+                        "event_id": str(uuid4()), "session_id": session["session_id"], "instance_id": state["initial_request"]["incarnation_id"], "sequence": state["sequence"],
                         "stage": "resolved", "version_id": session["version_id"], "digest": session["digest"],
                         "materialization_digest": None, "observed_at": datetime.now(timezone.utc).isoformat(),
                         "details": {"path": None, "sha256": None, "ranges": [], "runtime_version": "deepagents-0.4.11",
@@ -54,6 +56,9 @@ def main():
                     "name": f"unrelated-{uuid4()}", "kind": "runtime", "selector": {"label": "staging"}, "update_mode": "new_thread",
                     "profile": "synthetic", "profile_version": "1", "repository": None, "expected_report_interval_seconds": 3600},
                     options=RequestOptions(idempotency_key=str(uuid4())))
+                state.setdefault("unrelated_bindings", []).append({"id": unrelated["id"], "revision": unrelated["revision"]})
+                path = args.input.parent / f"runtime-{index}.json"
+                path.write_text(json.dumps(state)); path.chmod(0o600)
                 print(json.dumps({"receipt": receipt, "unrelated_binding": unrelated["id"]}))
             finally:
                 api.request("DELETE", root + f"contexts/credentials/{credential['id']}/")

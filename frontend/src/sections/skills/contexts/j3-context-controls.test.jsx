@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTestsPanel from './ContextTestsPanel';
 import ContextLabelRequestPanel from './ContextLabelRequestPanel';
 import ContextDependentsPanel from './ContextDependentsPanel';
+import ContextConsumersView from './ContextConsumersView';
+import ContextDetailView from './ContextDetailView';
 
 const state = vi.hoisted(() => ({ identity: 'org:workspace:author', prepare: vi.fn(), create: vi.fn(), previewLabel: vi.fn(), submitLabel: vi.fn(), dependents: null }));
 vi.mock('src/api/skills/testing', () => ({
@@ -90,4 +92,24 @@ it('shows dependent failures rather than claiming an empty inventory', () => {
   mount(<ContextDependentsPanel skillId="child" />);
   expect(screen.getByText('Dependents unavailable')).toBeVisible();
   expect(screen.queryByText('No published references')).not.toBeInTheDocument();
+});
+
+it('labels delivered sessions with their exact release number, never a guessed one', () => {
+  const fact = (versionId, sessionId) => ({ versionId, digest, observedAt: 'now', origin: 'client_reported', sessionId });
+  const row = (id, loaded) => ({ binding: { id, name: `runtime-${id}`, selector: { label: 'production' } }, desired: null, resolved: null, installed: null, discovered: null, loaded, states: ['mixed_sessions', 'old_thread_pinned'], observationAgeSeconds: 1 });
+  const data = { results: [row('known', fact('parent-v2', 'fresh-session')), row('unknown', fact('foreign-version', null))], page: 1, pageSize: 25, count: 2, asOf: 'now' };
+  mount(<ContextConsumersView scopeKey="scope" state="ready" data={data} versionNumbers={{ 'parent-v2': 2 }} onPageChange={() => {}} onWindowChange={() => {}} />);
+  expect(screen.getByText('v2')).toBeVisible();
+  expect(screen.getByText('Session fresh-session')).toBeVisible();
+  expect(screen.getByText('foreign-version')).toBeVisible();
+  expect(screen.queryByText('v1')).not.toBeInTheDocument();
+  expect(screen.getAllByText('Old thread retained')).toHaveLength(2);
+});
+
+it.each([['versions', 'Label request'], ['consumers', 'Consumer rows'], ['unknown-tab', null]])('opens the shared %s tab link without guessing', (tab, body) => {
+  const scopeKey = 'scope';
+  const detail = { scopeKey, query: { scopeKey, data: { context: { id: 'c', name: 'parent', latestVersion: 2, labels: [] } } }, versionQuery: { scopeKey, data: { version, descriptor: { description: 'Purpose', links: [] }, files: [{ path: 'AGENTS.md', origin: { kind: 'owned' } }] } }, fileQuery: { scopeKey, data: { path: 'AGENTS.md', versionId: version.id, text: '# Root' } }, versions: [version] };
+  mount(<ContextDetailView {...detail} initialTab={tab} sections={{ versions: <p>Label request</p>, consumers: <p>Consumer rows</p> }} />);
+  if (body) expect(screen.getByText(body)).toBeVisible();
+  else expect(screen.getByLabelText('AGENTS.md read-only source')).toBeVisible();
 });

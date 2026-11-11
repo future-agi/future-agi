@@ -24,6 +24,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       'review and publish each parent independently without moving production',
       'inspect both immutable parent descriptors and the unchanged pinned context',
       'request and independently approve each exact parent label move through the UI',
+      'resume each pre-move runtime thread and start a clean one, then inspect delivered releases in the Consumers tab',
     ],
     backendChecks: [
       'the initial three immutable descriptors contain the exact fifteen-member set with shared policy v7',
@@ -34,6 +35,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       'dependent inventory contains exactly the three authorized parent identities and identifies the deliberate pin',
       'whole-context jobs preserve the saved compiled digest, deliver v8 to candidate and v7 to reference at the model boundary, and never deliver v9',
       'each label move requires an independently approved parent request and records the authorized reviewer in PostgreSQL',
+      'a resumed runtime thread keeps its original session and v1 identity after production moves, a clean follower thread receives v2, and the pinned binding stays on v1',
     ],
   }),
 }, async ({ browser, request, scopeActors, scopeProbe }, testInfo) => {
@@ -258,6 +260,38 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await page.goto(`${UI}/${parents[0].id}?version=2`);
     await page.getByRole('tab', { name: 'Linked skills', exact: true }).click();
     await shot('published-v8-with-upstream-v9');
+    // Runtime sessions over the public consumption API, opened before any label
+    // moves. This checks server session identity; native model delivery is
+    // measured by the registered J3 driver, not by this flow.
+    const initialRoot = '# Synthetic policy\nConsult approved linked skills.\n';
+    const reviewedRoot = '# Reviewed synthetic policy\nUse explicitly accepted policy, never upstream latest.\n';
+    const versionId = async (id: string, n: number) => (await req(author, 'GET', `contexts/${id}/versions/${n}/inspection/`)).manifest.version_id;
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const consume = async (credential: string, method: string, path: string, data?: unknown): Promise<any> => {
+      const response = await request.fetch(`${E2E.apiUrl}${API}${path}`, { method, headers: { Authorization: `Context ${credential}`, 'Idempotency-Key': randomUUID() }, data });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify({ path, status: response.status(), body })).toBeTruthy();
+      return body.result;
+    };
+    const bindingBody = (binding: any, selector: unknown) => ({ name: binding.name, kind: binding.kind, selector, update_mode: binding.update_mode,
+      profile: binding.profile, profile_version: binding.profile_version, repository: binding.repository, expected_report_interval_seconds: binding.expected_report_interval_seconds });
+    const runtimes: any[] = [];
+    for (const parent of parents) {
+      const binding = await req(owner, 'POST', `contexts/${parent.id}/bindings/`, { name: `${parent.name}-runtime`, kind: 'runtime', selector: { version: 1 },
+        update_mode: 'new_thread', profile: 'deepagents', profile_version: '0.4.11', repository: null, expected_report_interval_seconds: 3600 });
+      const v1 = await versionId(parent.id, 1);
+      const consumer = await req(owner, 'POST', 'contexts/credentials/', { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: parent.id, labels: ['production'], version_ids: [v1] }], binding_ids: [], expires_at: expiresAt });
+      const reporter = await req(owner, 'POST', 'contexts/credentials/', { purpose: 'report', grants: [], binding_ids: [binding.id], expires_at: expiresAt });
+      const thread = { client_session_key: randomUUID(), incarnation_id: randomUUID(), resume_session_id: null, adapter_version: 'e2e-j3', runtime_version: 'e2e', runtime_config_digest: `sha256:${'0'.repeat(64)}` };
+      const initial = await consume(consumer.secret, 'POST', `contexts/bindings/${binding.id}/sessions/`, thread);
+      expect([initial.history_mode, initial.version_id]).toEqual(['fresh', v1]);
+      runtimes.push({ binding, consumer, reporter, thread, initial, v1, sequence: 0 });
+    }
+    const deliver = (runtime: any, session: any, incarnation: string, content: string) => consume(runtime.reporter.secret, 'POST', `contexts/bindings/${runtime.binding.id}/receipts/`, {
+      event_id: randomUUID(), session_id: session.session_id, instance_id: incarnation, sequence: ++runtime.sequence, stage: 'instructions_delivered',
+      version_id: session.version_id, digest: session.digest, materialization_digest: null, observed_at: new Date().toISOString(),
+      details: { path: 'AGENTS.md', sha256: createHash('sha256').update(content).digest('hex'), ranges: [[0, content.length]], runtime_version: 'e2e', adapter_version: 'e2e-j3', diagnostic_codes: [], trace_ref: null } });
+    for (const runtime of runtimes) await deliver(runtime, runtime.initial, runtime.thread.incarnation_id, initialRoot);
     const reviewerContext = await browser.newContext({ baseURL: E2E.appUrl, viewport: { width: 1440, height: 900 } });
     await reviewerContext.addInitScript(authInitScript, { access: owner.tokens.access, refresh: owner.tokens.refresh, organizationId: owner.organizationId, workspaceId: owner.workspaceId });
     await reviewerContext.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), owner.organizationId);
@@ -295,7 +329,36 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         if (evidence) await writeFile(`${evidence}/shots/authorized-${parent.name}.png`, image);
       }
     } finally { await reviewerContext.close(); }
-    events.push({ stage: 'model-boundary-text-tests-only', ledger: await fake.ledger(), limitation: 'Fresh/resumed native runtime sessions are not established by text test delivery.' });
+    try {
+      for (const [i, parent] of parents.entries()) {
+        const runtime = runtimes[i];
+        if (i < 2) runtime.binding = await req(owner, 'PATCH', `contexts/bindings/${runtime.binding.id}/`, { revision: runtime.binding.revision, binding: bindingBody(runtime.binding, { label: 'production' }) });
+        const resumed = await consume(runtime.consumer.secret, 'POST', `contexts/bindings/${runtime.binding.id}/sessions/`, { ...runtime.thread, resume_session_id: runtime.initial.session_id });
+        expect([resumed.history_mode, resumed.session_id, resumed.version_id, resumed.digest]).toEqual(['resumed', runtime.initial.session_id, wrong === 'resumed-identity' ? 'substituted' : runtime.v1, runtime.initial.digest]);
+        const clean = { ...runtime.thread, client_session_key: randomUUID(), incarnation_id: randomUUID() };
+        const fresh = await consume(runtime.consumer.secret, 'POST', `contexts/bindings/${runtime.binding.id}/sessions/`, clean);
+        expect([fresh.history_mode, fresh.version_id]).toEqual(['fresh', i < 2 ? await versionId(parent.id, 2) : runtime.v1]);
+        await deliver(runtime, fresh, clean.incarnation_id, i < 2 ? reviewedRoot : initialRoot);
+        await page.goto(`${UI}/${parent.id}`);
+        await page.getByRole('tab', { name: 'Consumers', exact: true }).click();
+        const row = page.getByRole('table', { name: 'Context delivery observations' }).getByRole('row').filter({ hasText: `${parent.name}-runtime` });
+        const state = wrong === 'session-ui' ? 'Matches target' : i < 2 ? 'Old thread retained' : 'Pinned as intended';
+        await expect(row.getByText(state, { exact: true })).toBeVisible();
+        await expect(row.getByText(i < 2 ? 'v2' : 'v1', { exact: true }).first()).toBeVisible();
+        events.push({ stage: 'runtime-sessions', parent: parent.id, initial: runtime.initial.version_id, resumed: resumed.version_id, fresh: fresh.version_id });
+        await shot(`sessions-${parent.name}`);
+      }
+    } finally {
+      for (const runtime of runtimes) {
+        const remove = async (path: string, data?: unknown) => {
+          const response = await request.fetch(`${E2E.apiUrl}${API}${path}`, { method: 'DELETE', headers: scopeActors.headers(owner), data });
+          expect(response.ok(), path).toBeTruthy();
+        };
+        for (const credential of [runtime.consumer, runtime.reporter]) await remove(`contexts/credentials/${credential.id}/`);
+        await remove(`contexts/bindings/${runtime.binding.id}/`, { revision: runtime.binding.revision });
+      }
+    }
+    events.push({ stage: 'model-boundary-text-tests-only', ledger: await fake.ledger(), limitation: 'Session identity here is server-side; native fresh/resumed model delivery is measured by the registered J3 driver.' });
   } finally {
     if (testInfo.status !== testInfo.expectedStatus) await shot('failure');
     await testInfo.attach('j3-observations', { body: JSON.stringify(events), contentType: 'application/json' });

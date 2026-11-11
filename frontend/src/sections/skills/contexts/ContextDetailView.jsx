@@ -14,8 +14,10 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Hierarchy: selected/latest/production strip, AGENTS root, read-only provenance.
 // Palette/depth/surfaces: neutral source paper and divider, no delivery inference.
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
+// A shared link may open any known tab; anything else opens the context itself.
+const TAB_IDS = ["context", "links", "tests", "versions", "consumers", "use"];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state, initialTab }) {
-  const [tab, setTab] = useState(initialTab === 'tests' ? 'tests' : 'context');
+  const [tab, setTab] = useState(TAB_IDS.includes(initialTab) ? initialTab : 'context');
   const [fileMode, setFileMode] = useState('source');
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || query.isLoading || state === "loading") return <ContentSkeleton />;
