@@ -230,7 +230,14 @@ def _spend(sandbox) -> dict[str, Any] | None:
 
     try:
         return _json_object(sandbox, COST_FILE, COST_MAX_BYTES)
-    except ReadingResultInvalid:
+    except ReadingResultInvalid as exc:
+        if exc.code != "reading_file_missing":
+            logger.warning(
+                "agent_reading_spend_unreadable",
+                sandbox_id=str(sandbox.id),
+                code=exc.code,
+                exc_info=True,
+            )
         return None
 
 

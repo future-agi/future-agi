@@ -877,3 +877,30 @@ def test_each_reading_run_is_billed_once_and_a_retry_again(monkeypatch):
         str(first_run),
         str(retried_run),
     ]
+
+
+def test_a_reading_that_reports_a_stage_twice_is_refused(monkeypatch):
+    from ee.usage.services import emitter
+
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    stage = {
+        "stage": "understanding-agent",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000,
+        "tokens_out": 100,
+        "tokens_cached": 0,
+    }
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=uuid4(),
+            run_id=str(uuid4()),
+            spend={"stages": [stage, dict(stage)]},
+        )
+
+    assert refused.value.code == "reading_usage_invalid"
+    assert events == []

@@ -476,6 +476,11 @@ def record_agent_reading_usage(
         for item in spend.get("stages") or []
         if isinstance(item, dict) and (record := _authoring_stage_record(item))
     ]
+    stages = [record["stage"] for record in records]
+    if len(set(stages)) != len(stages):
+        raise HostedHarnessError(
+            "reading_usage_invalid", "Each reading stage must be reported once."
+        )
     if not records:
         return None
     report = {

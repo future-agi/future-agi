@@ -398,6 +398,38 @@ class TestReadingSandbox:
         assert provider.deleted is True
 
 
+class TestReadingSpend:
+    @pytest.mark.parametrize(
+        ("code", "warned"),
+        [("reading_file_missing", False), ("reading_file_invalid", True)],
+    )
+    def test_an_unreadable_cost_file_is_logged_but_a_missing_one_is_not(
+        self, monkeypatch, code, warned
+    ):
+        from simulate.services import agent_reading
+        from simulate.services.agent_reading import ReadingResultInvalid
+
+        def unreadable(_sandbox, path, _max_bytes):
+            raise ReadingResultInvalid(code, path)
+
+        monkeypatch.setattr(agent_reading, "_json_object", unreadable)
+        warnings = []
+        monkeypatch.setattr(
+            agent_reading_sandbox.logger,
+            "warning",
+            lambda event, **fields: warnings.append((event, fields)),
+        )
+
+        spend = agent_reading_sandbox._spend(SimpleNamespace(id="sb-1"))
+
+        assert spend is None
+        assert [event for event, _ in warnings] == (
+            ["agent_reading_spend_unreadable"] if warned else []
+        )
+        if warned:
+            assert warnings[0][1]["code"] == code
+
+
 class TestReadingBill:
     def test_a_reading_is_billed_for_its_own_run(self, agent, monkeypatch, no_evals):
         version = _connect(agent)
