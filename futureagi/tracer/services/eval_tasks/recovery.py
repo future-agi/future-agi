@@ -6,9 +6,12 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import structlog
 from django.core.cache import cache
 from django.db import transaction
+from django.utils import timezone
 
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
@@ -57,6 +60,38 @@ class RecoveryInterrupted(Exception):
         super().__init__(str(cause))
         self.outcome = outcome
         self.cause = cause
+
+
+def continuous_activation_floor(task: EvalTask, *, now: datetime) -> datetime | None:
+    """The ``start_time`` a continuous task must be restarted with.
+
+    Coverage begins when the task's current coverage was accepted, never at
+    recovery: arrivals between acceptance and the restart belong to the task,
+    so the floor is not ``now``. ``start_time`` is that acceptance once
+    anything has stamped it (the workflow's first RUNNING transition, a
+    conversion in ``update_task_configuration``, or a cursor-resetting rerun in
+    ``update_eval_task``); a task that never started falls back to
+    ``created_at``.
+
+    With a cursor, the reconciler floors at the cursor and ``start_time`` only
+    bounds it from below, so it is kept as it is. Without one, rows written
+    before those edits stamped ``start_time`` can still carry an older value: a
+    historical run's start, or the previous activation's before a Delete &
+    rerun or selection edit whose dispatch failed. The NULL-cursor reconcile
+    would then evaluate (and bill) every arrival since that older time, which
+    no ordinary dispatch would. ``last_run`` tells the two apart without a
+    migration: creation and ``update_eval_task`` stamp it in the transaction
+    that accepts the coverage, and the reconciler stamps it only in the pass
+    that also sets the cursor, so with no cursor it is the latest acceptance.
+    It is a writable API field, hence the cap at ``now``.
+    """
+    floor = task.start_time or task.created_at
+    if task.continuous_cursor is not None or task.last_run is None:
+        return floor
+    accepted = min(task.last_run, now)
+    if floor is None or accepted > floor:
+        return accepted
+    return floor
 
 
 def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
@@ -174,11 +209,18 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             task = current
             if task.run_type == RunType.CONTINUOUS:
                 # Continuous coverage starts at acceptance/activation, never
-                # at recovery. Creation uses created_at; conversion persists a
-                # fresh start_time in the mode-change transaction. Match the
+                # at recovery (see ``continuous_activation_floor``). Match the
                 # workflow's guarded startup transition, retaining partial (or
                 # NULL) cursors and existing results through catch-up.
-                task.start_time = task.start_time or task.created_at
+                floor = continuous_activation_floor(task, now=timezone.now())
+                if floor != task.start_time and task.start_time is not None:
+                    logger.info(
+                        "eval_task_sweep_activation_floor_raised",
+                        task_id=str(task.id),
+                        stored_start_time=task.start_time.isoformat(),
+                        activation_floor=floor.isoformat(),
+                    )
+                task.start_time = floor
                 task.status = EvalTaskStatus.RUNNING
                 EvalTask.no_workspace_objects.filter(id=task.id).update(
                     status=task.status, start_time=task.start_time
@@ -290,6 +332,7 @@ def recover_stranded_tasks(*, limit: int, stale_running_seconds: int) -> dict:
 __all__ = [
     "RESTART_REAP_SECONDS",
     "RecoveryInterrupted",
+    "continuous_activation_floor",
     "recover_stranded_tasks",
     "recover_task",
 ]

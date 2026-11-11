@@ -2,7 +2,9 @@
 
 Real PATCH, PostgreSQL, ClickHouse, Temporal, sweeper and reconciler; only paid
 computation is replaced with deterministic completion. Existing historical
-results must remain unchanged and arrivals before conversion must be excluded.
+results must remain unchanged and arrivals before conversion must be excluded,
+including for rows a pre-deploy conversion or Delete & rerun left without a
+persisted activation floor.
 """
 
 import asyncio
@@ -31,6 +33,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
+from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.eval_tasks.recovery import recover_stranded_tasks
 from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
 
@@ -47,7 +50,9 @@ async def wait_until(fn, timeout=100):
     raise AssertionError(f"Timed out waiting for {fn}")
 
 
-def seed_case(project, custom_eval_config, activation, age_days):
+def seed_case(
+    project, custom_eval_config, activation, age_days, names=("ordinary", "recovered")
+):
     spans = {}
     for label, arrived in {
         "historical": activation - timedelta(days=age_days) + timedelta(minutes=1),
@@ -74,7 +79,7 @@ def seed_case(project, custom_eval_config, activation, age_days):
         spans[label] = span
     seed_ch_spans(spans.values(), version_from_created_at=True)
     cases = {}
-    for name in ("ordinary", "recovered"):
+    for name in names:
         cfg = CustomEvalConfig.objects.create(
             name=f"qa3797-{name}",
             project=project,
@@ -125,6 +130,11 @@ def read_case(task, old_id, spans):
             id_to_label[r["observation_span_id"]]
             for r in entries
             if r["status"] == "completed"
+        ),
+        "live_completed": sorted(
+            id_to_label[r["observation_span_id"]]
+            for r in entries
+            if r["status"] == "completed" and not r["deleted"]
         ),
         "existing": EvalLogger.all_objects.filter(pk=old_id).values().get(),
         "entries": [
@@ -286,6 +296,150 @@ async def test_conversion_recovery_excludes_pre_activation_arrivals(
                     f"recovered={observations['recovered']['completed']} "
                     f"activation={activation.isoformat()} recovered_floor={observations['recovered']['start_time']}"
                 )
+            finally:
+                for task, _, _ in cases.values():
+                    try:
+                        await env.client.get_workflow_handle(
+                            f"eval-task-{task.id}"
+                        ).terminate("QA cleanup")
+                    except Exception:
+                        pass
+    finally:
+        await env.shutdown()
+        await sync_to_async(truncate_ch_spans)()
+        await sync_to_async(close_old_connections)()
+
+
+def write_pre_deploy_shape(task, activation, age_days, shape):
+    """The row the code before this deploy left when the edit's dispatch failed.
+
+    The edit cleared the cursor and stamped ``last_run`` but persisted no
+    activation floor: ``start_time`` is still the historical run's
+    (``conversion``) or that of the activation a Delete & rerun replaced
+    (``rerun``, whose earlier result the rerun soft-deleted).
+    """
+    fields = {}
+    if shape == "rerun":
+        soft_delete_live(task)
+        fields["end_time"] = None
+    EvalTask.no_workspace_objects.filter(pk=task.pk).update(
+        run_type=RunType.CONTINUOUS,
+        status=EvalTaskStatus.PENDING,
+        start_time=activation - timedelta(days=age_days),
+        continuous_cursor=None,
+        last_run=activation,
+        **fields,
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db(transaction=True)
+async def test_pre_deploy_rows_recover_from_their_last_acceptance(
+    auth_client, project, custom_eval_config, monkeypatch
+):
+    age_days = 30
+    shapes = ("conversion", "rerun")
+    activation = timezone.now().replace(microsecond=0)
+    clock = {"now": activation}
+    monkeypatch.setattr(timezone, "now", lambda: clock["now"])
+    spans, cases = await sync_to_async(seed_case)(
+        project, custom_eval_config, activation, age_days, names=shapes
+    )
+    paid_calls = []
+
+    def complete_synthetic_eval(entry):
+        paid_calls.append(entry.eval_task_id)
+        EvalLogger.all_objects.filter(id=entry.id).update(
+            status=EvalEntryStatus.COMPLETED, error=False
+        )
+        return EvalEntryStatus.COMPLETED
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.run_entry.run_entry", complete_synthetic_eval
+    )
+    monkeypatch.setattr(workflow_client, "start_eval_task_workflow_sync", _REAL_START)
+    env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
+    target = env.client.service_client.config.target_host
+
+    async def local_client():
+        return await Client.connect(target, namespace=env.client.namespace)
+
+    monkeypatch.setattr("tfc.temporal.common.client.get_client", local_client)
+    observations = {}
+    try:
+        async with Worker(
+            env.client,
+            task_queue="tasks_s",
+            workflows=get_workflows(),
+            activities=get_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            try:
+                for shape in shapes:
+                    task, old_id, _ = cases[shape]
+                    clock["now"] = activation
+                    await sync_to_async(write_pre_deploy_shape)(
+                        task, activation, age_days, shape
+                    )
+                    old_snapshot = await sync_to_async(
+                        lambda old_id=old_id: EvalLogger.all_objects.filter(pk=old_id)
+                        .values()
+                        .get()
+                    )()
+                    clock["now"] = activation + timedelta(hours=1)
+                    await sync_to_async(cache.delete)("eval-task-sweep:position:v1")
+                    outcome = await sync_to_async(
+                        recover_stranded_tasks, thread_sensitive=False
+                    )(limit=100, stale_running_seconds=7200)
+                    assert outcome["idle_continuous_candidates"] == 1, outcome
+                    assert outcome["restarted"] == 1 and outcome["errors"] == 0, outcome
+                    await wait_until(
+                        lambda task=task: EvalLogger.all_objects.filter(
+                            eval_task_id=str(task.id),
+                            observation_span_id=spans["post_conversion"].id,
+                            status="completed",
+                            deleted=False,
+                        ).exists()
+                    )
+                    await wait_until(
+                        lambda task=task: not EvalLogger.all_objects.filter(
+                            eval_task_id=str(task.id), status__in=["pending", "running"]
+                        ).exists()
+                    )
+                    observations[shape] = await sync_to_async(read_case)(
+                        task, old_id, spans
+                    )
+                    assert observations[shape]["existing"] == old_snapshot, (
+                        "Earlier paid result was changed"
+                    )
+                    await env.client.get_workflow_handle(
+                        f"eval-task-{task.id}"
+                    ).terminate("QA scenario finished")
+                    await sync_to_async(
+                        EvalTask.no_workspace_objects.filter(pk=task.pk).update
+                    )(status="paused")
+                calls = {
+                    shape: paid_calls.count(str(cases[shape][0].id)) for shape in shapes
+                }
+                print(
+                    "QA3797_PRE_DEPLOY",
+                    {
+                        k: {f: v for f, v in obs.items() if f != "existing"}
+                        for k, obs in observations.items()
+                    },
+                    "evaluator_calls",
+                    calls,
+                )
+                floors = {k: obs["start_time"] for k, obs in observations.items()}
+                assert observations["conversion"]["completed"] == [
+                    "historical",
+                    "post_conversion",
+                ], f"Pre-deploy conversion backfilled history; floors={floors}"
+                assert observations["rerun"]["live_completed"] == ["post_conversion"], (
+                    f"Pre-deploy rerun backfilled history; floors={floors}"
+                )
+                assert calls == {"conversion": 1, "rerun": 1}, calls
+                assert floors == {"conversion": activation, "rerun": activation}
             finally:
                 for task, _, _ in cases.values():
                     try:
