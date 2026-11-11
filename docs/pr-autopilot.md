@@ -247,7 +247,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    approves with the workflow token and stops working once the setting is off.
    `future-agi/ee` and `future-agi/agent-learning-kit` also produce deployed
    images, have the same setting on and are under the same organisation
-   ruleset. They have the same exposure and need the same change.
+   ruleset. They have the same exposure and need the same change, plus a
+   repository ruleset on their `main` with `require_last_push_approval: true`
+   (step 3).
 3. **Require approval of the most recent push** on `main` and `dev`, in a
    repository ruleset rather than by editing organisation ruleset 2289447,
    which covers other repositories. Otherwise a writer can push onto someone
@@ -264,7 +266,7 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    group, every later run for that PR.
    - `pr-autopilot`: deployment branch rule `dev`. The `approve-and-merge`
      job of `low-risk-pr-autopilot.yml` names it.
-   - `release-autopilot`: deployment branch rule `main`. The release job of
+   - `release-autopilot`: deployment branch rule `main`. The `merge` job of
      `release-autopilot.yml` names it.
 5. **Move the release-bot App key** (`RELEASE_BOT_APP_ID`,
    `RELEASE_BOT_PRIVATE_KEY`, organisation secrets today) into environment
@@ -286,8 +288,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    lists this repository's three holders and the jobs, and
    `docs/auto-deploy.md` in `future-agi/deployment` (Administrator setup
    step 1) lists the jobs in every repository, and the other remedy there: a
-   separate App for deployment bumps under the same custody. The same
-   custody is a precondition of that repository's deploy identity. Once
+   separate App for deployment bumps under the same custody. The separate App
+   covers only `future-agi/deployment`. This repository still needs the move,
+   because the shared App can approve here. Do it before any approver key is
+   added. The same custody is a precondition of that repository's deploy
+   identity. Once
    every such job names an environment, delete the organisation secrets,
    generate a new private key for the release-bot App and delete the old one,
    because any branch workflow could read the old key. Step 6 waits for this.
