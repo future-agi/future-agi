@@ -270,17 +270,23 @@ def _refresh_waiting_trace_witnesses(
     """
 
     updates: list[EvalLogger] = []
-    entries = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        target_type=EvalTargetType.TRACE,
-        trace_id__in=list(trace_ids),
-    ).only(
-        "id",
-        "trace_id",
-        "status",
-        "config_hash",
-        "custom_eval_config_id",
-        "output_metadata",
+    # Primary: an earlier pass may have just rewritten these witnesses, and a
+    # stale replica copy that already equals the new metadata skips the update.
+    entries = (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            target_type=EvalTargetType.TRACE,
+            trace_id__in=list(trace_ids),
+        )
+        .only(
+            "id",
+            "trace_id",
+            "status",
+            "config_hash",
+            "custom_eval_config_id",
+            "output_metadata",
+        )
     )
     for entry in entries:
         expected_hash = config_hashes.get(entry.custom_eval_config_id)

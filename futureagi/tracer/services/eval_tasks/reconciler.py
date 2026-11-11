@@ -174,7 +174,11 @@ def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
 
 
 def _live_count(task: EvalTask) -> int:
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).count()
+    # Primary, on the reconcile transaction's own connection: the count must
+    # include the entries this pass just inserted (uncommitted) and any a
+    # lagging replica has not applied, or ``created`` and the requeue branch
+    # are decided from a stale zero.
+    return EvalLogger.objects.using("default").filter(eval_task_id=str(task.id)).count()
 
 
 def _requeue_and_drop(
@@ -196,7 +200,11 @@ def _requeue_and_drop(
     # what turns it into a statement about *when* the row changed.
     window_floor = getattr(task, "continuous_cursor", None)
     # Stream the live entries — we only collect ids, never hold all objects.
-    for entry in EvalLogger.objects.filter(eval_task_id=str(task.id)).iterator():
+    # Primary: a replica that still shows an entry as RUNNING (or an old hash)
+    # would skip a requeue this full proof is the only pass to make.
+    for entry in (
+        EvalLogger.objects.using("default").filter(eval_task_id=str(task.id)).iterator()
+    ):
         cfg_id = entry.custom_eval_config_id
         current_eval = cfg_id in current_eval_ids
         identity = _entry_identity(entry, task.row_type)
