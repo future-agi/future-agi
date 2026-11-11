@@ -1,9 +1,11 @@
 import PropTypes from "prop-types";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "notistack";
 import { Alert, Button, CircularProgress } from "@mui/material";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import {
+  agentDetailQueryKey,
   pollWhileChecking,
   toVersion,
   useRetryVersion,
@@ -33,6 +35,17 @@ export default function AgentReadingState({ agent }) {
     const first = (list.data?.pages?.[0]?.results ?? []).map(toVersion);
     return first.find((v) => v.check !== "discarded") ?? null;
   }, [list.data]);
+  const queryClient = useQueryClient();
+  const wasPending = useRef(false);
+  const check = newest?.check ?? null;
+  useEffect(() => {
+    if (wasPending.current && check && check !== "pending") {
+      queryClient.invalidateQueries({
+        queryKey: agentDetailQueryKey(agent.id),
+      });
+    }
+    wasPending.current = check === "pending";
+  }, [check, agent.id, queryClient]);
 
   if (!newest) return null;
 
