@@ -59,6 +59,11 @@ const unsafeRoutes: [string, (cfg: any) => void][] = [
   ['control plane', c => { c.control_plane = { url: 'http://other.invalid' }; }],
   ['env expansion', c => { c.providers.openai.base_url = '${UNTRUSTED_UPSTREAM}'; }],
   ['unknown model', c => { c.providers.openai.models.push('another-model'); }],
+  ['decision external upstream', c => { c.providers.openrouter.base_url = 'https://openrouter.ai'; }],
+  ['decision wrong format', c => { c.providers.typesafe.api_format = 'openai'; }],
+  ['decision real key', c => { c.providers.perplexity.api_key = 'not-a-synthetic-key'; }],
+  ['decision unknown model', c => { c.providers.openrouter.models.push('unknown/model'); }],
+  ['missing decision connection', c => { delete c.providers.openrouter; }],
 ];
 for (const [name, mutate] of unsafeRoutes) {
   test(`managed mock rejects ${name} before registration`, async () => {

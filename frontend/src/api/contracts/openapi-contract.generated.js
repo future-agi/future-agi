@@ -6046,7 +6046,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/GatewayHealthResponse",
           },
           400: {
-            $ref: "#/definitions/AgentccErrorResponse",
+            $ref: "#/definitions/GatewayHealthErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -13241,13 +13241,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/api/models_list/": {
       get: {
         operationId: "model-hub_api_models_list_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelListResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -65344,6 +65372,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/GatewayHealthErrorResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+      description:
+        "Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.",
+    },
     GatewayHealthResponse: {
       required: ["status", "result"],
       type: "object",
@@ -75047,6 +75147,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
               minLength: 1,
             },
+          },
+        },
+      },
+    },
+    ModelListResponse: {
+      required: ["count", "results"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelListEntry",
           },
         },
       },
@@ -100572,7 +100698,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewaySummaryResult: {
-      required: ["id", "name", "base_url", "status"],
+      required: ["id", "name", "base_url", "status", "last_health_check"],
       type: "object",
       properties: {
         id: {
@@ -100596,6 +100722,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's live health probe, including unreachable results.",
+          type: "string",
+          format: "date-time",
+        },
         provider_count: {
           title: "Provider count",
           type: "integer",
@@ -100606,14 +100739,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResult: {
+      required: ["status", "error", "last_health_check"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["unreachable"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's failed live health probe.",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-string-or-object": true,
+    },
     GatewayHealthResult: {
-      required: ["status", "providers", "provider_count", "model_count"],
+      required: [
+        "status",
+        "last_health_check",
+        "providers",
+        "provider_count",
+        "model_count",
+      ],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+        last_health_check: {
+          title: "Last health check",
+          description: "Completion time of this request's live health probe.",
+          type: "string",
+          format: "date-time",
         },
         health: {
           title: "Health",
@@ -106675,6 +106843,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Success",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ModelListEntry: {
+      required: ["model_name", "type"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        author: {
+          title: "Author",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        question_types: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        min_choices: {
+          title: "Min choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_choices: {
+          title: "Max choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_state_bytes: {
+          title: "Max state bytes",
+          type: "integer",
+          minimum: 1,
+        },
+        notice: {
+          title: "Notice",
+          type: "string",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DecisionConnection",
+          },
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },
@@ -123511,6 +123803,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         y: {
           title: "Y",
           type: "integer",
+        },
+      },
+    },
+    DecisionConnection: {
+      required: ["model_name", "provider", "label", "is_available"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
         },
       },
     },

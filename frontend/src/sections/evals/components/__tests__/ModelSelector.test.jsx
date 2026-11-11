@@ -163,11 +163,11 @@ describe("ModelSelector — Jev models (bring your own key)", () => {
       "Turing LargeBest accuracy for complex evaluations",
       "Turing SmallBalanced accuracy, lower cost",
       "Turing FlashFast, low-latency evaluations",
-      "Jev 1.13 (pinned)jev-1.13.0",
-      "Jev latestjev-latest",
+      "Jev 1.13 (pinned)TypeSafe · Pass/Fail / Choices / Scorevia TypeSafe · Key configured",
+      "Jev latestMoving aliasTypeSafe · Pass/Fail / Choices / Scorevia TypeSafe · Key configured",
       "local-modelcustom",
     ]);
-    const headers = ["FutureAGI Models", "Jev models", "Your Models"].map(
+    const headers = ["FutureAGI Models", "Decision models", "Your Models"].map(
       (text) => screen.getByText(text),
     );
     expect(
