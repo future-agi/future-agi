@@ -364,6 +364,13 @@ export async function createDriver({ jobId, runId, registration }) {
             '-e', `TRACE_API_KEY=${input.apiKey}`, '-e', `TRACE_SECRET_KEY=${input.secretKey}`, '-e', `TRACE_PROJECT=${input.projectName}`, input.runtimeContainer, 'python', '/opt/ctxhub/production_request.py',
             '--binding-id', input.production.bindingId, '--context-id', input.contextId], { encoding: 'utf8' }).trim().split('\n').at(-1));
           state.production = produced;
+          // Wait until the retained tracing store has the exported spans (independent of the UI).
+          for (let attempt = 0; ; attempt++) {
+            const count = Number((await (await fetch(`${input.chUrl}/?query=${encodeURIComponent(`SELECT count() FROM spans FINAL WHERE trace_id='${produced.trace_id}'`)}`, { headers: { Authorization: `Basic ${Buffer.from(`default:${input.chPassword}`).toString('base64')}` } })).text()).trim());
+            if (count === 2) break;
+            requireValue(attempt < 60 && !signal.aborted, 'The exported production trace did not arrive');
+            await new Promise((r) => setTimeout(r, 2000));
+          }
           await go('retained-tracing', '/dashboard/observe');
           await op.click(page.getByText(input.projectName, { exact: true }), 'open-incident-project');
           await op.transition('production-trace', () => op.click(page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Production refund request' }).first(), 'open-production-trace'));
