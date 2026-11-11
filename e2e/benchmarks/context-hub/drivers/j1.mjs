@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
 import { digest, requireValue } from '../../../lib/skills-r3/canonical.mjs';
+import { performUpdate } from './j1-update.mjs';
 
 const expect = playwrightExpect.configure({ timeout: 60_000 });
 
@@ -30,6 +31,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const plans = [];
   const imported = [];
   const attempts = [];
+  const update = {};
   const headers = { Authorization: `Bearer ${input.actor.access}`, 'X-Organization-Id': input.actor.organizationId, 'X-Workspace-Id': input.actor.workspaceId };
   const record = async (name, value) => {
     await writeFile(resolve(output, `${name}.json`), JSON.stringify(value, null, 2), { mode: 0o600 });
@@ -43,7 +45,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const open = async () => {
     if (context) return;
     browser = await chromium.launch({ headless: true });
-    context = await browser.newContext({ baseURL: input.appUrl, viewport: { width: 1440, height: 900 } });
+    context = await browser.newContext({ baseURL: input.appUrl, viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
     await context.addInitScript(actor => {
       localStorage.setItem('accessToken', actor.access);
       localStorage.setItem('refreshToken', actor.refresh);
@@ -288,9 +290,11 @@ export async function createDriver({ jobId, runId, registration }) {
           await click(page, 'tab', 'Use');
           await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
           await page.screenshot({ path: resolve(output, 'shots', 'unqualified-delivery.png') });
-          await record('delivery-blocker', { contextId, candidate, reason: 'Public Use handoff has no released package/verified host profile. This driver cannot replace real discovery/model-boundary evidence with a synthetic success.', qualified: false });
+          const capabilities = await read('contexts/capabilities/', signal);
+          await record('delivery-blocker', { contextId, candidate, capabilities, reason: 'Public Use handoff has no released package/verified host profile. This driver cannot replace real discovery/model-boundary evidence with a synthetic success.', qualified: false });
           throw new Error('Public immutable candidate delivery is not qualified');
         }
+        if (await performUpdate(stage, { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, choose, go }, update)) return;
         throw new Error(`No completed public-interface stage evidence: ${stage.id}`);
       } catch (error) {
         await record('blocked-stage', { stage: stage.id, errorType: error.name, qualified: false });
