@@ -18,8 +18,15 @@ const clip = (text) =>
     : text;
 
 // One imported case: what its source holds and lacks, what became of it, and —
-// while it waits — what the person says the record shows.
-export default function EvidenceCaseCard({ item, shows, onShowsChange }) {
+// while it waits — what the person wants its new scenario to be. A simulated
+// source (a Simulator project's) says so; production sources are regression evidence.
+export default function EvidenceCaseCard({
+  item,
+  kind,
+  simulated,
+  shows,
+  onShowsChange,
+}) {
   const turns = item.transcript?.turns ?? [];
   const preview =
     turns.length > 1 ? [turns[0], turns[turns.length - 1]] : turns;
@@ -32,6 +39,14 @@ export default function EvidenceCaseCard({ item, shows, onShowsChange }) {
         <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {item.source_id}
         </Typography>
+        {simulated ? (
+          <StatusBadge
+            role="neutral"
+            label={EVIDENCE_COPY.simulated(kind)}
+            size="sm"
+            variant="badge"
+          />
+        ) : null}
         <StatusBadge
           role={CASE_ROLE[item.status] || "neutral"}
           label={EVIDENCE_COPY[item.status] || item.status}
@@ -101,7 +116,9 @@ export default function EvidenceCaseCard({ item, shows, onShowsChange }) {
           label={EVIDENCE_COPY.shows}
           value={shows}
           onChange={(event) => onShowsChange(item.id, event.target.value)}
-          sx={{ mt: 1.5, minWidth: 220 }}
+          helperText={EVIDENCE_COPY.showsDetail[shows]}
+          fullWidth
+          sx={{ mt: 1.5 }}
         >
           {Object.entries(EVIDENCE_COPY.showsOptions).map(([value, label]) => (
             <MenuItem key={value} value={value}>
@@ -116,6 +133,8 @@ export default function EvidenceCaseCard({ item, shows, onShowsChange }) {
 
 EvidenceCaseCard.propTypes = {
   item: PropTypes.object.isRequired,
+  kind: PropTypes.oneOf(["session", "call"]),
+  simulated: PropTypes.bool,
   shows: PropTypes.string,
   onShowsChange: PropTypes.func,
 };

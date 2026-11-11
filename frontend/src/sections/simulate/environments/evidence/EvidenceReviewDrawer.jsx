@@ -112,10 +112,17 @@ export default function EvidenceReviewDrawer({
                   {EVIDENCE_COPY.redactionReady(data.redaction?.total ?? 0)}
                 </Alert>
               )}
+              {data.simulated ? (
+                <Alert severity="info" data-testid="evidence-simulated">
+                  {EVIDENCE_COPY.simulatedNotice(kind)}
+                </Alert>
+              ) : null}
               {cases.map((one) => (
                 <EvidenceCaseCard
                   key={one.id}
                   item={one}
+                  kind={kind}
+                  simulated={Boolean(data.simulated)}
                   shows={shows[one.id] || "failure"}
                   onShowsChange={
                     data.drafting

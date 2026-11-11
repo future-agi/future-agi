@@ -138,6 +138,57 @@ describe("EvidenceReviewDrawer", () => {
     );
   });
 
+  it("asks what the new scenarios should be, and drafts the chosen regression test", async () => {
+    axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
+    renderDrawer();
+    const choice = await screen.findByRole("combobox", {
+      name: /^What should the new scenarios be\?/,
+    });
+    expect(choice).toHaveTextContent(
+      "Reproduce the failure as a regression test",
+    );
+    expect(
+      screen.getByText(/^Keeps: the situation, what the user said/),
+    ).toBeInTheDocument();
+    await userEvent.click(choice);
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Keep this success as a regression test",
+      }),
+    );
+    expect(
+      screen.getByText(/^Keeps: the workflow that worked, step by step/),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 1 scenario" }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
+        case_ids: ["c1"],
+        shows: { c1: "success" },
+      }),
+    );
+  });
+
+  it("labels a Simulator project's calls as simulated, not production", async () => {
+    evidence = bundle({
+      source_kind: "call",
+      simulated: true,
+      cases: [item(), item({ id: "c2", source_id: "call-2" })],
+    });
+    renderDrawer();
+    expect(await screen.findByTestId("evidence-simulated")).toHaveTextContent(
+      "These calls come from a Simulator project",
+    );
+    for (const id of ["c1", "c2"]) {
+      expect(
+        within(screen.getByTestId(`evidence-case-${id}`)).getByText(
+          "Simulated call, not production",
+        ),
+      ).toBeInTheDocument();
+    }
+  });
+
   it("while drafting: says so, takes no draft or add, and locks the record choice", async () => {
     evidence = bundle({ drafting: true });
     renderDrawer();
@@ -145,7 +196,11 @@ describe("EvidenceReviewDrawer", () => {
       "Drafting 1 imported case",
     );
     expect(screen.queryByRole("button", { name: /^Draft / })).toBeNull();
-    expect(screen.queryByLabelText("What the record shows")).toBeNull();
+    expect(
+      screen.queryByRole("combobox", {
+        name: /^What should the new scenarios be\?/,
+      }),
+    ).toBeNull();
     expect(
       screen.getByRole("button", { name: "Save 0 to the suite" }),
     ).toBeDisabled();

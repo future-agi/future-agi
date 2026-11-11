@@ -31,6 +31,10 @@ export const EVIDENCE_COPY = {
   title: "Review imported evidence",
   subtitle: (count, kind) =>
     `${count} ${kind}${count === 1 ? "" : "s"} from Observe`,
+  // A Simulator project's sources are our own simulations, never production evidence.
+  simulated: (kind) => `Simulated ${kind}, not production`,
+  simulatedNotice: (kind) =>
+    `These ${kind}s come from a Simulator project: they are simulations, not production. The scenarios drafted from them never claim a customer did this.`,
   notFound: "This import is not available.",
   loadError: "Couldn't read this import from Observe. Try again in a moment.",
   stepEvidence: "1. Evidence",
@@ -41,11 +45,20 @@ export const EVIDENCE_COPY = {
     total
       ? `${total} value${total === 1 ? "" : "s"} of personal data will be replaced with tokens before anything becomes scenario text.`
       : "No personal data was found.",
-  shows: "What the record shows",
+  shows: "What should the new scenarios be?",
   showsOptions: {
-    failure: "A failure",
-    success: "A correct path",
-    partial: "Partial evidence",
+    failure: "Reproduce the failure as a regression test",
+    success: "Keep this success as a regression test",
+    partial: "A regression test from partial evidence",
+  },
+  // What each choice keeps from the evidence, and what the builder makes up.
+  showsDetail: {
+    failure:
+      "Keeps: the situation, what the user said and the failure evidence. Makes: what should have happened, written from the policy, never copied from the agent's answer.",
+    success:
+      "Keeps: the workflow that worked, step by step. Makes: explicit checks; an observed success still needs a reviewed expected outcome.",
+    partial:
+      "Keeps: only what the record does show. Makes: checks for that part; anything it does not show is labelled synthetic.",
   },
   startingState:
     "Observe never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
