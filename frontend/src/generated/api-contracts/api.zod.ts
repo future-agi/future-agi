@@ -5145,6 +5145,12 @@ export const AgentccGatewaysListResponse = zod.object({
       name: zod.string().min(1),
       base_url: zod.string().url().min(1),
       status: zod.string().min(1),
+      last_health_check: zod
+        .string()
+        .datetime({ offset: true })
+        .describe(
+          "Completion time of this request's live health probe, including unreachable results.",
+        ),
       provider_count: zod.number().optional(),
       model_count: zod.number().optional(),
     }),
@@ -5173,6 +5179,12 @@ export const AgentccGatewaysReadResponse = zod.object({
     name: zod.string().min(1),
     base_url: zod.string().url().min(1),
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe(
+        "Completion time of this request's live health probe, including unreachable results.",
+      ),
     provider_count: zod.number().optional(),
     model_count: zod.number().optional(),
   }),
@@ -5303,6 +5315,10 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe("Completion time of this request's live health probe."),
     health: zod.object({}).passthrough().optional(),
     providers: zod.object({
       providers: zod.array(
@@ -19194,11 +19210,51 @@ export const ModelHubApiModelVoicesListResponse = zod.object({
   }),
 });
 
+export const ModelHubApiModelsListListQueryParams = zod.object({
+  name: zod.string().optional(),
+  search: zod.string().optional(),
+  model_type: zod.string().optional(),
+  exclude_providers: zod.array(zod.string()).optional(),
+});
+
 export const ModelHubApiModelsListListResponse = zod.object({
   count: zod.number(),
-  next: zod.string().optional(),
-  previous: zod.string().optional(),
-  results: zod.array(zod.object({}).passthrough()),
+  next: zod.string().nullish(),
+  previous: zod.string().nullish(),
+  results: zod.array(
+    zod.object({
+      model_name: zod.string().min(1),
+      label: zod.string().min(1).optional(),
+      author: zod.string().min(1).optional(),
+      version: zod.string().min(1).optional(),
+      question_types: zod.array(zod.string().min(1)).optional(),
+      min_choices: zod.number().min(1).optional(),
+      max_choices: zod.number().min(1).optional(),
+      max_state_bytes: zod.number().min(1).optional(),
+      notice: zod.string().optional(),
+      unavailable_reason: zod.string().min(1).nullish(),
+      connections: zod
+        .array(
+          zod.object({
+            model_name: zod.string().min(1),
+            provider: zod.string().min(1),
+            label: zod.string().min(1),
+            is_available: zod.boolean(),
+          }),
+        )
+        .optional(),
+      type: zod.string().min(1),
+      providers: zod.string().optional(),
+      is_available: zod.boolean().optional(),
+      logo_url: zod.string().nullish(),
+      best_for: jsonValueSchema.optional().describe("Any valid JSON value."),
+      use_case: jsonValueSchema.optional().describe("Any valid JSON value."),
+      cutoff: jsonValueSchema.optional().describe("Any valid JSON value."),
+      rate_limits: jsonValueSchema.optional().describe("Any valid JSON value."),
+      latency: jsonValueSchema.optional().describe("Any valid JSON value."),
+      pricing: jsonValueSchema.optional().describe("Any valid JSON value."),
+    }),
+  ),
 });
 
 /**
