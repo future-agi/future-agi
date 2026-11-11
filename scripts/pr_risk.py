@@ -1900,12 +1900,16 @@ def merge(api, policy, settings, context, approver):
             raise
     # The App's approval of this head exists, so a note that it could not
     # approve no longer applies (and no longer slows the sweep for this PR).
-    clear_note(
-        api,
-        number,
-        APPROVER_UNAVAILABLE_MARKER,
-        f"The approver App approved head `{context['head']}`.",
-    )
+    # Only a note: a failure here must not stop the merge.
+    try:
+        clear_note(
+            api,
+            number,
+            APPROVER_UNAVAILABLE_MARKER,
+            f"The approver App approved head `{context['head']}`.",
+        )
+    except PolicyError:
+        summary("The approver note could not be marked as no longer applying.")
     summary(audit)
     # Re-read AFTER approval. GitHub can take a moment to update protection; a
     # blocked/unknown state waits for the next scheduled sweep, never bypasses it.

@@ -2690,6 +2690,18 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("did not receive", note)
         self.assert_nothing_approved()
 
+    def test_an_approver_note_that_cannot_be_cleared_does_not_stop_the_merge(self):
+        context = self.passing_review()
+        self.api.refuse_approval = 422
+        with self.assertRaisesRegex(risk.PolicyError, "refused the approver App"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.api.refuse_approval = None
+        self.failing(lambda m, r, d: m == "PATCH" and r.startswith("issues/comments/"), 1)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        [note] = self.approver_notes()
+        self.assertIn("refused the approval", note)
+
     def test_approval_recorded_under_another_login_stops_the_merge(self):
         context = self.passing_review()
         self.api.approver.login = "other-app[bot]"
@@ -3166,8 +3178,10 @@ class ControllerTests(unittest.TestCase):
         # The gate job ends with the markers and hands the outcome on.
         jobs = yaml.safe_load(WORKFLOW_TEXT)["jobs"]
         self.assertTrue(names[-1].startswith("Review retryable: "))
-        self.assertEqual(jobs["review-gate-and-merge"]["outputs"],
-                         {"outcome": "${{ steps.publish.outputs.outcome }}"})
+        self.assertEqual(jobs["review-gate-and-merge"]["outputs"], {
+            "outcome": "${{ steps.publish.outputs.outcome }}",
+            "reused": "${{ !fromJSON(needs.prepare.outputs.context).check_id }}",
+        })
         approving = jobs["approve-and-merge"]
         merge = approving["steps"][-1]
         self.assertIn("python3 -I scripts/pr_risk.py merge", merge["run"])
@@ -3175,7 +3189,7 @@ class ControllerTests(unittest.TestCase):
         # Only after a pass published in this run, or for a reused pass.
         self.assertTrue(approving["if"].endswith(
             "(needs.review-gate-and-merge.outputs.outcome == 'passed' || "
-            "!fromJSON(needs.prepare.outputs.context).check_id)"), approving["if"])
+            "needs.review-gate-and-merge.outputs.reused == 'true')"), approving["if"])
         self.assertEqual(merge["env"]["REVIEW_OUTCOME"], "${{ needs.review-gate-and-merge.outputs.outcome }}")
         self.assertNotIn("pr_risk.py finish", WORKFLOW_TEXT)
 
@@ -3230,11 +3244,11 @@ class WorkflowContractTests(unittest.TestCase):
         # first; always() keeps a skipped ai-review (a reused pass) from skipping it.
         self.assertEqual(approving["needs"], ["prepare", "review-gate-and-merge"])
         for part in ("always() && !cancelled()", "needs.prepare.result == 'success'",
-                     "needs.review-gate-and-merge.result == 'success'",
-                     "needs.prepare.outputs.context != '' &&"):
+                     "needs.review-gate-and-merge.result == 'success'"):
             self.assertIn(part, approving["if"])
-        self.assertLess(approving["if"].index("needs.prepare.outputs.context != ''"),
-                        approving["if"].index("fromJSON("))
+        # Evaluated on every run, including sweeps with no context: it must
+        # never parse the context, or every such run would fail.
+        self.assertNotIn("fromJSON", approving["if"])
         steps = approving["steps"]
         self.assertFalse(any(str(step.get("name", "")).startswith("Review ") for step in steps))
         mint = next(step for step in steps if step.get("id") == "approver")

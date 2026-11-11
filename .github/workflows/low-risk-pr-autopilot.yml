@@ -204,8 +204,11 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
+    # Plain strings, so the next job's condition never parses the context:
+    # outcome is empty for a reused pass, and reused is 'true' only then.
     outputs:
       outcome: ${{ steps.publish.outputs.outcome }}
+      reused: ${{ !fromJSON(needs.prepare.outputs.context).check_id }}
     steps:
       - name: Check out only the same trusted controller revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -264,8 +267,7 @@ jobs:
       always() && !cancelled() && github.run_attempt == '1' &&
       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' &&
       needs.prepare.result == 'success' && needs.review-gate-and-merge.result == 'success' &&
-      needs.prepare.outputs.context != '' &&
-      (needs.review-gate-and-merge.outputs.outcome == 'passed' || !fromJSON(needs.prepare.outputs.context).check_id)
+      (needs.review-gate-and-merge.outputs.outcome == 'passed' || needs.review-gate-and-merge.outputs.reused == 'true')
     # Holds the approver App's client ID and private key. Its deployment branch
     # rule allows only dev, so no copy of this workflow on another branch (and
     # no pull_request_target run, which runs on main) can read the key. It must

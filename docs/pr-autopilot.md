@@ -200,7 +200,10 @@ How the workflow uses the App:
   records under another login posts the same note. A server error does not.
   Once the App approves the head, the bot marks the note "No longer
   applies". While the note names the PR's head, the sweep dispatches the PR
-  about once an hour.
+  about once an hour. Because the token step continues on error, the
+  controller cannot tell a token step that failed on a GitHub server error
+  from a missing key. Either way the PR gets the note and waits about an
+  hour, while a server error on the approval itself posts no note.
 - The controller's own-approval lookup and the dismissed-approval hold read
   only reviews by that login with type `Bot`. The prepare job does not hold
   the App's identity, so it waits when any bot's autopilot approval of the
@@ -757,8 +760,10 @@ Suggested rollout:
      without waiting, also for a reused pass (when `ai-review` is skipped);
      the token step mints a token whose approval satisfies `dev`'s rules (the
      live check in owner setting 7); a copy of the workflow dispatched on
-     another branch cannot read the environment's key; and with the key
-     removed, the merge step still runs and the PR gets the approver note.
+     another branch cannot read the environment's key; with the key
+     removed, the merge step still runs and the PR gets the approver note;
+     and a sweep run, a PR-event run and a dispatch run that only waits show
+     `approve-and-merge` as skipped, not failed.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
