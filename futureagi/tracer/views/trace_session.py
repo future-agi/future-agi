@@ -818,10 +818,12 @@ def _soft_delete_trace_session_tree(trace_sessions):
 
     session_ids = [session.id for session in sessions]
     trace_ids = list(
-        Trace.no_workspace_objects.filter(
+        Trace.no_workspace_objects.using("default")
+        .filter(
             session_id__in=session_ids,
             deleted=False,
-        ).values_list("id", flat=True)
+        )
+        .values_list("id", flat=True)
     )
 
     if trace_ids:

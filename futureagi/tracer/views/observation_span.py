@@ -703,6 +703,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             .filter(project__organization=_get_request_organization(self.request))
         )
 
+        # Mutations must load the latest row, not overwrite it from a stale replica.
+        if getattr(self, "action", None) in {"update", "partial_update", "destroy"}:
+            query_Set = query_Set.using("default")
+
         if observation_span_id:
             return query_Set.filter(id=observation_span_id)
 
@@ -1504,7 +1508,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         project=observation_span["project"],
                         project__organization=_get_request_organization(self.request),
                     )
-                observation_span["trace"] = Trace.objects.get(
+                observation_span["trace"] = Trace.objects.using("default").get(
                     _project_workspace_scope_q(self.request),
                     id=observation_span["trace"],
                     project=observation_span["project"],
@@ -1786,7 +1790,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             span_id = request.data.get("span_id")
             if not span_id:
                 return self._gm.bad_request("span_id is required")
-            span = ObservationSpan.objects.get(
+            span = ObservationSpan.objects.using("default").get(
                 _project_workspace_scope_q(request),
                 id=span_id,
                 project__organization=_get_request_organization(request),
@@ -4175,13 +4179,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 if observation_span_id:
-                    observation_span = ObservationSpan.objects.get(
+                    observation_span = ObservationSpan.objects.using("default").get(
                         _project_workspace_scope_q(request),
                         id=observation_span_id,
                         project__organization=_get_request_organization(request),
                     )
                 elif trace_id:
-                    observation_span = ObservationSpan.objects.get(
+                    observation_span = ObservationSpan.objects.using("default").get(
                         _project_workspace_scope_q(request),
                         trace_id=trace_id,
                         project__organization=_get_request_organization(request),
