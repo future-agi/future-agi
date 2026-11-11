@@ -1251,8 +1251,16 @@ jobs:
       - name: Open bump PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MIGRATIONS: ${{ needs.guard.outputs.migrations }}
         run: |
           set -eu
+          # The deployment autopilot reads this count from the head commit
+          # message: only "Migrations: 0 new files" lets it merge unattended.
+          # Anything but a plain count is written as unknown, never dropped.
+          case "$MIGRATIONS" in
+            unknown) ;;
+            "" | *[!0-9]*) MIGRATIONS=unknown ;;
+          esac
           branch="chore/bump-platform-${VERSION}"
           git config user.name "futureagi-release-bot"
           git config user.email "release-bot@futureagi.com"
@@ -1260,7 +1268,7 @@ jobs:
           git switch -c "$branch" 2>/dev/null || git switch "$branch"
           git add eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
           git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
-          git commit -m "chore(release): bump platform images to ${VERSION}"
+          git commit -m "chore(release): bump platform images to ${VERSION}" -m "Migrations: ${MIGRATIONS} new files"
           # Plain --force: the bump branch is bot-owned and regenerated from main
           # each run; a single-branch checkout never fetches its remote ref, so
           # --force-with-lease has no base to compare and is rejected as "stale
@@ -1276,7 +1284,7 @@ jobs:
               --title "chore(release): bump platform to ${VERSION}" \
               --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide.
 
-          Migrations: ${{ needs.guard.outputs.migrations }} new files"
+          Migrations: ${MIGRATIONS} new files"
           else
             echo "bump PR already open"
           fi

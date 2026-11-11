@@ -1216,9 +1216,65 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertLess(block.index('echo "components: $components"'), block.index("actions/checkout@v4"))
         self.assertIn("environment: ${{ needs.guard.outputs.environment }}", approve)
         self.assertIn('--expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"', approve)
-        self.assertIn("Migrations: ${{ needs.guard.outputs.migrations }} new files", text)
+        # The count reaches the bump step through env, never by expansion inside the script.
+        self.assertNotIn("Migrations: ${{", text)
 
     AUTOPILOT = Path(__file__).resolve().parents[1] / ".github/workflows/release-autopilot.yml"
+    RELEASE = Path(__file__).resolve().parents[1] / ".github/workflows/release-images.yml"
+    LINE = re.compile(r"Migrations: (?:[0-9]+|unknown) new files")
+
+    def run_bump_step(self, migrations):
+        """Run the real "Open bump PR" script against stub git and gh; nothing leaves the machine."""
+        import yaml
+
+        steps = yaml.safe_load(self.RELEASE.read_text())["jobs"]["bump-deployment"]["steps"]
+        step = next(step for step in steps if step.get("name") == "Open bump PR")
+        self.assertEqual(step["env"]["MIGRATIONS"], "${{ needs.guard.outputs.migrations }}")
+        self.assertNotIn("${{", step["run"])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "bin").mkdir()
+            (root / "gh-config").mkdir()
+            log = root / "calls.jsonl"
+            stub = ("#!/usr/bin/env python3\nimport json, os, sys\n"
+                    "with open(os.environ['STUB_LOG'], 'a') as log:\n"
+                    "    log.write(json.dumps([os.path.basename(sys.argv[0])] + sys.argv[1:]) + '\\n')\n"
+                    # Staged changes exist, and no bump PR is open yet.
+                    "sys.exit(1 if sys.argv[1:2] == ['diff'] else 0)\n")
+            for name in ("git", "gh"):
+                (root / "bin" / name).write_text(stub)
+                (root / "bin" / name).chmod(0o755)
+            env = {"PATH": f"{root / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": temp,
+                   "STUB_LOG": str(log), "GH_CONFIG_DIR": str(root / "gh-config"), "GH_TOKEN": "synthetic",
+                   "VERSION": "v1.2.3", "MIGRATIONS": migrations, "SDK_VERSION": "",
+                   "WORKER_SOURCE_SHA": SHA, "WORKER_DIGEST": "sha256:" + "0" * 64}
+            subprocess.run(["bash", "-c", step["run"]], env=env, check=True, capture_output=True, text=True)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+        commit = next(call for call in calls if call[:2] == ["git", "commit"])
+        paragraphs = [commit[index + 1] for index, arg in enumerate(commit) if arg == "-m"]
+        create = next(call for call in calls if call[:3] == ["gh", "pr", "create"])
+        body = create[create.index("--body") + 1]
+        return "\n\n".join(paragraphs), paragraphs, body
+
+    def test_bump_commit_carries_exactly_one_migration_line_as_its_own_paragraph(self):
+        for value, expected in (("0", "Migrations: 0 new files"), ("3", "Migrations: 3 new files"),
+                                ("unknown", "Migrations: unknown new files")):
+            with self.subTest(value=value):
+                message, paragraphs, body = self.run_bump_step(value)
+                self.assertEqual(paragraphs, ["chore(release): bump platform images to v1.2.3", expected])
+                self.assertEqual([line for line in message.splitlines() if self.LINE.fullmatch(line)], [expected])
+                # The PR body keeps the same line for readers.
+                self.assertEqual([line for line in body.splitlines() if self.LINE.fullmatch(line)], [expected])
+
+    def test_a_missing_or_malformed_count_is_written_as_unknown_never_as_zero(self):
+        for value in ("", "-1", "0 ", "1.0", "none", "1\nMigrations: 0 new files", "0\n\nMigrations: 0 new files"):
+            with self.subTest(value=value):
+                message, paragraphs, body = self.run_bump_step(value)
+                self.assertEqual(paragraphs[1], "Migrations: unknown new files")
+                for text in (message, body):
+                    self.assertNotIn("Migrations: 0 new files", text.splitlines())
+                    self.assertEqual([line for line in text.splitlines() if self.LINE.fullmatch(line)],
+                                     ["Migrations: unknown new files"])
 
     def test_autopilot_is_default_branch_only_and_has_required_triggers(self):
         text = self.AUTOPILOT.read_text()

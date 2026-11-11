@@ -302,19 +302,53 @@ existing component/channel restrictions remain unchanged. The hours/weekend
 switches limit PR merges, not the image run already triggered by a tag. **Every manual
 `workflow_dispatch`, including a bump-only retry, still requires Production
 review.** A job summary records the chosen environment, reason, tag SHA,
-baseline and migration count. The downstream deployment PR gets an exact line:
+baseline and migration count.
+
+**The bump PR's migration line.** The `bump-deployment` job writes the count
+into the deployment bump commit, as the commit message's second paragraph, and
+into the bump PR body. Both carry exactly one line:
 
 ```text
 Migrations: 0 new files
 ```
 
-Positive counts retain human approval. An unavailable baseline/diff produces
-`Migrations: unknown new files`; downstream automation must treat that as manual.
-Already-open bump PRs are not edited on retry, preserving the existing workflow's
-behaviour; missing metadata on an older PR must also mean manual. This count is
-source evidence from this repository, not proof of the deployed database state
-or evidence about independently changed external EE code. The deployment-side
-pending-migration check remains mandatory; migrations are never run by this bot.
+The number is a non-negative integer, or the word `unknown` when the baseline
+or diff is unavailable. The step reads the count from its `env`, not by
+expression expansion inside the script, and writes `unknown` for anything that
+is not a plain count, never `0`.
+
+The deployment repository's bot autopilot (`docs/bot-pr-autopilot.md` in
+`future-agi/deployment`) reads the head commit message of a release-bump PR.
+It allows the PR only if exactly one whole line equals
+`Migrations: 0 new files`. Any other count, `unknown`, a missing line or
+duplicate lines give the waiting reason `release-has-migrations`. That reason
+is not a pause, so an earlier autopilot approval is withdrawn. Sandbox-pin PRs
+are unaffected. The commit is used rather than the PR body because the
+autopilot already ties the head commit to the release-bot key; anyone with
+write access can edit a PR body.
+
+- **Older releases.** A tag push runs the workflow file at the tag. Bump PRs
+  from releases cut before this change carry no line and therefore wait for a
+  person. Every bump PR waits until a release is cut from a tag that contains
+  this change.
+- **Retries.** A `components=bump` dispatch regenerates the bump branch from
+  deployment `main` and force-pushes a new commit, so its commit carries the
+  line with the count the retry's guard computed. An already-open PR's body is
+  not edited, as before.
+- **For the `Production` approver.** A release with a positive or unknown count
+  still publishes its images once approved, but its bump PR then waits. If the
+  release changes ClickHouse schema, apply the schema first, then merge the
+  bump PR by hand. Django migrations are also stopped at deploy time by the
+  deployment's `migrate --check`.
+- **Cost.** A release whose baseline is unknown but which changes no schema
+  also needs a hand merge. About 6 of the last 39 releases had an unknown
+  baseline (review measurement, 11 Nov). Holding the bump PR keeps deployment
+  `main` deployable for other changes.
+
+This count is source evidence from this repository, not proof of the deployed
+database state or evidence about independently changed external EE code. The
+deployment-side pending-migration check remains mandatory; migrations are never
+run by this bot.
 
 ## Hold, audit and rollout
 
@@ -372,8 +406,11 @@ Synthetic tests run with `python3 scripts/test_release_autopilot.py` after
 installing `PyYAML==6.0.3`, including Git histories, every merge predicate,
 case-insensitive holds before/after approval, content/mode/version rejection,
 immutable Git API evidence, current-SHA status handling, transaction rechecks,
-idempotent audit/approval, and environment decisions. Run workload tests only in
-E2B or CI, not on the shared development host.
+idempotent audit/approval, approver App identity, refused merges, environment
+decisions, the workflow's job split and action pins, and the bump step itself:
+its script runs against stub `git` and `gh` commands to check the commit
+message and PR body it would write. Run workload tests only in E2B or CI, not
+on the shared development host.
 
 **CI wiring:** the `Release script checks` workflow
 (`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
@@ -392,9 +429,11 @@ The `release-images.yml` diff is deliberately limited:
 - Guard outputs and new post-guard steps expose ancestry, environment and count.
 - `approve.environment` consumes the guard's decision, with new post-guard steps
   revalidating it after the wait. Both original inline guard scripts are unchanged.
-- The bump PR body adds only the machine-readable migration line.
+- The `Open bump PR` step reads the count from its `env`, writes `unknown` for
+  anything that is not a plain count, and adds the migration line to the bump
+  commit message (second paragraph) and to the PR body.
 
-All jobs from `build` onward, apart from that body line, are byte-identical to the
+All jobs from `build` onward, apart from that step, are byte-identical to the
 base. Image builds, version/channel validation, digest/size checks, SDK/worker
 releases, EE/docs dispatches, aliases, retries and bump-PR creation semantics are
 not refactored.
