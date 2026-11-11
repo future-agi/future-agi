@@ -114,3 +114,10 @@ it('holds items whose publication warnings are unacknowledged and publishes them
   expect(accept).toHaveBeenCalledTimes(2);
   expect(publish.mock.calls.filter(([input]) => input.acknowledgeWarnings)).toHaveLength(2);
 });
+
+it('lets the owner inspect every defaulted item\'s exact source files inside the reviewed set', () => {
+  const files = [{ path: 'SKILL.md', status: 'removed', fromText: 'Exact source café', toText: '' }];
+  render(<MigrationBatchReview plans={[plan([item('one', { sourceHubChanges: files })])]} onAccept={vi.fn()} onPublish={vi.fn()} />);
+  fireEvent.click(screen.getByText('Inspect source files'));
+  expect(screen.getByText('SKILL.md · added')).toBeVisible();
+});

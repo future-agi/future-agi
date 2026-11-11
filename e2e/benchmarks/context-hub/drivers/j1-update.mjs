@@ -130,8 +130,8 @@ export async function performUpdate(stage, tools, state) {
     // The diverged item is an exception: the owner inspects Base/Source/Hub and
     // chooses replacement explicitly; the unchanged-Hub item has the safe default.
     await expect(page.getByText('Source and Hub both changed. Choose keep or replace; nothing is merged.', { exact: true })).toBeVisible();
+    await operator.click(page.getByText('Inspect Base, Source and Hub differences', { exact: true }), 'inspect-base-source-hub');
     await operator.review('base-source-hub-differences', names, [row.name], async () => {
-      await page.getByText('Inspect Base, Source and Hub differences', { exact: true }).click();
       await expect(page.getByRole('table', { name: 'Retained migration items' }).getByText(/^SKILL\.md · /).first()).toBeVisible();
     }, { packet_sha256: digest(fresh), preconditions_sha256: digest(state.personal) });
     await choose(page, `Decision for ${row.name}`, 'Replace with reviewed source');

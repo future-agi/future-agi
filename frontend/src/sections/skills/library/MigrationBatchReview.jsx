@@ -129,6 +129,10 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
             </TextField> : <Typography variant="s1">{row.kind === "default" ? row.note : row.kind === "excluded" ? "Left out" : "Held"}</Typography>}
             {row.kind !== "default" && <Typography variant="s3" display="block" color="text.secondary">{row.note}</Typography>}
             {row.kind === "held" && row.item.hasDraft && onPreserveDraft && <Button size="small" disabled={running} onClick={() => onPreserveDraft(row.item)}>{`Preserve draft for ${row.item.name || row.item.root}`}</Button>}
+            {row.kind === "default" && Array.isArray(row.item.sourceHubChanges) && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect source files</Typography>
+              {row.item.destinationId ? <FileChanges files={row.item.sourceHubChanges} beforeTitle="Reviewed source" afterTitle="Current Hub" />
+                : <FileChanges files={row.item.sourceHubChanges.map((file) => ({ path: file.path, status: "added", fromText: "", toText: file.fromText }))} beforeTitle="Not in Hub yet" afterTitle="Reviewed source" />}
+            </Box>}
             {row.kind === "choice" && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect Base, Source and Hub differences</Typography>
               {Array.isArray(row.item.sourceHubChanges) && <FileChanges files={row.item.sourceHubChanges} beforeTitle="New source" afterTitle="Current Hub" />}
               {row.item.basisPayloadAvailable === false ? <Typography variant="s3">No historical source text is available; only Source and Hub are compared.</Typography> : <>
