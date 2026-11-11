@@ -537,7 +537,6 @@ function FilterRow({
             disabled={
               f.value !== filter.field && takenSingleFields?.has(f.value)
             }
-            sx={{ fontSize: 12 }}
           >
             {f.label}
           </MenuItem>
@@ -553,7 +552,7 @@ function FilterRow({
         sx={{ minWidth: 110, fontSize: 12, height: 30 }}
       >
         {operators.map((op) => (
-          <MenuItem key={op.value} value={op.value} sx={{ fontSize: 12 }}>
+          <MenuItem key={op.value} value={op.value}>
             {op.label}
           </MenuItem>
         ))}
@@ -970,7 +969,6 @@ const FilterPanel = ({
                 py: 0.5,
                 px: 1,
                 textTransform: "none",
-                fontSize: 12,
                 fontWeight: 500,
                 minWidth: 0,
               },

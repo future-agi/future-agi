@@ -106,7 +106,6 @@ export function PickerRow({
             mx: 0.5,
             px: 1,
             py: 0.5,
-            minHeight: 30,
             gap: 1,
             borderRadius: "6px",
             alignItems: meta ? "flex-start" : "center",

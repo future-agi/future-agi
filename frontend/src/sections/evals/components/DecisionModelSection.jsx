@@ -2,6 +2,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Link,
   NativeSelect,
   Typography,
 } from "@mui/material";
@@ -58,30 +59,20 @@ export default function DecisionModelSection({
             sx={{ fontSize: 11, lineHeight: "16px", color: "text.disabled" }}
           >
             Couldn’t load the catalog, showing built-in Jev models.{" "}
-            <Button
-              variant="text"
-              disableRipple
+            <Link
+              component="button"
               aria-label="Retry catalog"
               onClick={onRetry}
+              underline="always"
+              color="text.secondary"
               sx={{
-                p: 0,
-                minWidth: 0,
-                height: "auto",
-                verticalAlign: "baseline",
-                fontSize: 11,
-                lineHeight: "16px",
+                font: "inherit",
                 fontWeight: 500,
-                color: "text.secondary",
-                textDecoration: "underline",
-                "&:hover": {
-                  bgcolor: "transparent",
-                  color: "text.primary",
-                  textDecoration: "underline",
-                },
+                verticalAlign: "baseline",
               }}
             >
               Retry
-            </Button>
+            </Link>
           </Typography>
         </Box>
       )}
@@ -262,7 +253,7 @@ export default function DecisionModelSection({
           role="menuitem"
           size="small"
           onClick={() => setExpanded((value) => !value)}
-          sx={{ ml: 1, mb: 0.5, fontSize: 11, color: "text.secondary" }}
+          sx={{ ml: 1, mb: 0.5, color: "text.secondary" }}
         >
           {expanded
             ? "Show fewer decision models"
