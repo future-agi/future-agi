@@ -78,9 +78,11 @@ def log_token_warning(request: Request, event_name: str, **kwargs: object) -> No
 
 
 def oauth_token_attempt_ident(request: Request) -> str:
-    grant_type = request_data_value(request, "grant_type") or "unknown"
+    # Every grant type verifies the same client_secret, so invalid attempts are
+    # counted per client and address, not per grant type. Keying on grant_type
+    # would give each client one extra lockout budget per grant type.
     client_id = request_data_value(request, "client_id") or "unknown"
-    return stable_hash(f"{client_ident(request)}:{grant_type}:{client_id}")
+    return stable_hash(f"{client_ident(request)}:{client_id}")
 
 
 def _invalid_attempt_key(request: Request) -> str:
@@ -89,6 +91,25 @@ def _invalid_attempt_key(request: Request) -> str:
 
 def _invalid_lockout_key(request: Request) -> str:
     return f"mcp_oauth_token_invalid_lock:{oauth_token_attempt_ident(request)}"
+
+
+def _in_flight_key(request: Request) -> str:
+    return f"mcp_oauth_token_in_flight:{oauth_token_attempt_ident(request)}"
+
+
+# Request attribute holding the in-flight reservation key until release.
+_RESERVATION_ATTR = "_mcp_oauth_token_attempt_reservation"
+# Upper bound on how long a crashed worker's reservation can linger.
+_RESERVATION_TIMEOUT_SECONDS = 60
+
+
+def _invalid_attempt_limit() -> int:
+    return int(
+        _setting(
+            "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT",
+            DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT,
+        )
+    )
 
 
 def get_invalid_attempt_lockout_wait(request: Request) -> int:
@@ -111,13 +132,55 @@ def clear_invalid_token_attempts(request: Request) -> None:
         raise RateLimitBackendUnavailableError() from exc
 
 
+def reserve_token_attempt(request: Request) -> bool:
+    """Count this request as in flight; return False if it would exceed the limit.
+
+    The lockout is only written after a failed secret check, so without a
+    reservation a concurrent burst passes the lockout check together and gets
+    more secret checks than the limit allows. Recorded invalid attempts plus
+    requests still being verified must stay within the limit. A refused
+    request gives its slot back at once; an admitted one keeps it until
+    release_token_attempt_reservation() runs after the response is built.
+    """
+    key = _in_flight_key(request)
+    try:
+        if cache.add(key, 1, timeout=_RESERVATION_TIMEOUT_SECONDS):
+            in_flight = 1
+        else:
+            try:
+                in_flight = cache.incr(key)
+            except ValueError:
+                cache.set(key, 1, timeout=_RESERVATION_TIMEOUT_SECONDS)
+                in_flight = 1
+        setattr(request, _RESERVATION_ATTR, key)
+        recorded = int(cache.get(_invalid_attempt_key(request)) or 0)
+    except (ConnectionInterrupted, RedisError) as exc:
+        logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        raise RateLimitBackendUnavailableError() from exc
+
+    if recorded + in_flight <= _invalid_attempt_limit():
+        return True
+    release_token_attempt_reservation(request)
+    return False
+
+
+def release_token_attempt_reservation(request: Request | None) -> None:
+    key = getattr(request, _RESERVATION_ATTR, None)
+    if not key:
+        return
+    setattr(request, _RESERVATION_ATTR, None)
+    try:
+        cache.decr(key)
+    except ValueError:
+        # The reservation already expired.
+        pass
+    except (ConnectionInterrupted, RedisError):
+        # The reservation TTL bounds how long a missed release can linger.
+        logger.error("mcp_oauth_token_reservation_release_failed", exc_info=True)
+
+
 def record_invalid_token_attempt(request: Request) -> int:
-    limit = int(
-        _setting(
-            "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT",
-            DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT,
-        )
-    )
+    limit = _invalid_attempt_limit()
     window_seconds = int(
         _setting(
             "MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS",
@@ -183,20 +246,40 @@ class MCPOAuthTokenThrottled(Throttled):
 
 
 class MCPOAuthTokenLockoutThrottle(BaseThrottle):
-    """Reject token requests while an invalid-attempt lockout is active."""
+    """Reject token requests while an invalid-attempt lockout is active.
+
+    Also reserves an in-flight slot so concurrent requests cannot get more
+    secret checks than the invalid-attempt limit. The view must call
+    release_token_attempt_reservation() once the request finishes.
+    """
+
+    def _raise_lockout(self, request: Request, wait: int) -> None:
+        log_token_warning(
+            request,
+            "mcp_oauth_token_invalid_attempt_lockout",
+            retry_after_seconds=wait,
+        )
+        raise MCPOAuthTokenThrottled(
+            wait,
+            detail="Too many invalid token attempts",
+        )
 
     def allow_request(self, request: Request, view: object) -> bool:
         wait = get_invalid_attempt_lockout_wait(request)
         if wait > 0:
-            log_token_warning(
-                request,
-                "mcp_oauth_token_invalid_attempt_lockout",
-                retry_after_seconds=wait,
-            )
-            raise MCPOAuthTokenThrottled(
-                wait,
-                detail="Too many invalid token attempts",
-            )
+            self._raise_lockout(request, wait)
+
+        if not reserve_token_attempt(request):
+            # In-flight attempts already fill the remaining budget. Retry once
+            # they finish; by then they are recorded or cleared.
+            self._raise_lockout(request, 1)
+
+        # A request that finished between the first check and the reservation
+        # may have set the lockout and reset the attempt counter.
+        wait = get_invalid_attempt_lockout_wait(request)
+        if wait > 0:
+            release_token_attempt_reservation(request)
+            self._raise_lockout(request, wait)
         return True
 
 
@@ -259,16 +342,13 @@ class MCPOAuthTokenIPThrottle(AtomicRateThrottle):
 
 
 class MCPOAuthTokenClientThrottle(AtomicRateThrottle):
-    """Rate-limit token exchange attempts for the same client and grant type."""
+    """Rate-limit token exchange attempts for the same client, across grant types."""
 
     scope = "mcp_oauth_token_client"
     rate_setting = "MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE"
     default_rate = DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE
 
     def get_raw_ident(self, request: Request) -> str | None:
-        client_id = request_data_value(request, "client_id")
-        if not client_id:
-            return None
-
-        grant_type = request_data_value(request, "grant_type") or "unknown"
-        return f"{grant_type}:{client_id}"
+        # Every grant type verifies the same client_secret, so one window
+        # covers all of them.
+        return request_data_value(request, "client_id") or None
