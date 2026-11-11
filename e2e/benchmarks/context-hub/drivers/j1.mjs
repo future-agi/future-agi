@@ -427,7 +427,7 @@ export async function createDriver({ jobId, runId, registration }) {
         if (await performUpdate(stage, { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, choose, go }, update)) return;
         throw new Error(`No completed public-interface stage evidence: ${stage.id}`);
       } catch (error) {
-        await record('blocked-stage', { stage: stage.id, errorType: error.name, qualified: false });
+        await record('blocked-stage', { stage: stage.id, errorType: error.name, message: String(error.message).slice(0, 4000), stack: String(error.stack).split('\n').slice(0, 8), qualified: false });
         if (lastPage && !lastPage.isClosed()) await lastPage.screenshot({ path: resolve(output, 'shots', 'blocked.png') }).catch(() => {});
         throw error;
       } finally { signal.removeEventListener('abort', abort); }
