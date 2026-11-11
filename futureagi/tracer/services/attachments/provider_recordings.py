@@ -291,7 +291,8 @@ def process_livekit_event(connection, event):
     if (
         not isinstance(event_id, str)
         or not 1 <= len(event_id) <= 64
-        or event.get("event") not in {"egress_started", "egress_updated", "egress_ended"}
+        or event.get("event")
+        not in {"egress_started", "egress_updated", "egress_ended"}
         or not isinstance(info, dict)
         or not isinstance(info.get("egressId"), str)
     ):

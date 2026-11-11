@@ -75,8 +75,10 @@ class Destination:
 def parse_destination(url, *, approved_hosts):
     """https only, no userinfo/IP literals, host within an approved suffix."""
     try:
-        if not isinstance(url, str) or len(url) > 4096 or any(
-            ord(c) < 0x21 or ord(c) == 0x7F for c in url
+        if (
+            not isinstance(url, str)
+            or len(url) > 4096
+            or any(ord(c) < 0x21 or ord(c) == 0x7F for c in url)
         ):
             raise ValueError
         parts = urlsplit(url)

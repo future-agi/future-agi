@@ -323,9 +323,7 @@ def parse_request(body):
             expected_kind = "ProviderFile"
             reference = {
                 "connection_id": _canonical_uuid(source["connection_id"]),
-                "registered_output_id": _canonical_uuid(
-                    source["registered_output_id"]
-                ),
+                "registered_output_id": _canonical_uuid(source["registered_output_id"]),
             }
         else:
             raise ValueError
@@ -441,8 +439,10 @@ def submit(importer, *, scope_id, body):
         return _response(replay), replay
     limits = server_limits()
     facts, envelope_id, registration = _resolve_source(importer, scope, source)
-    direction = "mixed" if "mixed" in {facts.direction, recording["direction"]} else (
-        facts.direction
+    direction = (
+        "mixed"
+        if "mixed" in {facts.direction, recording["direction"]}
+        else (facts.direction)
     )
     # Deny-wins privacy on the trusted ancestry, before any byte is read.
     _admit_policy(scope, session, direction)
@@ -694,9 +694,10 @@ def _segments(job, recording, snapshot_path, facts, limits, storage):
                 output_limit=plan.byte_length,
             )
             part.flush()
-            if result.get("byte_length") != plan.byte_length or os.fstat(
-                part.fileno()
-            ).st_size != plan.byte_length:
+            if (
+                result.get("byte_length") != plan.byte_length
+                or os.fstat(part.fileno()).st_size != plan.byte_length
+            ):
                 raise AttachmentError("validation_failed", 422)
             # Independent validation of the produced bytes, not the producer.
             probed = sandbox.probe(part.name)
@@ -840,7 +841,10 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             locked.save(update_fields=["attempts"])
     if locked is None:
         return _finish(
-            job, state=RecordingState.FAILED, reason="source_unavailable", storage=storage
+            job,
+            state=RecordingState.FAILED,
+            reason="source_unavailable",
+            storage=storage,
         ).state
     try:
         _, recording = _fence(job)
@@ -854,7 +858,9 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             ):
                 # Reject a duration mismatch before producing any segment.
                 raise AttachmentError("validation_failed", 422)
-            plans, rows = _segments(job, recording, snapshot.name, facts, limits, storage)
+            plans, rows = _segments(
+                job, recording, snapshot.name, facts, limits, storage
+            )
         track_ids = [
             uuid.uuid5(recording.client_id, f"track:{index}")
             for index in range(facts["channels"])
@@ -928,7 +934,10 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             )
             return RecordingState.IMPORTING
         return _finish(
-            job, state=RecordingState.FAILED, reason="source_unavailable", storage=storage
+            job,
+            state=RecordingState.FAILED,
+            reason="source_unavailable",
+            storage=storage,
         ).state
 
 

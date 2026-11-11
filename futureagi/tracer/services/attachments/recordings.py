@@ -367,9 +367,7 @@ def with_truncation(manifest, *, captured_ms, limit_ms):
         "reason": "truncated",
     }
     if manifest["layout"] == "separate_tracks":
-        gaps = [
-            {**gap, "track_id": track["track_id"]} for track in manifest["tracks"]
-        ]
+        gaps = [{**gap, "track_id": track["track_id"]} for track in manifest["tracks"]]
     else:
         gaps = [gap]
     result = dict(manifest, gaps=[*manifest["gaps"], *gaps], capture_complete=False)

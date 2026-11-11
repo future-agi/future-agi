@@ -8,6 +8,8 @@ class SdkConfig(AppConfig):
     def ready(self):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
+        from django.conf import settings
+
         from tracer.models import (
             attachment,  # noqa: F401
             attachment_recording,  # noqa: F401
@@ -15,8 +17,8 @@ class SdkConfig(AppConfig):
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
             eval_task,  # noqa: F401
-            feed_alert,  # noqa: F401
             external_eval_config,  # noqa: F401
+            feed_alert,  # noqa: F401
             imagine_analysis,  # noqa: F401
             insights,  # noqa: F401
             instant_eval,  # noqa: F401
@@ -38,8 +40,6 @@ class SdkConfig(AppConfig):
             trace_scan,  # noqa: F401
             trace_session,  # noqa: F401
         )
-
-        from django.conf import settings
 
         if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
             from tracer.services.attachments.storage import from_settings

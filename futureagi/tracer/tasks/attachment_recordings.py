@@ -50,9 +50,7 @@ def run_attachment_recording_jobs():
         published_at__isnull=False, representation="peaks"
     ).values("segment_id")
     for segment_id, scope_id in (
-        AttachmentRecordingSegment.objects.filter(
-            state=RecordingSegmentState.PUBLISHED
-        )
+        AttachmentRecordingSegment.objects.filter(state=RecordingSegmentState.PUBLISHED)
         .exclude(pk__in=done)
         .values_list("pk", "scope_id")[:DERIVATIVES_PER_TICK]
     ):

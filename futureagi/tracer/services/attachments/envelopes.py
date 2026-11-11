@@ -131,17 +131,16 @@ def open_url(*, scope_id, envelope_id):
 
 
 def destroy(*, scope_id, envelope_id):
-    AttachmentSourceEnvelope.objects.filter(
-        pk=envelope_id, scope_id=scope_id
-    ).delete()
+    AttachmentSourceEnvelope.objects.filter(pk=envelope_id, scope_id=scope_id).delete()
 
 
 @transaction.atomic
 def sweep(*, limit=500):
     """Delete expired envelopes; scheduled by the attachment sweep workflow."""
     ids = list(
-        AttachmentSourceEnvelope.objects.filter(expires_at__lte=timezone.now())
-        .values_list("pk", flat=True)[:limit]
+        AttachmentSourceEnvelope.objects.filter(
+            expires_at__lte=timezone.now()
+        ).values_list("pk", flat=True)[:limit]
     )
     AttachmentSourceEnvelope.objects.filter(pk__in=ids).delete()
     return len(ids)

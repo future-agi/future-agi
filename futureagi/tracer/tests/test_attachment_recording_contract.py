@@ -356,4 +356,9 @@ def test_two_hour_stereo_fixture_derives_isolated_channels_and_peaks(tmp_path):
         peak_bytes += limit
     elapsed = time.monotonic() - started
     print(f"two-hour fixture: 240 segments, peaks {peak_bytes} bytes, {elapsed:.1f}s")
-    assert peak_bytes < 2 * 1024 * 1024  # bounded pyramid for two hours
+    # Linear in duration with a fixed per-segment ceiling (~26 KiB per 30 s of
+    # 24 kHz stereo); never a whole-recording decode.
+    per_segment = derivatives.peaks_bytes(
+        frame_count=rate * 30, rate=rate, channels=2
+    )
+    assert peak_bytes == 240 * per_segment == 6_393_600

@@ -219,9 +219,7 @@ def test_completed_import_publishes_bounded_segments_once(env):
         "recording_id",
         "state",
     }
-    assert set(budgets().values()) == {
-        (len(data) + 8 * 1024 * 1024, 1, 1, 1, 2, 1)
-    }
+    assert set(budgets().values()) == {(len(data) + 8 * 1024 * 1024, 1, 1, 1, 2, 1)}
     assert drive(job, store, data) == "ready"
     recording = AttachmentRecording.objects.get(pk=job.recording_id)
     manifest = recording.manifest
@@ -397,7 +395,9 @@ def test_transient_transport_errors_retry_at_most_three_times(env):
         raise AttachmentError("source_unavailable", 503)
 
     states = [
-        imports.run(job.id, scope_id=job.scope_id, storage=Store(), source_factory=failing)
+        imports.run(
+            job.id, scope_id=job.scope_id, storage=Store(), source_factory=failing
+        )
         for _ in range(4)
     ]
     assert states == ["importing", "importing", "failed", "failed"]
@@ -450,9 +450,12 @@ def test_deletion_during_import_fences_publication(env, monkeypatch):
     assert drive(job, store, data) == "deleted"
     assert not AttachmentOccurrence.objects.exists()
     assert store.objects == {}
-    assert AttachmentRecordingSegment.objects.filter(
-        state=RecordingSegmentState.STAGED
-    ).count() == 0
+    assert (
+        AttachmentRecordingSegment.objects.filter(
+            state=RecordingSegmentState.STAGED
+        ).count()
+        == 0
+    )
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
 
 
@@ -626,9 +629,9 @@ def test_reconcile_with_unavailable_status_api_changes_nothing(env):
         def get(self, egress_id):
             return None
 
-    assert provider_recordings.reconcile(registration, Unavailable()).provider_state == (
-        "registered"
-    )
+    assert provider_recordings.reconcile(
+        registration, Unavailable()
+    ).provider_state == ("registered")
     assert AttachmentProviderRecording.objects.get().import_job_id is None
 
 

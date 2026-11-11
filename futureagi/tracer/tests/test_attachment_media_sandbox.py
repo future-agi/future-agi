@@ -38,7 +38,17 @@ def wav(path, *, channels=2, rate=24000, frames=2400, sample=None):
 @pytest.mark.parametrize("operation", ["deny-socket", "deny-open", "deny-exec"])
 def test_negative_controls_are_killed_by_seccomp(operation):
     completed = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", str(sandbox.WORKER), operation, "-1", "-1", "1"],
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(sandbox.WORKER),
+            operation,
+            "-1",
+            "-1",
+            "1",
+        ],
         env={},
         capture_output=True,
         check=False,
@@ -157,8 +167,9 @@ def test_output_limit_bounds_what_a_worker_can_write(tmp_path):
 
 def test_segment_range_outside_source_rejected(tmp_path):
     source = wav(tmp_path / "s.wav", frames=1000)
-    with open(tmp_path / "o", "wb") as output, pytest.raises(
-        AttachmentError, match="validation_rejected"
+    with (
+        open(tmp_path / "o", "wb") as output,
+        pytest.raises(AttachmentError, match="validation_rejected"),
     ):
         sandbox.run("segment", source, 900, 200, output=output, output_limit=9000)
 
@@ -176,9 +187,7 @@ def test_symlinked_input_is_not_followed(tmp_path):
         sandbox.probe(link)
 
 
-def test_worker_environment_is_empty_and_credentials_unreachable(
-    tmp_path, monkeypatch
-):
+def test_worker_environment_is_empty_and_credentials_unreachable(tmp_path, monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "canary-secret-value")
     seen = {}
     real = subprocess.run

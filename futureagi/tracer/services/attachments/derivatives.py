@@ -217,7 +217,11 @@ def identity_for(*, scope_id, occurrence_id, representation):
     ).first()
     if row is None:
         return None
-    return ObjectIdentity(row.storage_key, row.storage_version), row.byte_length, row.facts
+    return (
+        ObjectIdentity(row.storage_key, row.storage_version),
+        row.byte_length,
+        row.facts,
+    )
 
 
 def erase_for_segment(segment, storage):
