@@ -38,6 +38,14 @@ export async function createDriver({ jobId, runId, registration }) {
   let sdkEnv;
   let install;
   let boundaryArtifact;
+  // Working context of the single operator. Opening a product screen is already
+  // an S transition (go); returning from the browser to the terminal is another
+  // working-context transition and is counted, never assumed free.
+  let place = null;
+  const terminal = async operator => {
+    if (place === 'browser') await operator.transition('switch-to-terminal', async () => {});
+    place = 'terminal';
+  };
   const plans = [];
   const imported = [];
   const attempts = [];
@@ -76,6 +84,7 @@ export async function createDriver({ jobId, runId, registration }) {
     '--name', input.contextName, '--description', input.description,
     '--source-origin', 'local:synthetic-j1', '--source-project', input.sourceProject, '--source-revision', 'v1'];
   const local = async (operator, selected) => {
+    await terminal(operator);
     const result = await operator.command('local-library-inventory', 'bash', [resolve(input.productRoot, 'bin/skills-inventory'), ...baseArgs,
       ...(selected ? selected.flatMap(key => ['--select', key]) : [])], {
       cwd: input.productRoot, env: { PATH: process.env.PATH, SKILLS_INVENTORY_PYTHON: input.python },
@@ -92,8 +101,8 @@ export async function createDriver({ jobId, runId, registration }) {
   };
   const sourceAtStart = await sourceHash();
   // SDK CLI as a developer runs it: the credential travels only in the environment.
-  const sdk = (operator, target, args) => operator.command(target, input.sdkPython, ['-I', '-m', 'fi.context', ...args],
-    { cwd: input.project, env: sdkEnv, timeoutMs: 180_000 });
+  const sdk = async (operator, target, args) => (await terminal(operator), operator.command(target, input.sdkPython, ['-I', '-m', 'fi.context', ...args],
+    { cwd: input.project, env: sdkEnv, timeoutMs: 180_000 }));
   const walk = async (root, base = root) => (await Promise.all((await readdir(root, { withFileTypes: true })).map(async entry => {
     const path = resolve(root, entry.name);
     return entry.isDirectory() ? walk(path, base) : [relative(base, path)];
@@ -123,7 +132,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await operator.click(field, 'choose-field');
         await operator.click(page.getByRole('option', { name: value, exact: true }), 'select-option');
       };
-      const go = (page, path, target) => operator.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'owner', step: stage.id, phase: stage.phase, target }, () => page.goto(path)));
+      const go = (page, path, target) => { place = 'browser'; return operator.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'owner', step: stage.id, phase: stage.phase, target }, () => page.goto(path))); };
       const receipt = async (source, value, decision = undefined) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: await record(stage.id, value), actionSequences: [], ...(decision ? { decision } : {}) });
       const abort = () => { void context?.close().catch(() => {}); };
       signal.addEventListener('abort', abort, { once: true });
@@ -167,6 +176,9 @@ export async function createDriver({ jobId, runId, registration }) {
             await click(page, 'tab', 'Retained migration');
             await choose(page, 'Retained source format', kind === 'exchange' ? 'Versioned Langfuse exchange JSON' : 'Private folder or ZIP');
             await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-input' }, () => page.getByLabel(kind === 'exchange' ? 'Retained source files' : 'Retained private folder', { exact: true }).setInputFiles(kind === 'exchange' ? input.exchange : input.folder));
+            // The identities come from the terminal inventory report: a manual
+            // information transfer into the browser form (H), plus the field edit (A).
+            if (kind === 'folder') await operator.handoff('inventory-identities-to-import-form', async () => {});
             if (kind === 'folder') await operator.fill(page.getByLabel('Immutable source identities JSON', { exact: true }), JSON.stringify(inventory.folder_upload_source_identities), 'source-identity-map');
             const preview = page.waitForResponse(response => response.url().includes('/intake/') && response.url().endsWith('/preview/') && response.request().method() === 'POST');
             await click(page, 'button', 'Preview retained migration');
@@ -334,7 +346,9 @@ export async function createDriver({ jobId, runId, registration }) {
           credentialId = (await issuedResponse.json()).result.id;
           await click(page, 'button', 'Copy credential secret');
           await expect(page.getByText('Copied. Store it in your secret manager.', { exact: true })).toBeVisible();
-          secret = await page.evaluate(() => navigator.clipboard.readText());
+          // The one-time secret travels by clipboard from the browser into the
+          // developer's terminal environment: a manual information transfer (H).
+          secret = await operator.handoff('credential-secret-to-sdk-environment', () => page.evaluate(() => navigator.clipboard.readText()));
           requireValue(/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{40,}$/.test(secret), 'One-time credential secret required');
           await page.evaluate(() => navigator.clipboard.writeText(''));
           await expect(page.getByRole('row').filter({ hasText: credentialId.slice(0, 8) })).toBeVisible();
