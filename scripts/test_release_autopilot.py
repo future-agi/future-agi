@@ -901,10 +901,23 @@ class ApiAdapterTests(unittest.TestCase):
             policy.snapshot(42)
 
     def test_api_keeps_only_the_http_status_of_a_failure(self):
+        # gh (pkg/cmd/api/api.go) prints "gh: <message> (HTTP NNN)" and then
+        # only fixed hint lines, so its status is the last line ending that way.
         for stderr, status in (("gh: Pull Request is not mergeable (HTTP 405)\n", 405),
-                               ("gh: Validation Failed (HTTP 422)\nprivate detail (HTTP 500)\n", 422),
+                               # A ruleset refusal: a multi-line message, status on a later line.
+                               ("gh: Repository rule violations found\n\nAt least 1 approving review "
+                                "is required by reviewers with write access.\n\n (HTTP 405)\n", 405),
+                               # Message text that mimics the suffix does not pick the status.
+                               ("gh: Validation Failed (HTTP 422)\nprivate detail (HTTP 500)\n", 500),
+                               ("gh: private detail (HTTP 405)\n\n (HTTP 502)\n", 502),
+                               # gh's hint lines after the status line are skipped.
+                               ("gh: Not Found (HTTP 404)\ngh: This API operation needs the \"repo\" "
+                                "scope. To request it, run:  gh auth refresh -h github.com -s repo\n", 404),
+                               ("gh: Must authenticate via SSO (HTTP 403)\n"
+                                "Authorize in your web browser: https://github.com/orgs/x/sso\n", 403),
                                ("gh: request failed\n", None), ("", None),
-                               ("gh: (HTTP 405) private text\n", None)):
+                               ("gh: (HTTP 405) private text\n", None),
+                               ("gh: Repository rule violations found\n\nprivate reason\n", None)):
             with self.subTest(stderr=stderr), \
                     patch.object(policy.subprocess, "run",
                                  return_value=subprocess.CompletedProcess([], 1, "private body", stderr)):

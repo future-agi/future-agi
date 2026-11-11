@@ -300,10 +300,13 @@ def api(path, *, token=None, method="GET", data=None):
                             text=True, capture_output=True, env=env, timeout=60)
     if result.returncode:
         # Never echo credentials, response bodies or user-controlled API text.
-        # gh ends its first error line with "(HTTP NNN)"; keep only that number.
-        first = (result.stderr or "").splitlines()[:1]
-        match = re.search(r"\(HTTP ([1-5][0-9]{2})\)\Z", first[0].rstrip()) if first else None
-        raise GitHubError(int(match[1]) if match else None)
+        # gh prints "gh: <message> (HTTP NNN)". The message can span lines, such
+        # as a ruleset refusal, and only fixed hint lines follow it, so gh's own
+        # status is the last line that ends in "(HTTP NNN)". An earlier match is
+        # message text. Keep only that number.
+        statuses = [match[1] for line in (result.stderr or "").splitlines()
+                    if (match := re.search(r"\(HTTP ([1-5][0-9]{2})\)\s*\Z", line))]
+        raise GitHubError(int(statuses[-1]) if statuses else None)
     return json.loads(result.stdout)
 
 
