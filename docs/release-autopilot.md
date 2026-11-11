@@ -251,9 +251,11 @@ E2B or CI, not on the shared development host.
 (`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
 every `scripts/test_*.py` when `release-images.yml`, `release-autopilot.yml`, this
 script or its tests change. Its `paths` filter does not list
-`.github/workflows/build-image-multiarch.yml`, so a rename of that workflow's
-`publish` job (one of the two jobs that prove a release shipped) is caught only
-when a listed file next changes. Adding that path to the filter closes the gap.
+`.github/workflows/build-image-multiarch.yml` or
+`futureagi/tracer/services/clickhouse/**`. A rename of that workflow's `publish`
+job (one of the two jobs that prove a release shipped), or a move of a ClickHouse
+schema applier or of `v2/schema/`, is therefore caught only when a listed file
+next changes. Adding those two paths to the filter closes the gap.
 
 The `release-images.yml` diff is deliberately limited:
 
