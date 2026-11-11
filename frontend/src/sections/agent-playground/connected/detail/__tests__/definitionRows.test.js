@@ -43,6 +43,12 @@ describe("factsOf", () => {
     ).toBe("archive");
     expect(factsOf({ source: "github" }, {}).provider).toBe("github");
   });
+
+  it("takes the type the reading stored over the snapshot taken at connect", () => {
+    const connected = { config: { agent_type: "text" } };
+    expect(factsOf({}, connected, { type: "voice" }).type).toBe("voice");
+    expect(factsOf({}, connected, null).type).toBe("text");
+  });
 });
 
 describe("identityRows", () => {

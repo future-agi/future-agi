@@ -34,7 +34,7 @@ export const factsOf = (agent = {}, version = {}, stored = null) => {
     source: version.source ?? null,
     telephony: stored?.telephony ?? [],
     name: pick(config.agent_name),
-    type: pick(config.agent_type),
+    type: pick(stored?.type, config.agent_type),
     description: pick(config.description),
     languages: config.languages ?? [],
     inbound: pick(config.inbound),
