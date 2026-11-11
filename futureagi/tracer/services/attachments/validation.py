@@ -21,9 +21,18 @@ from tracer.models.attachment import (
     AttachmentUpload,
 )
 from tracer.services.attachments.bootstrap import check_session, session_policy
-from tracer.services.attachments.contract import AttachmentError, admit_audio
+from tracer.services.attachments.contract import (
+    SERVER_MODALITIES,
+    AttachmentError,
+    admit_audio,
+)
 from tracer.services.attachments.storage import ObjectIdentity
 from tracer.services.attachments.uploads import settle
+
+
+VALIDATED_MIME_TYPES = frozenset(
+    mime for types in SERVER_MODALITIES.values() for mime in types
+)
 
 
 def sandbox_probe(path):
@@ -93,7 +102,11 @@ def sandbox_probe(path):
             result = json.loads(output.read(8193))
         if (
             set(result) != {"mime_type", "sample_rate", "channels", "frame_count"}
-            or result["mime_type"] != "audio/wav"
+            or result["mime_type"] not in VALIDATED_MIME_TYPES
+            or any(
+                type(result[key]) is not int or result[key] < 0
+                for key in ("sample_rate", "channels", "frame_count")
+            )
         ):
             raise ValueError
         return result
@@ -122,7 +135,20 @@ def _check(upload):
         session_policy(upload.capture_session),
         direction=upload.occurrence.direction,
         source_kind=upload.attachment.source_kind,
+        creates_recording=upload.recording_id is not None,
+        modality=upload.attachment.modality,
     )
+
+
+def accept(facts, upload):
+    """The sniffed type must be exactly the declared one; the blob stores it.
+
+    A PNG declared as image/jpeg, or a WAV declared as audio/ogg, is rejected:
+    the gateway serves the validated type, so a mismatch is never relabelled.
+    """
+    if facts["mime_type"] != upload.mime_type:
+        raise AttachmentError("validation_rejected", 422)
+    return facts
 
 
 def validate(upload_id, *, scope_id, storage):
@@ -145,7 +171,7 @@ def validate(upload_id, *, scope_id, storage):
                 expected_length=upload.expected_bytes,
             )
             snapshot.flush()
-            facts = sandbox_probe(snapshot.name)
+            facts = accept(sandbox_probe(snapshot.name), upload)
             # Scope lock serializes policy/deletion fencing and publication. The
             # bounded promotion is intentionally inside this transaction.
             with transaction.atomic():

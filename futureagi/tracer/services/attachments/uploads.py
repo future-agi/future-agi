@@ -50,6 +50,7 @@ from tracer.services.attachments.bootstrap import (
     session_policy,
 )
 from tracer.services.attachments.contract import (
+    SEGMENT_MIME_TYPES,
     SERVER_MODALITIES,
     AttachmentError,
     admit_audio,
@@ -180,8 +181,11 @@ def initialize(writer, *, scope_id, body, key):
         direction=body["direction"],
         source_kind=body["source_kind"],
         creates_recording=recording_id is not None,
+        modality=body["modality"],
     )
-    if body["mime_type"] not in SERVER_MODALITIES.get(body["modality"], ()):
+    if body["mime_type"] not in SERVER_MODALITIES.get(body["modality"], ()) or (
+        recording_id is not None and body["mime_type"] not in SEGMENT_MIME_TYPES
+    ):
         raise AttachmentError("unsupported_media", 403)
     expected_bytes = body["declared_bytes"]
     if not 0 < expected_bytes <= MAX_UPLOAD_BYTES:
@@ -369,6 +373,7 @@ def _live_upload(token, scope_id, upload_id, operation, *, states=None):
         direction=occurrence.direction,
         source_kind=upload.attachment.source_kind,
         creates_recording=upload.recording_id is not None,
+        modality=upload.attachment.modality,
     )
     return upload
 
