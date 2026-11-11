@@ -113,9 +113,16 @@ def test_unavailable_model_is_actionable_client_error(
 
     provider.assert_not_called()
     assert response.status_code == 400, response.json()
-    message = str(response.json()).lower()
+    body = str(response.json())
+    message = body.lower()
     assert "model" in message
     assert "select" in message and "supported" in message
+    if model and model.strip():
+        # The response names the model that is missing from the catalog.
+        assert f"Model '{model}' is not available" in body, body
+    else:
+        # Nothing to name: no empty quoted model name in the message.
+        assert "The selected model is not available" in body, body
     assert_no_error_logs(logs)
 
 
