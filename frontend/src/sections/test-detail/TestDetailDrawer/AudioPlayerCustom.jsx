@@ -1,4 +1,9 @@
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useCallback, useEffect } from "react";
+import RecordingAttachmentPlayer from "src/components/attachments/RecordingAttachmentPlayer";
+import AttachmentStatus from "src/components/attachments/AttachmentStatus";
+
+const isAttachmentUri = (value) =>
+  typeof value === "string" && /^\s*fi-attachment:/i.test(value);
 import { Box, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
@@ -27,51 +32,67 @@ const isUpdatedWithinTwoMinutes = (timestamp) => {
  * recording shape rather than the provider, so every provider that returns one
  * URL renders identically.
  */
-export const SingleTrackPlayer = ({ url }) => (
-  <Stack
-    height={50}
-    width="100%"
-    justifyContent="center"
-    alignItems="center"
-    direction="row"
-  >
-    <AudioPlaybackProvider>
-      <CustomAudioPlayer
-        audioData={{ url }}
-        customLoaderComponent={
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 1.5,
-              width: "100%",
-            }}
-          >
-            <Iconify icon="svg-spinners:bars-scale" width={20} height={20} />
-            <Typography typography="s1" fontWeight="fontWeightMedium">
-              Painting sound waves...
-            </Typography>
-          </Box>
-        }
+export const SingleTrackPlayer = ({ url, onInstance }) => {
+  const handleReady = useCallback(
+    (instance) => {
+      if (instance)
+        onInstance?.({ multitrack: instance, wavesurfers: [instance] });
+    },
+    [onInstance],
+  );
+  useEffect(
+    () => () => onInstance?.({ multitrack: null, wavesurfers: [] }),
+    [url, onInstance],
+  );
+  if (isAttachmentUri(url)) return <AttachmentStatus />;
+  return (
+    <Stack
+      height={50}
+      width="100%"
+      justifyContent="center"
+      alignItems="center"
+      direction="row"
+    >
+      <AudioPlaybackProvider>
+        <CustomAudioPlayer
+          audioData={{ url }}
+          onAudioReady={handleReady}
+          customLoaderComponent={
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 1.5,
+                width: "100%",
+              }}
+            >
+              <Iconify icon="svg-spinners:bars-scale" width={20} height={20} />
+              <Typography typography="s1" fontWeight="fontWeightMedium">
+                Painting sound waves...
+              </Typography>
+            </Box>
+          }
+        />
+      </AudioPlaybackProvider>
+      <AudioDownloadButton
+        audioUrls={{ mono: url, stereo: "", assistant: "", customer: "" }}
+        singleTrack
+        size="small"
+        sx={{
+          minWidth: "32px",
+          mr: 1,
+          borderRadius: "4px",
+          bgcolor: "background.paper",
+        }}
       />
-    </AudioPlaybackProvider>
-    <AudioDownloadButton
-      audioUrls={{ mono: url, stereo: "", assistant: "", customer: "" }}
-      singleTrack
-      size="small"
-      sx={{
-        minWidth: "32px",
-        mr: 1,
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-      }}
-    />
-  </Stack>
-);
+    </Stack>
+  );
+};
 
 SingleTrackPlayer.propTypes = {
   url: PropTypes.string,
+  onInstance: PropTypes.func,
 };
 
 /**
@@ -79,7 +100,14 @@ SingleTrackPlayer.propTypes = {
  * URL is available. Falls back to separate mono assistant/customer URLs, and to
  * the single-track bar when the call has only one mixed recording.
  */
-export const StereoMultiTrackPlayer = ({
+export const StereoMultiTrackPlayer = (props) => {
+  // Reserved attachment references must not enter legacy decode/download paths.
+  if (Object.values(props.recordings || {}).some(isAttachmentUri))
+    return <AttachmentStatus />;
+  return <LegacyStereoMultiTrackPlayer {...props} />;
+};
+
+const LegacyStereoMultiTrackPlayer = ({
   recordings,
   id,
   height = 70,
@@ -143,7 +171,9 @@ export const StereoMultiTrackPlayer = ({
   );
 
   if (combinedOnly) {
-    return <SingleTrackPlayer url={recordings.combined} />;
+    return (
+      <SingleTrackPlayer url={recordings.combined} onInstance={onInstance} />
+    );
   }
 
   // The stereo split was the only source and it failed (403, CORS, decode),
@@ -196,7 +226,20 @@ StereoMultiTrackPlayer.propTypes = {
   provider: PropTypes.string,
 };
 
+LegacyStereoMultiTrackPlayer.propTypes = StereoMultiTrackPlayer.propTypes;
+
 const AudioPlayerCustom = ({ data, onInstance }) => {
+  // An explicit new-tier projection must never fall back to legacy URLs,
+  // including null, malformed, pending, policy-hidden and deleted projections.
+  if (data && Object.hasOwn(data, "recording_attachment")) {
+    return (
+      <RecordingAttachmentPlayer
+        projectId={data.project_id}
+        attachment={data.recording_attachment}
+        onInstance={onInstance}
+      />
+    );
+  }
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
       data?.status,
@@ -336,6 +379,10 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.simulation_call_type === n?.simulation_call_type &&
     p?.module === n?.module &&
     p?.recording_available === n?.recording_available &&
+    Object.hasOwn(p || {}, "recording_attachment") ===
+      Object.hasOwn(n || {}, "recording_attachment") &&
+    p?.recording_attachment === n?.recording_attachment &&
+    p?.project_id === n?.project_id &&
     p?.ended_reason === n?.ended_reason &&
     p?.call_metadata?.provider === n?.call_metadata?.provider &&
     p?.recording_url === n?.recording_url &&

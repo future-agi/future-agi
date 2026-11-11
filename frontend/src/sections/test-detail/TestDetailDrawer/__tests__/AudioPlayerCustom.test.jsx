@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "src/utils/test-utils";
 
-const captured = { trackUrls: null, singleUrl: null };
+const captured = { trackUrls: null, singleUrl: null, singleReady: null };
+vi.mock("src/components/attachments/client", () => ({
+  resolveAttachments: vi.fn(),
+  listAttachments: vi.fn(),
+}));
 
 // Mutable so a case can hand back real split channels; hoisted because the
 // vi.mock factory below is lifted above this file's other statements.
@@ -24,17 +28,21 @@ vi.mock("src/hooks/use-stereo-channels", () => ({
   },
 }));
 
-vi.mock("src/components/multi-track-audio-player/MultiTrackAudioPlayer", () => ({
-  default: (props) => {
-    captured.trackUrls = props.trackUrls;
-    return <div data-testid="multi-track" />;
-  },
-  MemoizedBarsIcon: () => <span data-testid="bars" />,
-}));
+vi.mock(
+  "src/components/multi-track-audio-player/MultiTrackAudioPlayer",
+  () => ({
+    default: (props) => {
+      captured.trackUrls = props.trackUrls;
+      return <div data-testid="multi-track" />;
+    },
+    MemoizedBarsIcon: () => <span data-testid="bars" />,
+  }),
+);
 
 vi.mock("src/components/custom-audio/CustomAudioPlayer", () => ({
   default: (props) => {
     captured.singleUrl = props.audioData?.url;
+    captured.singleReady = props.onAudioReady;
     return <div data-testid="single-track" />;
   },
 }));
@@ -72,6 +80,25 @@ const resetCaptured = () => {
 
 describe("StereoMultiTrackPlayer track selection", () => {
   beforeEach(resetCaptured);
+
+  it.each(["combined", "stereo", "assistant", "customer"])(
+    "keeps reserved references out of legacy %s paths",
+    (field) => {
+      stereoArgs.current = null;
+      render(
+        <StereoMultiTrackPlayer
+          recordings={{
+            combined: COMBINED,
+            [field]: "fi-attachment:20000000-0000-0000-0000-000000000002",
+          }}
+        />,
+      );
+      expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+      expect(stereoArgs.current).toBeNull();
+      expect(captured.singleUrl).toBeNull();
+      expect(captured.trackUrls).toBeNull();
+    },
+  );
 
   it("splits a stereo recording into two channel tracks", () => {
     Object.assign(stereo, {
@@ -143,7 +170,10 @@ describe("StereoMultiTrackPlayer track selection", () => {
     // A two-row waveform can neither be filled nor separate the speakers, and
     // it never reports ready while a track URL is missing.
     render(
-      <StereoMultiTrackPlayer recordings={{ combined: COMBINED }} id="call-1" />,
+      <StereoMultiTrackPlayer
+        recordings={{ combined: COMBINED }}
+        id="call-1"
+      />,
     );
 
     expect(captured.singleUrl).toBe(COMBINED);
@@ -177,9 +207,7 @@ describe("StereoMultiTrackPlayer track selection", () => {
       />,
     );
 
-    expect(
-      screen.queryByText("Recording unavailable"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Recording unavailable")).not.toBeInTheDocument();
     expect(captured.trackUrls.map(({ url }) => url)).toEqual([
       undefined,
       "https://example.test/assistant.wav",
@@ -189,6 +217,41 @@ describe("StereoMultiTrackPlayer track selection", () => {
 
 describe("AudioPlayerCustom picks the renderer from the recording shape", () => {
   beforeEach(resetCaptured);
+
+  it.each([null, {}, { state: "deleted" }, { state: "rejected" }])(
+    "never falls back to legacy URLs for an explicit attachment projection %j",
+    (recording_attachment) => {
+      render(
+        <AudioPlayerCustom
+          data={{
+            module: "project",
+            recording_attachment,
+            recording_available: true,
+            recording: { mono: { combined_url: COMBINED } },
+            audio_url: COMBINED,
+          }}
+        />,
+      );
+      expect(captured.singleUrl).toBeNull();
+      expect(captured.trackUrls).toBeNull();
+    },
+  );
+
+  it("publishes the legacy mixed-only instance to the transcript bridge", () => {
+    const onInstance = vi.fn();
+    const instance = { getDuration: () => 10 };
+    render(
+      <StereoMultiTrackPlayer
+        recordings={{ combined: COMBINED }}
+        onInstance={onInstance}
+      />,
+    );
+    captured.singleReady(instance);
+    expect(onInstance).toHaveBeenCalledWith({
+      multitrack: instance,
+      wavesurfers: [instance],
+    });
+  });
 
   it("shows recording unavailable for the project module when the detail has no URLs", () => {
     render(

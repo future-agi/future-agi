@@ -177,7 +177,7 @@ const CustomAudioPlayer = ({
           wavesurfer.current.setVolume(isMuted ? 0 : volume);
 
           if (!signal.aborted && onAudioReady) {
-            onAudioReady();
+            onAudioReady(wavesurfer.current);
           }
         } else if (!signal.aborted) {
           // Create new instance
@@ -278,7 +278,7 @@ const CustomAudioPlayer = ({
         }
 
         if (onAudioReady) {
-          onAudioReady();
+          onAudioReady(waveSurferInstance);
         }
       });
 
