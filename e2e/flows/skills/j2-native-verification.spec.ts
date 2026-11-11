@@ -166,6 +166,8 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByRole('option', { name: /refund-policy$/ }).click();
     await editor.getByLabel('Required business action', { exact: true }).click();
     await page.getByRole('option', { name: 'Issue a refund', exact: true }).click();
+    await editor.getByText('Required application behavior').scrollIntoViewIfNeeded();
+    await shot('J2-required-behavior');
     await editor.getByRole('checkbox', { name: /I reviewed the request/ }).check();
     await editor.getByRole('button', { name: 'Save example' }).click();
     await expect(editor).toBeHidden();
