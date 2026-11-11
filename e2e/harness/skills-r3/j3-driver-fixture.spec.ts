@@ -30,6 +30,7 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
   const parents = [];
   for (let index = 0; index < 3; index++) {
     const name = `${prefix}-parent-${index}`;
+    if (process.env.J3_COHORT === 'cold') { parents.push({ id: null, name }); continue; }
     const draft = await api(author, 'POST', 'contexts/', { name, description: 'Synthetic shared-policy context', tags: [], files: [{ path: 'AGENTS.md', content: '# Synthetic policy\nConsult approved linked skills.\n' }] });
     const links = leaves.map((leaf, child) => ({ skill_id: leaf.id, selector: index === 2 && child === 0 ? { version: 7 } : { label: 'production' } }));
     const config = { revision: draft.revision, links, refresh_skill_ids: [] };
@@ -46,11 +47,13 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
   provenance.fixture_hash = sha({ leaves, parents, initialPolicyVersion: 7 });
   const actor = (value: typeof author) => ({ ...value.tokens, userId: value.userId, organizationId: value.organizationId, workspaceId: value.workspaceId });
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(`${directory}/input.json`, JSON.stringify({ appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, owner: actor(owner), author: actor(author), leaves, parents, provenance, outputDir: `${directory}/artifacts` }), { mode: 0o600 });
-  for (const cohort of ['cold', 'configured']) {
+  const issued = await owner.api.post<{ result: { api_key: string; secret_key: string } }>('/accounts/key/generate_secret_key/', { key_name: `${prefix}-sdk` });
+  const { api_key: apiKey, secret_key: secretKey } = issued.result;
+  await writeFile(`${directory}/input.json`, JSON.stringify({ appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, owner: actor(owner), author: actor(author), sdkActor: { apiKey, secretKey, organizationId: owner.organizationId, workspaceId: owner.workspaceId }, leaves, parents, provenance, outputDir: `${directory}/artifacts` }), { mode: 0o600 });
+  for (const cohort of [process.env.J3_COHORT || 'configured']) {
     await writeFile(`${directory}/${cohort}.json`, JSON.stringify({ schema: 1, job: 'J3', cohort, evidence_scope: 'synthetic', population: { contexts: 3, catalog_members: 15, intentional_pins: 1 }, fault_ids: ['upstream-advances-during-review', 'unrelated-heartbeat', 'source-aba'],
       customer_input_hash: provenance.fixture_hash, initial_conditions_hash: sha({ leaves, parents, version: 7, cohort }), safety_requirements_hash: sha(['exact-v8', 'pin-v7', 'separate-parent-review', 'independent-label-authorization', 'fresh-resumed-boundaries']), complete_job_boundary_hash: sha('J3 full ROUND3-PLAN target flow; no narrowed boundary'),
-      expected_observations: { 'dependents-and-pins': parents.map((parent, index) => `${parent.id}:${index === 2 ? 'pin-v7' : 'follower'}`), 'accepted-v8-not-v9': [8, 8, 7], 'descriptor-projection': true, 'monotonic-draft-revisions': true, 'fresh-resumed-identities': { fresh: [8, 8, 7], resumed: [7, 7, 7] }, 'source-aba-rejected': true },
+      expected_observations: { 'dependents-and-pins': parents.map((parent, index) => `${parent.name}:${index === 2 ? 'pin-v7' : 'follower'}`), 'accepted-v8-not-v9': [8, 8, 7], 'descriptor-projection': true, 'monotonic-draft-revisions': true, 'fresh-resumed-identities': { fresh: [8, 8, 7], resumed: [7, 7, 7] }, 'source-aba-rejected': true },
     }), { mode: 0o600 });
   }
 });

@@ -233,12 +233,14 @@ def validate_inventory_review(
     known = {}
     for bundle in inventory:
         for item in bundle["files"]:
-            key = (bundle["skill_id"], item["path"], item["sha256"])
+            key = (str(bundle["skill_id"]), item["path"], item["sha256"])
             known[key] = item
     classifications = {}
     reasons = set()
     for item in review.get("classifications", []):
-        key = (item.get("skill_id"), item.get("path"), item.get("sha256"))
+        # HTTP serializers yield UUID objects; frozen inventory is JSON. Compare
+        # the same canonical identity without weakening path/hash membership.
+        key = (str(item.get("skill_id")), item.get("path"), item.get("sha256"))
         classification, reason = item.get("classification"), item.get("reason", "")
         if (
             set(item) != {"skill_id", "path", "sha256", "classification", "reason"}
@@ -254,7 +256,7 @@ def validate_inventory_review(
                 "Classifications must identify exact files and explain the decision.",
                 status=400,
             )
-        classifications[key] = {**item, "reason": reason.strip()}
+        classifications[key] = {**item, "skill_id": key[0], "reason": reason.strip()}
         if classification == "evaluation_material":
             reasons.add("evaluation_material")
     for key, item in known.items():
