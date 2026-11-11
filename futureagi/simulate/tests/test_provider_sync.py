@@ -104,6 +104,12 @@ class TestSecretFilter:
             "authorization",
             "privateKey",
             "cookie",
+            "key",
+            "publicKey",
+            "auth",
+            "bearerToken",
+            "jwt",
+            "signature",
         ],
     )
     def test_a_secret_key_is_redacted(self, key):
@@ -123,6 +129,12 @@ class TestSecretFilter:
         assert kept == {
             "server": {"headers": {"X-Custom": "[redacted]", "Accept": "[redacted]"}}
         }
+
+    @pytest.mark.parametrize("name", ["query_params", "queryParams"])
+    def test_every_query_param_value_is_redacted(self, name):
+        kept = _safe({"server": {name: {"code": "fn-key", "v": "1"}}})
+
+        assert kept == {"server": {name: {"code": "[redacted]", "v": "[redacted]"}}}
 
     def test_a_url_loses_its_query(self):
         kept = _safe({"url": "https://hooks.example.com/a?token=abc"})

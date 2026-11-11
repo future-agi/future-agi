@@ -76,9 +76,8 @@ class HarnessGitHubWebhookView(APIView):
         if not change.is_valid():
             return _rejected("bad_json", delivery)
         installation_id = str(change.validated_data["installation"]["id"])
-        if _DELIVERY.fullmatch(delivery) and not cache.add(
-            f"github-installation-delivery:{delivery}", True, timeout=86_400
-        ):
+        seen_key = f"github-installation-delivery:{delivery}"
+        if _DELIVERY.fullmatch(delivery) and cache.get(seen_key):
             return Response(status=status.HTTP_204_NO_CONTENT)
         if event == "installation_repositories":
             forget_repositories(installation_id)
@@ -87,6 +86,8 @@ class HarnessGitHubWebhookView(APIView):
                 installation_id=installation_id,
                 action=change.validated_data["action"],
             )
+        if _DELIVERY.fullmatch(delivery):
+            cache.add(seen_key, True, timeout=86_400)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @swagger_auto_schema(

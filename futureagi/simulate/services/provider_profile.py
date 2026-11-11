@@ -37,8 +37,14 @@ _SECRET_WORDS = frozenset(
         "authorization",
         "apikey",
         "cookie",
+        "key",
+        "auth",
+        "bearer",
+        "jwt",
+        "signature",
     }
 )
+_VALUE_MAPS = frozenset({"headers", "query_params", "queryparams"})
 _SECRET_PAIRS = (("api", "key"), ("private", "key"), ("access", "key"))
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 MAIN_UNIT = "main"
@@ -62,7 +68,7 @@ def _safe(value: Any, key: str = "") -> Any:
     if _secret_key(key):
         return _REDACTED
     if isinstance(value, Mapping):
-        if key.lower() == "headers":
+        if key.lower().replace("_", "") in _VALUE_MAPS:
             return {str(k): _REDACTED for k in value}
         return {str(k): _safe(item, str(k)) for k, item in value.items()}
     if isinstance(value, list):
