@@ -535,8 +535,14 @@ def is_migration(path):
             and parts[-1] != "__init__.py")
 
 
+# Jobs of a release-images run whose success proves the release shipped:
+# approve passed review (or the automatic lane) and backend / publish pushed
+# the image that carries the migrations. A test pins both names to the workflows.
+SHIPPED_JOBS = frozenset({"approve", "backend / publish"})
+
+
 def published(tag):
-    """A stable tag whose release-images run succeeded, i.e. a release that shipped."""
+    """A stable tag whose release-images push run approved and published the backend image."""
     sha = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
     if not SHA.fullmatch(sha):
         return False
@@ -544,7 +550,20 @@ def published(tag):
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     if not isinstance(runs, list):
         return False
-    return any(run.get("head_branch") == tag and run.get("conclusion") == "success" for run in runs)
+    runs = [run for run in runs if isinstance(run, dict) and run.get("head_branch") == tag]
+    if any(run.get("conclusion") == "success" for run in runs):
+        return True
+    # A side job such as the Helm chart can fail after the images went out. Such
+    # a finished run still shipped when approve and the backend publish job
+    # succeeded on any attempt. A waiting, rejected or build-failed run did not.
+    for run in runs:
+        if run.get("status") != "completed" or type(run.get("id")) is not int:
+            continue
+        jobs = pages(f"actions/runs/{run['id']}/jobs?filter=all", "jobs")
+        passed = {job.get("name") for job in jobs if isinstance(job, dict) and job.get("conclusion") == "success"}
+        if SHIPPED_JOBS <= passed:
+            return True
+    return False
 
 
 def migration_evidence(version, sha):
@@ -555,11 +574,12 @@ def migration_evidence(version, sha):
         return None, None
     last = max(previous, key=version_tuple)
     # The previous tag is a baseline only if that release actually shipped. A
-    # tag whose run is still waiting, was rejected or failed would hide its own
-    # migrations from the next release.
+    # tag whose run is still waiting, was rejected or failed before publishing
+    # the backend would hide its own migrations from the next release. API
+    # errors and malformed responses mean not shipped.
     try:
         shipped = published(last)
-    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+    except (RuntimeError, OSError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):
         shipped = False
     if not shipped:
         return last, None

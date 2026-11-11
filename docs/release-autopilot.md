@@ -135,9 +135,15 @@ approval. New steps then fetch full history and execute the policy from `main`:
    reachable from that commit. Exclude the current release, beta, rc, dev and
    unrelated-history tags. This is the previous stable baseline; a newer tag
    pushed while approval waits cannot become the baseline. The baseline must have
-   **shipped**: a successful `release-images` run for that tag. If the previous
-   tag is still waiting for approval, was rejected or failed, the count is
-   unknown and the release keeps human review.
+   **shipped**: its `release-images` tag-push run succeeded, or that run finished
+   and its `approve` and `backend / publish` jobs both succeeded on some attempt.
+   The second case covers a run that failed on a side job, such as the Helm chart
+   install check, after the images were published. If the previous tag's run is
+   still in progress or waiting for approval, was rejected, or failed before the
+   backend image was published, the count is unknown and the release keeps
+   human review. An unreadable or malformed run or job listing also means
+   unknown. A dispatch retry of the previous tag does not count, because only
+   tag-push runs are read.
 3. Count every added, edited, deleted or renamed migration or schema file since
    that baseline: `futureagi/*/migrations/*.py` and `*.sql`, nested
    `futureagi/ee/**/migrations/`, `ee/**/migrations/`, and the ClickHouse schema

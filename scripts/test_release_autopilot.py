@@ -459,8 +459,9 @@ class GitEvidenceTests(unittest.TestCase):
             text = self.release()
         self.assertIn("environment=Production", text)
         self.assertIn("migrations=unknown", text)
-        with patch.object(policy, "published", side_effect=RuntimeError("api")):
-            self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
+        for error in (RuntimeError("api"), KeyError("jobs"), ValueError("json"), TypeError("shape")):
+            with self.subTest(error=type(error).__name__), patch.object(policy, "published", side_effect=error):
+                self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
 
     def test_tag_pushed_by_a_person_keeps_review(self):
         output = self.root / "outputs"
@@ -550,6 +551,101 @@ class GitEvidenceTests(unittest.TestCase):
             with self.subTest(version=version), patch.object(policy, "git") as git, self.assertRaises(ValueError):
                 policy.release_environment(version)
             git.assert_not_called()
+
+
+class PublishedTests(unittest.TestCase):
+    """Whether the previous tag shipped, from synthetic release-images runs and jobs."""
+
+    def run_row(self, **fields):
+        return {"id": 7, "head_branch": "v1.1.0", "status": "completed", "conclusion": "failure", **fields}
+
+    def job(self, name, conclusion="success", attempt=1):
+        return {"name": name, "conclusion": conclusion, "run_attempt": attempt}
+
+    SHIPPED = ("approve", "backend / publish")
+
+    def published(self, runs, jobs=()):
+        with patch.object(policy, "git", return_value=SHA), \
+                patch.object(policy, "api", return_value={"workflow_runs": runs}) as api, \
+                patch.object(policy, "pages", return_value=list(jobs)) as pages:
+            result = policy.published("v1.1.0")
+        self.assertIn(f"head_sha={SHA}&event=push", api.call_args.args[0])
+        return result, pages
+
+    def test_successful_run_ships_without_reading_jobs(self):
+        result, pages = self.published([self.run_row(conclusion="success")])
+        self.assertTrue(result)
+        pages.assert_not_called()
+
+    def test_run_that_failed_on_a_side_job_after_publishing_shipped(self):
+        jobs = [*map(self.job, self.SHIPPED),
+                self.job("helm-chart / install the package on kind (published images)", "failure"),
+                self.job("helm-chart / push, sign, attest, release", "skipped")]
+        result, pages = self.published([self.run_row()], jobs)
+        self.assertTrue(result)
+        pages.assert_called_once_with("actions/runs/7/jobs?filter=all", "jobs")
+        # Success on any attempt counts: a failed-jobs re-run that published the backend.
+        jobs = [self.job("approve"), self.job("backend / publish", "failure"),
+                self.job("backend / publish", "success", attempt=2)]
+        self.assertTrue(self.published([self.run_row(run_attempt=2)], jobs)[0])
+
+    def test_rejected_waiting_or_build_failed_runs_did_not_ship(self):
+        cases = [
+            # Production review rejected: nothing ran after approve.
+            [self.job("approve", "failure"), self.job("backend / publish", "skipped")],
+            # Approved, but the backend image never published.
+            [self.job("approve"), self.job("backend / publish", "failure")],
+            [self.job("approve")],
+            [self.job("backend / publish")],
+            # Similar names are not the pinned jobs.
+            [self.job("approve-extra"), self.job("backend-slim / publish")],
+            [], [None, "approve"],
+        ]
+        for jobs in cases:
+            with self.subTest(jobs=jobs):
+                self.assertFalse(self.published([self.run_row()], jobs)[0])
+        everything = list(map(self.job, self.SHIPPED))
+        for run in (self.run_row(status="in_progress", conclusion=None), self.run_row(status="waiting", conclusion=None),
+                    self.run_row(head_branch="v1.1.1", conclusion="success"), self.run_row(head_branch="v1.1.1"),
+                    self.run_row(id="7"), self.run_row(id=None)):
+            with self.subTest(run=run):
+                result, pages = self.published([run], everything)
+                self.assertFalse(result)
+                pages.assert_not_called()
+        self.assertFalse(self.published([], everything)[0])
+
+    def test_unreadable_or_malformed_job_evidence_is_not_shipped(self):
+        for error in (RuntimeError("api"), KeyError("jobs")):
+            with self.subTest(error=type(error).__name__), patch.object(policy, "git", return_value=SHA), \
+                    patch.object(policy, "api", return_value={"workflow_runs": [self.run_row()]}), \
+                    patch.object(policy, "pages", side_effect=error), self.assertRaises(type(error)):
+                # migration_evidence maps each of these to an unknown count (Production).
+                policy.published("v1.1.0")
+        with patch.object(policy, "git", return_value=SHA), patch.object(policy, "api", return_value={"workflow_runs": None}):
+            self.assertFalse(policy.published("v1.1.0"))
+
+    def test_shipped_job_names_match_the_release_workflows(self):
+        import yaml
+
+        workflows = Path(__file__).resolve().parents[1] / ".github/workflows"
+
+        def jobs(name):
+            return yaml.safe_load((workflows / name).read_text())["jobs"]
+
+        release = jobs("release-images.yml")
+        self.assertEqual(policy.SHIPPED_JOBS, set(self.SHIPPED))
+        # GitHub shows a job without `name:` by its id, and a called workflow's
+        # job as "<caller id> / <job id>". A rename here would send every release to a person.
+        for name in policy.SHIPPED_JOBS:
+            with self.subTest(name=name):
+                caller, _, called = name.partition(" / ")
+                self.assertNotIn("name", release[caller])
+                if called:
+                    path = release[caller]["uses"]
+                    self.assertTrue(path.startswith("./.github/workflows/"))
+                    self.assertNotIn("name", jobs(path.rsplit("/", 1)[1])[called])
+                else:
+                    self.assertNotIn("uses", release[caller])
 
 
 def metadata_api_responses(metadata):
