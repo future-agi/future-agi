@@ -63,7 +63,12 @@ export default function ReadyToRun({
   const voiceReplies = (report.rows || []).find(
     (r) => r.id === "message" && r.status === "unavailable",
   );
-  const open = areas.filter((a) => a.status !== "ready" && !isLimit(a));
+  /* Areas only waiting on the starts-and-replies check share one line: the
+     same check covers them all. */
+  const waiting = areas.filter((a) => a.status === "unchecked" && a.waits);
+  const open = areas.filter(
+    (a) => a.status !== "ready" && !isLimit(a) && !waiting.includes(a),
+  );
   const ready = areas.filter((a) => a.status === "ready" || isLimit(a));
   const limitPhrase = (a) => {
     const d = String(a.detail || "");
@@ -245,9 +250,7 @@ export default function ReadyToRun({
                   {checking
                     ? "Checking…"
                     : a.status === "unchecked"
-                      ? a.waits
-                        ? "Not checked yet · the starts and replies check covers it"
-                        : "Not checked yet"
+                      ? "Not checked yet"
                       : `${String(a.detail || "")
                           .split(/\s+—\s+|(?<=\.)\s/)[0]
                           .replace(
@@ -301,6 +304,39 @@ export default function ReadyToRun({
           </Fragment>
         );
       })}
+      {waiting.length > 0 && (
+        <Tooltip
+          arrow
+          placement="top-start"
+          title={waiting.map((a) => `${a.label}: ${a.detail}`).join("\n")}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 1.5,
+              py: 0.625,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <StatusDot
+              status={checking ? "running" : READY_STATUS.unchecked.dot}
+              size={6}
+              live={checking}
+              hollow={!checking}
+            />
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {checking
+                ? "Checking…"
+                : `Also covered by that check: ${waiting.map((a) => a.label.toLowerCase()).join(", ")}`}
+            </Typography>
+          </Stack>
+        </Tooltip>
+      )}
       {ready.length > 0 && (
         <Tooltip
           arrow
