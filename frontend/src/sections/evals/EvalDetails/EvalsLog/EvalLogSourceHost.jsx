@@ -269,6 +269,11 @@ function SourceDialog({ pinned, onClose, revalidate, onState }) {
       onClose={onClose}
       disableRestoreFocus
       aria-labelledby="eval-log-source-title"
+      // The viewer's own panels (Annotate, Add to dataset) are drawers that
+      // portal to the body at the drawer layer. On that same layer, opening
+      // later puts them above this host, as they are above the trace drawer
+      // in Observe; at the modal layer they would paint beneath it.
+      sx={{ zIndex: (theme) => theme.zIndex.drawer }}
     >
       <Box
         role="dialog"
