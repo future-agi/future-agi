@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, BrokenBarrierError
 from unittest.mock import patch
 
 import pytest
@@ -580,3 +580,199 @@ def test_invalid_refresh_token_returns_oauth_error_without_crashing(
 
     assert response.status_code == 400
     assert response.data["error"] == "invalid_grant"
+
+
+def _bad_secret_payload(client_id, grant_type, secret="wrong-secret"):
+    payload = {
+        "grant_type": grant_type,
+        "client_id": client_id,
+        "client_secret": secret,
+    }
+    if grant_type == "authorization_code":
+        payload["code"] = "bad-code"
+    else:
+        payload["refresh_token"] = "bad-refresh-token"
+    return payload
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+def test_invalid_secret_lockout_cannot_be_bypassed_by_switching_grant_type(
+    api_client, user, workspace, oauth_client_app
+):
+    # Both grant types verify the same client_secret, so a lockout earned with
+    # one grant must also stop secret guesses sent with the other grant.
+    for _ in range(2):
+        response = _post_token(
+            api_client,
+            _bad_secret_payload(oauth_client_app.client_id, "authorization_code"),
+            remote_addr="203.0.113.60",
+        )
+        assert response.status_code == 401
+        assert response.data["error"] == "invalid_client"
+
+    switched = _post_token(
+        api_client,
+        _bad_secret_payload(oauth_client_app.client_id, "refresh_token"),
+        remote_addr="203.0.113.60",
+    )
+    assert switched.status_code == 429
+    assert switched.data["error"] == "slow_down"
+    assert switched.data["error_description"] == "Too many invalid token attempts"
+    assert int(switched["Retry-After"]) > 0
+
+    # Authorized-user control: another registered client exchanging a valid
+    # code from the same address is not caught by this client's lockout.
+    other_client = MCPOAuthClient.objects.create(
+        client_id="other-oauth-client",
+        client_secret_hash=hash_client_secret("other-secret"),
+        name="Other OAuth Client",
+        redirect_uris=["https://example.com/callback"],
+    )
+    auth_code = _create_auth_code(user, workspace, other_client)
+    allowed = _post_token(
+        api_client,
+        {
+            "grant_type": "authorization_code",
+            "code": auth_code.code,
+            "client_id": other_client.client_id,
+            "client_secret": "other-secret",
+            "redirect_uri": auth_code.redirect_uri,
+        },
+        remote_addr="203.0.113.60",
+    )
+    assert allowed.status_code == 200
+    assert allowed.data["access_token"]
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="2/min",
+)
+def test_client_throttle_counts_every_grant_type_for_the_same_client(
+    api_client, oauth_client_app
+):
+    first = _post_token(
+        api_client,
+        _bad_secret_payload(oauth_client_app.client_id, "authorization_code"),
+        remote_addr="203.0.113.61",
+    )
+    second = _post_token(
+        api_client,
+        _bad_secret_payload(oauth_client_app.client_id, "authorization_code"),
+        remote_addr="203.0.113.62",
+    )
+    switched = _post_token(
+        api_client,
+        _bad_secret_payload(oauth_client_app.client_id, "refresh_token"),
+        remote_addr="203.0.113.63",
+    )
+
+    assert first.status_code == 401
+    assert second.status_code == 401
+    assert switched.status_code == 429
+    assert switched.data["error"] == "slow_down"
+    assert switched.data["error_description"] == "Too many token requests"
+    assert int(switched["Retry-After"]) > 0
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+def test_in_flight_attempts_count_toward_invalid_attempt_limit():
+    # Simulate a concurrent burst: every request has passed the throttles and
+    # none has finished verifying its secret yet. The burst must not get more
+    # secret checks than the invalid-attempt limit allows.
+    view = MCPOAuthTokenView()
+
+    def new_request():
+        raw_request = APIRequestFactory().post(
+            TOKEN_URL,
+            _bad_secret_payload("burst-client", "refresh_token"),
+            format="json",
+            REMOTE_ADDR="203.0.113.64",
+        )
+        return view.initialize_request(raw_request)
+
+    request = new_request()
+    throttle = throttles.MCPOAuthTokenLockoutThrottle()
+
+    in_flight = [new_request() for _ in range(2)]
+    for pending in in_flight:
+        assert throttle.allow_request(pending, view) is True
+
+    with pytest.raises(throttles.MCPOAuthTokenThrottled) as excinfo:
+        throttle.allow_request(request, view)
+    assert excinfo.value.detail["error"] == "slow_down"
+    assert int(excinfo.value.wait) > 0
+
+    # Once the in-flight requests finish, the reservation is returned and a
+    # legitimate retry is evaluated normally.
+    for pending in in_flight:
+        throttles.release_token_attempt_reservation(pending)
+    retry = new_request()
+    assert throttle.allow_request(retry, view) is True
+    throttles.release_token_attempt_reservation(retry)
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+def test_concurrent_burst_gets_at_most_the_invalid_attempt_limit(monkeypatch):
+    from mcp_server.views import oauth as oauth_views
+
+    burst = 6
+    # With the limit at 2, only two requests may be verifying at once; the
+    # barrier holds them together so the rest of the burst arrives mid-flight.
+    started = Barrier(2)
+    verified = []
+
+    def slow_lookup(client_id, protocol="management"):
+        # Hold admitted requests together so the rest of the burst arrives
+        # while they are still verifying. A request left without a partner
+        # (only possible without in-flight accounting) carries on after the
+        # timeout, so the count assertion below reports the failure.
+        try:
+            started.wait(timeout=2)
+        except BrokenBarrierError:
+            pass
+        return None, None
+
+    real_record = throttles.record_invalid_token_attempt
+
+    def counting_record(request):
+        verified.append(1)
+        return real_record(request)
+
+    monkeypatch.setattr(oauth_views, "_get_active_oauth_client", slow_lookup)
+    monkeypatch.setattr(oauth_views, "record_invalid_token_attempt", counting_record)
+
+    def send(_):
+        raw = APIRequestFactory().post(
+            TOKEN_URL,
+            _bad_secret_payload("burst-client", "authorization_code"),
+            format="json",
+            REMOTE_ADDR="203.0.113.65",
+        )
+        return MCPOAuthTokenView.as_view()(raw)
+
+    with ThreadPoolExecutor(max_workers=burst) as workers:
+        responses = list(workers.map(send, range(burst)))
+
+    statuses = sorted(r.status_code for r in responses)
+    assert len(verified) <= 2
+    assert statuses.count(401) == len(verified)
+    assert all(status in (401, 429) for status in statuses)
