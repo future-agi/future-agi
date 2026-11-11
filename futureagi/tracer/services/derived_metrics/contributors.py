@@ -109,21 +109,9 @@ def _trace_id(unit_id: str, selection_unit: str) -> str | None:
 def read_contributors(run, rollup="overall", group_key="", limit=20):
     if getattr(run, "kind", "run") != "snapshot":
         return _read_contributors(run, rollup, group_key, limit)
-    from tracer.models.derived_metric import DerivedMetricRun
-    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+    from tracer.services.derived_metrics.snapshots import snapshot_read
 
-    with serialized_project(run.definition.metric.project_id):
-        current = (
-            DerivedMetricRun.objects.select_related("definition__metric")
-            .filter(
-                pk=run.id,
-                status="complete",
-                deleted_at__isnull=True,
-            )
-            .first()
-        )
-        if current is None:
-            raise MetricInputError("This snapshot is no longer available.")
+    with snapshot_read(run) as current:
         return _read_contributors(current, rollup, group_key, limit)
 
 

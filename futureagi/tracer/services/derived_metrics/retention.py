@@ -6,7 +6,8 @@ is different: without unit lineage in retired parts we conservatively discard
 project aggregate history. This is the design's safe fallback, not subtraction.
 
 Callers schedule expiry independently of arrivals and retry failed mutations.
-A purge holds the same project synchronization as publication and pin capture.
+Purge planning uses the same short serialization as publication/pin capture;
+native mutations use immutable, generation-bounded namespaces and write receipts.
 The original manifest is revoked before any physical deletion. Audit hashes are
 never rewritten; terminal private replay/preimage chunks can be deleted whole.
 """
@@ -375,6 +376,24 @@ def _current_expiry_required(
     return False
 
 
+def _require_retention_definitions(writer, definitions):
+    for definition in definitions:
+        definition_id = getattr(definition, "id", None)
+        if (
+            definition_id is not None
+            and not DerivedMetricVersion.objects.filter(
+                id=definition_id,
+                metric_id=definition.metric_id,
+                version=definition.version,
+                metric__project_id=writer.lease.project_id,
+                metric__organization_id=writer.org_id,
+                metric__deleted=False,
+                pins_revoked_at__isnull=True,
+            ).exists()
+        ):
+            raise MetricStateConflict("retention definition is expired or deleted")
+
+
 def retirement_plan(writer, draft, head, definitions, cutoff):
     """Convert proposed anchor changes to one complete privacy checkpoint.
 
@@ -459,21 +478,35 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     )
     if blocked:
         raise MetricStateConflict("retention proposal lacks complete membership")
-    attempt = writer.begin(
-        purpose="compaction",
-        ceilings={
-            **draft.source_ceilings,
-            **({"retention_floor": cutoff} if logical_expiry else {}),
-            "logical_expiry": logical_expiry,
-            # PG-only drafts can contain owner preimages that the safe span
-            # checkpoint no longer needs. GC must finish their cleanup after a
-            # publication-before-purge crash, without revoking retained pins or
-            # deleting newer failed work that this publication never consumed.
-            "private_cleanup_through": draft.generation,
-        },
-        versions=draft.metric_versions,
-        ledger=ledger,
-    )
+    with serialized_project(writer.lease.project_id):
+        # Classification copied private bytes without a lifecycle lock. A
+        # revocation need not change the lease or the head id. Recheck both the
+        # base and draft before registering ANY durable successor/private chunks.
+        current = MetricProjectRefresh.for_project(
+            writer.lease.project_id
+        ).head_manifest
+        if (current.id if current else None) != (head.id if head else None) or (
+            current is not None and current.revoked_at is not None
+        ):
+            raise MetricStateConflict("retention base changed or expired")
+        MetricRefreshAttempt._locked_open(
+            draft.id, state=MetricRefreshAttempt.State.PREPARED, **writer.lease.check()
+        )
+        _require_retention_definitions(writer, definitions)
+        # Registration and recovery transfer commit together. A subsequent
+        # revocation now sees and aborts this successor before it can append.
+        attempt = writer.begin(
+            purpose="compaction",
+            ceilings={
+                **draft.source_ceilings,
+                **({"retention_floor": cutoff} if logical_expiry else {}),
+                "logical_expiry": logical_expiry,
+                # GC must scrub consumed PG-only drafts even when safe pins stay.
+                "private_cleanup_through": draft.generation,
+            },
+            versions=draft.metric_versions,
+            ledger=ledger,
+        )
     live_payloads = writer.freeze(attempt, FIELD_VALUES, retained, params)
     retired, rp = committed_rows_select(
         RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
@@ -684,8 +717,6 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None or head.revoked_at:
             raise MetricStateConflict("retention cleanup requires a safe checkpoint")
-        writer.store.assert_visible(head)
-        shard = writer.store.identity()
         keep = {a for _, a in head.allowed_attempts()}
         # Publication-time revocation removed every affected old pin. Preserve
         # safe POST-expiry states that a later compaction superseded while a new
@@ -713,17 +744,25 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         for retained in MetricReadManifest.objects.filter(id__in=roots):
             keep.update(a for _, a in retained.allowed_attempts())
         keep = tuple(keep) or (UUID(int=0),)
-        complete = True
-        for obligation in pending.order_by("requested_at"):
-            # Recovery can enter here without purge_checkpoint, including a
-            # crash immediately after logical publication. Attempt TTL is not
-            # permission to retain expired PG preimages or frozen replay bytes.
-            recovery_attempt = (
-                head.published_by
-                if head.published_by.source_ceilings.get("recovery_pending")
-                else None
-            )
-            through = obligation.store_payload["through_generation"]
+        obligations = list(pending.order_by("requested_at"))
+    # Safe roots were frozen under serialization. New attempts have generations
+    # above every obligation; new captures can only pin these roots or their
+    # descendants. Revoked old namespaces cannot register new submissions.
+    writer.store.assert_visible(head)
+    shard = writer.store.identity()
+    complete = True
+    for obligation in obligations:
+        # Recovery can enter here without purge_checkpoint, including a
+        # crash immediately after logical publication. Attempt TTL is not
+        # permission to retain expired PG preimages or frozen replay bytes.
+        recovery_attempt = (
+            head.published_by
+            if head.published_by.source_ceilings.get("recovery_pending")
+            else None
+        )
+        through = obligation.store_payload["through_generation"]
+        with serialized_project(project_id):
+            writer.lease.check()
             _purge_terminal_payloads(
                 project_id,
                 recovery_attempt=recovery_attempt,
@@ -735,79 +774,82 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
                 through_generation=through,
             ).exists():
                 raise MetricStateConflict("physical expiry private scrub is incomplete")
-            if obligation.store_payload.get("shard") != shard:
-                raise MetricStateConflict("physical expiry shard is not proven")
-            params = {
-                "purge_org": str(writer.org_id),
-                "purge_project": str(project_id),
-                "purge_through": through,
-                "purge_keep": keep,
-            }
-            predicate = (
-                "org_id = toUUID(%(purge_org)s) AND project_id = toUUID(%(purge_project)s) "
-                "AND generation <= %(purge_through)s AND attempt_id NOT IN %(purge_keep)s"
-            )
-            tables = (
-                FIELD_VALUES,
-                TABLES["metric_field_values_checkpoint"],
-                SOURCE_DEPENDENCIES,
-                UNIT_STATE,
-            )
-            # Preserve the existing core receipt shape; current-list stores get
-            # their own verification count under the same quiescence barrier.
-            core_table_count = len(tables)
-            tables = (*tables, *LIST_CURRENT_TABLES)
-            # Prompt scrub, even while an old submission may still land.
-            for table in tables:
-                _delete(writer.store, table, predicate, params)
-            submissions = MetricErasureRequest.objects.filter(
-                project_key=project_id,
-                store_payload__protocol="metric_submission",
-                store_payload__generation__lte=through,
-            )
-            if submissions.exclude(
-                status="done", receipts__synchronous_response__drained=1
-            ).exists():
-                complete = False
-                continue
-            # Registration is fenced under the same project lock: no new old-
-            # namespace submission can appear after this barrier observation.
-            for table in tables:
-                _delete(writer.store, table, predicate, params)
-                if writer.store.execute(
-                    f"SELECT count() FROM {table.name} WHERE {predicate}", params
-                ) != [(0,)]:
-                    raise MetricStateConflict("physical expiry scrub is incomplete")
-            MetricErasureRequest.objects.filter(id=obligation.id).update(
-                status="done",
-                completed_at=now or writer.lease.clock(),
-                receipts={
-                    "write_barrier": {"drained": submissions.count()},
-                    "final_scrub": {
-                        "verified_tables": core_table_count,
-                        "remaining": 0,
-                        "private_payloads_remaining": 0,
-                    },
-                    "current_facts_scrub": {
-                        "verified_tables": len(LIST_CURRENT_TABLES),
-                        "remaining": 0,
-                    },
+        if obligation.store_payload.get("shard") != shard:
+            raise MetricStateConflict("physical expiry shard is not proven")
+        params = {
+            "purge_org": str(writer.org_id),
+            "purge_project": str(project_id),
+            "purge_through": through,
+            "purge_keep": keep,
+        }
+        predicate = (
+            "org_id = toUUID(%(purge_org)s) AND project_id = toUUID(%(purge_project)s) "
+            "AND generation <= %(purge_through)s AND attempt_id NOT IN %(purge_keep)s"
+        )
+        tables = (
+            FIELD_VALUES,
+            TABLES["metric_field_values_checkpoint"],
+            SOURCE_DEPENDENCIES,
+            UNIT_STATE,
+        )
+        # Preserve the existing core receipt shape; current-list stores get
+        # their own verification count under the same quiescence barrier.
+        core_table_count = len(tables)
+        tables = (*tables, *LIST_CURRENT_TABLES)
+        # Prompt scrub, even while an old submission may still land.
+        for table in tables:
+            _delete(writer.store, table, predicate, params)
+        submissions = MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_submission",
+            store_payload__generation__lte=through,
+        )
+        if submissions.exclude(
+            status="done", receipts__synchronous_response__drained=1
+        ).exists():
+            complete = False
+            continue
+        # Logical publication already aborted old writers under the lifecycle
+        # key. Their dispatch registration revalidates that state, so no new old-
+        # namespace submission can appear after this barrier observation.
+        for table in tables:
+            _delete(writer.store, table, predicate, params)
+            if writer.store.execute(
+                f"SELECT count() FROM {table.name} WHERE {predicate}", params
+            ) != [(0,)]:
+                raise MetricStateConflict("physical expiry scrub is incomplete")
+        MetricErasureRequest.objects.filter(id=obligation.id).update(
+            status="done",
+            completed_at=now or writer.lease.clock(),
+            receipts={
+                "write_barrier": {"drained": submissions.count()},
+                "final_scrub": {
+                    "verified_tables": core_table_count,
+                    "remaining": 0,
+                    "private_payloads_remaining": 0,
                 },
-            )
-            # Omission debts are discharged only by this verified all-revisions
-            # scrub, never just by losing their last row in the current head.
-            MetricErasureRequest.objects.filter(
-                project_key=project_id,
-                store_payload__protocol="metric_omission",
-                store_payload__through_generation__lte=through,
-            ).exclude(status="done").update(
-                status="done",
-                completed_at=now or writer.lease.clock(),
-                receipts={"expiry_scrub": {"through_generation": through}},
-            )
-            # Namespace receipts have served their proof; no private rows or
-            # unbounded per-write history is required after completion.
-            submissions.delete()
+                "current_facts_scrub": {
+                    "verified_tables": len(LIST_CURRENT_TABLES),
+                    "remaining": 0,
+                },
+            },
+        )
+        # Omission debts are discharged only by this verified all-revisions
+        # scrub, never just by losing their last row in the current head.
+        MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_omission",
+            store_payload__through_generation__lte=through,
+        ).exclude(status="done").update(
+            status="done",
+            completed_at=now or writer.lease.clock(),
+            receipts={"expiry_scrub": {"through_generation": through}},
+        )
+        # Namespace receipts have served their proof; no private rows or
+        # unbounded per-write history is required after completion.
+        submissions.delete()
+    with serialized_project(project_id):
+        writer.lease.check()
         replan = (
             MetricErasureRequest.objects.filter(
                 project_key=project_id, store_payload__protocol="metric_policy_replan"
@@ -967,14 +1009,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None:
             return {"unlimited": False, "purged": False}
-        writer.store.assert_visible(head)
         if head.revoked_at:
             raise MetricStateConflict("expired base requires source rebuild")
-        from tracer.services.derived_metrics.span_evidence import (
-            require_retirement_evidence,
-        )
-
-        require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
         # Classification below performs ClickHouse reads without a PG
         # transaction. Keep predecessors open (and therefore GC-rooted) until
         # their complete, policy-safe handoff is durable in the successor.
@@ -986,6 +1022,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             ).values_list("id", flat=True)
         )
         recovery = writer.abort_stale(abort=False)
+    writer.store.assert_visible(head)
+    from tracer.services.derived_metrics.span_evidence import (
+        require_retirement_evidence,
+    )
+
+    require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
     params = {
         "expiry_cutoff": cutoff,
         "expiry_project": str(project_id),
@@ -1057,21 +1099,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         current = MetricProjectRefresh.for_project(project_id).head_manifest
         if current is None or current.id != head.id or current.revoked_at is not None:
             raise MetricStateConflict("retention base changed or expired")
-        for definition in definitions:
-            definition_id = getattr(definition, "id", None)
-            if (
-                definition_id is not None
-                and not DerivedMetricVersion.objects.filter(
-                    id=definition_id,
-                    metric_id=definition.metric_id,
-                    version=definition.version,
-                    metric__project_id=project_id,
-                    metric__organization_id=writer.org_id,
-                    metric__deleted=False,
-                    pins_revoked_at__isnull=True,
-                ).exists()
-            ):
-                raise MetricStateConflict("retention definition is expired or deleted")
+        _require_retention_definitions(writer, definitions)
         # Register the successor under the same lock as these fresh checks:
         # subsequent revocations must abort it before any copy can publish.
         attempt = writer.begin(
@@ -1343,98 +1371,96 @@ def purge_by_scope(store, request, *, writer=None):
                 raise MetricStateConflict(
                     "subject erasure requires a usable source manifest"
                 )
-            store.assert_visible(head)
-            ids = tuple(request.subject_ids)
-            params["erase_subjects"] = ids
-            field_predicate = (
-                "user_id IN %(erase_subjects)s"
-                if kind == "users"
-                else "(session_id IN %(erase_subjects)s OR unit_id IN %(erase_subjects)s)"
-            )
-            # Retention can scrub an unproven span-owner link while retaining
-            # the younger span. Without that lineage, subject erasure must drop
-            # unknown-owner span evidence conservatively, never guess it is safe.
-            owner = "user_id" if kind == "users" else "session_id"
-            field_predicate = (
-                f"({field_predicate} OR (level = 'span' AND {owner} = ''))"
-            )
-            dep_predicate = (
-                "(raw_user_id IN %(erase_subjects)s OR canonical_user_id IN %(erase_subjects)s)"
-                if kind == "users"
-                else "(raw_session_id IN %(erase_subjects)s OR canonical_session_id IN %(erase_subjects)s)"
-            )
-            fields, fp = committed_rows_select(
-                FIELD_VALUES,
-                head,
-                org_id=request.organization_key,
-                project_id=request.project_key,
-            )
-            deps, dp = committed_rows_select(
-                SOURCE_DEPENDENCIES,
-                head,
-                org_id=request.organization_key,
-                project_id=request.project_key,
-            )
-            params.update(fp)
-            params.update(dp)
-            # Unassignable multi-user conversations still carry the erased user's
-            # evidence: remove that conversation, rather than leaking its maps.
-            victims = store.execute(
-                f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} "
-                f"UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate} "
-                f"UNION DISTINCT SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE {dep_predicate}",
-                params,
-            )
-            for table in LIST_CURRENT_TABLES:
-                facts, bound = committed_rows_select(
-                    table,
-                    head,
-                    org_id=request.organization_key,
-                    project_id=request.project_key,
-                )
-                victims.extend(
-                    store.execute(
-                        f"SELECT DISTINCT canonical_session_id FROM ({facts}) WHERE {dep_predicate}",
-                        {**params, **bound},
-                    )
-                )
-            params["erase_units"] = tuple(row[0] for row in victims) or ("",)
             attempt = writer.begin(
                 purpose="compaction", ceilings={"erasure": str(request.id)}
             )
+        store.assert_visible(head)
+        ids = tuple(request.subject_ids)
+        params["erase_subjects"] = ids
+        field_predicate = (
+            "user_id IN %(erase_subjects)s"
+            if kind == "users"
+            else "(session_id IN %(erase_subjects)s OR unit_id IN %(erase_subjects)s)"
+        )
+        # Retention can scrub an unproven span-owner link while retaining
+        # the younger span. Without that lineage, subject erasure must drop
+        # unknown-owner span evidence conservatively, never guess it is safe.
+        owner = "user_id" if kind == "users" else "session_id"
+        field_predicate = f"({field_predicate} OR (level = 'span' AND {owner} = ''))"
+        dep_predicate = (
+            "(raw_user_id IN %(erase_subjects)s OR canonical_user_id IN %(erase_subjects)s)"
+            if kind == "users"
+            else "(raw_session_id IN %(erase_subjects)s OR canonical_session_id IN %(erase_subjects)s)"
+        )
+        fields, fp = committed_rows_select(
+            FIELD_VALUES,
+            head,
+            org_id=request.organization_key,
+            project_id=request.project_key,
+        )
+        deps, dp = committed_rows_select(
+            SOURCE_DEPENDENCIES,
+            head,
+            org_id=request.organization_key,
+            project_id=request.project_key,
+        )
+        params.update(fp)
+        params.update(dp)
+        # Unassignable multi-user conversations still carry the erased user's
+        # evidence: remove that conversation, rather than leaking its maps.
+        victims = store.execute(
+            f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} "
+            f"UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate} "
+            f"UNION DISTINCT SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE {dep_predicate}",
+            params,
+        )
+        for table in LIST_CURRENT_TABLES:
+            facts, bound = committed_rows_select(
+                table,
+                head,
+                org_id=request.organization_key,
+                project_id=request.project_key,
+            )
+            victims.extend(
+                store.execute(
+                    f"SELECT DISTINCT canonical_session_id FROM ({facts}) WHERE {dep_predicate}",
+                    {**params, **bound},
+                )
+            )
+        params["erase_units"] = tuple(row[0] for row in victims) or ("",)
+        writer.freeze(
+            attempt,
+            FIELD_VALUES,
+            f"SELECT * FROM ({fields}) WHERE NOT ({field_predicate}) AND unit_id NOT IN %(erase_units)s",
+            params,
+        )
+        for table in (SOURCE_DEPENDENCIES, UNIT_STATE):
+            sql, p = committed_rows_select(
+                table,
+                head,
+                org_id=request.organization_key,
+                project_id=request.project_key,
+            )
+            predicate = (
+                dep_predicate
+                if table == SOURCE_DEPENDENCIES
+                else "unit_id IN %(erase_units)s"
+            )
             writer.freeze(
                 attempt,
-                FIELD_VALUES,
-                f"SELECT * FROM ({fields}) WHERE NOT ({field_predicate}) AND unit_id NOT IN %(erase_units)s",
-                params,
+                table,
+                f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
+                {**p, **params},
             )
-            for table in (SOURCE_DEPENDENCIES, UNIT_STATE):
-                sql, p = committed_rows_select(
-                    table,
-                    head,
-                    org_id=request.organization_key,
-                    project_id=request.project_key,
-                )
-                predicate = (
-                    dep_predicate
-                    if table == SOURCE_DEPENDENCIES
-                    else "unit_id IN %(erase_units)s"
-                )
-                writer.freeze(
-                    attempt,
-                    table,
-                    f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
-                    {**p, **params},
-                )
-            for table in LIST_CURRENT_TABLES:
-                writer.freeze_current(
-                    attempt,
-                    table,
-                    head,
-                    where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
-                    params=params,
-                )
-            writer.seal(attempt)
+        for table in LIST_CURRENT_TABLES:
+            writer.freeze_current(
+                attempt,
+                table,
+                head,
+                where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
+                params=params,
+            )
+        writer.seal(attempt)
         manifest = writer.stage_and_publish(attempt)
         with serialized_project(request.project_key):
             old = list(
@@ -1442,31 +1468,44 @@ def purge_by_scope(store, request, *, writer=None):
                 .exclude(id=manifest.id)
                 .values_list("id", flat=True)
             )
+            writer.lease.check()
+            current = MetricProjectRefresh.for_project(
+                request.project_key
+            ).head_manifest
+            if current is None or current.id != manifest.id or current.revoked_at:
+                raise MetricStateConflict("subject erasure checkpoint changed")
             revoke_generations(request.project_key, reason="erased", manifest_ids=old)
+        writer.lease.check()
+        for table in TABLES.values():
+            if table.name.startswith("metric_field_values") or table in (
+                SOURCE_DEPENDENCIES,
+                UNIT_STATE,
+                *LIST_CURRENT_TABLES,
+            ):
+                # Every old generation was revoked, and the new complete
+                # checkpoint contains ALL unrelated live rows. Collect ALL
+                # older evidence, not just a rediscovered id list: this also
+                # makes interruption after field purge restart-safe for state
+                # and dependency rows that have no surviving field lineage.
+                predicate = "attempt_id != toUUID(%(erase_new)s)"
+            else:
+                predicate = "1"  # no surviving per-unit lineage in anonymous parts
+            _delete(
+                store,
+                table,
+                base + " AND generation <= %(erase_through)s AND (" + predicate + ")",
+                {
+                    **params,
+                    "erase_new": str(attempt.id),
+                    "erase_through": attempt.generation,
+                },
+            )
         with serialized_project(request.project_key):
             writer.lease.check()
-            for table in TABLES.values():
-                if table.name.startswith("metric_field_values") or table in (
-                    SOURCE_DEPENDENCIES,
-                    UNIT_STATE,
-                    *LIST_CURRENT_TABLES,
-                ):
-                    # Every old generation was revoked, and the new complete
-                    # checkpoint contains ALL unrelated live rows. Collect ALL
-                    # older evidence, not just a rediscovered id list: this also
-                    # makes interruption after field purge restart-safe for state
-                    # and dependency rows that have no surviving field lineage.
-                    predicate = "attempt_id != toUUID(%(erase_new)s)"
-                else:
-                    predicate = "1"  # no surviving per-unit lineage in anonymous parts
-                _delete(
-                    store,
-                    table,
-                    base + " AND (" + predicate + ")",
-                    {**params, "erase_new": str(attempt.id)},
-                )
-            _purge_terminal_payloads(request.project_key)
-            return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
+            _purge_terminal_payloads(
+                request.project_key, through_generation=attempt.generation
+            )
+        return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
     if kind not in {"organization", "project", "metric", "version"}:
         raise ValueError("unsupported live erasure scope")
     # Parent-independent intents may reach this path after the project vanished.
@@ -1495,6 +1534,15 @@ def purge_by_scope(store, request, *, writer=None):
                     definition_version_ids=list(versions.values_list("id", flat=True)),
                 )
             else:
+                # Discovery happens BEFORE an attempt exists and may already
+                # hold private dependency preimages in memory. Abort/revoke alone
+                # cannot fence that writer (including a project with NO head).
+                # Invalidate its durable lease in this same lifecycle boundary;
+                # registration/append require the old epoch+token and must fail.
+                # A later worker takes a new epoch and rediscovers current source.
+                MetricProjectRefresh.objects.filter(project_id=project).update(
+                    lease_token=None, lease_expires_at=None, lease_holder=""
+                )
                 revoke_generations(project, reason="erased")
             _purge_terminal_payloads(project)
     for table in TABLES.values():

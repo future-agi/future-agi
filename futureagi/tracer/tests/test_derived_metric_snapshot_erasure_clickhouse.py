@@ -124,6 +124,163 @@ def overall(store, run):
     )
 
 
+@pytest.mark.parametrize("pause", ["retention_probe", "before_purge", "native_delete"])
+def test_expired_capture_cannot_take_over_a_paused_destructive_setup(
+    capture_case, live_writer, monkeypatch, pause
+):
+    """A run lease is not a DELETE fence; takeover must respect the run gate."""
+    from tracer.tests.test_derived_metric_integration_fences import (
+        assert_lifecycle_available,
+    )
+
+    _, run, _ = capture_case
+    paused = []
+
+    def attempt_takeover():
+        if paused:
+            return
+        paused.append(True)
+        assert_lifecycle_available(run.definition.metric.project_id)
+        current = DerivedMetricRun.objects.get(pk=run.id)
+        old_attempt = current.attempt_id
+        DerivedMetricRun.objects.filter(pk=run.id).update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        # Without the independent gate B completes in this exact pause and A's
+        # resumed purge destroys B's rows. With it B cannot claim the namespace,
+        # even during a native DELETE, and durable recovery retries after exit.
+        snapshots.execute_snapshot(run.id, store=live_writer.store, policy=lambda _: 0)
+        current.refresh_from_db()
+        assert current.status == "running"
+        assert current.attempt_id == old_attempt
+        assert MetricGenerationPin.objects.filter(pk=current.pin_id).exists()
+
+    name = {
+        "retention_probe": "_assert_retained",
+        "before_purge": "purge_run",
+        "native_delete": "delete_rows",
+    }[pause]
+    original = getattr(snapshots, name)
+
+    def paused_setup(*args, **kwargs):
+        if pause == "retention_probe":
+            value = original(*args, **kwargs)
+            attempt_takeover()
+            return value
+        attempt_takeover()
+        return original(*args, **kwargs)
+
+    if pause == "native_delete":
+        native = live_writer.store.execute
+
+        def paused_native(sql, *args, **kwargs):
+            if sql.startswith("ALTER TABLE derived_metric_results DELETE"):
+                attempt_takeover()
+            return native(sql, *args, **kwargs)
+
+        monkeypatch.setattr(live_writer.store, "execute", paused_native)
+    else:
+        monkeypatch.setattr(snapshots, name, paused_setup)
+    execute(run, live_writer.store)
+    assert paused and run.status == "complete", run.error
+    assert overall(live_writer.store, run) == [(3.0, 4)]
+    committed = (run.attempt_id, run.result_id)
+    execute(run, live_writer.store)
+    assert (run.attempt_id, run.result_id) == committed
+    assert overall(live_writer.store, run) == [(3.0, 4)]
+    assert live_writer.store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+        {"s": str(run.snapshot_id)},
+    ) == [(4,)]
+
+
+@pytest.mark.parametrize("pause", ["before_purge", "native_delete"])
+def test_disconnected_capture_gate_cannot_delete_successor_namespace(
+    capture_case, live_writer, monkeypatch, pause
+):
+    """Terminate ONLY A's gate backend; B completes before A's DELETE resumes."""
+    from django.db import connection, connections
+
+    _, run, _ = capture_case
+    copy_database = connections["default"].copy
+    gates, completed, old_namespaces = [], [], []
+
+    def remember_gate(*args, **kwargs):
+        database = copy_database(*args, **kwargs)
+        if kwargs.get("alias") == "metric_snapshot_execution":
+            gates.append(database)
+        return database
+
+    monkeypatch.setattr(connections["default"], "copy", remember_gate)
+
+    def complete_successor():
+        if old_namespaces:
+            return
+        old = DerivedMetricRun.objects.get(pk=run.id)
+        old_namespaces.append((old.attempt_id, old.snapshot_id))
+        with gates[0].cursor() as cursor:
+            cursor.execute("SELECT pg_backend_pid()")
+            gate_pid = cursor.fetchone()[0]
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_terminate_backend(%s)", [gate_pid])
+            assert cursor.fetchone()[0]
+        # The ORM and native connections remain usable; only the exclusion gate
+        # was lost. Its absence is NOT evidence that A stopped destructive work.
+        DerivedMetricRun.objects.filter(pk=run.id).update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        snapshots.execute_snapshot(run.id, store=live_writer.store, policy=lambda _: 0)
+        successor = DerivedMetricRun.objects.get(pk=run.id)
+        assert successor.status == "complete", successor.error
+        assert successor.attempt_id != old.attempt_id
+        assert successor.snapshot_id != old.snapshot_id
+        assert successor.result_id != old.attempt_id
+        assert overall(live_writer.store, successor) == [(3.0, 4)]
+        completed.append(
+            (successor.attempt_id, successor.snapshot_id, successor.result_id)
+        )
+
+    purge, native = snapshots.purge_run, live_writer.store.execute
+
+    def paused_purge(*args, **kwargs):
+        complete_successor()
+        return purge(*args, **kwargs)
+
+    def paused_delete(sql, *args, **kwargs):
+        if sql.startswith("ALTER TABLE derived_metric_results DELETE"):
+            complete_successor()
+        return native(sql, *args, **kwargs)
+
+    if pause == "before_purge":
+        monkeypatch.setattr(snapshots, "purge_run", paused_purge)
+    else:
+        monkeypatch.setattr(live_writer.store, "execute", paused_delete)
+    execute(run, live_writer.store)
+    assert len(completed) == 1
+    assert (run.attempt_id, run.snapshot_id, run.result_id) == completed[0]
+    assert run.status == "complete"
+    assert overall(live_writer.store, run) == [(3.0, 4)]
+    # A's eventual failure obligation is ALSO attempt-qualified. It must be safe
+    # to drain both the takeover's obligation and A's duplicate failure receipt.
+    jobs = MetricErasureRequest.objects.filter(
+        run_key=run.id, store_payload__protocol="metric_snapshot_attempt_cleanup"
+    )
+    assert jobs.count() == 1
+    assert jobs.get().result_key == old_namespaces[0][0]
+    assert jobs.get().snapshot_key == old_namespaces[0][1]
+    for job in jobs:
+        assert erasure.process_erasure(job.id, store=live_writer.store)
+    assert overall(live_writer.store, run) == [(3.0, 4)]
+    assert live_writer.store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+        {"s": str(run.snapshot_id)},
+    ) == [(4,)]
+    assert live_writer.store.execute(
+        "SELECT count() FROM derived_metric_commits WHERE run_id = %(r)s AND result_id = %(s)s",
+        {"r": str(run.id), "s": str(run.result_id)},
+    ) == [(1,)]
+
+
 def test_90_day_capture_stays_pinned_across_uncommitted_and_later_refresh(
     capture_case, live_writer
 ):
@@ -225,6 +382,68 @@ def test_all_passing_typed_condition_keeps_numeric_indicator(
         "SELECT input_values FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
         {"s": str(run.snapshot_id)},
     ) == [({"field_condition": 1.0},)]
+
+
+def test_committed_dispatch_blocks_erasure_without_holding_lifecycle(
+    capture_case, live_writer, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import close_old_connections, connection, transaction
+
+    from tracer.services.derived_metrics.deletion_protocol import project_lock
+
+    metric, run, _ = capture_case
+    store = live_writer.store
+    native = store.client.execute
+    attempted = []
+
+    def other_connection_can_lock():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                return project_lock(metric.project_id, blocking=False)
+        finally:
+            close_old_connections()
+
+    def pause_before_send(sql, *args, **kwargs):
+        if not attempted:
+            assert not connection.in_atomic_block, "snapshot setup retained a PG lock"
+        if kwargs.get("query_id", "").startswith("metric-snapshot-") and not attempted:
+            assert not connection.in_atomic_block
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                assert pool.submit(other_connection_can_lock).result(timeout=5)
+            receipt = MetricErasureRequest.objects.get(
+                run_key=run.id,
+                store_payload__protocol=snapshots.SUBMISSION_PROTOCOL,
+            )
+            assert receipt.store_payload["phase"] == "dispatching"
+            job = erasure.erase_metric_data(
+                organization_id=metric.organization_id,
+                project_id=metric.project_id,
+                scope_kind="project",
+            )
+            attempted.append(job.id)
+            # No query is active yet. Absence is NOT proof: the paused sender
+            # still owns a sealed socket and may submit immediately after this.
+            assert not erasure.process_erasure(job.id, store=store)
+            job.refresh_from_db()
+            assert job.status != "done" and job.completed_at is None
+        return native(sql, *args, **kwargs)
+
+    monkeypatch.setattr(store.client, "execute", pause_before_send)
+    execute(run, store)
+    assert len(attempted) == 1
+    # The first write can land, but revocation prevents capture publication.
+    assert run.status != "complete" and run.result_id is None
+    assert erasure.process_erasure(attempted[0], store=store)
+    for table in ("derived_metric_inputs", "derived_metric_results"):
+        assert store.execute(
+            f"SELECT count() FROM {table} WHERE project_id = %(project)s",
+            {"project": str(metric.project_id)},
+        ) == [(0,)]
+    assert run.pin_id is None
+    assert not MetricGenerationPin.objects.filter(project_id=metric.project_id).exists()
 
 
 def test_delete_snapshot_purges_every_result_version(capture_case, live_writer, user):

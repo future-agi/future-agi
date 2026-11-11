@@ -30,11 +30,19 @@ intent after all stores have receipts. All hooks participate in delete rollback.
 import hashlib
 import json
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from functools import wraps
+from time import sleep
 
 from django.apps import apps
-from django.db import DEFAULT_DB_ALIAS, IntegrityError, connections, transaction
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    IntegrityError,
+    OperationalError,
+    connections,
+    transaction,
+)
 from django.db.models import Q
 from django.db.models.deletion import Collector
 from django.db.models.signals import pre_delete
@@ -53,6 +61,98 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 
+_lock_budget = ContextVar("metric_lifecycle_lock_budget", default=None)
+
+
+@contextmanager
+def lifecycle_lock_budget(lease):
+    """Carry the writer's live lease/activity budget through model lock calls."""
+    token = _lock_budget.set(lease)
+    try:
+        with connections[DEFAULT_DB_ALIAS].execute_wrapper(_budgeted_row_lock):
+            yield
+    finally:
+        _lock_budget.reset(token)
+
+
+def _budgeted_row_lock(execute, sql, params, many, context):
+    """Bound ORM row-lock waits too, including UPDATEs outside explicit atomics.
+
+    The setting is transaction-local (safe through transaction-mode PgBouncer),
+    refreshed for EACH statement, and restored before any native IO can begin.
+    Advisory try-lock polling uses the same lease but needs no SQL timeout.
+    """
+    lease = _lock_budget.get()
+    statement = sql.lstrip().upper()
+    if lease is None or not (
+        statement.startswith(("UPDATE ", "INSERT ", "DELETE "))
+        or (statement.startswith("SELECT ") and "FOR UPDATE" in statement)
+    ):
+        return execute(sql, params, many, context)
+    milliseconds = max(1, int(lease.remaining_seconds() * 1000))
+    db = context["connection"]
+    try:
+        with transaction.atomic(using=db.alias):
+            # Use the driver cursor: these control statements must not recurse
+            # through the ORM execute wrapper or expose project/private values.
+            with db.connection.cursor() as cursor:
+                cursor.execute("SHOW lock_timeout")
+                previous = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT set_config('lock_timeout', %s, true)", [f"{milliseconds}ms"]
+                )
+                result = execute(sql, params, many, context)
+                cursor.execute(
+                    "SELECT set_config('lock_timeout', %s, true)", [previous]
+                )
+                return result
+    except OperationalError as exc:
+        if (
+            getattr(exc.__cause__, "sqlstate", None)
+            or getattr(exc.__cause__, "pgcode", None)
+        ) != "55P03":
+            raise
+        lease.remaining_seconds()
+        from tracer.services.derived_metrics.lease import MetricPassDeadline
+
+        raise MetricPassDeadline() from None
+
+
+def try_control_update(queryset, **updates):
+    """Best-effort fenced bookkeeping; never wait behind a stalled reader.
+
+    Skipped cleanup remains recoverable by lease expiry. Do not reset an epoch
+    or acknowledge work when this returns zero. Call outside a failed atomic.
+    """
+    token = _lock_budget.set(None)
+    try:
+        with transaction.atomic(using=queryset.db):
+            db = connections[queryset.db]
+            with db.cursor() as cursor:
+                cursor.execute("SHOW lock_timeout")
+                previous = cursor.fetchone()[0]
+                cursor.execute("SELECT set_config('lock_timeout', '100ms', true)")
+            ids = list(
+                queryset.select_for_update(skip_locked=True).values_list(
+                    "pk", flat=True
+                )
+            )
+            moved = queryset.filter(pk__in=ids).update(**updates) if ids else 0
+            with db.cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config('lock_timeout', %s, true)", [previous]
+                )
+            return moved
+    except OperationalError as exc:
+        if (
+            getattr(exc.__cause__, "sqlstate", None)
+            or getattr(exc.__cause__, "pgcode", None)
+        ) != "55P03":
+            raise
+        return 0
+    finally:
+        _lock_budget.reset(token)
+
 
 def project_lock(project_id, *, using=DEFAULT_DB_ALIAS, blocking=True):
     """Acquire the project serialization lock inside an existing transaction.
@@ -69,8 +169,20 @@ def project_lock(project_id, *, using=DEFAULT_DB_ALIAS, blocking=True):
         if not blocking:
             cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
             return cursor.fetchone()[0]
-        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
-        return True
+        lease = _lock_budget.get()
+        if lease is None:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+            return True
+        # Cooperative checks before SQL alone cannot interrupt a blocking lock.
+        # Try-locks keep the transaction usable, and the shared lease object
+        # accounts for renewals without ever extending the activity deadline.
+        while True:
+            lease.remaining_seconds()
+            cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+            if cursor.fetchone()[0]:
+                lease.remaining_seconds()
+                return True
+            sleep(min(0.05, lease.remaining_seconds()))
 
 
 def _project_lock_key(project_id):
@@ -79,25 +191,6 @@ def _project_lock_key(project_id):
         "big",
         signed=True,
     )
-
-
-@contextmanager
-def project_dispatch_fence(project_id):
-    """Same project lock across independently committed dispatch lifecycle phases.
-
-    Session ownership fences late writers while a drain commits a no-dispatch
-    decision. A transaction lock alone cannot preserve a dispatch marker when a
-    native call fails and its surrounding transaction rolls back.
-    """
-    db = connections[DEFAULT_DB_ALIAS]
-    key = _project_lock_key(project_id)
-    with db.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_lock(%s)", [key])
-    try:
-        yield
-    finally:
-        with db.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
 
 
 @contextmanager
