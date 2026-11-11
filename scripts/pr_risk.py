@@ -1490,8 +1490,8 @@ def prepare(api, policy, settings, event, event_name):
     if plan == "retry-later":
         summary(
             "Waiting: the review of this exact revision did not finish (the head or "
-            "dev moved, or the AI job failed). Update the branch from dev or push a "
-            "commit to retry."
+            "dev moved, the AI job failed, or the review could not start). Update the "
+            "branch from dev or push a commit to retry."
         )
         return
     if plan != "new":

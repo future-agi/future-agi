@@ -61,7 +61,9 @@ those files take the human path.
 
 ## Switches and administrative prerequisites
 
-No repository settings are changed by the workflow installation.
+No repository settings are changed by the workflow installation, with one
+exception: if the owner has not created the environment `pr-autopilot`, GitHub
+creates it, with no rules, the first time the gate job runs.
 
 | Variable, secret, label or setting | Default | Administrative action |
 | --- | --- | --- |
@@ -573,7 +575,9 @@ LOW path, so a person's merge of a LOW file would not start them either. Every
 `dev` push workflow accepts `workflow_dispatch`. A test reads every workflow
 file and fails if a `dev` push workflow that a LOW merge would start is not
 dispatched under the same paths, or if a dispatch's inputs do not fit the
-workflow. Widening the LOW allowlist can therefore require new entries.
+workflow. It counts every push trigger form that can run on `dev`, and reports
+`branches-ignore`, `paths-ignore` and negated branch patterns as not modelled.
+Widening the LOW allowlist can therefore require new entries.
 
 Those workflows execute their own trusted post-merge code and use their own
 permissions/secrets. This lane adds no production credentials and does not

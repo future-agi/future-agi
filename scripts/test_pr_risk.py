@@ -3,6 +3,7 @@
 
 import copy
 import datetime as dt
+import fnmatch
 import http.client
 import json
 import os
@@ -954,10 +955,16 @@ class EvidenceTests(unittest.TestCase):
         )
 
     @staticmethod
-    def post_merge_gaps(policy):
+    def repository_workflows():
+        import yaml
+
+        directory = Path(__file__).resolve().parents[1] / ".github/workflows"
+        return {path.name: yaml.safe_load(path.read_text()) for path in sorted(directory.glob("*.y*ml"))}
+
+    @staticmethod
+    def post_merge_gaps(policy, workflows):
         """Dev push workflows a person's merge of a LOW file would start, but
         whose post-merge dispatch is missing, filtered differently or invalid."""
-        import yaml
 
         def samples(glob):
             """LOW example paths for one allowlist glob: ** as one and as zero directories."""
@@ -970,33 +977,42 @@ class EvidenceTests(unittest.TestCase):
         gaps = [path for path in low if risk.classify([file(path)], policy)["tier"] != "low"]
         configured = {entry["workflow"]: entry for entry in policy["post_merge_workflows"]}
         seen = set()
-        for path in sorted((Path(__file__).resolve().parents[1] / ".github/workflows").glob("*.y*ml")):
-            workflow = yaml.safe_load(path.read_text())
+        for name, workflow in workflows.items():
             on = workflow.get(True, workflow.get("on"))
+            if isinstance(on, str):
+                on = {on: None}
+            elif isinstance(on, list):
+                on = dict.fromkeys(on)
             if not isinstance(on, dict) or "push" not in on:
                 continue
             push = on["push"] or {}
-            if "dev" not in (push.get("branches") or []):
+            unmodelled = {"branches-ignore", "paths-ignore"} & set(push)
+            if unmodelled or any(b.startswith("!") for b in push.get("branches") or []):
+                gaps.append(f"{name}: {', '.join(sorted(unmodelled)) or 'a negated branch'} is not modelled")
                 continue
-            if "paths-ignore" in push:
-                gaps.append(f"{path.name}: paths-ignore is not modelled")
+            if "branches" in push:
+                # GitHub's * stops at "/", which "dev" does not contain.
+                if not any(fnmatch.fnmatchcase("dev", b) for b in push["branches"]):
+                    continue
+            elif {"tags", "tags-ignore"} & set(push):
+                continue  # tag pushes only
             started = {sample for sample in low if risk.matches(sample, push.get("paths") or ["**"])}
-            if path.name not in configured:
+            if name not in configured:
                 if started:
-                    gaps.append(f"{path.name}: a LOW merge would start it, but it is not dispatched")
+                    gaps.append(f"{name}: a LOW merge would start it, but it is not dispatched")
                 continue
-            seen.add(path.name)
-            entry = configured[path.name]
+            seen.add(name)
+            entry = configured[name]
             inputs = ((on.get("workflow_dispatch") or {}).get("inputs") or {}) if "workflow_dispatch" in on else None
             if inputs is None:
-                gaps.append(f"{path.name}: has no workflow_dispatch")
+                gaps.append(f"{name}: has no workflow_dispatch")
                 continue
             if {sample for sample in low if risk.matches(sample, entry["paths"])} != started:
-                gaps.append(f"{path.name}: dispatch paths differ from its push filter on LOW paths")
+                gaps.append(f"{name}: dispatch paths differ from its push filter on LOW paths")
             if not set(entry["inputs"]) <= set(inputs) or any(
                 value.get("required") and key not in entry["inputs"] for key, value in inputs.items()
             ):
-                gaps.append(f"{path.name}: dispatch inputs do not fit the workflow")
+                gaps.append(f"{name}: dispatch inputs do not fit the workflow")
         gaps += [f"{name}: not a dev push workflow" for name in set(configured) - seen]
         return gaps
 
@@ -1008,7 +1024,8 @@ class EvidenceTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("PyYAML is not installed")
-        self.assertEqual(self.post_merge_gaps(POLICY), [])
+        workflows = self.repository_workflows()
+        self.assertEqual(self.post_merge_gaps(POLICY, workflows), [])
         names = {entry["workflow"] for entry in POLICY["post_merge_workflows"]}
         self.assertLessEqual({"sdk-compatibility.yml", "standalone-ci.yml", "update-ci.yml"}, names)
         # Each way to fall out of step is caught.
@@ -1021,8 +1038,23 @@ class EvidenceTests(unittest.TestCase):
         ):
             policy = copy.deepcopy(POLICY)
             change(policy)
-            with self.subTest(gaps=self.post_merge_gaps(policy)):
-                self.assertTrue(self.post_merge_gaps(policy))
+            with self.subTest(gaps=self.post_merge_gaps(policy, workflows)):
+                self.assertTrue(self.post_merge_gaps(policy, workflows))
+        # Every form of push trigger that can run on dev counts.
+        for extra in (
+            {"on": "push"},
+            {"on": ["push", "workflow_dispatch"]},
+            {True: {"push": {"paths": ["docs/**"]}}},
+            {True: {"push": {"branches": ["d*"]}, "workflow_dispatch": None}},
+            {True: {"push": {"branches-ignore": ["main"]}}},
+            {True: {"push": {"branches": ["**", "!main"]}}},
+        ):
+            with self.subTest(extra=extra):
+                self.assertTrue(self.post_merge_gaps(POLICY, {**workflows, "extra.yml": extra}))
+        # Tag-only pushes and other branches never run for a dev merge.
+        for extra in ({True: {"push": {"tags": ["v*"]}}}, {True: {"push": {"branches": ["feat/*"]}}}):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.post_merge_gaps(POLICY, {**workflows, "extra.yml": extra}), [])
 
     def test_no_secret_or_mention_echo_in_markdown_escaping(self):
         escaped = risk.safe_text("<script>@someone</script>")
@@ -1482,10 +1514,11 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.reservations())
         self.assertNotIn("context", {k: v for k, v in self.outputs.items() if v})
 
-    def test_forged_pass_from_a_base_branch_workflow_copy_cannot_merge(self):
+    def test_forged_pass_from_a_pull_request_target_run_cannot_merge(self):
         # A genuine blocking verdict on HEAD, then the same diff force-pushed as
-        # OTHER with a pass created by an edited workflow copy on another base
-        # branch: a pull_request_target run with the right title and path.
+        # OTHER with a pass recorded by a pull_request_target run with the right
+        # title and path. Such a run takes its workflow from main (before Dec
+        # 2025, from the PR's base branch), never dev's copy, so it never vouches.
         context = self.prepare()
         self.assertEqual(self.publish(context, verdict(blocking_findings=True)), "blocked")
         self.new_head(OTHER, force=True)
@@ -2488,6 +2521,26 @@ class ControllerTests(unittest.TestCase):
                         risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 self.assertFalse(self.merge_blocked_notes())
 
+    def test_a_blocked_note_for_an_older_head_is_updated_not_repeated(self):
+        context = self.passing_review()
+        self.api.pr["mergeable_state"] = "blocked"
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        [note] = self.merge_blocked_notes()
+        # A new revision is reviewed, approved and blocked the same way.
+        self.catch_up("1" * 40, OTHER)
+        context = self.prepare()
+        self.assertEqual(self.publish(context), "passed")
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        [note] = self.merge_blocked_notes()
+        self.assertIn("`" + "1" * 40 + "`", note)
+        self.assertNotIn(f"`{HEAD}`", note)
+        [note_id] = [c["id"] for c in self.api.comments if c["body"].startswith(risk.MERGE_BLOCKED_MARKER)]
+        self.assertEqual(len(self.api.writes(f"issues/comments/{note_id}")), 1)
+
     def test_a_refused_approval_posts_one_audit_comment(self):
         for status in (422, 403):
             with self.subTest(status=status):
@@ -2784,6 +2837,46 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.sweep(), [])
         # A person's comment that copies the marker is not the bot's audit.
         self.api.pr_comments[5][0]["user"] = {"login": "someone", "type": "User"}
+        self.assertEqual(self.sweep(), ["5"])
+
+    def test_sweep_reads_the_head_that_the_real_tier_audit_recorded(self):
+        # Round trip: the tier comment tier_audit writes is the one the sweep parses.
+        untrusted = settings(authors="")
+        self.prepare(untrusted, event_name="pull_request_target")
+        self.assertEqual({label["name"] for label in self.api.pr["labels"]}, {"autopilot-low"})
+        self.assertEqual(self.sweep(untrusted), [])
+        self.new_head("1" * 40, "a pushed change")
+        self.assertEqual(self.sweep(untrusted), ["42"])
+        # The re-tier run records the new head, so the next sweep is quiet.
+        self.prepare(untrusted)
+        self.assertEqual(self.sweep(untrusted), [])
+
+    def test_sweep_continues_past_an_unreadable_tier_audit_and_names_it(self):
+        self.api.open_prs = [self.open_pr(3, ["autopilot-medium"]), self.open_pr(4, ["autopilot-medium"]),
+                             self.open_pr(5)]
+        self.tier_comment(4, OTHER)
+        original = self.api.pages
+
+        def pages(route, key=None):
+            if route.startswith("issues/3/comments"):
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 502)", 502)
+            return original(route, key)
+
+        self.api.pages = pages
+        with self.assertRaisesRegex(risk.PolicyError, "tier audit of PR\\(s\\) 3 could not be read"):
+            self.sweep()
+        self.assertEqual(self.sent, ["4", "5"])
+
+    def test_sweep_dispatches_even_if_the_labels_cannot_be_checked(self):
+        self.api.open_prs = [self.open_pr(5)]
+        original = self.api.pages
+
+        def pages(route, key=None):
+            if route.startswith("labels"):
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 502)", 502)
+            return original(route, key)
+
+        self.api.pages = pages
         self.assertEqual(self.sweep(), ["5"])
 
     def test_sweep_caps_and_rotates_classification_after_trusted_low_prs(self):
