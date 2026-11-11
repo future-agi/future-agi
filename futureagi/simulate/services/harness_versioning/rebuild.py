@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from functools import partial
 from itertools import zip_longest
@@ -1792,12 +1792,26 @@ def _close_if_open(
     error: dict | None = None,
     states: tuple = OPEN,
     turn_event: Any = None,
+    still: Callable[[HarnessNudge, HostedHarnessConversation | None, Any], bool]
+    | None = None,
 ) -> None:
-    """Fail the rebuild under the locks if it is still in ``states``."""
+    """Fail the rebuild under the locks if it is still in ``states``.
+
+    With ``still``, the reason to close is checked again under the locks, against
+    the locked conversation, and the rebuild is left open if it no longer holds.
+    """
     with transaction.atomic():
         locked = nudges._head(environment_id, lock=True)
         nudge = _lock_nudge(locked, nudge_id) if locked is not None else None
         if nudge is not None and nudge.state in states:
+            if still is not None:
+                conversation = (
+                    HostedHarnessConversation.no_workspace_objects.select_for_update()
+                    .filter(job_id=environment_id)
+                    .first()
+                )
+                if not still(nudge, conversation, timezone.now()):
+                    return
             close_nudge(
                 nudge,
                 locked=locked,
@@ -1824,6 +1838,41 @@ def _no_runtime(conversation: HostedHarnessConversation | None, now: Any) -> boo
     return not runtime_is_live(lease, now=now) and not runtime_start_pending(
         lease, now=now
     )
+
+
+def _sandbox_gone(conversation: HostedHarnessConversation | None, now: Any) -> bool:
+    """The rebuild's own chat sandbox is past its lease and has gone quiet.
+
+    After ``expires_at`` the sandbox can't reach the platform (auth refuses it) and
+    the provider deletes it, so that sandbox can't finish the turn. The heartbeat must
+    also be stale, so a renewal already in flight, or a clock that runs ahead, can't
+    end a live turn.
+    """
+    from simulate.services.hosted_harness_conversation import RUNTIME_STALE_SECONDS
+
+    lease = _chat_lease(conversation) if conversation is not None else None
+    if lease is None or lease.expires_at > now:
+        return False
+    return lease.heartbeat_at is None or (
+        now - lease.heartbeat_at > timedelta(seconds=RUNTIME_STALE_SECONDS)
+    )
+
+
+def _rebuild_stuck(
+    nudge: HarnessNudge, conversation: HostedHarnessConversation | None, now: Any
+) -> bool:
+    """A running rebuild whose turn can no longer end on its own."""
+    if (
+        conversation is not None
+        and (nudge.draft_snapshot or {}).get("turn_sequence") is not None
+    ):
+        return False
+    taken = _taken_at(nudge)
+    if taken is None:
+        return False
+    if now - taken > NUDGE_STUCK_AFTER and _no_runtime(conversation, now):
+        return True
+    return _sandbox_gone(conversation, now)
 
 
 def check_nudges(environment_id: Any) -> None:
@@ -1877,13 +1926,8 @@ def check_nudges(environment_id: Any) -> None:
             else:
                 finish_nudge_turn(str(conversation.id), sequence)
         return
-    taken = _taken_at(nudge)
-    if (
-        taken is not None
-        and now - taken > NUDGE_STUCK_AFTER
-        and _no_runtime(conversation, now)
-    ):
-        _close_if_open(environment_id, nudge.id, "rebuild_stuck")
+    if _rebuild_stuck(nudge, conversation, now):
+        _close_if_open(environment_id, nudge.id, "rebuild_stuck", still=_rebuild_stuck)
 
 
 def _fair(rows: Any, limit: int) -> list[Any]:

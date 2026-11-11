@@ -2040,6 +2040,68 @@ class TestGuestTurn:
         ]
 
 
+def _rebuild_with_lease(
+    user,
+    workspace,
+    storage,
+    key,
+    auth_client,
+    capture,
+    *,
+    lease_state,
+    expires_in,
+    heartbeat_age,
+    started_ago=timedelta(minutes=20),
+):
+    """A rebuild whose turn started ``started_ago`` ago, a streaming reply, an open
+    draft of the nudge's own, and the chat's sandbox lease in the given shape."""
+    from simulate.services.hosted_harness_gateway import with_authoring_basis
+
+    environment, nudge, _a1, _a2 = _queued(
+        user, workspace, storage, key, auth_client, capture
+    )
+    assert rebuild.dispatch_nudge(environment.id, start_runtime=False)
+    nudge.refresh_from_db()
+    rebuild.start_nudge_turn(
+        nudge.id,
+        message_id=nudge.command_message_id,
+        started_at=timezone.now() - started_ago,
+    )
+    drafts.record_draft(
+        environment,
+        with_authoring_basis(_authoring(contract=REFUND), ""),
+        origin="nudge",
+        nudge=nudge,
+    )
+    conversation = nudge.command_message.conversation
+    issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-nudge",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    now = timezone.now()
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation
+    ).update(
+        state=lease_state,
+        expires_at=now + expires_in,
+        heartbeat_at=now - heartbeat_age,
+    )
+    conversation.refresh_from_db()
+    reply = HostedHarnessConversationMessage.no_workspace_objects.create(
+        conversation=conversation,
+        sequence=conversation.next_message_sequence,
+        role="assistant",
+        state="streaming",
+    )
+    HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(
+        next_message_sequence=conversation.next_message_sequence + 1
+    )
+    return environment, nudge, conversation, reply
+
+
 class TestChecks:
     def test_a_command_never_taken_ends_the_rebuild(
         self,
@@ -2145,6 +2207,426 @@ class TestChecks:
             id=nudge.command_message_id
         )
         assert message.state == "failed"
+
+    def test_a_rebuild_whose_sandbox_ran_out_of_lease_and_went_quiet_is_closed(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-gone",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="responding", active_invocation_id="turn-1")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "rebuild_stuck"})
+        message = HostedHarnessConversationMessage.no_workspace_objects.get(
+            id=nudge.command_message_id
+        )
+        assert message.state == "failed"
+        reply.refresh_from_db()
+        assert reply.state == "failed"
+        assert drafts.open_draft(environment, "environment") is None
+        assert (
+            HarnessEnvironmentVersion.all_objects.filter(
+                job=environment, nudge=nudge
+            ).values_list("status", "discard_reason")
+        ).first() == ("discarded", "rebuild_restored")
+        conversation.refresh_from_db()
+        assert (conversation.state, conversation.active_invocation_id) == ("cold", None)
+        assert _names(inline, "stop_harness_nudge_sandbox") == [
+            [str(conversation.id), "sandbox-nudge"]
+        ]
+
+    def test_a_renewal_in_flight_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-renewing",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(seconds=-5),
+            heartbeat_age=timedelta(seconds=10),
+        )
+
+        rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_a_restart_in_progress_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-restarting",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="starting",
+            expires_in=timedelta(minutes=8),
+            heartbeat_age=timedelta(minutes=2),
+        )
+
+        rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_a_quiet_sandbox_still_inside_its_lease_is_left_to_the_sweep(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-in-lease",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=10),
+            heartbeat_age=timedelta(minutes=5),
+        )
+
+        rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_a_failed_start_whose_lease_has_run_out_closes_the_rebuild(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-failed-start",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="expired",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=11),
+        )
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="degraded")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "rebuild_stuck"})
+        conversation.refresh_from_db()
+        assert conversation.state == "degraded"
+
+    def test_a_failed_start_still_inside_its_lease_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-failed-in-lease",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="expired",
+            expires_in=timedelta(minutes=5),
+            heartbeat_age=timedelta(minutes=5),
+        )
+
+        rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_a_persons_message_waiting_behind_the_rebuild_restarts_the_chat(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-waiting",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="responding", active_invocation_id="turn-1")
+        enqueue_message(environment, content="later", client_request_id="later")
+        inline.clear()
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "rebuild_stuck"})
+        conversation.refresh_from_db()
+        assert (conversation.state, conversation.active_invocation_id) == (
+            "starting",
+            None,
+        )
+        assert _names(inline, "ensure_hosted_harness_conversation_runtime")
+
+    def test_a_restart_loop_that_keeps_renewing_the_lease_stays_on_the_hour_rule(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-loop",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="starting",
+            expires_in=timedelta(minutes=19),
+            heartbeat_age=timedelta(minutes=11),
+        )
+
+        rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_the_hour_rule_still_closes_a_rebuild_whose_lease_has_not_run_out(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-hour",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=10),
+            heartbeat_age=timedelta(minutes=5),
+            started_ago=timedelta(minutes=61),
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "rebuild_stuck"})
+
+    def test_the_hour_rule_leaves_a_rebuild_whose_sandbox_still_answers(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-hour-live",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=10),
+            heartbeat_age=timedelta(seconds=10),
+            started_ago=timedelta(minutes=61),
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+
+    def test_a_restart_claimed_between_the_check_and_the_close_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-claimed",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        real = rebuild._rebuild_stuck
+        calls = []
+
+        def claimed_after_the_first_look(nudge_, conversation_, now):
+            calls.append(1)
+            result = real(nudge_, conversation_, now)
+            if len(calls) == 1:
+                HostedHarnessConversationLease.no_workspace_objects.filter(
+                    conversation=conversation
+                ).update(
+                    state="starting",
+                    expires_at=now + timedelta(minutes=10),
+                    heartbeat_at=now,
+                )
+            return result
+
+        with patch.object(rebuild, "_rebuild_stuck", claimed_after_the_first_look):
+            with django_capture_on_commit_callbacks(execute=True):
+                rebuild.check_nudges(environment.id)
+
+        assert len(calls) == 2
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+        lease = HostedHarnessConversationLease.no_workspace_objects.get(
+            conversation=conversation
+        )
+        assert lease.state == "starting"
+        assert not _names(inline, "stop_harness_nudge_sandbox")
+
+    def test_a_turn_that_ended_between_the_check_and_the_close_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-ended",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        real = rebuild._rebuild_stuck
+        calls = []
+
+        def ended_after_the_first_look(nudge_, conversation_, now):
+            calls.append(1)
+            result = real(nudge_, conversation_, now)
+            if len(calls) == 1:
+                HarnessNudge.no_workspace_objects.filter(id=nudge.id).update(
+                    draft_snapshot={**nudge_.draft_snapshot, "turn_sequence": 1}
+                )
+            return result
+
+        with patch.object(rebuild, "_rebuild_stuck", ended_after_the_first_look):
+            with django_capture_on_commit_callbacks(execute=True):
+                rebuild.check_nudges(environment.id)
+
+        assert len(calls) == 2
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+        assert drafts.open_draft(environment, "environment") is not None
+        assert not HarnessEnvironmentVersion.all_objects.filter(
+            job=environment, nudge=nudge, status="discarded"
+        ).exists()
 
     def test_recovery_keeps_messages_waiting_behind_a_rebuild(
         self,
