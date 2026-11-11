@@ -212,6 +212,37 @@ def test_i05_real_clickhouse_trace(auth_client, log_factory, collector_tree, pro
     assert nav["span_id"] == collector_tree[1]["id"]
 
 
+def test_i05b_trace_destination_nests_the_evaluated_child(
+    auth_client, log_factory, collector_tree
+):
+    # View trace (R1-02) looks for exactly one span with the pinned id, trace
+    # and project anywhere in the tree the trace drawer reads. Hold the real
+    # response to that shape: the evaluated collector child is nested.
+    root, child = collector_tree
+    nav = _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))
+    response = auth_client.get(
+        f"/tracer/trace/{nav['trace_id']}/", {"project_id": nav["project_id"]}
+    )
+    assert response.status_code == 200, response.content
+    result = response.json()["result"]
+    assert (result["trace"]["id"], result["trace"]["project"]) == (
+        nav["trace_id"],
+        nav["project_id"],
+    )
+    top_level = {
+        entry["observation_span"]["id"] for entry in result["observation_spans"]
+    }
+    assert root["id"] in top_level and child["id"] not in top_level
+    matches, pending = [], list(result["observation_spans"])
+    while pending:
+        entry = pending.pop()
+        span = entry["observation_span"]
+        if span["id"] == nav["span_id"]:
+            matches.append((span["trace"], span["project"]))
+        pending.extend(entry.get("children") or [])
+    assert matches == [(nav["trace_id"], nav["project_id"])]
+
+
 def test_i06_clickhouse_only_without_postgres_trace(
     auth_client, log_factory, collector_tree
 ):
