@@ -3007,7 +3007,8 @@ export default function EnvironmentWorkspace() {
                     Make a copy
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Same agent makes a duplicate; another agent a fork.
+                    Opens a copy to change freely, for this agent or another.
+                    The original stays as it is.
                   </Typography>
                 </Box>
               </MenuItem>
@@ -3032,10 +3033,11 @@ export default function EnvironmentWorkspace() {
                 />
                 <Box>
                   <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    Try in sandbox
+                    Try the tools yourself
                   </Typography>
                   <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Act as the agent and watch the world. Not a run.
+                    Opens World &amp; tools: call a tool as the agent would and see
+                    the records change. Nothing is run or scored.
                   </Typography>
                 </Box>
               </MenuItem>
@@ -3065,7 +3067,8 @@ export default function EnvironmentWorkspace() {
                       <Typography
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
-                        You skipped it — it&apos;s still here to take.
+                        Opens the catalogue update you skipped: see what
+                        changed, then take it or keep your version.
                       </Typography>
                     </Box>
                   </MenuItem>
@@ -3076,7 +3079,7 @@ export default function EnvironmentWorkspace() {
                   id: "package",
                   icon: "solar:box-linear",
                   title: "Save an environment release",
-                  body: "A private, fixed copy another agent can run the same tasks on.",
+                  body: "Opens the commands that save this version as a private release, so other agents run exactly the same tasks.",
                 },
               ].map((m) => (
                 <MenuItem
@@ -3123,11 +3126,16 @@ export default function EnvironmentWorkspace() {
                   width={16}
                   sx={{ flexShrink: 0 }}
                 />
-                <Typography
-                  sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
-                >
-                  Delete environment
-                </Typography>
+                <Box>
+                  <Typography
+                    sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
+                  >
+                    Delete environment
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Asks you to confirm first.
+                  </Typography>
+                </Box>
               </MenuItem>
             </Menu>
           </>

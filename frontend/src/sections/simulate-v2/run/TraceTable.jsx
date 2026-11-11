@@ -55,6 +55,7 @@ import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
 import { packOf } from "../workspace/scenarios/redTeamPacks";
 import { memberPathOf } from "../_mock/memberAttribution";
+import TrialDots from "./TrialDots";
 
 /**
  * The traces, as a table with optional grouping.
@@ -640,6 +641,8 @@ export default function TraceTable({
         rows,
         outcomes,
         blockers,
+        /* Scenarios ran more than once: the group reads "passed every trial". */
+        repeated: rows.some((r) => (r.samples?.length || 0) > 1),
         count: rows.length,
         pct: measured.length
           ? Math.round((passed / measured.length) * 100)
@@ -903,6 +906,7 @@ export default function TraceTable({
                 )}
                 <Stack direction="row" alignItems="center" spacing={0.75}>
                   <VerdictLabel task={t} outcome={outcome} />
+                  <TrialDots samples={t.samples} />
                   <Box
                     sx={{
                       width: "3px",
@@ -1472,9 +1476,14 @@ function GroupHeaderRow({
 
   /* The group's pass rate, read the way the run summary reads it: passed
      out of the scenarios that were scored. */
+  /* Repeated scenarios: a scenario counts as passed only when every one of
+     its trials passed, and the flaky ones (some trials passed) are said. */
+  const flakyN = group.repeated ? group.outcomes?.mixed || 0 : 0;
   const passText =
     group.measured > 0
-      ? ` · ${group.pct}% passed ${group.passed}/${group.measured}`
+      ? group.repeated
+        ? ` · ${group.passed}/${group.measured} passed every trial${flakyN ? ` · ${flakyN} flaky` : ""}`
+        : ` · ${group.pct}% passed ${group.passed}/${group.measured}`
       : "";
   const passMark = group.measured > 0 && (
     <Typography
@@ -1488,9 +1497,11 @@ function GroupHeaderRow({
     >
       {"· "}
       <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
-        {`${group.pct}%`}
+        {group.repeated ? `${group.passed}/${group.measured}` : `${group.pct}%`}
       </Box>
-      {` passed ${group.passed}/${group.measured}`}
+      {group.repeated
+        ? ` passed every trial${flakyN ? ` · ${flakyN} flaky` : ""}`
+        : ` passed ${group.passed}/${group.measured}`}
     </Typography>
   );
   /* Member groups also say what that member fails at most. */

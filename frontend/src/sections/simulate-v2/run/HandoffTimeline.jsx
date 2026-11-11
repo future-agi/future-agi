@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -158,6 +158,53 @@ function Details({ agent, task }) {
 }
 Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
+/* The path the work took, as numbers in order (1 → 2 → 3 → 1 is a
+   loop); the same numbers name the graph's nodes. Who each is, on hover. */
+function PathLine({ path }) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      useFlexGap
+      flexWrap="wrap"
+      sx={{ px: 2, pt: 1.25, columnGap: 0.75, rowGap: 0.5 }}
+    >
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mr: 0.5 }}>
+        Path
+      </Typography>
+      {path.map((stop, i) => (
+        <Fragment key={i}>
+          {i > 0 && (
+            <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+              {"→"}
+            </Typography>
+          )}
+          <Tooltip
+            arrow
+            title={`${stop.who.map((w) => `${w.n} · ${w.name}`).join(" and ")}${stop.together ? " — handed work at the same time" : ""}`}
+          >
+            <Box
+              component="span"
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                px: 0.75,
+                borderRadius: "4px",
+                bgcolor: "background.neutral",
+                cursor: "default",
+              }}
+            >
+              {stop.who.map((w) => w.n).join(" + ")}
+            </Box>
+          </Tooltip>
+        </Fragment>
+      ))}
+    </Stack>
+  );
+}
+PathLine.propTypes = { path: PropTypes.array.isRequired };
+
 const findEntry = (entries, id) => {
   for (const e of entries || []) {
     if (e.observation_span?.id === id) return e;
@@ -215,7 +262,12 @@ export default function HandoffTimeline({ agent, task }) {
           direction="row"
           spacing={1.5}
           alignItems="center"
-          sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{
+            px: 2,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
         >
           <Button
             size="small"
@@ -290,6 +342,7 @@ export default function HandoffTimeline({ agent, task }) {
         />
       </Box>
       <Divider />
+      {g.path?.length > 1 && <PathLine path={g.path} />}
       <Box sx={{ height: 520 }}>
         <AgentGraph
           data={graph}

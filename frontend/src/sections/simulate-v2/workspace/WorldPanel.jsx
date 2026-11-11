@@ -269,7 +269,7 @@ export default function WorldPanel({
             "&:hover": { textDecorationColor: "currentColor" },
           }}
         >
-          Try in sandbox
+          Try the tools yourself
         </ButtonBase>
         <Box flex={1} />
         <EnvironmentKindNote env={env} envState={envState} compact />

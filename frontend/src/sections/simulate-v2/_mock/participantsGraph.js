@@ -3,8 +3,10 @@
   already reads (TraceTreeV2, buildTraceGraph → AgentGraph), plus the three
   graph additions from the Participants view proposal (internal-docs,
   participants-view-proposal.md §4):
-    1. step numbers on edges, in recorded order across the whole call
-       ("2, 6" is a loop; siblings handed work at once read 3a / 3b);
+    1. the path the work took: each participant numbered in the order it
+       first acted, and the path as those numbers (1 → 2 → 3 → 1 is a
+       loop; siblings handed work at once share a step) — Chintan's
+       canvas comment, 10 Nov, in place of step numbers on edges;
        a control pass (transferred) is a dashed edge
     2. declared workers that never ran as "Not run" ghosts, more than three
        grouped into one node
@@ -125,7 +127,8 @@ export const participantsGraphOf = (p) => {
   );
   const workerSpan = (t, w, turnWorkers) => {
     const node = blockNode[w.id] || w.id;
-    const parent = (w.parentId && blockNode[w.parentId]) || w.parentId || coord.id;
+    const parent =
+      (w.parentId && blockNode[w.parentId]) || w.parentId || coord.id;
     const st = endStateOf(w, { undeclared: undeclaredIds.has(w.id) });
     if (st && states[node]?.tone !== "error") states[node] = st;
     if (w.transfer || w.state === "transferred")
@@ -179,9 +182,7 @@ export const participantsGraphOf = (p) => {
       input: t.request,
       output: t.reply,
       children: [
-        ...ws
-          .filter((w) => !w.parentId)
-          .map((w) => workerSpan(t, w, ws)),
+        ...ws.filter((w) => !w.parentId).map((w) => workerSpan(t, w, ws)),
         ...(t.untied || []).map((c) => toolSpan(t, c, coord.id, coord.name)),
         ...own.map((c) => toolSpan(t, c, coord.id, coord.name)),
       ],
@@ -205,7 +206,9 @@ export const participantsGraphOf = (p) => {
   });
   const callEnd = Math.max(
     0,
-    ...turns.map((s) => (Date.parse(s.observation_span.end_time) - BASE) / 1000),
+    ...turns.map(
+      (s) => (Date.parse(s.observation_span.end_time) - BASE) / 1000,
+    ),
   );
   const spans = [
     span("call", "Call (whole session)", "chain", {
@@ -217,8 +220,8 @@ export const participantsGraphOf = (p) => {
     }),
   ];
 
-  /* 1 · Step numbers in recorded order; hand-offs from one parent that ran
-     in parallel share a number, lettered a, b. */
+  /* 1 · Moves in recorded order; hand-offs from one parent that ran in
+     parallel share a number. */
   const ordered = steps
     .map((s, i) => ({ ...s, i }))
     .sort((a, b) => a.at - b.at || a.i - b.i);
@@ -230,37 +233,52 @@ export const participantsGraphOf = (p) => {
     if (!together) n += 1;
     s.n = n;
   });
-  const size = {};
-  ordered.forEach((s) => (size[s.n] = (size[s.n] || 0) + 1));
-  const seen = {};
-  const labels = {};
-  ordered.forEach((s) => {
-    const k = (seen[s.n] = (seen[s.n] ?? -1) + 1);
-    const mark = size[s.n] > 1 ? `${s.n}${String.fromCharCode(97 + k)}` : `${s.n}`;
-    (labels[s.edge] = labels[s.edge] || []).push(mark);
+
+  /* The path the work took, as Chintan reads it (10 Nov): each participant
+     gets a number in the order it first acted, and the path lists those
+     numbers in the order the work moved, so a loop reads 1 → 2 → 3 → 1.
+     Siblings handed work at once share one step. Tools aren't steps. */
+  const moves = ordered.filter((st) => st.kind !== "tool");
+  const path = [];
+  /* Who holds the work now: one participant, or a group working at once. */
+  let at = [];
+  moves.forEach((st) => {
+    const [from, to] = st.edge.split("->");
+    const together = moves.filter((x) => x.n === st.n);
+    if (together.length > 1 && together[0] !== st) return;
+    if (!at.includes(from)) path.push({ ids: [from] });
+    const ids = together.map((x) => x.edge.split("->")[1]);
+    path.push(together.length > 1 ? { ids, together: true } : { ids: [to] });
+    at = together.length > 1 ? ids : [to];
   });
+  const numberOf = {};
+  path.forEach((stop) =>
+    stop.ids.forEach((id) => {
+      if (!(id in numberOf)) numberOf[id] = Object.keys(numberOf).length + 1;
+    }),
+  );
 
   const graph = buildTraceGraph(spans);
   graph.edges = graph.edges.map((e) => {
     const key = `${e.source}->${e.target}`;
-    return labels[key] || control.has(key)
-      ? {
-          ...e,
-          ...(labels[key] && { _stepLabel: labels[key].join(", ") }),
-          ...(control.has(key) && { _control: true }),
-        }
-      : e;
+    return control.has(key) ? { ...e, _control: true } : e;
   });
-  graph.nodes = graph.nodes.map((nd) =>
-    states[nd.id] ? { ...nd, _state: states[nd.id] } : nd,
-  );
+  graph.nodes = graph.nodes.map((nd) => ({
+    ...nd,
+    ...(numberOf[nd.id] && { name: `${numberOf[nd.id]} · ${nd.name}` }),
+    ...(states[nd.id] && { _state: states[nd.id] }),
+  }));
 
   /* 2 · Declared workers that never ran: ghosts under the coordinator. */
   const notRun = p.observed ? p.notRun || [] : [];
   const ghosts =
     notRun.length > 3
       ? [{ id: "__not_run__", name: `${notRun.length} workers`, names: notRun }]
-      : notRun.map((name) => ({ id: `__not_run__${name}`, name, names: [name] }));
+      : notRun.map((name) => ({
+          id: `__not_run__${name}`,
+          name,
+          names: [name],
+        }));
   ghosts.forEach((g) => {
     graph.nodes.push({
       id: g.id,
@@ -289,7 +307,20 @@ export const participantsGraphOf = (p) => {
     });
   });
 
-  return { spans, graph, nodeOfSpan };
+  /* Each stop: { ids, together }, with each id's number and name. */
+  const nameOf = Object.fromEntries(
+    buildTraceGraph(spans).nodes.map((nd) => [nd.id, nd.name]),
+  );
+  const pathStops = path.map((stop) => ({
+    together: !!stop.together,
+    who: stop.ids.map((id) => ({
+      id,
+      n: numberOf[id],
+      name: nameOf[id] || id,
+    })),
+  }));
+
+  return { spans, graph, nodeOfSpan, path: pathStops };
 };
 
 /** The span tree cut to one participant: its turns, the path to it, and
