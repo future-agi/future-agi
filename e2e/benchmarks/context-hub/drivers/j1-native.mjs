@@ -13,6 +13,7 @@ const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // npm @openai/codex@0.167.1 → @openai/codex-linux-x64 vendor musl executable.
 // Same pin as the J5 native fixture; a different binary is not this evidence.
 export const CODEX_VERSION = 'codex-cli 0.167.1';
+const PLUGIN_ISOLATION = ['plugins', 'plugin_discovery_prefetch', 'remote_plugin', 'plugin_sharing', 'apps'];
 export const CODEX_BINARY_SHA256 = 'dd5bfdf19d794dcc6fb482d2d5a2d9fb31d11f6caa44b303bb72890d461e8a02';
 
 const inputTexts = (request) => (request.input ?? []).flatMap((item) => (typeof item.content === 'string' ? [item.content]
@@ -111,6 +112,9 @@ export async function observeCodexDelivery({ executable, executableSha256, proje
       '-c', 'model="gpt-5.1-codex-mini"', '-c', 'model_provider="fixture"', '-c', 'model_providers.fixture.name="Synthetic fixture"',
       '-c', `model_providers.fixture.base_url="${origin}"`, '-c', 'model_providers.fixture.wire_api="responses"',
       '-c', 'model_providers.fixture.env_key="J1_FAKE_API_KEY"', '-c', 'model_providers.fixture.requires_openai_auth=false', '-c', 'analytics.enabled=false',
+      // Offline, project-only host: no remote plugin/app catalogue clones that
+      // outlive the turn or add skills the fixture did not install.
+      ...PLUGIN_ISOLATION.flatMap((feature) => ['-c', `features.${feature}=false`]),
       'Open each installed policy skill you are asked to read. Do not change files.'],
     { env, signal, timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
     run.child.stdin.end();
@@ -123,6 +127,6 @@ export async function observeCodexDelivery({ executable, executableSha256, proje
       requests, process_events: events };
   } finally {
     server.closeAllConnections(); await new Promise((done) => server.close(done));
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
