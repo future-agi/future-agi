@@ -148,6 +148,9 @@ class FakeGitHub:
         self.after_approval = None
         self.run_event = "workflow_dispatch"
         self.run_path = f".github/workflows/{risk.WORKFLOW}"
+        self.run_title = "PR autopilot #42"
+        self.dev_tip = BASE
+        self.behind = 1
 
     def pages(self, route, key=None):
         del key
@@ -197,8 +200,15 @@ class FakeGitHub:
             }
         if method == "GET" and route == "pulls/42":
             return copy.deepcopy(self.pr)
+        if method == "GET" and route == "git/ref/heads/dev":
+            return {"object": {"sha": self.dev_tip}}
+        if method == "GET" and route.startswith("compare/"):
+            # The PR contains the dev tip only when its recorded base is that tip,
+            # unless a test says the branch is current despite a stale base.
+            return {"behind_by": 0 if self.pr["base"]["sha"] == self.dev_tip else self.behind}
         if method == "GET" and route.startswith("actions/runs/"):
             return {
+                "display_title": self.run_title,
                 "path": self.run_path,
                 "event": self.run_event,
                 "head_branch": "dev",
@@ -1061,6 +1071,71 @@ class ControllerTests(unittest.TestCase):
             risk.review_check_passes(self.api, self.api.checks, context, POLICY)
         )
 
+    def test_review_evidence_from_a_run_for_another_pr_is_not_trusted(self):
+        context = self.passing_review()
+        self.api.run_title = "PR autopilot #7"
+        self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+
+    def test_a_second_review_check_cannot_override_a_failure(self):
+        context = self.passing_review()
+        failed = copy.deepcopy(next(c for c in self.api.checks if c["name"] == POLICY["review_check"]))
+        failed.update(id=500, conclusion="failure")
+        forged = copy.deepcopy(failed)
+        forged.update(id=501, conclusion="success")
+        self.api.checks += [failed, forged]
+        self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
+
+    def test_deleted_ledger_comment_does_not_buy_another_review(self):
+        context = self.prepare()
+        self.assertFalse(risk.publish_verdict(self.api, POLICY, context, verdict(blocking_findings=True), "success"))
+        reviews = len(self.api.writes("check-runs"))
+        self.api.comments = [c for c in self.api.comments if not c["body"].startswith(risk.ROUND_MARKER)]
+        self.prepare()
+        self.assertEqual(len(self.api.writes("check-runs")), reviews)
+        self.assertEqual(self.outputs["review"], "false")
+        self.assertTrue(any("already consumed a review attempt" in c["body"] for c in self.api.comments))
+
+    def test_stale_recorded_base_but_current_branch_proceeds(self):
+        self.api.pr["base"]["sha"] = OTHER
+        self.api.behind = 0
+        context = self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual(context["base"], BASE)
+
+    def test_branch_behind_dev_waits_without_spending_a_review(self):
+        self.api.dev_tip = OTHER
+        with patch.dict(os.environ, {"POLICY_SHA": OTHER}):
+            self.prepare()
+        self.assertFalse(self.api.writes("check-runs"))
+        self.assertEqual(self.outputs["review"], "false")
+
+    def test_failing_advisory_checks_do_not_block_the_merge(self):
+        context = self.passing_review()
+        self.api.pr["mergeable_state"] = "unstable"
+        risk.merge(self.api, POLICY, settings(), context)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        for state in ("blocked", "behind", "dirty", "unknown", None):
+            with self.subTest(state=state):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.pr["mergeable_state"] = state
+                with self.assertRaises(risk.PolicyError):
+                    risk.merge(self.api, POLICY, settings(), context)
+                self.assertFalse(self.api.writes("pulls/42/merge"))
+
+    def test_post_merge_dispatches_survive_a_label_failure(self):
+        context = self.passing_review()
+        original = self.api.request
+
+        def flaky(method, route, data=None, **kwargs):
+            if method == "POST" and route == "issues/42/labels" and "autopilot-merged" in (data or {}).get("labels", []):
+                raise risk.PolicyError("label failed")
+            return original(method, route, data, **kwargs)
+        self.api.request = flaky
+        with patch.object(risk.time, "sleep"), self.assertRaisesRegex(risk.PolicyError, "merged, but"):
+            risk.merge(self.api, POLICY, settings(), context)
+        self.assertTrue(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
+
     def test_bad_bot_ledger_stops_instead_of_resetting_budget(self):
         self.api.comments.append(
             {
@@ -1221,7 +1296,7 @@ class WorkflowContractTests(unittest.TestCase):
             0
         ]
         self.assertNotIn(": write", review)
-        self.assertIn("anthropics/claude-code-action@v1.0.120", review)
+        self.assertIn("anthropics/claude-code-action@dde2242db6af13460b916652159b6ba19a598f30 # v1.0.120", review)
         self.assertIn('--tools ""', review)
         self.assertIn('--disallowedTools "mcp__*"', review)
         self.assertNotIn("pull_request.head.sha", text)

@@ -20,6 +20,7 @@ import re
 import secrets
 import sys
 import urllib.error
+import time
 import urllib.parse
 import urllib.request
 
@@ -382,10 +383,13 @@ def bot_comment(comment):
     return user.get("login") == "github-actions[bot]" and user.get("type") == "Bot"
 
 
-def trusted_run(api, run_id):
+def trusted_run(api, run_id, number):
     run = api.request("GET", f"actions/runs/{int(run_id)}")
+    # The workflow's run-name binds each run to one PR, so a run evaluating
+    # another PR cannot vouch for this one.
     return (
-        run.get("path") == f".github/workflows/{WORKFLOW}"
+        run.get("display_title") == f"PR autopilot #{int(number)}"
+        and run.get("path") == f".github/workflows/{WORKFLOW}"
         and run.get("event") in {"pull_request_target", "workflow_dispatch"}
         and run.get("head_repository", {}).get("full_name") == api.repository
         and (
@@ -402,7 +406,7 @@ def review_ledger(api, number, comments):
             continue
         try:
             record = json.loads(body[len(ROUND_MARKER) :].split(" -->", 1)[0])
-            if record["pr"] != number or not trusted_run(api, record["run_id"]):
+            if record["pr"] != number or not trusted_run(api, record["run_id"], number):
                 raise PolicyError("untrusted review-round record")
             if not SHA.fullmatch(record["head"]) or not SHA.fullmatch(record["base"]):
                 raise PolicyError("invalid review-round SHA")
@@ -514,6 +518,20 @@ def protection(api, policy):
     return requirements
 
 
+def current_base(api, pr):
+    """The live dev tip if this PR's branch contains it, else None (behind dev).
+
+    pulls.base.sha does not follow dev, so it is only a fast path.
+    """
+    tip = (api.request("GET", "git/ref/heads/dev").get("object") or {}).get("sha", "")
+    if not SHA.fullmatch(tip):
+        raise PolicyError("dev tip is unknown")
+    if pr["base"]["sha"] == tip:
+        return tip
+    compare = api.request("GET", f"compare/{tip}...{pr['head']['sha']}")
+    return tip if compare.get("behind_by") == 0 else None
+
+
 def checks_for(api, head):
     return api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")
 
@@ -526,9 +544,29 @@ def ci_evidence(api, pr, policy):
     return passed, requirements, checks
 
 
+def review_records(checks, context, policy):
+    """Review check runs on this head and dev base, whatever PR they name."""
+    found = []
+    for check in checks:
+        if check.get("name") != policy["review_check"] or check.get("head_sha") != context["head"]:
+            continue
+        try:
+            record = json.loads(check.get("external_id", ""))
+        except (ValueError, TypeError):
+            record = None
+        if isinstance(record, dict) and record.get("head") == context["head"] and record.get("base") == context["base"]:
+            found.append(check)
+    return found
+
+
 def review_check_passes(api, checks, context, policy):
     matches_ = [c for c in checks if c["name"] == policy["review_check"]]
     if not matches_:
+        return False
+    # A second review check for the same revision (a forged one, or one from a
+    # duplicate PR) must not override a failure: every one must have passed.
+    if any(c.get("status") != "completed" or c.get("conclusion") != "success"
+           for c in review_records(checks, context, policy)):
         return False
     check = max(matches_, key=lambda c: c["id"])
     if (
@@ -542,7 +580,7 @@ def review_check_passes(api, checks, context, policy):
         record = json.loads(check.get("external_id", ""))
         return all(
             record[k] == context[k] for k in ("pr", "head", "base")
-        ) and trusted_run(api, record["run_id"])
+        ) and trusted_run(api, record["run_id"], context["pr"])
     except (ValueError, KeyError, TypeError):
         return False
 
@@ -694,12 +732,17 @@ def prepare(api, policy, settings, event, event_name):
     pr, files, risk = snapshot(api, number, policy)
     if pr["base"]["ref"] != "dev" or pr["state"] != "open":
         return
-    if pr["base"]["sha"] != os.environ["POLICY_SHA"]:
-        raise PolicyError("dev advanced after checkout; wait for a fresh run")
     comments = api.pages(f"issues/{number}/comments")
     ensure_labels(api, policy["labels"].values())
     tier_audit(api, pr, risk, policy, comments)
-    context = {"pr": number, "head": pr["head"]["sha"], "base": pr["base"]["sha"]}
+    base = current_base(api, pr)
+    if base is None:
+        # Behind dev: the author updates the branch. No review round is spent.
+        summary("Waiting: the branch is behind dev; update it from dev to continue.")
+        return
+    if base != os.environ["POLICY_SHA"]:
+        raise PolicyError("dev advanced after checkout; wait for a fresh run")
+    context = {"pr": number, "head": pr["head"]["sha"], "base": base}
     decision = merge_decision(
         pr,
         risk,
@@ -727,6 +770,10 @@ def prepare(api, policy, settings, event, event_name):
     plan = review_plan(
         rounds, context["head"], context["base"], policy["max_review_rounds"]
     )
+    # Check runs cannot be deleted: a review of this exact revision, for any PR,
+    # counts even if its ledger comment was removed or a duplicate PR was opened.
+    if plan == "new" and review_records(checks, context, policy):
+        plan = "already-reviewed"
     if plan != "new":
         reason = (
             "The three-round AI review budget is exhausted. A person must review this PR."
@@ -816,7 +863,7 @@ def publish_verdict(api, policy, context, raw, action_result):
         current = get_pr(api, context["pr"])
         if (
             current["head"]["sha"] != context["head"]
-            or current["base"]["sha"] != context["base"]
+            or current_base(api, current) != context["base"]
         ):
             passed = False
             reasons = [
@@ -863,7 +910,7 @@ def no_requested_changes(api, number):
 
 def validate_live(api, policy, settings, context):
     pr, _, risk = snapshot(api, context["pr"], policy)
-    if pr["head"]["sha"] != context["head"] or pr["base"]["sha"] != context["base"]:
+    if pr["head"]["sha"] != context["head"] or current_base(api, pr) != context["base"]:
         raise PolicyError("head or dev base changed; fresh evaluation is required")
     passed, requirements, checks = ci_evidence(api, pr, policy)
     review_passed = review_check_passes(api, checks, context, policy)
@@ -927,10 +974,15 @@ def merge(api, policy, settings, context):
     # Re-read AFTER approval. GitHub can take a moment to update protection; a
     # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
     pr, _ = validate_live(api, policy, settings, context)
-    if pr.get("mergeable_state") != "clean":
+    # "unstable" means only non-required checks are failing or pending (E2E is
+    # advisory); validate_live just re-verified every required check and the
+    # review on this head. blocked, behind, dirty and unknown still wait.
+    if pr.get("mergeable_state") not in {"clean", "unstable"}:
         raise PolicyError(
             "GitHub protection is not clean after approval; wait for a fresh run"
         )
+    # Plan the follow-ups before merging, so an API error afterwards cannot lose them.
+    plan_files = api.pages(f"pulls/{number}/files")
     response = api.request(
         "PUT",
         f"pulls/{number}/merge",
@@ -938,24 +990,48 @@ def merge(api, policy, settings, context):
     )
     if response.get("merged") is not True:
         raise PolicyError("GitHub did not confirm a merge")
-    add_label(api, number, policy["labels"]["merged"])
-    comment(
-        api,
-        number,
-        f"<!-- pr-autopilot:merged -->\nAutopilot merged head `{context['head']}` with a merge commit after rechecking policy, review and required checks. Merge SHA: `{response['sha']}`.\n\n{audit}",
-    )
+    # GITHUB_TOKEN merges start no push workflows, so the dev verification
+    # dispatches matter most. Each follow-up gets its own attempt.
+    missed = []
+    try:
+        plan = post_merge_plan(policy, plan_files, settings)
+    except (KeyError, TypeError):
+        plan = []
+        missed.append("post-merge plan")
+    for entry in plan:
+        workflow = urllib.parse.quote(entry["workflow"], safe="")
+        for attempt in range(3):
+            try:
+                api.request(
+                    "POST",
+                    f"actions/workflows/{workflow}/dispatches",
+                    {"ref": "dev", "inputs": entry["inputs"]},
+                )
+                summary(f"Post-merge dispatch on dev: {entry['workflow']}.")
+                break
+            except PolicyError:
+                if attempt == 2:
+                    missed.append(entry["workflow"])
+                else:
+                    time.sleep(2 * (attempt + 1))
+    try:
+        add_label(api, number, policy["labels"]["merged"])
+    except PolicyError:
+        missed.append("merged label")
+    note = ("\n\nNot started (dispatch these on dev by hand): " + ", ".join(f"`{safe_text(m)}`" for m in missed)) if missed else ""
+    try:
+        comment(
+            api,
+            number,
+            f"<!-- pr-autopilot:merged -->\nAutopilot merged head `{context['head']}` with a merge commit after rechecking policy, review and required checks. Merge SHA: `{response['sha']}`.{note}\n\n{audit}",
+        )
+    except PolicyError:
+        missed.append("merged comment")
     summary(
         f"Autopilot merged PR #{number}; merge SHA {response['sha']}; checks: {', '.join(checks)}."
     )
-    files = api.pages(f"pulls/{number}/files")
-    for entry in post_merge_plan(policy, files, settings):
-        workflow = urllib.parse.quote(entry["workflow"], safe="")
-        api.request(
-            "POST",
-            f"actions/workflows/{workflow}/dispatches",
-            {"ref": "dev", "inputs": entry["inputs"]},
-        )
-        summary(f"Post-merge dispatch on dev: {entry['workflow']}.")
+    if missed:
+        raise PolicyError("merged, but follow-ups did not complete: " + ", ".join(missed))
 
 
 def post_merge_plan(policy, files, settings):

@@ -101,7 +101,10 @@ number of human approvals.
 
 1. `pull_request_target` handles PRs targeting `dev`. Privileged jobs sparsely
    check out only `dev`'s controller and policy, with checkout credentials not
-   persisted. The checkout SHA must match the live PR base. Schedule runs
+   persisted. The checkout SHA must be the current `dev` tip, and the PR must
+   already contain that tip (GitHub's compare shows it is not behind). The
+   PR's recorded base SHA can be older than the tip; that is fine. A PR that is
+   behind `dev` waits quietly and spends no review round. Schedule runs
    dispatch separate evaluations on `dev`; manual dispatches on other branches
    are rejected. The scheduled entry needs to exist on the default branch.
 2. The controller classifies and audits the tier. It requires an open,
@@ -134,12 +137,16 @@ number of human approvals.
 6. Before approval and again before merge, the controller re-reads the PR,
    files, rules, current-head CI, hold/draft/author state, time, and review result.
    Outstanding human change requests block it. A cached AI pass must match both
-   head and base and come from this trusted workflow's run. It labels and comments
+   head and base and come from this trusted workflow's run **for this PR number**
+   (the run name is `PR autopilot #N`). If any review check on the same revision
+   is not a success, the pass is not used. It labels and comments
    each automated approval, refreshes every gate **after** the audit writes and
    existing-approval lookup, then approves with `GITHUB_TOKEN`. Existing matching
    bot approvals are not duplicated. An audit label/comment without a submitted
    approval can remain if this final refresh catches a hold or another changed gate.
-7. It waits for GitHub's mergeability/protection state to be `clean`, then calls
+7. It waits for GitHub's mergeability/protection state to be `clean` or
+   `unstable` (`unstable` means a check that is not required is failing or still
+   running; the required checks were already verified above), then calls
    the merge API with the expected head SHA and `merge_method: merge`. GitHub
    remains the final authority for branch protection; no bypass token or
    `--admin` equivalent is used. The branch is not deleted.
@@ -160,9 +167,11 @@ Variables are an Actions run snapshot, not a live external kill-switch service.
 
 ## AI review contract and bounded retries
 
-The action is pinned to `anthropics/claude-code-action@v1.0.120`, with the
-`anthropic_api_key`, `github_token`, `prompt`, `claude_args` and
-`structured_output` interfaces confirmed against its published documentation.
+The action is pinned to the commit of `anthropics/claude-code-action` v1.0.120
+(`dde2242db6af13460b916652159b6ba19a598f30`), because this job holds the API key
+and a tag can be moved. Its `anthropic_api_key`, `github_token`, `prompt`,
+`claude_args` and `structured_output` inputs were checked against the published
+documentation for that version.
 It uses `claude-opus-5-5`, at most three turns per invocation, and no fallback
 that could convert an unavailable review into a pass. The model must return:
 
@@ -190,7 +199,10 @@ base may consume the next round; after three, the controller posts a human
 escalation. The bot does not modify code or dismiss findings. The author fixes
 blocking findings with a reason and submits a new revision; a person takes over
 if the budget or automated path cannot complete. Do not delete/edit reservation
-comments to bypass the cap. A passing exact-pair review can be reused while the
+comments to bypass the cap: check runs cannot be deleted, so a review check
+for the same head and base, on this PR or any other, still counts as an attempt
+if its comment is removed or the change is reopened as a new PR. A passing
+exact-pair review can be reused while the
 other merge gates are rechecked.
 
 **Workflow reruns do not invoke review or approve/merge.** All three controller/
@@ -235,6 +247,11 @@ change release/main automation. Dispatches test/deploy the current `dev` ref,
 which can include later merges; they are not proof that a particular merge has
 already passed post-merge verification. The team must inventory other push-only
 consumers before enabling the autopilot.
+
+The controller reads the changed files it needs for this choice **before** the
+merge call. Each dispatch is tried three times. The merge label, the merge
+comment and every dispatch are attempted independently, so one failure does not
+skip the others; the job then fails and names what was missed.
 
 Approval comments, review records, tier labels, review check details, merge
 comments and job summaries identify the policy/base SHA, head SHA, checks and
