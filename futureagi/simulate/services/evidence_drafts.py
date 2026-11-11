@@ -55,7 +55,9 @@ TIMED_OUT = "Drafting did not finish in time."
 # platform-sent builder turn on shared dev took about 40 minutes.
 DRAFTING_TIMEOUT = timedelta(minutes=90)
 # What a drafting chat's capability leaves out; its server-side refusals stand too.
-REFUSED_ENDPOINTS = ("publish", "run_start", "rerun", "adjust")
+# The sandbox client will not load a capability without `rerun` and `adjust`, so
+# those two stay offered and refuse_for_drafting_job refuses them when called.
+UNOFFERED_ENDPOINTS = ("publish", "run_start")
 # The builder's last words a blocked case shows, at most.
 REASON_CHARS = 240
 
@@ -69,12 +71,30 @@ def scenario_key_for(case: EvidenceImportCase) -> str:
     return f"evidence-{case.id.hex[:12]}"
 
 
-def turn_message(cases: list[EvidenceImportCase], source_kind: str) -> str:
+SHOWN = {
+    "failure": "a failure the agent must stop making",
+    "success": "a correct path the agent must keep taking",
+    "partial": "only partial evidence: test what it does show",
+}
+
+
+def turn_message(
+    cases: list[EvidenceImportCase],
+    source_kind: str,
+    shows: dict[str, str] | None = None,
+) -> str:
     """What the builder is asked in an evidence turn. The evidence itself is in
-    the sandbox's EVIDENCE_PATH, never in the message (chat caps its length)."""
+    the sandbox's EVIDENCE_PATH, never in the message (chat caps its length).
+    ``shows`` is what the person says each case records."""
+    shows = shows or {}
     listed = "\n".join(
         f"- case {case.id}: write it under scenario_key {scenario_key_for(case)} "
         f"(the {source_kind} {case.source_id} in the evidence)"
+        + (
+            f"; the person says it records {SHOWN[shows[str(case.id)]]}"
+            if shows.get(str(case.id)) in SHOWN
+            else ""
+        )
         for case in cases
     )
     return (
@@ -93,9 +113,10 @@ def turn_message(cases: list[EvidenceImportCase], source_kind: str) -> str:
         "- Checks: use the existing ones where they fit. A behaviour no check covers "
         "gets a new check under a new name; never edit an existing check.\n"
         "- A case that cannot become a sound scenario (a tool the agent needs is "
-        "missing, the evidence is too thin, or the suite already has it) is not "
-        "written: say which case and why in your final reply, naming any existing "
-        "scenario it duplicates.\n"
+        "missing, the evidence is too thin, the suite already has it, or the "
+        "evidence contradicts what the person says it records) is not written: say "
+        "which case and why in your final reply, naming any existing scenario it "
+        "duplicates.\n"
         "- Do not run scenarios.\n\n"
         f"Cases:\n{listed}"
     )
@@ -304,11 +325,13 @@ def _block(cases: list[EvidenceImportCase], reason: str) -> None:
 def _last_words(
     conversation: HostedHarnessConversation, command: HostedHarnessConversationMessage
 ) -> str:
+    # The sandbox's replies carry no reply_to; a drafting chat holds this one
+    # command, so its reply is the builder's last message after it.
     reply = (
         HostedHarnessConversationMessage.no_workspace_objects.filter(
             conversation=conversation,
             role=HostedHarnessConversationMessage.Role.ASSISTANT,
-            reply_to=command.id,
+            sequence__gt=command.sequence,
         )
         .order_by("-sequence")
         .first()
@@ -339,6 +362,7 @@ def start_drafting(
     *,
     endpoint_base_url: str,
     user,
+    shows: dict[str, str] | None = None,
 ) -> HostedHarnessConversation:
     """Ask the environment's builder to draft a scenario for each of ``case_ids``,
     in a throwaway job of the import's own: its chat, memory and checkpoints never
@@ -384,7 +408,7 @@ def start_drafting(
         locked.save(update_fields=["drafting_job", "updated_at"])
         conversation, _command, _created = enqueue_message(
             locked.drafting_job,
-            content=turn_message(cases, locked.source_kind),
+            content=turn_message(cases, locked.source_kind, shows),
             client_request_id=f"evidence-{locked.id}",
             payload={"from_platform": True},
             server_payload={

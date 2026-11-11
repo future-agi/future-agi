@@ -138,6 +138,7 @@ def import_bundle(
         "agent_version_id": evidence_import.agent_version_id,
         "source_kind": evidence_import.source_kind,
         "created_at": evidence_import.created_at,
+        "drafting": evidence_import.drafting_job_id is not None,
         "cases": [_case(case, current.get(case.source_id)) for case in cases],
         "redaction": _redaction(cases, current),
     }

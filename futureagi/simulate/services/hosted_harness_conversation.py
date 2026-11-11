@@ -716,7 +716,7 @@ def issue_conversation_capability(
     from simulate.services import evidence_drafts
 
     if evidence_drafts.is_drafting_job(conversation.job):
-        for name in evidence_drafts.REFUSED_ENDPOINTS:
+        for name in evidence_drafts.UNOFFERED_ENDPOINTS:
             document["endpoints"].pop(name, None)
     return ConversationCapability(
         lease=lease, token=token, fence=fence, document=document

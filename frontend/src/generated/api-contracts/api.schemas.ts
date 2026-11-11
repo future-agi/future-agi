@@ -20237,6 +20237,8 @@ export interface EvidenceImportApi {
   agent_version_id: string;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
+  /** True while the environment's builder is drafting cases. */
+  drafting: boolean;
   cases: EvidenceImportCaseApi[];
   redaction: EvidenceRedactionApi;
 }
@@ -20275,6 +20277,13 @@ export interface EvidenceImportAddResponseApi {
   evidence_import: EvidenceImportApi;
 }
 
+/**
+ * What the person says each case records, by case id.
+ */
+export type EvidenceImportDraftApiShows = {
+  [key: string]: "failure" | "success" | "partial";
+};
+
 export interface EvidenceImportDraftApi {
   /**
    * The import's waiting cases the environment's builder drafts.
@@ -20282,6 +20291,8 @@ export interface EvidenceImportDraftApi {
    * @maxItems 20
    */
   case_ids: string[];
+  /** What the person says each case records, by case id. */
+  shows?: EvidenceImportDraftApiShows;
 }
 
 export type HarnessNudgeApiTarget =

@@ -152,6 +152,9 @@ class EvidenceImportSerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(allow_null=True)
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     created_at = serializers.DateTimeField()
+    drafting = serializers.BooleanField(
+        help_text="True while the environment's builder is drafting cases."
+    )
     cases = EvidenceImportCaseSerializer(many=True)
     redaction = EvidenceRedactionSerializer()
 
@@ -191,4 +194,10 @@ class EvidenceImportDraftSerializer(serializers.Serializer):
         min_length=1,
         max_length=MAX_SOURCES,
         help_text="The import's waiting cases the environment's builder drafts.",
+    )
+    shows = serializers.DictField(
+        child=serializers.ChoiceField(choices=("failure", "success", "partial")),
+        required=False,
+        default=dict,
+        help_text="What the person says each case records, by case id.",
     )

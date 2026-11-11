@@ -40240,6 +40240,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   agent_version_id: zod.string().uuid(),
   source_kind: zod.enum(["session", "call"]),
   created_at: zod.string().datetime({ offset: true }),
+  drafting: zod
+    .boolean()
+    .describe("True while the environment's builder is drafting cases."),
   cases: zod.array(
     zod.object({
       id: zod.string().uuid(),
@@ -40506,6 +40509,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       agent_version_id: zod.string().uuid(),
       source_kind: zod.enum(["session", "call"]),
       created_at: zod.string().datetime({ offset: true }),
+      drafting: zod
+        .boolean()
+        .describe("True while the environment's builder is drafting cases."),
       cases: zod.array(
         zod.object({
           id: zod.string().uuid(),
@@ -40715,6 +40721,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesPara
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyCaseIdsMax = 20;
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyShowsDefault =
+  {};
+
 export const SimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBody =
   zod.object({
     case_ids: zod
@@ -40724,6 +40733,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBody
         simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyCaseIdsMax,
       )
       .describe("The import's waiting cases the environment's builder drafts."),
+    shows: zod
+      .record(zod.string(), zod.enum(["failure", "success", "partial"]))
+      .default(
+        simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesBodyShowsDefault,
+      )
+      .describe("What the person says each case records, by case id."),
   });
 
 /**

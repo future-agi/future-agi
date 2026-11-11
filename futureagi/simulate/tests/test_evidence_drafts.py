@@ -142,12 +142,12 @@ def _end_turn(conversation, command, *, said=""):
         emitted_at=timezone.now(),
     )
     if said:
+        # As the events ingest stores a sandbox's reply: no reply_to.
         HostedHarnessConversationMessage.no_workspace_objects.create(
             conversation=conversation,
             sequence=command.sequence + 1,
             role="assistant",
             content=said,
-            reply_to=command.id,
             state="completed",
         )
 

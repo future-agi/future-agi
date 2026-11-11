@@ -574,7 +574,11 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             [str(case_id) for case_id in request.validated_data["case_ids"]],
             endpoint_base_url=_public_base_url(request),
             user=request.user,
+            shows=request.validated_data.get("shows") or {},
         )
+        # start_drafting links the drafting job on its own locked copy; the answer
+        # must say drafting has started, or the review never asks again.
+        evidence_import.refresh_from_db()
         return Response(
             EvidenceImportSerializer(import_bundle(evidence_import)).data,
             status=status.HTTP_202_ACCEPTED,

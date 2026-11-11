@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from simulate.models import (
     EvidenceImport,
@@ -222,7 +223,7 @@ class TestOutOfTheWay:
 
 
 class TestTheTurnCannotReachTheEnvironment:
-    def test_the_capability_leaves_out_publishing_runs_and_adjustments(
+    def test_the_capability_leaves_out_publishing_and_runs(
         self, cases, user, scheduled
     ):
         conversation = _start(cases, user)
@@ -236,8 +237,58 @@ class TestTheTurnCannotReachTheEnvironment:
         )
 
         endpoints = capability.document["endpoints"]
-        assert not set(evidence_drafts.REFUSED_ENDPOINTS) & set(endpoints)
-        assert {"commands", "events", "workspace"} <= set(endpoints)
+        assert not {"publish", "run_start"} & set(endpoints)
+        # The sandbox client refuses a capability without these; the server
+        # refuses the calls instead (test_rerun_and_adjust_are_refused).
+        assert {
+            "commands",
+            "events",
+            "workspace",
+            "run_status",
+            "rerun",
+            "adjust",
+            "session_store",
+            "session_store_append",
+        } <= set(endpoints)
+
+    def test_rerun_and_adjust_are_refused_over_the_capability(
+        self, cases, user, scheduled
+    ):
+        # The capability offers both (the sandbox client requires them); the
+        # server is what refuses a drafting chat's call.
+        conversation = _start(cases, user)
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url=BASE_URL,
+            provider_ref="sandbox-1",
+            attempt=None,
+            ttl_seconds=600,
+        )
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {capability.token}",
+            "HTTP_X_HARNESS_CONVERSATION_FENCE": capability.fence,
+        }
+        base = f"/simulate/api/harness/conversations/{conversation.id}"
+
+        adjusted = APIClient().post(
+            f"{base}/adjust/",
+            {
+                "instruction": "Add a failed payment scenario",
+                "client_request_id": "evidence-adjust-1",
+            },
+            format="json",
+            **headers,
+        )
+        rerun = APIClient().post(f"{base}/rerun/", {}, format="json", **headers)
+
+        assert (adjusted.status_code, adjusted.data["error"]) == (
+            409,
+            "evidence_turn_refused",
+        )
+        assert (rerun.status_code, rerun.data["error"]) == (
+            409,
+            "evidence_turn_refused",
+        )
 
     def test_rerun_and_adjust_are_refused(self, environment, cases, user, scheduled):
         conversation = _start(cases, user)
@@ -374,6 +425,28 @@ class TestSettleAndForget:
         lease.refresh_from_db()
         assert lease.state == "expired"
 
+    def test_a_failed_turn_says_what_the_builder_said(
+        self, cases, user, scheduled, django_capture_on_commit_callbacks
+    ):
+        conversation = _start(cases, user)
+        command = _command(conversation)
+        # As the events ingest stores the sandbox's reply: no reply_to.
+        HostedHarnessConversationMessage.no_workspace_objects.create(
+            conversation=conversation,
+            sequence=command.sequence + 1,
+            role="assistant",
+            content="I could not draft these cases.",
+            state="completed",
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            evidence_drafts.turn_ended(str(conversation.id), str(command.id), "failed")
+
+        assert {
+            c.reason
+            for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
+        } == {f"{evidence_drafts.TURN_FAILED} It said: I could not draft these cases."}
+
     def test_a_turn_that_never_ends_is_settled_and_deleted_by_the_sweep(
         self, cases, user, scheduled
     ):
@@ -419,3 +492,58 @@ class TestSettleAndForget:
         storage.remove_object = lambda _bucket, key: storage.objects.pop(key, None)
         assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 1}
         assert not any(_gone(conversation).values())
+
+
+def test_the_turn_says_what_each_case_records(cases, user, scheduled):
+    conversation = evidence_drafts.start_drafting(
+        cases[0].evidence_import,
+        [str(case.id) for case in cases],
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(cases[0].id): "failure", str(cases[1].id): "success"},
+    )
+
+    content = _command(conversation).content
+    assert evidence_drafts.SHOWN["failure"] in content
+    assert evidence_drafts.SHOWN["success"] in content
+    assert "contradicts what the person says it records" in content
+
+
+def test_the_bundle_says_while_drafting_runs(cases, user, scheduled):
+    from simulate.selectors.evidence_import import import_bundle
+
+    evidence_import = cases[0].evidence_import
+    found = {case.source_id: _evidence(case.source_id) for case in cases}
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence", return_value=found
+    ):
+        assert import_bundle(evidence_import)["drafting"] is False
+        _start(cases, user)
+        evidence_import.refresh_from_db()
+        assert import_bundle(evidence_import)["drafting"] is True
+
+
+def test_the_draft_answer_says_drafting_has_started(
+    environment, cases, user, scheduled, versioning_on, settings
+):
+    # The review keeps this answer and asks again only while it says drafting, so
+    # an answer read before the drafting job was linked would leave it waiting.
+    settings.HARNESS_PUBLIC_BASE_URL = BASE_URL
+    evidence_import = cases[0].evidence_import
+    api = APIClient()
+    api.force_authenticate(user=user)
+    api.credentials(HTTP_X_WORKSPACE_ID=str(environment.workspace_id))
+    found = {case.source_id: _evidence(case.source_id) for case in cases}
+
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence", return_value=found
+    ):
+        response = api.post(
+            f"/simulate/api/harness-environments/{environment.id}"
+            f"/evidence-imports/{evidence_import.id}/draft/",
+            {"case_ids": [str(case.id) for case in cases]},
+            format="json",
+        )
+
+    assert response.status_code == 202, response.content
+    assert response.json()["drafting"] is True

@@ -63523,6 +63523,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version_id",
         "source_kind",
         "created_at",
+        "drafting",
         "cases",
         "redaction",
       ],
@@ -63558,6 +63559,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        drafting: {
+          title: "Drafting",
+          description:
+            "True while the environment's builder is drafting cases.",
+          type: "boolean",
         },
         cases: {
           type: "array",
@@ -63650,6 +63657,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           maxItems: 20,
           minItems: 1,
+        },
+        shows: {
+          title: "Shows",
+          description: "What the person says each case records, by case id.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["failure", "success", "partial"],
+          },
+          default: {},
         },
       },
     },
