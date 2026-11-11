@@ -9,12 +9,16 @@ import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  isScenarioFailed,
+  isScenarioInProgress,
+} from "src/utils/scenarioStatus";
 
 const PromptPreview = ({ scenario }) => {
   const { role } = useAuthContext();
   const isWriteDisabled =
     !RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
-  const { data: tableData, isPending: isLoadingTable } = useQuery(
+  const { data: tableData } = useQuery(
     getDatasetQueryOptions(scenario.dataset, 0, [], [], "", { enabled: false }),
   );
 
@@ -25,13 +29,13 @@ const PromptPreview = ({ scenario }) => {
     return allowedVariables;
   }, [tableData?.data?.result?.column_config]);
 
-  const isLoading =
-    isLoadingTable ||
-    (scenario?.prompts ? false : scenario?.status === "Processing");
+  const hasPrompts = Boolean(scenario?.prompts?.[0]?.content);
+  const isProcessing = !hasPrompts && isScenarioInProgress(scenario?.status);
+  const isFailed = !hasPrompts && isScenarioFailed(scenario?.status);
 
   const [open, setOpen] = useState(false);
 
-  if (isLoading) {
+  if (isProcessing) {
     return (
       <Box
         sx={{
@@ -51,6 +55,29 @@ const PromptPreview = ({ scenario }) => {
         <CircularProgress size={20} />
         <Typography typography="s1">
           We are processing the prompts...
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (isFailed) {
+    return (
+      <Box
+        sx={{
+          flex: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+          overflow: "hidden",
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+        }}
+      >
+        <Typography typography="s1">
+          There was an error generating the prompt
         </Typography>
       </Box>
     );
@@ -127,11 +154,11 @@ const PromptPreview = ({ scenario }) => {
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 paddingX: 2,
                 paddingY: "12px",
                 backgroundColor: "background.default",
-                fontSize: "14px",
+                fontSize: "13px",
               }}
             >
               <MarkdownWithVariableHighlight
@@ -150,7 +177,12 @@ const PromptPreview = ({ scenario }) => {
         >
           <SvgColor
             src="/assets/icons/ic_info.svg"
-            sx={{ width: 16, height: 16, color: "blue.500", flexShrink: 0 }}
+            sx={{
+              width: 16,
+              height: 16,
+              color: "status.info.fg",
+              flexShrink: 0,
+            }}
           />
           <Typography typography="s2" fontWeight="fontWeightMedium">
             Make sure your scenario table below contains all the column that are

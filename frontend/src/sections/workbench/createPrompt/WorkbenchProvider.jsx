@@ -13,14 +13,17 @@ import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
 import { useSnackbar } from "src/components/snackbar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { DefaultMessages } from "../constant";
 import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
+import { visibleWorkbenchTab } from "./workbenchTab";
 import {
   getVariables,
   handleAuthFailClose,
   normalizeConfigurationForLoad,
   normalizeConfigurationForSave,
+  normalizeMessagesForLoad,
   runPromptOverSocket,
 } from "./common";
 import logger from "src/utils/logger";
@@ -77,7 +80,12 @@ const WorkbenchProvider = ({ children }) => {
   const queryClient = useQueryClient();
 
   //Multi States
-  const [currentTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const [urlTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const currentTab = visibleWorkbenchTab(
+    urlTab,
+    restrictSimulateToEnvironments,
+  );
   const [selectedVersions, setSelectedVersions] = useUrlState(
     "selected-versions",
     [],
@@ -574,6 +582,7 @@ const WorkbenchProvider = ({ children }) => {
       skipLatestLoadOnce.current = false;
       return;
     }
+    const loadedVersion = selectedVersions?.[0]?.version;
     setPromptName(data?.name);
     setSelectedVersions([
       {
@@ -591,8 +600,18 @@ const WorkbenchProvider = ({ children }) => {
       setCurrentTab("Playground");
     }
 
-    if (data?.prompt_config?.[0]?.messages && !prompts?.[0]?.prompts.length) {
-      const newPrompts = data?.prompt_config?.[0]?.messages?.map((prompt) => ({
+    // Load messages when the editor is empty or the fetched version differs from the
+    // one already loaded. Guarding only on empty `prompts` left stale content from
+    // another version in the editor after a switch; reloading on every `data` refetch
+    // (rename/commit/tag invalidations) would clobber the current same-version editor.
+    const isVersionSwitch = loadedVersion !== data?.version;
+    if (
+      data?.prompt_config?.[0]?.messages &&
+      (!prompts?.[0]?.prompts?.length || isVersionSwitch)
+    ) {
+      const newPrompts = normalizeMessagesForLoad(
+        data?.prompt_config?.[0]?.messages,
+      ).map((prompt) => ({
         ...prompt,
         id: getRandomId(),
       }));
@@ -751,7 +770,9 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: version?.prompt_config_snapshot?.messages,
+        prompts: normalizeMessagesForLoad(
+          version?.prompt_config_snapshot?.messages,
+        ),
         id: getRandomId(),
       });
 
@@ -1295,11 +1316,12 @@ const WorkbenchProvider = ({ children }) => {
       };
     });
 
-    const newPrompts =
-      version?.prompt_config_snapshot?.messages?.map((rest) => ({
-        ...rest,
-        id: getRandomId(),
-      })) || [];
+    const newPrompts = normalizeMessagesForLoad(
+      version?.prompt_config_snapshot?.messages,
+    ).map((rest) => ({
+      ...rest,
+      id: getRandomId(),
+    }));
 
     setPrompts([{ prompts: newPrompts, id: getRandomId() }]);
 
@@ -1441,6 +1463,7 @@ const WorkbenchProvider = ({ children }) => {
     const newPlaceholders = [];
     const newResults = [];
     const newModelConfigs = [];
+    const addedVariableData = {};
 
     newCompareVersions.forEach((eachCompareVersions) => {
       newVersions.push({
@@ -1453,9 +1476,15 @@ const WorkbenchProvider = ({ children }) => {
       });
 
       newPrompts.push({
-        prompts: eachCompareVersions.prompt_config_snapshot.messages,
+        prompts: normalizeMessagesForLoad(
+          eachCompareVersions.prompt_config_snapshot.messages,
+        ),
         id: getRandomId(),
       });
+
+      if (eachCompareVersions?.variable_names) {
+        Object.assign(addedVariableData, eachCompareVersions.variable_names);
+      }
 
       const placeholderArray =
         eachCompareVersions.prompt_config_snapshot.placeholders || [];
@@ -1485,6 +1514,8 @@ const WorkbenchProvider = ({ children }) => {
     setPlaceholders((e) => [e[0], ...newPlaceholders]);
     setModelConfig((e) => [e[0], ...newModelConfigs]);
     setResults((e) => [e[0], ...newResults]);
+    // Merge added versions' variables into the shared panel; base (index 0) wins on conflicts.
+    setVariableData((prev) => ({ ...addedVariableData, ...prev }));
   };
 
   const removeFromCompare = (index) => {

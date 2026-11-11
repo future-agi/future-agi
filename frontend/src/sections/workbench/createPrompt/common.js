@@ -1,6 +1,16 @@
 import { enqueueSnackbar } from "notistack";
 import { PromptRoles, WS_CLOSE_CODES } from "src/utils/constants";
+import { normalizeModelOption } from "src/components/custom-model-dropdown/common";
+import { normalizeContentBlocks } from "src/components/PromptCards/common";
 import { extractVariables } from "./Playground/common";
+
+export function normalizeMessagesForLoad(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map((message) => ({
+    ...message,
+    content: normalizeContentBlocks(message?.content) || [],
+  }));
+}
 
 /**
  * Predicate: does this CloseEvent indicate a BE-initiated auth failure
@@ -219,6 +229,9 @@ export function normalizeConfigurationForLoad(configuration) {
     delete result[snake];
     delete result[camel];
     if (value !== undefined) result[camel] = value;
+  }
+  if (result.model_detail) {
+    result.model_detail = normalizeModelOption(result.model_detail);
   }
   return result;
 }

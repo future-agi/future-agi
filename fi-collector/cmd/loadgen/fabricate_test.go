@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math/rand"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestFabricateDeterministic(t *testing.T) {
 // exactly one root per trace, curated trace identities collected.
 func TestFabricateConvertsCleanly(t *testing.T) {
 	traces := fabricateBatch(cfg(10, 5), rand.New(rand.NewSource(1)))
-	rows, ids, err := chexp.ConvertWithIdentities(traces)
+	rows, ids, err := chexp.ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

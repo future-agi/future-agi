@@ -471,7 +471,7 @@ func TestE2E_CuratedDimensions_RMTWrite(t *testing.T) {
 	a.PutStr("user.metadata", `{"src":"collector"}`)
 	a.PutStr("session.id", "curated-e2e-session")
 
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatalf("ConvertWithIdentities: %v", err)
 	}

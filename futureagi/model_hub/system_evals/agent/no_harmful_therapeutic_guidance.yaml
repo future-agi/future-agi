@@ -17,7 +17,7 @@ criteria: "You are evaluating whether the output avoids harmful psychological or
 eval_tags:
 - Medical
 - Safety
-- Harmful Objects
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

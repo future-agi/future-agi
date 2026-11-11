@@ -1,4 +1,5 @@
-import { Box, Typography, IconButton, Chip, Skeleton } from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Box, Button, Typography, IconButton, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -29,6 +30,9 @@ import _ from "lodash";
 import FormattedValueReason from "./FormattedReason";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalLogGridPage } from "../utils/eval_log_grid_read";
+import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 
 const EvaluateArrayCellRenderer = ({ value }) => {
   return (
@@ -51,15 +55,9 @@ const EvaluateArrayCellRenderer = ({ value }) => {
           overflow: "hidden",
         }}
       >
-        {value?.map((item) => (
-          <Chip
-            key={item}
-            label={item}
-            size="small"
-            variant="outlined"
-            color="primary"
-          />
-        ))}
+        <Typography variant="s2" sx={{ color: "text.primary" }}>
+          {value?.join(" · ")}
+        </Typography>
       </Box>
     </Box>
   );
@@ -182,7 +180,7 @@ const CustomCellRender = (props) => {
       >
         <Box
           sx={{
-            color: "error.main",
+            color: "status.danger.fg",
             opacity: 1,
             flex: 1,
             display: "flex",
@@ -392,14 +390,14 @@ const CustomDevelopDetailColumn = (props) => {
 
   const renderIcon = () => {
     if (colDef?.headerName === "image_url") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else if (col.origin_type === "run_prompt") {
       return <Iconify icon="token:rune" sx={{ color: "info.main" }} />;
     } else if (col.origin_type === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "#22B3B7" }}
+          icon="solar:check-circle-linear"
+          sx={{ color: "status.success.fg" }}
         />
       );
     } else if (
@@ -408,30 +406,30 @@ const CustomDevelopDetailColumn = (props) => {
     ) {
       return (
         <Iconify
-          icon="icon-park-outline:smart-optimization"
+          icon="solar:magic-stick-3-linear"
           sx={{ color: "primary.main" }}
         />
       );
     } else if (col.origin_type === "annotation_label") {
-      return <Iconify icon="jam:write" />;
+      return <Iconify icon="solar:pen-linear" />;
     } else if (col.data_type === "text") {
-      return <Iconify icon="material-symbols:notes" />;
+      return <Iconify icon="solar:notes-linear" />;
     } else if (col.data_type === "array") {
-      return <Iconify icon="material-symbols:data-array" />;
+      return <Iconify icon="solar:brackets-linear" />;
     } else if (col.data_type === "integer") {
-      return <Iconify icon="material-symbols:tag" />;
+      return <Iconify icon="solar:hashtag-linear" />;
     } else if (col.data_type === "float") {
       return <Iconify icon="tabler:decimal" />;
     } else if (col.data_type === "boolean") {
       return <Iconify icon="material-symbols:toggle-on-outline" />;
     } else if (col.data_type === "datetime") {
-      return <Iconify icon="tabler:calendar" />;
+      return <Iconify icon="solar:calendar-linear" />;
     } else if (col.data_type === "json") {
-      return <Iconify icon="material-symbols:data-object" />;
+      return <Iconify icon="solar:braces-linear" />;
     } else if (col.data_type === "image") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else {
-      return <Iconify icon="material-symbols:notes" />;
+      return <Iconify icon="solar:notes-linear" />;
     }
   };
 
@@ -440,13 +438,13 @@ const CustomDevelopDetailColumn = (props) => {
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
-      return "#EEFDFE"; // Same color as evaluation
+      return "status.success.bg";
     } else if (originType === "run_prompt") {
-      return "#EEF4FF";
+      return "status.info.bg";
     } else if (originType === "optimisation") {
-      return "primary.lighter";
+      return "status.discovery.bg";
     } else if (originType === "annotation_label") {
-      return "#FFE2FE";
+      return "status.warning.bg";
     }
     return "background.default";
   };
@@ -465,13 +463,13 @@ const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={700} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="11px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>
@@ -527,6 +525,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
   const [columnData] = useState([]);
   const { evalId } = useParams();
   const [isRefreshing, setIsRefreshing] = useState(null);
+  const [readError, setReadError] = useState(null);
   const [, setIsData] = useState(true);
   const [, setRowData] = useState([]);
   const [columnDefs, setColumnDefs] = useState([
@@ -581,28 +580,31 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
         const pageNumber = Math.floor(request.startRow / pageSize);
 
         try {
-          const { data } = await axios.get(
-            endpoints.develop.eval.getEvalsLogs,
-            {
-              params: {
-                eval_template_id: evalId,
-                current_page_index: pageNumber,
-                page_size: pageSize,
-                filters: JSON.stringify(validatedFilters),
-                sort: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    type: sort === "asc" ? "ascending" : "descending",
-                  })),
-                ),
-              },
-            },
+          const page = await readEvalLogGridPage(
+            ({ signal, timeout }) =>
+              axios.get(endpoints.develop.eval.getEvalsLogs, {
+                signal,
+                timeout,
+                params: {
+                  eval_template_id: evalId,
+                  current_page_index: pageNumber,
+                  page_size: pageSize,
+                  filters: JSON.stringify(validatedFilters),
+                  sort: JSON.stringify(
+                    request?.sortModel?.map(({ colId, sort }) => ({
+                      column_id: colId,
+                      type: sort === "asc" ? "ascending" : "descending",
+                    })),
+                  ),
+                },
+              }),
+            { currentPageIndex: pageNumber, pageSize },
           );
 
-          setColumnDataNew(data?.result?.column_config);
-          // const rows = generateRowData(data?.result?.table, data?.result?.column_config);
-          const rows = data?.result?.table;
+          setColumnDataNew(page.columns);
+          const rows = page.rows;
           setRowData(rows);
+          setReadError(null);
           if (!rows || rows.length === 0) {
             setTimeout(() => {
               if (gridRef.current?.api) {
@@ -620,7 +622,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }
           params.success({
             rowData: rows,
-            rowCount: data?.result?.metadata?.total_rows,
+            rowCount: page.totalRows,
           });
           if (rows?.length === 0) {
             setTimeout(() => {
@@ -631,12 +633,8 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }
         } catch (error) {
           setIsRefreshing(null);
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
-          setTimeout(() => {
-            if (gridRef.current?.api) {
-              gridRef.current.api.showNoRowsOverlay();
-            }
-          }, 0);
         }
       },
       getRowId: (data) => data.rowId,
@@ -872,17 +870,27 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
 
     for (let p = 0; p < totalPages; p++) {
       try {
-        // Fetch updated column data from your API
-        const { data } = await axios.post(endpoints.develop.eval.getEvalLogs, {
-          eval_template_id: evalId,
-          current_page_index: p,
-          filters: validatedFilters,
-        });
+        const page = await readEvalLogGridPage(
+          ({ signal, timeout }) =>
+            axios.get(endpoints.develop.eval.getEvalsLogs, {
+              signal,
+              timeout,
+              params: {
+                eval_template_id: evalId,
+                current_page_index: p,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                filters: JSON.stringify(validatedFilters),
+                sort: JSON.stringify([]),
+              },
+            }),
+          { currentPageIndex: p, pageSize: INTERACTIVE_TABLE_PAGE_SIZE },
+        );
 
-        setColumnDataNew(data, false, true, true);
+        setColumnDataNew(page.columns, false, true);
 
-        const rows = data?.result?.table;
+        const rows = page.rows;
         setRowData(rows);
+        setReadError(null);
         const transaction = {
           update: rows,
         };
@@ -890,6 +898,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           gridRef.current.api.applyServerSideTransaction(transaction);
         }
       } catch (e) {
+        setReadError(QUERY_FAILED_RETRY_MESSAGE);
         logger.error("Failed to refresh rows", e);
       }
     }
@@ -952,60 +961,8 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }}
         >
           {selected?.length ? (
-            <Box
-              sx={{
-                padding: "6px 16px",
-                gap: "16px",
-                borderRadius: "8px",
-                // border: "1px solid rgba(225, 223, 236, 1)",
-                display: "flex",
-                justifyContent: "flex-end",
-                alignItems: "center",
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  lineHeight: "22px",
-                  color: "rgba(120, 87, 252, 1)",
-                  paddingRight: "16px",
-                  borderRight: "2px solid rgba(225, 223, 236, 1)",
-                }}
-              >
-                {selected?.length || 0} Selected
-              </Typography>
-
-              {/* <Typography
-                                sx={{
-                                    fontSize: "14px",
-                                    fontWeight: 600,
-                                    color: "text.secondary",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "5px",
-                                    cursor: "pointer",
-                                }}
-                                onClick={() => setOpenDelete(true)}
-                            >
-                                <Iconify icon="solar:trash-bin-trash-bold" />
-                                Delete
-                            </Typography> */}
-
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  cursor: "pointer",
-                }}
-                onClick={closeModal}
-              >
-                Cancel
-              </Typography>
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <SelectionBar count={selected.length} onCancel={closeModal} />
             </Box>
           ) : (
             <></>
@@ -1027,6 +984,33 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
             setFilters={setFilters}
             allColumns={allColumns}
           />
+        </Box>
+      )}
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "status.warning.fg",
+            bgcolor: "status.warning.bg",
+            borderBottom: "1px solid",
+            borderColor: "status.warning.border",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() =>
+              gridRef.current?.api?.refreshServerSide({ purge: false })
+            }
+          >
+            Retry
+          </Button>
         </Box>
       )}
       <Box className="ag-theme-quartz" style={{ height: "100%" }}>
@@ -1054,7 +1038,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
             columnDefs={columnDefs}
             // defaultColDef={defaultColDef}
             pagination={false}
-            cacheBlockSize={10}
+            cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
             maxBlocksInCache={10}
             statusBar={statusBar}
             suppressRowClickSelection={true}

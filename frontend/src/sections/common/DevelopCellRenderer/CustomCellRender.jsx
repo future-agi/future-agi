@@ -177,13 +177,11 @@ const CustomCellRender = (props) => {
           <Button
             onClick={() => setExpanded(!expanded)}
             sx={{
-              textTransform: "none",
               p: 0,
               mt: 0.5,
               minWidth: "auto",
               color: "text.primary",
               textDecoration: "underline",
-              fontSize: "14px",
               "&:hover": {
                 backgroundColor: "transparent",
               },
@@ -216,6 +214,7 @@ const CustomCellRender = (props) => {
                       column.feedBackClick({
                         ...cellData,
                         ...column,
+                        value,
                         rowData: props?.data,
                       });
                     }}

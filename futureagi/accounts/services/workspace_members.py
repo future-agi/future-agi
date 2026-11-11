@@ -4,6 +4,7 @@ from django.db import models
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
+from accounts.utils import build_invite_links
 from tfc.constants.levels import Level
 
 logger = structlog.get_logger(__name__)
@@ -31,6 +32,7 @@ def _member_row(
     member_type,
     org_level=None,
     auto_access=False,
+    invite_link=None,
 ):
     """Single source of the member-row shape (was hand-built in 3 places).
 
@@ -39,7 +41,7 @@ def _member_row(
     invite sources. Shape is contracted by
     ``accounts.serializers.rbac.WorkspaceMemberRowSerializer``.
     """
-    return {
+    row = {
         "id": str(row_id),
         "name": name or "",
         "email": email,
@@ -52,6 +54,10 @@ def _member_row(
         "type": member_type,
         "auto_access": auto_access,
     }
+    # Omitted rather than nulled, matching the organization member list.
+    if invite_link:
+        row["invite_link"] = invite_link
+    return row
 
 
 def list_workspace_members(
@@ -64,10 +70,11 @@ def list_workspace_members(
     sort="-created_at",
     page=1,
     limit=20,
+    viewer_org_level=0,
 ):
     rows, explicit_user_ids = _explicit_members(workspace, organization)
     rows.extend(_auto_access_admins(organization, explicit_user_ids))
-    rows = _merge_pending_invites(rows, organization, workspace)
+    rows = _merge_pending_invites(rows, organization, workspace, viewer_org_level)
     rows = _apply_filters(rows, search, filter_status, filter_role)
     rows = _apply_sort(rows, sort)
 
@@ -166,20 +173,22 @@ def _auto_access_admins(organization, explicit_user_ids):
     return rows
 
 
-def _merge_pending_invites(member_rows, organization, workspace):
-    invites = _pending_invites(organization, workspace)
+def _merge_pending_invites(member_rows, organization, workspace, viewer_org_level=0):
+    invites = _pending_invites(organization, workspace, viewer_org_level)
     invited_emails = {inv["email"] for inv in invites}
     deduped = [r for r in member_rows if r["email"] not in invited_emails]
     deduped.extend(invites)
     return deduped
 
 
-def _pending_invites(organization, workspace):
+def _pending_invites(organization, workspace, viewer_org_level=0):
     qs = OrganizationInvite.objects.filter(
         organization=organization, status=InviteStatus.PENDING
     )
+    invites = list(qs)
+    invite_links = build_invite_links([inv.target_email for inv in invites])
     results = []
-    for inv in qs:
+    for inv in invites:
         ws_match = None
         if inv.workspace_access:
             for entry in inv.workspace_access:
@@ -195,6 +204,15 @@ def _pending_invites(organization, workspace):
             if ws_match
             else Level.WORKSPACE_ADMIN
         )
+        # The link claims the invite, so whoever reads one can take that seat.
+        # Compare against the invite's own level rather than a fixed rank: a
+        # workspace admin must not receive the link for a MEMBER invite they
+        # could never create, and an org admin must not receive one for an
+        # Owner invite.
+        invite_link = None
+        if viewer_org_level >= inv.level:
+            invite_link = invite_links.get(inv.target_email.lower())
+
         results.append(
             _member_row(
                 row_id=inv.id,
@@ -205,6 +223,7 @@ def _pending_invites(organization, workspace):
                 status=inv.effective_status,
                 created_at=inv.created_at.isoformat() if inv.created_at else "",
                 member_type="invite",
+                invite_link=invite_link,
             )
         )
     return results

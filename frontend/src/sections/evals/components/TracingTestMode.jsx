@@ -2,17 +2,19 @@
 import {
   Autocomplete,
   Box,
+  Button,
   Chip,
   CircularProgress,
   IconButton,
   InputAdornment,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { styled } from "@mui/material/styles";
+import { createFilterOptions } from "@mui/material/Autocomplete";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -25,13 +27,28 @@ import React, {
 import { useQuery } from "@tanstack/react-query";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
-import axios, { endpoints } from "src/utils/axios";
+import { useMapToVariable } from "./useMapToVariable";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { canonicalEntries } from "src/utils/utils";
 import {
-  canonicalEntries,
-  canonicalKeys,
-  stripAttributePathPrefix,
-} from "src/utils/utils";
+  getSpanReadCacheKey,
+  getSpanReadIdentityKey,
+  SPAN_REFERENCE_ERROR,
+  spanReadRequest,
+  verifySpanReadResponse,
+} from "src/sections/projects/LLMTracing/spanReadReference";
+import {
+  collectExactListRows,
+  createListCursorProtocolError,
+  isListCursorProtocolError,
+  listCursorBoundaryIdentity,
+  listContinuationParams,
+  rememberBoundedListCursorIdentity,
+  requestListWithLegacyCursorFallback,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
 
 import {
   InlineAudio,
@@ -47,13 +64,94 @@ import { useForm, useWatch } from "react-hook-form";
 import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import DateRangePill, {
+  dateFilterForOption,
+} from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import { buildFlatValueMap, executeEvalForRow } from "../utils/evalExecution";
+import {
+  buildAutoCtx,
+  buildCompositeCtx,
+  resolveMappingFromRow,
+} from "../utils/evalExecution";
+import {
+  walkPaths,
+  expandPaths,
+  sortSpansForMapping,
+} from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import {
+  getAttributeLookupMessage,
+  getQueryReadMessage,
+  getQueryReadState,
+} from "src/utils/queryReadState";
+import {
+  mergeTracingFieldNames,
+  useExactEvalAttributeFields,
+} from "./useExactEvalAttributeFields";
+import {
+  parseAxiosResult,
+  parseSessionObserveListResponse,
+  parseSpanObserveListResponse,
+  parseTraceObserveListResponse,
+  parseVoiceCallDetailResponse,
+  parseVoiceCallListResponse,
+} from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
+
+const MappingOption = styled("li")(({ theme }) => ({
+  fontSize: "12px",
+  fontFamily: "monospace",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  containerType: "inline-size",
+  color: theme.palette.text.primary,
+  '&[data-nested="true"]': { color: theme.palette.primary.main },
+  // Reveal the clipped tail on hover/focus; fitting text stays put.
+  "&:hover > span, &.Mui-focused > span": {
+    maxWidth: "none",
+    flexShrink: 0,
+    transform: "translateX(min(0px, calc(100cqw - 100%)))",
+  },
+}));
+
+const MappingOptionLabel = styled("span")({
+  display: "inline-block",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  verticalAlign: "top",
+});
+
+// The listbox is not virtualised; cap what gets mounted. The search is
+// server-backed, so narrowing the query still reaches everything.
+const MAPPING_OPTION_RENDER_LIMIT = 200;
+const filterMappingOptions = createFilterOptions({
+  limit: MAPPING_OPTION_RENDER_LIMIT,
+});
+
+// Module-level so their identity is stable across renders.
+const MAPPING_LISTBOX_PROPS = { style: { maxHeight: 260 } };
+const isMappingOptionEqual = (opt, val) => opt === val;
+
+const renderMappingOption = (props, col) => {
+  const { key, ...rest } = props;
+  const depth = col.includes(".") ? col.split(".").length - 1 : 0;
+  return (
+    <MappingOption
+      key={key}
+      {...rest}
+      title={col}
+      data-nested={depth > 0 ? "true" : undefined}
+      style={depth > 0 ? { paddingLeft: 12 + depth * 12 } : undefined}
+    >
+      <MappingOptionLabel>{col}</MappingOptionLabel>
+    </MappingOption>
+  );
+};
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -109,20 +207,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Recursively find a span by ID in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list (depth-first, like the graph)
@@ -215,7 +299,196 @@ export const buildTracingPreviewListParams = ({
   page_number: 0,
   page_size: 50,
   filters: JSON.stringify(effectiveFilters || []),
+  cursor_mode: true,
 });
+
+// eslint-disable-next-line react-refresh/only-export-components
+export const buildTracingVoicePreviewListParams = ({
+  selectedProjectId,
+  effectiveFilters,
+}) => ({
+  project_id: selectedProjectId,
+  page: 1,
+  page_size: 50,
+  filters: JSON.stringify(effectiveFilters || []),
+  cursor_mode: true,
+});
+
+const tracingPreviewRowIdentity = (rowType, row) => {
+  if (rowType === "VoiceCall") {
+    return row?.call_id || row?.id || row?.trace_id || null;
+  }
+  if (rowType === "Session") {
+    return row?.session_id || row?.id || null;
+  }
+  if (rowType === "Trace") {
+    return row?.trace_id || row?.id || null;
+  }
+  return getSpanReadIdentityKey(row);
+};
+
+const MAPPING_COMMIT_DEBOUNCE_MS = 120;
+const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
+
+const MappingRow = React.memo(function MappingRow({
+  variable,
+  options,
+  value,
+  allowCustomFieldPath,
+  disabled,
+  isFetchingColumns,
+  disabledTooltip,
+  onSelect,
+  onType,
+  onOpen,
+}) {
+  const [inputValue, setInputValue] = useState(value || "");
+  const commitTimer = useRef(null);
+  const lastCommitted = useRef(value || "");
+
+  useEffect(() => {
+    const next = value || "";
+    if (next === lastCommitted.current) return;
+    lastCommitted.current = next;
+    setInputValue(next);
+  }, [value]);
+
+  useEffect(() => () => clearTimeout(commitTimer.current), []);
+
+  const autocomplete = (
+    <Autocomplete
+      size="small"
+      freeSolo={allowCustomFieldPath}
+      disabled={disabled}
+      options={options}
+      value={value || null}
+      onOpen={() => onOpen(variable, value)}
+      onChange={(_, val) => {
+        const next = val || "";
+        clearTimeout(commitTimer.current);
+        lastCommitted.current = next;
+        setInputValue(next);
+        onSelect(variable, next);
+      }}
+      {...(allowCustomFieldPath
+        ? {
+            inputValue,
+            onInputChange: (_event, val, reason) => {
+              if (reason === "reset") return;
+              const next = val || "";
+              setInputValue(next);
+              clearTimeout(commitTimer.current);
+              commitTimer.current = setTimeout(() => {
+                lastCommitted.current = next;
+                onType(variable, next);
+              }, MAPPING_COMMIT_DEBOUNCE_MS);
+            },
+          }
+        : {})}
+      openOnFocus
+      autoHighlight
+      selectOnFocus
+      handleHomeEndKeys
+      isOptionEqualToValue={isMappingOptionEqual}
+      sx={MAPPING_AUTOCOMPLETE_SX}
+      filterOptions={filterMappingOptions}
+      ListboxProps={MAPPING_LISTBOX_PROPS}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          placeholder={
+            isFetchingColumns
+              ? "Loading columns..."
+              : allowCustomFieldPath
+                ? "Search or type a path (e.g. attributes.input.value)"
+                : "Search column..."
+          }
+          InputProps={{
+            ...params.InputProps,
+            sx: {
+              ...params.InputProps.sx,
+              fontSize: "12px",
+              fontFamily: "monospace",
+              height: 28,
+              py: 0,
+            },
+            endAdornment: isFetchingColumns ? (
+              <InputAdornment position="end">
+                <CircularProgress size={14} />
+              </InputAdornment>
+            ) : (
+              params.InputProps.endAdornment
+            ),
+          }}
+        />
+      )}
+      renderOption={renderMappingOption}
+    />
+  );
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          px: 1,
+          py: 0.25,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          minWidth: 120,
+        }}
+      >
+        <Iconify
+          icon="solar:code-linear"
+          width={14}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
+        >
+          {variable}
+        </Typography>
+      </Box>
+      <Iconify
+        icon="solar:arrow-right-linear"
+        width={14}
+        sx={{ color: "text.disabled" }}
+      />
+      {disabled ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+        </CustomTooltip>
+      ) : (
+        autocomplete
+      )}
+    </Box>
+  );
+});
+
+MappingRow.propTypes = {
+  variable: PropTypes.string.isRequired,
+  options: PropTypes.arrayOf(PropTypes.string).isRequired,
+  value: PropTypes.string,
+  allowCustomFieldPath: PropTypes.bool,
+  disabled: PropTypes.bool,
+  isFetchingColumns: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
+  onSelect: PropTypes.func.isRequired,
+  onType: PropTypes.func.isRequired,
+  onOpen: PropTypes.func.isRequired,
+};
 
 const TracingTestMode = React.forwardRef(
   (
@@ -224,6 +497,7 @@ const TracingTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       onClearResult,
@@ -250,14 +524,6 @@ const TracingTestMode = React.forwardRef(
       // TestPlayground (eval detail) where there's no parent form to
       // wire filters from.
       hostsFilter = false,
-      // Optional: precomputed mapping-path list from the parent picker
-      // (e.g. TaskConfigPanel sends sessions / traces paths fetched from
-      // get_eval_attributes_list). When provided AND rowType is Session
-      // or Trace, the variable-mapping dropdown reads from this list
-      // instead of walking the loaded row's data — so users see all
-      // candidate paths immediately, regardless of drill-in depth.
-      // When null/empty, falls back to today's walked-detail behaviour.
-      pickerSourceColumns = null,
       // When true, the mapping Autocomplete accepts arbitrary typed values
       // (freeSolo) instead of being locked to `fieldNames`. The BE resolver
       // (_walk_dotted_path) already handles arbitrary depths safely across
@@ -289,9 +555,20 @@ const TracingTestMode = React.forwardRef(
       control: internalFilterForm.control,
       name: "filters",
     });
+    // Keep the existing 30-day preview default visible and editable. Property
+    // discovery includes older values; choosing one must not hide the range
+    // that determines whether its rows appear in this preview.
+    const [previewDateFilter, setPreviewDateFilter] = useState(() => ({
+      dateOption: "30D",
+      dateFilter: dateFilterForOption("30D"),
+    }));
     const internalApiFilters = useMemo(
-      () => buildApiFilterArray(internalFormFilters),
-      [internalFormFilters],
+      () =>
+        buildApiFilterArray(
+          internalFormFilters,
+          ...previewDateFilter.dateFilter,
+        ),
+      [internalFormFilters, previewDateFilter],
     );
     const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
 
@@ -339,8 +616,21 @@ const TracingTestMode = React.forwardRef(
     const [columns, setColumns] = useState([]);
     const [rows, setRows] = useState([]);
     const [totalRows, setTotalRows] = useState(0);
+    const [totalRowsIsLowerBound, setTotalRowsIsLowerBound] = useState(false);
+    const [listReadState, setListReadState] = useState("complete");
+    const [listFailureRetryable, setListFailureRetryable] = useState(false);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [listCursorRevision, advanceListCursor] = useState(0);
+    const [listContinuationPending, setListContinuationPending] =
+      useState(false);
+    const listContinuationRef = useRef({
+      signature: null,
+      cursor: null,
+      cursorIdentity: null,
+      rows: [],
+      requestedCursorIdentities: [],
+    });
     // Key the last-completed fetch so we can derive "is the current
     // selection stale w.r.t. the last fetch" at render time. React
     // effects run *after* paint, so tracking a `hasFetched` boolean
@@ -349,11 +639,21 @@ const TracingTestMode = React.forwardRef(
     // against the last-fetched key tells us synchronously — in the same
     // render that the props changed — that new data is on the way.
     const [lastFetchedKey, setLastFetchedKey] = useState(null);
+    const effectiveFilterKey = JSON.stringify(effectiveFilters || []);
     const currentFetchKey = selectedProjectId
-      ? `${selectedProjectId}:${rowType}`
+      ? `${selectedProjectId}:${rowType}:${effectiveFilterKey}`
       : null;
     const isPendingNewFetch =
       !!currentFetchKey && lastFetchedKey !== currentFetchKey;
+    const continueListSearch = useCallback(() => {
+      if (!listContinuationRef.current.cursor) return;
+      setListContinuationPending(false);
+      advanceListCursor((revision) => revision + 1);
+    }, []);
+    const retryListRead = useCallback(() => {
+      setListFailureRetryable(false);
+      advanceListCursor((revision) => revision + 1);
+    }, []);
 
     // Columns/Value table — user-resizable key column. Drag the divider
     // between key and value to widen long dotted paths. Ref holds the
@@ -366,11 +666,13 @@ const TracingTestMode = React.forwardRef(
     }, [keyColWidth]);
 
     // Span/trace detail (full attributes)
-    const [spanDetail, setSpanDetail] = useState(null);
+    const [loadedSpanDetail, setSpanDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [detailError, setDetailError] = useState(null);
 
     // Per-row cache so toggling rows doesn't refetch the trace or re-walk
-    // the response. Keyed by `${rowType}:${traceId}[:${spanId}]`. Each entry
+    // the response. Span keys contain project + physical identity + winner.
+    // Other keys retain the selected project scope. Each entry
     // is `{ detail, fieldNames? }` — fieldNames is filled lazily on first
     // walk and reused on subsequent row toggles.
     const detailCacheRef = useRef(new Map());
@@ -385,6 +687,32 @@ const TracingTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+    const [mappingSearch, setMappingSearch] = useState("");
+    const {
+      data: exactAttributeFields,
+      queryReadState: exactAttributeReadState,
+      isFetching: isFetchingExactAttributes,
+      fetchNextPage: fetchNextAttributePage,
+      hasNextPage: hasNextAttributePage,
+      isFetchingNextPage: isFetchingNextAttributePage,
+      isFetchNextPageError: isNextAttributePageError,
+    } = useExactEvalAttributeFields({
+      projectId: selectedProjectId,
+      rowType,
+      search: mappingSearch,
+      // Task mappings for every row type discover the same retained span-map
+      // keys. The hook maps each raw key into the resolver's canonical path
+      // grammar (including indexed trace/session prefixes).
+      enabled: allowCustomFieldPath,
+    });
+
+    // ── Map-from-table: assign a column's path straight into a variable ──
+    // Shared across every mapping surface — see useMapToVariable.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
 
     // Template ID ref (updated via imperative handle for first-test flow)
     const templateIdRef = useRef(templateId);
@@ -451,71 +779,319 @@ const TracingTestMode = React.forwardRef(
     // ── Fetch data when project or rowType changes ──
     useEffect(() => {
       if (!selectedProjectId) {
+        listContinuationRef.current = {
+          signature: null,
+          cursor: null,
+          cursorIdentity: null,
+          rows: [],
+          requestedCursorIdentities: [],
+        };
         setColumns([]);
         setRows([]);
         setTotalRows(0);
+        setTotalRowsIsLowerBound(false);
         setCurrentRowIndex(0);
         setLastFetchedKey(null);
+        setListReadState("complete");
+        setListFailureRetryable(false);
+        setListContinuationPending(false);
         return;
       }
 
       setLoading(true);
+      setListReadState("complete");
+      setListFailureRetryable(false);
+      setTotalRowsIsLowerBound(false);
+      setListContinuationPending(false);
       let cancelled = false;
-      const fetchKey = `${selectedProjectId}:${rowType}`;
-
+      const requestController = new AbortController();
+      const startedAt = Date.now();
+      const remainingMs = () =>
+        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
+      const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
+      if (listContinuationRef.current.signature !== fetchKey) {
+        listContinuationRef.current = {
+          signature: fetchKey,
+          cursor: null,
+          cursorIdentity: null,
+          rows: [],
+          requestedCursorIdentities: [],
+        };
+      }
+      const startingCursor = listContinuationRef.current.cursor;
+      const startingRows = startingCursor
+        ? listContinuationRef.current.rows || []
+        : [];
+      const continuationSnapshot = startingCursor
+        ? {
+            signature: fetchKey,
+            cursor: startingCursor,
+            cursorIdentity: listContinuationRef.current.cursorIdentity,
+            rows: [...startingRows],
+            requestedCursorIdentities: [
+              ...(listContinuationRef.current.requestedCursorIdentities || []),
+            ],
+          }
+        : null;
+      const requestedCursorIdentities = new Set(
+        listContinuationRef.current.requestedCursorIdentities || [],
+      );
+      const cursorIdentityByToken = new Map();
+      const assertUnconsumedCursor = (identity) => {
+        if (
+          typeof identity !== "string" ||
+          requestedCursorIdentities.has(identity)
+        ) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+      };
       const fetchData = async () => {
-        setRows([]);
+        if (!startingCursor) setRows([]);
         try {
-          if (rowType === "VoiceCall") {
-            const { data } = await axios.get(endpoints.project.getCallLogs, {
-              params: {
-                project_id: selectedProjectId,
-                page: 1,
-                page_size: 50,
-                filters: JSON.stringify(effectiveFilters || []),
-              },
+          if (startingCursor) {
+            const startingCursorIdentity =
+              listContinuationRef.current.cursorIdentity ||
+              listCursorBoundaryIdentity({ next_cursor: startingCursor });
+            assertUnconsumedCursor(startingCursorIdentity);
+            cursorIdentityByToken.set(startingCursor, startingCursorIdentity);
+          }
+          const recordContinuation = (metadata) => {
+            const nextCursor = metadata?.next_cursor;
+            const nextCursorIdentity = listCursorBoundaryIdentity(metadata);
+            if (typeof nextCursor !== "string" || nextCursor.length === 0) {
+              throw createListCursorProtocolError(
+                "List API returned a repeated continuation cursor",
+              );
+            }
+            // A deadline can return this cursor as pending. Only successful
+            // responses may mark it consumed, otherwise Continue rejects it.
+            assertUnconsumedCursor(nextCursorIdentity);
+            cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
+          };
+          const requestList = (
+            endpoint,
+            params,
+            { voice = false, parser, signal = requestController.signal } = {},
+          ) =>
+            requestListWithLegacyCursorFallback({
+              request: (nextParams) =>
+                readQuery(endpoint, { params: nextParams, signal }),
+              params,
+              pageParam: voice ? "page" : "page_number",
+              firstPage: voice ? 1 : 0,
+            }).then((response) => {
+              const parsed = parseAxiosResult(response, parser);
+              if (params.cursor && !signal.aborted && !cancelled) {
+                rememberBoundedListCursorIdentity(
+                  requestedCursorIdentities,
+                  cursorIdentityByToken.get(params.cursor) ||
+                    listCursorBoundaryIdentity({ next_cursor: params.cursor }),
+                );
+              }
+              return parsed;
             });
+          if (rowType === "VoiceCall") {
+            const requestParams = buildTracingVoicePreviewListParams({
+              selectedProjectId,
+              effectiveFilters,
+            });
+            const initialParams = startingCursor
+              ? listContinuationParams(requestParams, startingCursor)
+              : requestParams;
+            const response = await requestList(
+              endpoints.project.getCallLogs,
+              initialParams,
+              { voice: true, parser: parseVoiceCallListResponse },
+            );
+            const exactRows = await collectExactListRows({
+              maxElapsedMs: remainingMs(),
+              initialResponse: response,
+              initialRows: startingRows,
+              targetRowCount: requestParams.page_size,
+              rowsFromResponse: (nextResponse) => nextResponse.data.results,
+              metadataFromResponse: (nextResponse) => nextResponse.data,
+              cancellationSignal: requestController.signal,
+              nextResponse: (cursor, signal) =>
+                requestList(
+                  endpoints.project.getCallLogs,
+                  listContinuationParams(requestParams, cursor),
+                  {
+                    voice: true,
+                    parser: parseVoiceCallListResponse,
+                    signal,
+                  },
+                ),
+              rowIdentity: (row) => tracingPreviewRowIdentity(rowType, row),
+              onContinuation: recordContinuation,
+              isCurrent: () => !cancelled,
+            });
+            const { data } = exactRows.response;
             if (cancelled) return;
-            const result = data?.result || data || {};
-            const rowsOut = result.results || result.data || result.calls || [];
-            setColumns([]);
+            const result = data;
+            const rowsOut = exactRows.rows;
+            if (exactRows.pending) {
+              listContinuationRef.current = {
+                signature: fetchKey,
+                cursor: exactRows.nextCursor,
+                cursorIdentity: exactRows.nextCursorIdentity,
+                rows: rowsOut,
+                requestedCursorIdentities: [...requestedCursorIdentities],
+              };
+              setColumns([]);
+              setRows(rowsOut);
+              setTotalRows(rowsOut.length);
+              setTotalRowsIsLowerBound(true);
+              setCurrentRowIndex(0);
+              setListContinuationPending(true);
+              return;
+            }
+            listContinuationRef.current = {
+              signature: fetchKey,
+              cursor: null,
+              cursorIdentity: null,
+              rows: [],
+              requestedCursorIdentities: [],
+            };
+            const nextReadState = getQueryReadState(data);
+            setListReadState(
+              rowsOut.length > 0 || nextReadState === "sampled"
+                ? "complete"
+                : nextReadState,
+            );
+            setColumns(result.config);
             setRows(rowsOut);
-            setTotalRows(result.total_count || result.total || rowsOut.length);
+            setTotalRows(result.count);
+            setTotalRowsIsLowerBound(result.count_is_lower_bound === true);
             setCurrentRowIndex(0);
+            setListContinuationPending(false);
             return;
           }
 
           let endpoint;
+          let responseParser;
           const params = buildTracingPreviewListParams({
             selectedProjectId,
             effectiveFilters,
           });
+          const initialParams = startingCursor
+            ? listContinuationParams(params, startingCursor)
+            : params;
 
           if (rowType === "Span") {
             endpoint = endpoints.project.getSpansForObserveProject();
+            responseParser = parseSpanObserveListResponse;
           } else if (rowType === "Trace") {
             endpoint = endpoints.project.getTracesForObserveProject();
+            responseParser = parseTraceObserveListResponse;
           } else {
             endpoint = endpoints.project.projectSessionList();
+            responseParser = parseSessionObserveListResponse;
           }
 
-          const { data } = await axios.get(endpoint, { params });
+          const response = await requestList(endpoint, initialParams, {
+            parser: responseParser,
+          });
+          const exactRows = await collectExactListRows({
+            maxElapsedMs: remainingMs(),
+            initialResponse: response,
+            initialRows: startingRows,
+            targetRowCount: params.page_size,
+            rowsFromResponse: (nextResponse) => nextResponse.data.table,
+            metadataFromResponse: (nextResponse) => nextResponse.data.metadata,
+            cancellationSignal: requestController.signal,
+            nextResponse: (cursor, signal) =>
+              requestList(endpoint, listContinuationParams(params, cursor), {
+                parser: responseParser,
+                signal,
+              }),
+            rowIdentity: (row) => tracingPreviewRowIdentity(rowType, row),
+            onContinuation: recordContinuation,
+            isCurrent: () => !cancelled,
+          });
+          const { data } = exactRows.response;
           if (cancelled) return;
-          const res = data?.result || {};
+          const res = data;
 
-          const cols = res.config || [];
-          const tableRows = res.table || [];
-          const total = res.metadata?.total_rows || tableRows.length;
+          const cols = res.config;
+          const tableRows = exactRows.rows;
+          if (exactRows.pending) {
+            listContinuationRef.current = {
+              signature: fetchKey,
+              cursor: exactRows.nextCursor,
+              cursorIdentity: exactRows.nextCursorIdentity,
+              rows: tableRows,
+              requestedCursorIdentities: [...requestedCursorIdentities],
+            };
+            setColumns(cols);
+            setRows(tableRows);
+            setTotalRows(tableRows.length);
+            setTotalRowsIsLowerBound(true);
+            setCurrentRowIndex(0);
+            setListContinuationPending(true);
+            return;
+          }
+          listContinuationRef.current = {
+            signature: fetchKey,
+            cursor: null,
+            cursorIdentity: null,
+            rows: [],
+            requestedCursorIdentities: [],
+          };
+          const nextReadState = getQueryReadState(data);
+          setListReadState(
+            tableRows.length > 0 || nextReadState === "sampled"
+              ? "complete"
+              : nextReadState,
+          );
+          const total = res.metadata?.total_rows ?? tableRows.length;
 
           setColumns(cols);
           setRows(tableRows);
           setTotalRows(total);
+          setTotalRowsIsLowerBound(
+            res.metadata?.total_rows_is_lower_bound === true,
+          );
           setCurrentRowIndex(0);
-        } catch {
+          setListContinuationPending(false);
+        } catch (error) {
           if (cancelled) return;
+          if (continuationSnapshot && !isListCursorProtocolError(error)) {
+            // A transport failure does not invalidate rows and a checkpoint
+            // already proven by earlier bounded reads. Restore the exact
+            // pre-attempt snapshot (including the requested-cursor set before
+            // `startingCursor` was consumed) so an explicit retry can safely
+            // request the same saved checkpoint once more.
+            listContinuationRef.current = continuationSnapshot;
+            setListReadState("error");
+            setListFailureRetryable(true);
+            setRows(continuationSnapshot.rows);
+            setTotalRows(continuationSnapshot.rows.length);
+            setTotalRowsIsLowerBound(true);
+            setCurrentRowIndex((index) =>
+              Math.min(
+                index,
+                Math.max(0, continuationSnapshot.rows.length - 1),
+              ),
+            );
+            setListContinuationPending(true);
+            return;
+          }
+          listContinuationRef.current = {
+            signature: fetchKey,
+            cursor: null,
+            cursorIdentity: null,
+            rows: [],
+            requestedCursorIdentities: [],
+          };
+          setListReadState("error");
+          setListFailureRetryable(!isListCursorProtocolError(error));
           setColumns([]);
           setRows([]);
           setTotalRows(0);
+          setTotalRowsIsLowerBound(false);
+          setListContinuationPending(false);
         } finally {
           if (!cancelled) {
             setLoading(false);
@@ -527,23 +1103,31 @@ const TracingTestMode = React.forwardRef(
       fetchData();
       return () => {
         cancelled = true;
+        requestController.abort();
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId, rowType, JSON.stringify(effectiveFilters || [])]);
+    }, [selectedProjectId, rowType, effectiveFilterKey, listCursorRevision]);
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
+    // Effects clean up after render. Never expose the previous span even for
+    // the render between selection and cancellation of its in-flight request.
+    const selectedSpanKey = getSpanReadCacheKey(currentRow);
+    const spanDetail =
+      rowType === "Span"
+        ? selectedSpanKey &&
+          currentRow?.project_id === selectedProjectId &&
+          selectedSpanKey === getSpanReadCacheKey(loadedSpanDetail)
+          ? loadedSpanDetail
+          : null
+        : loadedSpanDetail;
 
     // ── Session drill-down queries (rowType=Session only) ──
-    // The mapping dropdown is sourced from `pickerSourceColumns` (the
-    // precomputed paths from get_eval_attributes_list) when present, so
-    // these queries primarily power the preview pane: showing real
-    // values from the session's first trace + spans so users can sanity-
-    // check what their mapping resolves to. Two queries: session detail
-    // (paginated traces) and the first trace's spans (eager-fetched on
-    // session select). React Query handles caching and dedup; cache keys
-    // are namespaced under `picker-` to stay isolated from any sibling
-    // hook in the wider app.
+    // These queries assemble the previewed session so the mapping dropdown
+    // can walk it: session detail (paginated traces) and the first trace's
+    // spans (eager-fetched on session select). React Query handles caching
+    // and dedup; cache keys are namespaced under `picker-` to stay isolated
+    // from any sibling hook in the wider app.
     const sessionRowSessionId =
       rowType === "Session" ? currentRow?.session_id : null;
 
@@ -563,16 +1147,21 @@ const TracingTestMode = React.forwardRef(
     const sessionFirstTraceId =
       sessionDetailQuery.data?.response?.[0]?.trace_id || null;
 
+    // The same trace id can exist in several projects; rows come from the
+    // selected project, so every trace-keyed detail read pins to it.
     const sessionFirstTraceSpansQuery = useQuery({
-      queryKey: ["picker-trace-spans", sessionFirstTraceId],
+      queryKey: ["picker-trace-spans", sessionFirstTraceId, selectedProjectId],
       queryFn: async () => {
         const resp = await axios.get(
           endpoints.project.getTrace(sessionFirstTraceId),
+          { params: { project_id: selectedProjectId } },
         );
         const r = resp.data?.result || {};
         return {
           trace: r.trace,
-          spans: flattenSpanTree(r.observation_spans || []),
+          spans: sortSpansForMapping(
+            flattenSpanTree(r.observation_spans || []),
+          ),
         };
       },
       enabled: !!sessionFirstTraceId,
@@ -581,8 +1170,10 @@ const TracingTestMode = React.forwardRef(
 
     // ── Fetch full span/trace detail when row changes ──
     useEffect(() => {
+      setDetailError(null);
       if (!currentRow) {
         setSpanDetail(null);
+        setLoadingDetail(false);
         return;
       }
 
@@ -590,8 +1181,16 @@ const TracingTestMode = React.forwardRef(
       const traceId = currentRow.trace_id;
       const cacheKey =
         rowType === "Span"
-          ? `Span:${traceId || ""}:${spanId || ""}`
-          : `${rowType}:${traceId || spanId || ""}`;
+          ? JSON.stringify([
+              selectedProjectId,
+              "Span",
+              getSpanReadCacheKey(currentRow),
+            ])
+          : JSON.stringify([
+              selectedProjectId,
+              rowType,
+              traceId || spanId || "",
+            ]);
 
       // Cache hit: reuse the exact same detailData reference so the
       // downstream fieldNames memo short-circuits too.
@@ -602,6 +1201,9 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
+      const controller = new AbortController();
+      let cancelled = false;
+      setSpanDetail(null);
       const fetchDetail = async () => {
         setLoadingDetail(true);
         try {
@@ -613,38 +1215,48 @@ const TracingTestMode = React.forwardRef(
             try {
               const { data } = await axios.get(
                 endpoints.project.getVoiceCallDetail,
-                { params: { trace_id: traceId } },
+                {
+                  params: { trace_id: traceId, project_id: selectedProjectId },
+                  signal: controller.signal,
+                },
               );
-              const voiceResult = data?.result || data?.data || data || {};
+              const voiceResult = parseVoiceCallDetailResponse(data);
               // Spread row-list fields first as a fallback so we never
               // lose data that was only present on the list row.
               detailData = { ...currentRow, ...voiceResult };
             } catch {
               detailData = { ...currentRow };
             }
-          } else if ((rowType === "Span" || rowType === "Trace") && traceId) {
+          } else if (rowType === "Span") {
+            const { spanId: selectedSpanId, params } =
+              spanReadRequest(currentRow);
+            if (params.project_id !== selectedProjectId)
+              throw new Error(SPAN_REFERENCE_ERROR);
+            const { data } = await axios.get(
+              endpoints.project.getObservationSpan(selectedSpanId),
+              { params, signal: controller.signal },
+            );
+            if (data?.status !== true) throw new Error(SPAN_REFERENCE_ERROR);
+            detailData = verifySpanReadResponse(
+              currentRow,
+              data?.result?.observation_span,
+            );
+          } else if (rowType === "Trace" && traceId) {
             // Fetch the TRACE detail — same API as the drawer uses.
             // This returns all observation spans with full attributes (including spanAttributes).
             const { data } = await axios.get(
               endpoints.project.getTrace(traceId),
+              {
+                params: { project_id: selectedProjectId },
+                signal: controller.signal,
+              },
             );
             const traceResult = data?.result;
 
             const spans = traceResult?.observation_spans;
-            if (rowType === "Span" && spanId && spans) {
-              detailData = findSpanInTree(spans, spanId);
-              if (!detailData) {
-                const firstSpan = spans?.[0];
-                detailData = firstSpan?.observation_span || traceResult?.trace;
-              }
-            } else {
-              const traceInfo = traceResult?.trace || {};
-              const allSpans = flattenSpanTree(spans);
-              detailData = {
-                ...traceInfo,
-                spans: allSpans,
-              };
-            }
+            const traceInfo = traceResult?.trace || {};
+            const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+            detailData = { ...traceInfo, spans: allSpans };
           } else if (rowType === "Session") {
             // Sessions are assembled via React Query at the top of the
             // component (sessionDetailQuery + sessionFirstTraceSpansQuery)
@@ -659,17 +1271,28 @@ const TracingTestMode = React.forwardRef(
             detailData = { ...currentRow };
           }
 
+          if (cancelled) return;
           detailCacheRef.current.set(cacheKey, { detail: detailData });
           setSpanDetail(detailData);
         } catch {
+          if (cancelled) return;
           setSpanDetail(null);
+          setDetailError(
+            rowType === "Span"
+              ? SPAN_REFERENCE_ERROR
+              : "Could not load this preview. Refresh the list and try again.",
+          );
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
 
       fetchDetail();
-    }, [currentRow, currentRowIndex, rowType, columns]);
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }, [currentRow, currentRowIndex, rowType, selectedProjectId]);
 
     // ── Session detail watcher ──
     // Compose `spanDetail` from the React Query results when in Session
@@ -695,10 +1318,11 @@ const TracingTestMode = React.forwardRef(
         traces: traces.map((t, i) => ({
           ...t,
           // First trace gets eager-fetched spans for immediate preview;
-          // remaining traces start empty and would be filled when the
-          // user clicks them (lazy fetch hook to be added in a follow-
-          // up if the basic preview proves not enough).
+          // remaining traces start empty and are stamped unloaded so
+          // resolvePath reports their span paths as unknown (silent),
+          // not missing.
           spans: i === 0 ? firstTraceSpans : [],
+          ...(i === 0 ? {} : { _spansLoaded: false }),
         })),
       };
       setSpanDetail(detailData);
@@ -768,104 +1392,117 @@ const TracingTestMode = React.forwardRef(
       // have it — avoids rewalking when React reuses the same cached
       // detailData object across row toggles.
       for (const entry of detailCacheRef.current.values()) {
-        if (entry.detail === source && entry.fieldNames) {
-          return entry.fieldNames;
+        if (entry.detail === source && entry.walked) {
+          return entry.walked;
         }
       }
 
-      const keys = [];
-      // Walks both dicts and arrays. Array elements get numeric
-      // indices (e.g. `messages.0.content`) so users can target
-      // individual items in chat-message lists. Limits prevent
-      // runaway recursion: 5000 dict keys, 500 array elements.
-      const ARRAY_PEEK = 500;
-      const DICT_LIMIT = 5000;
-      // Subtrees we deliberately don't recurse into — the key itself
-      // stays selectable, but its (often multi-MB) children are skipped
-      // so the first-row walk finishes in tens of ms on voice traces.
-      // `raw_log` is the Vapi call dump, `metrics_data` / `call_logs`
-      // are the per-turn payloads, `provider_transcript` is the raw
-      // transcript string — none of these are useful as variable paths.
-      const NO_RECURSE_KEYS = new Set([
-        "raw_log",
-        "rawLog",
-        "metrics_data",
-        "metricsData",
-        "call_logs",
-        "callLogs",
-        "provider_transcript",
-        "providerTranscript",
-      ]);
-      const walk = (node, prefix) => {
-        if (Array.isArray(node)) {
-          node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-            const path = prefix ? `${prefix}.${idx}` : String(idx);
-            keys.push(path);
-            if (item && typeof item === "object") {
-              walk(item, path);
-            }
-          });
-          return;
-        }
-        // canonicalEntries strips the camelCase aliases the axios
-        // interceptor layers on top of snake_case fields, otherwise the
-        // attribute autocomplete dropdown lists every path twice.
-        for (const [k, v] of canonicalEntries(node)) {
-          if (k.startsWith("_")) continue;
-          const path = prefix ? `${prefix}.${k}` : k;
-          keys.push(path);
-          if (NO_RECURSE_KEYS.has(k)) continue;
-          if (v && typeof v === "object") {
-            if (Array.isArray(v) || canonicalKeys(v).length < DICT_LIMIT) {
-              walk(v, path);
-            }
-          }
-        }
-      };
-      walk(source, "");
-      // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
-      const seen = new Set();
-      const flattened = [];
-      keys.forEach((k) => {
-        const short = stripAttributePathPrefix(k);
-        if (seen.has(short)) return;
-        seen.add(short);
-        flattened.push(short);
-      });
+      const walked = walkPaths(source); // { paths, truncated }
 
       // Persist back into the per-row cache so the next row toggle that
       // resolves to this same detail reference short-circuits the walk.
       for (const [key, entry] of detailCacheRef.current.entries()) {
         if (entry.detail === source) {
-          detailCacheRef.current.set(key, { ...entry, fieldNames: flattened });
+          detailCacheRef.current.set(key, { ...entry, walked });
           break;
         }
       }
 
-      return flattened;
+      return walked;
     }, [spanDetail]);
 
-    // Mapping-dropdown source. For Session / Trace row types when the
-    // parent picker passed in a precomputed list (TaskConfigPanel does
-    // this with the get_eval_attributes_list result), use it directly so
-    // users see every candidate path the moment they pick the row-type
-    // tab — no drill-in required. Span row type and any caller that
-    // doesn't pass pickerSourceColumns falls back to walking the loaded
-    // detail (existing behaviour).
+    // Type-to-deepen: options stay at the eager depth from walkPaths; when
+    // the user types past a truncated boundary, expandPaths merges deeper
+    // children in. Reset whenever the previewed row changes.
+    const [deepenedPaths, setDeepenedPaths] = useState([]);
+    const [deepenedTruncated, setDeepenedTruncated] = useState(() => new Set());
+
+    // A prefix stays in `truncatedSet` once known, so without this each
+    // backspace across a `.` re-walked the subtree.
+    const expandedPrefixesRef = useRef(new Set());
+
+    useEffect(() => {
+      setDeepenedPaths([]);
+      setDeepenedTruncated(new Set());
+      expandedPrefixesRef.current = new Set();
+    }, [spanDetail]);
+
+    // Mapping-dropdown source: paths walked from the previewed row (eager
+    // depth) plus any type-to-deepen additions. Falls back to the row's
+    // column keys before the detail has loaded.
     const fieldNames = useMemo(() => {
-      const usePrecomputed =
-        Array.isArray(pickerSourceColumns) &&
-        pickerSourceColumns.length > 0 &&
-        (rowType === "Session" || rowType === "Trace");
-      if (usePrecomputed) {
-        return pickerSourceColumns
-          .map((c) =>
-            typeof c === "string" ? c : c?.field || c?.name || c?.headerName,
-          )
-          .filter(Boolean);
-      }
-      return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
-    }, [pickerSourceColumns, rowType, walkedFromDetail, rowFields]);
+      const base = walkedFromDetail?.paths;
+      const genericFields = base?.length
+        ? [...base, ...deepenedPaths]
+        : rowFields.map((f) => f?.colId || f?.key);
+      return mergeTracingFieldNames(genericFields, exactAttributeFields);
+    }, [walkedFromDetail, deepenedPaths, rowFields, exactAttributeFields]);
+
+    // Untouched variables keep the same `fieldNames` reference so their
+    // listboxes skip re-filtering while a sibling is being typed into.
+    const optionsByVariable = useMemo(() => {
+      const fieldSet = new Set(fieldNames);
+      const out = {};
+      variables.forEach((variable) => {
+        const current = mapping[variable];
+        out[variable] =
+          current && !fieldSet.has(current)
+            ? [current, ...fieldNames]
+            : fieldNames;
+      });
+      return out;
+    }, [variables, mapping, fieldNames]);
+
+    const truncatedSet = useMemo(() => {
+      const merged = new Set(walkedFromDetail?.truncated || []);
+      deepenedTruncated.forEach((p) => merged.add(p));
+      return merged;
+    }, [walkedFromDetail, deepenedTruncated]);
+
+    // When the user types a truncated path followed by a dot, walk that node
+    // a few more levels and merge the children into the options. Operates on
+    // already-loaded detail (session traces beyond the first aren't fetched
+    // on demand here — their spans stay unknown, resolved silently).
+    const handleMappingInputChange = useCallback(
+      (_event, inputValue) => {
+        setMappingSearch(inputValue || "");
+        if (!inputValue?.endsWith(".")) return;
+        const prefix = inputValue.slice(0, -1);
+        if (!truncatedSet.has(prefix)) return;
+        if (expandedPrefixesRef.current.has(prefix)) return;
+        expandedPrefixesRef.current.add(prefix);
+        const { paths, truncated } = expandPaths(spanDetail, prefix);
+        if (!paths.length) return;
+        setDeepenedPaths((prev) => {
+          const known = new Set([...(walkedFromDetail?.paths || []), ...prev]);
+          const fresh = paths.filter((p) => !known.has(p));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+        setDeepenedTruncated((prev) => {
+          const next = new Set(prev);
+          truncated.forEach((p) => next.add(p));
+          return next;
+        });
+      },
+      [truncatedSet, spanDetail, walkedFromDetail],
+    );
+
+    const handleMappingSelect = useCallback((variable, val) => {
+      setMapping((prev) => ({ ...prev, [variable]: val }));
+    }, []);
+    const handleMappingType = useCallback(
+      (variable, val) => {
+        handleMappingInputChange(null, val);
+        setMapping((prev) => ({ ...prev, [variable]: val }));
+      },
+      [handleMappingInputChange],
+    );
+    const handleMappingOpen = useCallback(
+      (variable, val) => {
+        if (allowCustomFieldPath) setMappingSearch(val || variable);
+      },
+      [allowCustomFieldPath],
+    );
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -917,14 +1554,15 @@ const TracingTestMode = React.forwardRef(
       });
     }, [variables, fieldNames]);
 
-    // Mapping is always required; a sample row only when not using data injection.
+    // With data injection the trace/session context supplies the values, so
+    // mapping is optional; otherwise require all variables mapped + a sample row.
     useEffect(() => {
       if (!onReadyChange) return;
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
       const hasRow = !!currentRow;
-      const ready = hasDataInjection ? allMapped : allMapped && hasRow;
+      const ready = hasDataInjection || (allMapped && hasRow);
       onReadyChange(ready, mapping);
     }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
 
@@ -957,112 +1595,25 @@ const TracingTestMode = React.forwardRef(
       }
 
       try {
-        // Build a flat fieldName→value lookup by walking spanDetail with
-        // the same logic used to populate the fieldNames dropdown. This
-        // ensures that a field name selected from the dropdown (e.g.
-        // "input.value" — which may have been soft-flattened from
-        // "span_attributes.input.value") always resolves to the correct
-        // value, even when the top-level key shadows a deeper path.
-        // Limits match the dropdown walker so every path offered in the UI
-        // also resolves — otherwise deep paths (e.g. gen_ai.* under a big
-        // span_attributes dict) would be selectable but unresolvable.
-        const ARRAY_PEEK = 500;
-        const DICT_LIMIT = 5000;
-        const valueMap = {};
-        const walkValues = (node, prefix) => {
-          if (Array.isArray(node)) {
-            node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-              const path = prefix ? `${prefix}.${idx}` : String(idx);
-              valueMap[path] = item;
-              if (item && typeof item === "object") {
-                walkValues(item, path);
-              }
-            });
-            return;
-          }
-          // canonicalEntries drops the camelCase aliases the axios
-          // interceptor layers on — otherwise valueMap gets both
-          // `span_attributes.*` and `spanAttributes.*` branches of the
-          // same data, and only the snake side is stripped by the
-          // soft-flatten below.
-          for (const [k, v] of canonicalEntries(node)) {
-            if (k.startsWith("_")) continue;
-            const path = prefix ? `${prefix}.${k}` : k;
-            valueMap[path] = v;
-            if (v && typeof v === "object") {
-              if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-                walkValues(v, path);
-              }
-            }
-          }
-        };
-        walkValues(spanDetail, "");
-
-        // Build the soft-flattened lookup via `stripAttributePathPrefix`
-        // — the same util the `fieldNames` walker uses, so the dropdown
-        // and resolution keys stay in lockstep. The util strips any
-        // `span_attributes.` segment (anchored or nested under
-        // `spans.<n>.` / `traces.<i>.spans.<j>.`), which the previous
-        // anchored-only strip got wrong for trace/session row types
-        // (their detail nests `span_attributes.` mid-path).
-        const flatValueMap = {};
-        for (const [path, val] of Object.entries(valueMap)) {
-          const short = stripAttributePathPrefix(path);
-          // Top-level (unstripped) paths win — only fall back to a
-          // stripped path when no top-level entry exists for that short
-          // form.
-          if (!(short in flatValueMap) || short === path) {
-            flatValueMap[short] = val;
-          }
-        }
-
-        const evalMapping = {};
+        // Resolve each mapped variable against the previewed row via the
+        // shared per-path walker — the same resolution the dropdown offers,
+        // with rowFields as the fallback for annotation columns.
+        const scopedMapping = {};
         for (const variable of variables) {
-          const mappedField = mapping[variable];
-          if (!mappedField) continue;
-
-          // 1. Try the flat value map (same resolution as the dropdown)
-          let val = flatValueMap[mappedField];
-
-          // 2. Fallback: rowFields by key or colId
-          if (val === undefined) {
-            const rf = rowFields.find(
-              (f) => f.key === mappedField || f.colId === mappedField,
-            );
-            if (rf?.raw !== undefined && rf.raw !== null) {
-              val = rf.raw;
-            }
-          }
-
-          if (val !== undefined) {
-            evalMapping[variable] =
-              typeof val === "object" ? JSON.stringify(val) : String(val ?? "");
-          }
+          if (mapping[variable]) scopedMapping[variable] = mapping[variable];
         }
+        const evalMapping = resolveMappingFromRow(
+          scopedMapping,
+          spanDetail,
+          rowFields,
+        );
 
-        // Single-eval playground resolves {{span}} / {{trace}} /
-        // {{session}} server-side from IDs. Composite execution expects
-        // the concrete context objects directly.
-        const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
-
-        const compositeCtx = {};
-        if (rowType === "Span" && spanDetail)
-          compositeCtx.span_context = spanDetail;
-        if (rowType === "Trace" && currentRow)
-          compositeCtx.trace_context = currentRow;
-        if (rowType === "Session" && currentRow)
-          compositeCtx.session_context = currentRow;
-        if (rowType === "VoiceCall" && currentRow)
-          compositeCtx.trace_context = currentRow;
+        const autoCtx = buildAutoCtx({ rowType, currentRow, spanDetail });
+        const compositeCtx = buildCompositeCtx({
+          rowType,
+          currentRow,
+          spanDetail,
+        });
 
         const compositeConfig = buildCompositeRuntimeConfig({
           codeParams,
@@ -1095,9 +1646,10 @@ const TracingTestMode = React.forwardRef(
               )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1124,16 +1676,18 @@ const TracingTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          // A successful HTTP response can still carry a failed evaluation.
+          // Do not treat the result payload as user-safe: provider, query, and
+          // infrastructure errors have historically been returned here.
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1153,6 +1707,7 @@ const TracingTestMode = React.forwardRef(
       compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
+      runConfig,
       model,
     ]);
 
@@ -1168,13 +1723,20 @@ const TracingTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Project selector — hidden when pre-selected (e.g. task flow) */}
         {!projectLocked && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
               Project
-              <Typography component="span" sx={{ color: "error.main" }}>
+              <Typography component="span" sx={{ color: "status.danger.fg" }}>
                 *
               </Typography>
             </Typography>
@@ -1233,18 +1795,7 @@ const TracingTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600}>
               Row Type
             </Typography>
-            <Chip
-              label="Voice Calls"
-              size="small"
-              sx={{
-                height: 20,
-                fontSize: "11px",
-                bgcolor: "background.neutral",
-                color: "text.secondary",
-                "& .MuiChip-label": { px: 0.75 },
-                "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-              }}
-            />
+            <Chip label="Voice Calls" size="small" />
           </Box>
         )}
 
@@ -1258,42 +1809,17 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Run evaluations on
             </Typography>
-            <Tabs
+            <SegmentedTabs
               value={rowType}
               onChange={(_, val) => {
                 setRowType(val);
                 setMapping({});
               }}
-              variant="standard"
-              scrollButtons={false}
-              TabIndicatorProps={{ style: { display: "none" } }}
-              sx={{
-                minHeight: 28,
-                "& .MuiTabs-scroller": { overflow: "visible !important" },
-                "& .MuiTab-root": {
-                  minHeight: 28,
-                  px: 1.25,
-                  py: 0,
-                  mr: "0px !important",
-                  textTransform: "none",
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  minWidth: "auto",
-                },
-                border: "1px solid",
-                borderColor: "divider",
-                p: "2px",
-                borderRadius: "8px",
-                width: "fit-content",
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "background.neutral",
-              }}
+              sx={{ width: "fit-content" }}
             >
               {ROW_TYPE_OPTIONS.map((t) => (
                 <Tab
@@ -1303,33 +1829,13 @@ const TracingTestMode = React.forwardRef(
                     <Box
                       sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
                     >
-                      <Iconify icon={t.icon} width={13} />
+                      <Iconify icon={t.icon} width={14} />
                       {t.label}
                     </Box>
                   }
-                  sx={{
-                    bgcolor:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,255,255,0.12)"
-                              : "background.paper"
-                        : "transparent",
-                    boxShadow:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "none"
-                              : "0 1px 3px rgba(0,0,0,0.08)"
-                        : "none",
-                    borderRadius: "6px",
-                    fontWeight: rowType === t.value ? 600 : 400,
-                    color:
-                      rowType === t.value ? "text.primary" : "text.disabled",
-                  }}
                 />
               ))}
-            </Tabs>
+            </SegmentedTabs>
           </Box>
         )}
 
@@ -1338,7 +1844,7 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Narrow down which{" "}
               {rowType === "Trace"
@@ -1356,6 +1862,13 @@ const TracingTestMode = React.forwardRef(
               projectId={selectedProjectId}
               isSimulator={isVoiceProject}
               rowType={rowType}
+              toolbarStart={
+                <DateRangePill
+                  dateFilter={previewDateFilter}
+                  setDateFilter={setPreviewDateFilter}
+                  sx={{ height: 30, fontSize: 12 }}
+                />
+              }
             />
           </Box>
         )}
@@ -1363,9 +1876,42 @@ const TracingTestMode = React.forwardRef(
         {/* Loading */}
         {(loading || isPendingNewFetch) && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
+
+        {selectedProjectId &&
+          listContinuationPending &&
+          !loading &&
+          !isPendingNewFetch && (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+                px: 1.5,
+                py: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "6px",
+                bgcolor: "action.hover",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                Preparing exact results. Continue from the saved position to
+                search the next bounded batch.
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={continueListSearch}
+              >
+                Continue search
+              </Button>
+            </Box>
+          )}
 
         {/* Row navigator */}
         {selectedProjectId &&
@@ -1383,7 +1929,7 @@ const TracingTestMode = React.forwardRef(
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
                 {rows?.length ?? 0}
@@ -1391,12 +1937,13 @@ const TracingTestMode = React.forwardRef(
                   <Typography
                     component="span"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       ml: 0.5,
                     }}
                   >
-                    ({totalRows} matching total)
+                    ({totalRowsIsLowerBound ? "≥" : ""}
+                    {totalRows} matching total)
                   </Typography>
                 )}
               </Typography>
@@ -1404,19 +1951,20 @@ const TracingTestMode = React.forwardRef(
                 <IconButton
                   size="small"
                   disabled={currentRowIndex === 0}
+                  aria-label="Previous row"
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-left" width={16} />
+                  <Iconify icon="solar:alt-arrow-left-linear" width={16} />
                 </IconButton>
                 <IconButton
                   size="small"
                   disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                  aria-label="Next row"
                   onClick={() => {
                     setCurrentRowIndex((i) =>
                       Math.min((rows?.length ?? 0) - 1, i + 1),
@@ -1425,9 +1973,8 @@ const TracingTestMode = React.forwardRef(
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-right" width={16} />
+                  <Iconify icon="solar:alt-arrow-right-linear" width={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -1438,6 +1985,12 @@ const TracingTestMode = React.forwardRef(
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={18} />
           </Box>
+        )}
+
+        {detailError && !loadingDetail && (
+          <Typography role="alert" variant="body2" color="error" sx={{ py: 2 }}>
+            {detailError}
+          </Typography>
         )}
 
         {spanDetail && !loadingDetail && (
@@ -1468,7 +2021,7 @@ const TracingTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1485,10 +2038,7 @@ const TracingTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "background.default",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1572,6 +2122,8 @@ const TracingTestMode = React.forwardRef(
                         borderColor: "divider",
                         "&:last-child": { borderBottom: "none" },
                         "&:hover": { backgroundColor: "action.hover" },
+                        // Reveal the map/copy action only on row hover.
+                        ...rowHoverSx,
                       }}
                     >
                       <CustomTooltip
@@ -1631,7 +2183,7 @@ const TracingTestMode = React.forwardRef(
                                   whiteSpace: "pre-wrap",
                                   wordBreak: "break-all",
                                   fontFamily: "monospace",
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   maxWidth: 520,
                                 }}
                               >
@@ -1679,6 +2231,7 @@ const TracingTestMode = React.forwardRef(
                           </Tooltip>
                         )}
                       </Box>
+                      {renderRowMapAction(key)}
                     </Box>
                   );
                 })}
@@ -1698,6 +2251,52 @@ const TracingTestMode = React.forwardRef(
         {selectedProjectId &&
           !loading &&
           !isPendingNewFetch &&
+          !listContinuationPending &&
+          getQueryReadMessage(listReadState) && (
+            <Box
+              role="status"
+              sx={{
+                px: 1.5,
+                py: 1,
+                mb: rows.length > 0 ? 1 : 0,
+                borderRadius: "6px",
+                border: "1px solid",
+                borderColor: "status.warning.border",
+                backgroundColor: "status.warning.bg",
+              }}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{ color: "status.warning.fg" }}
+                >
+                  {getQueryReadMessage(listReadState)}
+                </Typography>
+                {listReadState === "error" && listFailureRetryable && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={retryListRead}
+                  >
+                    Retry
+                  </Button>
+                )}
+              </Box>
+            </Box>
+          )}
+
+        {selectedProjectId &&
+          !loading &&
+          !isPendingNewFetch &&
+          !listContinuationPending &&
+          listReadState === "complete" &&
           totalRows === 0 && (
             <Box
               sx={{
@@ -1712,7 +2311,7 @@ const TracingTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1721,11 +2320,14 @@ const TracingTestMode = React.forwardRef(
                 fontWeight={600}
                 color="text.secondary"
               >
-                No {rowType.toLowerCase()} data found
+                No matching{" "}
+                {rowType === "VoiceCall"
+                  ? "voice calls"
+                  : `${rowType.toLowerCase()}s`}{" "}
+                found
               </Typography>
               <Typography variant="caption" color="text.disabled">
-                Add {rowType.toLowerCase()} to this project before running a
-                test
+                Try changing the filters or date range.
               </Typography>
             </Box>
           )}
@@ -1733,12 +2335,20 @@ const TracingTestMode = React.forwardRef(
         {/* Variable mapping */}
         {variables.length > 0 &&
           (() => {
-            const isFetchingColumns =
+            const isLoadingRowColumns =
               !!selectedProjectId &&
               (loading || isPendingNewFetch || loadingDetail);
-            const mappingDisabledTooltip = isFetchingColumns
+            // The exact lookup refetches per keystroke; disabling the control
+            // would close its popup, so it only drives the spinner.
+            const isFetchingColumns =
+              isLoadingRowColumns ||
+              (!!selectedProjectId && isFetchingExactAttributes);
+            const mappingDisabledTooltip = isLoadingRowColumns
               ? "Columns are being fetched"
               : "";
+            const exactAttributeReadMessage = getAttributeLookupMessage(
+              exactAttributeReadState,
+            );
             return (
               <Box>
                 <Typography
@@ -1748,162 +2358,71 @@ const TracingTestMode = React.forwardRef(
                 >
                   Variable Mapping
                 </Typography>
+                {exactAttributeReadMessage && (
+                  <Box
+                    role="status"
+                    sx={{
+                      px: 1,
+                      py: 0.5,
+                      mb: 0.75,
+                      borderRadius: "4px",
+                      border: "1px solid",
+                      borderColor: "status.warning.border",
+                      backgroundColor: "status.warning.bg",
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "status.warning.fg" }}
+                    >
+                      {exactAttributeReadMessage}
+                    </Typography>
+                  </Box>
+                )}
+                {allowCustomFieldPath && hasNextAttributePage && (
+                  <Box sx={{ mb: 0.75 }}>
+                    <Button
+                      size="small"
+                      variant="text"
+                      disabled={isFetchingNextAttributePage}
+                      onClick={() =>
+                        fetchNextAttributePage?.()?.catch?.(() => undefined)
+                      }
+                      sx={{ px: 0, minWidth: 0 }}
+                    >
+                      {isFetchingNextAttributePage
+                        ? "Loading more attributes…"
+                        : isNextAttributePageError
+                          ? "Retry loading attributes"
+                          : "Load more attributes"}
+                    </Button>
+                  </Box>
+                )}
                 <Box
                   sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}
                 >
-                  {variables.map((variable) => {
-                    const autocomplete = (
-                      <Autocomplete
-                        size="small"
-                        freeSolo={allowCustomFieldPath}
-                        disabled={isFetchingColumns}
-                        options={
-                          mapping[variable] &&
-                          !fieldNames.includes(mapping[variable])
-                            ? [mapping[variable], ...fieldNames]
-                            : fieldNames
-                        }
-                        value={mapping[variable] || null}
-                        onChange={(_, val) =>
-                          setMapping((prev) => ({
-                            ...prev,
-                            [variable]: val || "",
-                          }))
-                        }
-                        {...(allowCustomFieldPath
-                          ? {
-                              inputValue: mapping[variable] || "",
-                              onInputChange: (_, val, reason) => {
-                                if (reason === "reset") return;
-                                setMapping((prev) => ({
-                                  ...prev,
-                                  [variable]: val || "",
-                                }));
-                              },
-                            }
-                          : {})}
-                        openOnFocus
-                        autoHighlight
-                        selectOnFocus
-                        handleHomeEndKeys
-                        isOptionEqualToValue={(opt, val) => opt === val}
-                        sx={{ flex: 1 }}
-                        ListboxProps={{ style: { maxHeight: 260 } }}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            placeholder={
-                              isFetchingColumns
-                                ? "Loading columns..."
-                                : allowCustomFieldPath
-                                  ? "Search or type a path (e.g. attributes.input.value)"
-                                  : "Search column..."
-                            }
-                            InputProps={{
-                              ...params.InputProps,
-                              sx: {
-                                ...params.InputProps.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                height: 28,
-                                py: 0,
-                              },
-                              endAdornment: isFetchingColumns ? (
-                                <InputAdornment position="end">
-                                  <CircularProgress size={14} />
-                                </InputAdornment>
-                              ) : (
-                                params.InputProps.endAdornment
-                              ),
-                            }}
-                          />
-                        )}
-                        renderOption={(props, col) => {
-                          const { key, ...rest } = props;
-                          return (
-                            <Box
-                              component="li"
-                              key={key}
-                              {...rest}
-                              title={col}
-                              sx={{
-                                ...rest.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                pl: col.includes(".")
-                                  ? `${12 + (col.split(".").length - 1) * 12}px`
-                                  : undefined,
-                                color: col.includes(".")
-                                  ? "primary.main"
-                                  : "text.primary",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                              }}
-                            >
-                              {col}
-                            </Box>
-                          );
-                        }}
-                      />
-                    );
-                    return (
-                      <Box
-                        key={variable}
-                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                      >
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                            px: 1,
-                            py: 0.25,
-                            borderRadius: "4px",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            minWidth: 120,
-                          }}
-                        >
-                          <Iconify
-                            icon="mdi:code-braces"
-                            width={14}
-                            sx={{ color: "text.secondary" }}
-                          />
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            sx={{ fontSize: "12px" }}
-                          >
-                            {variable}
-                          </Typography>
-                        </Box>
-                        <Iconify
-                          icon="mdi:arrow-right"
-                          width={14}
-                          sx={{ color: "text.disabled" }}
-                        />
-                        {isFetchingColumns ? (
-                          <CustomTooltip
-                            show
-                            type="black"
-                            size="small"
-                            title={mappingDisabledTooltip}
-                            placement="top"
-                            arrow
-                          >
-                            <Box sx={{ flex: 1 }}>{autocomplete}</Box>
-                          </CustomTooltip>
-                        ) : (
-                          autocomplete
-                        )}
-                      </Box>
-                    );
-                  })}
+                  {variables.map((variable) => (
+                    <MappingRow
+                      key={variable}
+                      variable={variable}
+                      options={optionsByVariable[variable] || fieldNames}
+                      value={mapping[variable] || ""}
+                      allowCustomFieldPath={allowCustomFieldPath}
+                      disabled={isLoadingRowColumns}
+                      isFetchingColumns={isFetchingColumns}
+                      disabledTooltip={mappingDisabledTooltip}
+                      onSelect={handleMappingSelect}
+                      onType={handleMappingType}
+                      onOpen={handleMappingOpen}
+                    />
+                  ))}
                 </Box>
               </Box>
             );
           })()}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && (
@@ -1933,18 +2452,15 @@ const TracingTestMode = React.forwardRef(
 
         {error && (
           <Box
-            sx={(t) => ({
+            sx={{
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: alpha(t.palette.error.main, 0.4),
-              backgroundColor: alpha(
-                t.palette.error.main,
-                t.palette.mode === "dark" ? 0.16 : 0.08,
-              ),
-            })}
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
+            }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" sx={{ color: "status.danger.fg" }}>
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -1960,6 +2476,7 @@ TracingTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,

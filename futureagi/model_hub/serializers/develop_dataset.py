@@ -98,6 +98,37 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
         return value
 
 
+class FeedbackTemplateResultSerializer(serializers.Serializer):
+    """Response shape for the `feedback/get_template` endpoint.
+
+    The FE reads these fields to pick the right "right value" widget: a raw
+    numeric input for scoring evals, a choice picker when `choice_scores` maps
+    labels to scores, or a checkbox / radio group for categorical evals.
+    """
+
+    output_type = serializers.CharField(required=False, allow_null=True)
+    eval_description = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    eval_name = serializers.CharField()
+    user_eval_name = serializers.CharField()
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+    )
+    multi_choice = serializers.BooleanField(required=False)
+    choice_scores = serializers.DictField(
+        child=serializers.FloatField(),
+        required=False,
+        allow_null=True,
+    )
+
+
+class FeedbackTemplateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = FeedbackTemplateResultSerializer()
+
+
 class FeedbackSerializer(serializers.ModelSerializer):
     def validate_source(self, value):
         valid_choices = [choice[0] for choice in FeedbackSourceChoices.get_choices()]

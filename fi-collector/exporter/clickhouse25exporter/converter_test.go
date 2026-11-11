@@ -1,6 +1,8 @@
 package clickhouse25exporter
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -154,7 +156,7 @@ func TestConvertParentSpan(t *testing.T) {
 // ingest (the only other `traces` writer) is disabled CDC-off, so no double-write.
 
 func TestConvertWithIdentities_TraceFromRootSpan(t *testing.T) {
-	rows, ids, err := ConvertWithIdentities(buildOTLPSpan())
+	rows, ids, err := ConvertWithIdentities(context.Background(), buildOTLPSpan(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +195,7 @@ func TestConvertWithIdentities_NoTraceFromChildSpan(t *testing.T) {
 	traces := buildOTLPSpan()
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetParentSpanID([8]byte{0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2})
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +210,7 @@ func TestConvertWithIdentities_NoTraceWhenTraceIDZero(t *testing.T) {
 	// malformed trace collapses onto one all-zeros trace_dict row (wrong project).
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetTraceID(pcommon.NewTraceIDEmpty())
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +227,7 @@ func TestConvertWithIdentities_NoTraceWhenProjectInvalid(t *testing.T) {
 	// No fi.project_id → coalesceUUID stamps a RANDOM project; skip (trace would
 	// key on a meaningless project).
 	traces.ResourceSpans().At(0).Resource().Attributes().Remove("fi.project_id")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func TestConvertWithIdentities_NoTraceWhenStartTimeZero(t *testing.T) {
 	// 197001 and never merges with the app's real-month row (poisons trace_dict). Skip.
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetStartTimestamp(pcommon.Timestamp(0))
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +262,7 @@ func TestConvertWithIdentities_VersionIsIngestTimeNotFutureStart(t *testing.T) {
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetStartTimestamp(pcommon.NewTimestampFromTime(future))
 	before := uint64(time.Now().UTC().UnixNano())
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +286,7 @@ func TestConvertWithIdentities_VersionAdvancesAcrossRePolls(t *testing.T) {
 	// Same deterministic id re-polled later must get a STRICTLY newer _version so
 	// the completed / recording-bearing row wins RMT dedup over the earlier poll.
 	convertOnce := func() uint64 {
-		rows, _, err := ConvertWithIdentities(buildOTLPSpan())
+		rows, _, err := ConvertWithIdentities(context.Background(), buildOTLPSpan(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +311,7 @@ func TestConvertWithIdentities_TraceProjectCanonicalized(t *testing.T) {
 		t.Fatal("test fixture bug: uppercase form must differ from canonical")
 	}
 	traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", upper)
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +329,7 @@ func TestConvertWithIdentities_RootAndChild_OneTrace(t *testing.T) {
 	child.SetParentSpanID([8]byte{9, 8, 7, 6, 5, 4, 3, 2}) // == root's span id
 	child.SetName("child.tool.call")
 	child.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 200_000_000)))
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +573,7 @@ func TestConvertWithIdentities_EndUserMatchesSpanColumn(t *testing.T) {
 	a.PutStr("user.id.hash", "hash-abc")
 	a.PutStr("user.metadata", `{"tier":"gold"}`)
 
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,7 +628,7 @@ func TestConvertWithIdentities_UntypedUser_EmptySentinelType(t *testing.T) {
 	// Absent user.id.type → the "" sentinel on the curated row (consolidates
 	// with NULL-typed history), and absent hash/metadata coerce to ""/"{}".
 	traces := buildObserveSpanWith("u1", true, "", false, "", false)
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +658,7 @@ func TestConvertWithIdentities_NonObserve_NoEndUser_ButSession(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	a.PutStr("user.id", "u1")
 	a.PutStr("session.id", "s1")
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,7 +708,7 @@ func TestConvertWithIdentities_DedupAcrossSpans(t *testing.T) {
 	addSpan(3, "userB", "sessY")
 	addSpan(4, "userB", "sessY") // dup identity
 
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +743,7 @@ func TestConvertWithIdentities_NonStringMetadata_JSONEncoded(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	md := a.PutEmptyMap("user.metadata")
 	md.PutStr("k", "v")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +761,7 @@ func TestConvertWithIdentities_MetadataHTMLNotEscaped(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	md := a.PutEmptyMap("user.metadata")
 	md.PutStr("html", "<a>&</a>")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -796,5 +798,461 @@ func TestResolveObservationType(t *testing.T) {
 		if got := resolveObservationType(c.attrs); got != c.want {
 			t.Errorf("%s: resolveObservationType=%q want %q", c.name, got, c.want)
 		}
+	}
+}
+
+type stubPricer struct {
+	cost            float64
+	ok              bool
+	calls           int
+	openRouterCalls int
+	lastOrg         string
+	lastModel       string
+}
+
+func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	s.calls++
+	s.lastOrg = orgID
+	s.lastModel = model
+	return s.cost, s.ok
+}
+
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	s.openRouterCalls++
+	return s.TokenCost(ctx, orgID, model, p, c)
+}
+
+// makeLLMSpanOrgID is the org UUID stamped by makeLLMSpan's resource attrs —
+// exported here so tests asserting org-scoped pricer routing don't hardcode
+// the literal twice.
+const makeLLMSpanOrgID = "5a1b0000-0000-4000-8000-000000000002"
+
+func makeLLMSpan(attrs map[string]any) ptrace.Traces {
+	td := ptrace.NewTraces()
+	rs := td.ResourceSpans().AppendEmpty()
+	// Converter reads the UNDERSCORED resource keys (fi.project_id / fi.org_id —
+	// see ConvertWithIdentities), matching every other fixture in this file
+	// (see e.g. line 21-22 above). A dotted key here silently fails to
+	// populate projectID/orgID, defeating org-scoped pricer-routing assertions.
+	rs.Resource().Attributes().PutStr("fi.project_id", "3f2e0000-0000-4000-8000-000000000001")
+	rs.Resource().Attributes().PutStr("fi.org_id", makeLLMSpanOrgID)
+	span := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	span.SetName("llm-call")
+	span.SetTraceID([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	span.SetSpanID([8]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	for k, v := range attrs {
+		switch t := v.(type) {
+		case string:
+			span.Attributes().PutStr(k, t)
+		case float64:
+			span.Attributes().PutDouble(k, t)
+		case int:
+			span.Attributes().PutInt(k, int64(t))
+		}
+	}
+	return td
+}
+
+func TestSpanCost_UserProvidedSkipsPricer(t *testing.T) {
+	p := &stubPricer{cost: 99, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.cost.total":          0.42,
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  100,
+		"gen_ai.usage.output_tokens": 50,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0.42 {
+		t.Fatalf("user cost must win, got %v", got)
+	}
+	if p.calls != 0 {
+		t.Fatal("pricer must not be called when user provided cost")
+	}
+}
+
+func TestSpanCost_TokenPricedWhenNoUserCost(t *testing.T) {
+	p := &stubPricer{cost: 0.0075, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  1000,
+		"gen_ai.usage.output_tokens": 500,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0.0075 {
+		t.Fatalf("want pricer cost 0.0075, got %v", got)
+	}
+	if rows[0]["prompt_tokens"].(int32) != 1000 || rows[0]["total_tokens"].(int32) != 1500 {
+		t.Fatalf("token columns wrong: %+v", rows[0])
+	}
+	// Org-scoped routing: the orgID the pricer receives must be the fixture's
+	// resource-stamped org, not empty/wrong — proves ConvertWithIdentities
+	// plumbs fi.org_id (not e.g. project_id) through to Pricer.TokenCost.
+	if p.lastOrg != makeLLMSpanOrgID {
+		t.Fatalf("pricer received orgID %q, want %q (fixture org)", p.lastOrg, makeLLMSpanOrgID)
+	}
+}
+
+// TestSpanCost_ExplicitZeroUserCostNotOverwritten pins a named coverage gap
+// (Task 8 review): a user who explicitly sets gen_ai.cost.total=0 means it —
+// the row cost must stay 0 even with a LIVE pricer that would return a
+// non-zero value, and the pricer must NOT be called (hot.CostUserSet gates
+// on presence, not truthiness/non-zero-ness of the attribute).
+func TestSpanCost_ExplicitZeroUserCostNotOverwritten(t *testing.T) {
+	p := &stubPricer{cost: 55.5, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.cost.total":          0.0,
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  100,
+		"gen_ai.usage.output_tokens": 50,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0 {
+		t.Fatalf("explicit-zero user cost must stay 0, got %v", got)
+	}
+	if p.calls != 0 {
+		t.Fatalf("pricer must not be called when user explicitly set cost=0, got %d calls", p.calls)
+	}
+}
+
+func TestSpanCost_NilPricerAndUnpriceable(t *testing.T) {
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.request.model":      "mystery",
+		"gen_ai.usage.input_tokens": 10,
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0 {
+		t.Fatalf("nil pricer must leave cost 0, got %v", got)
+	}
+}
+
+// simulationMarkKey is spelled out here rather than read from the converter,
+// so a typo in the converter's constant fails these tests.
+const simulationMarkKey = "fi.simulation.origin"
+
+// addChildAndSecondTrace appends to the fixture's one scope a child of its root
+// span and the root of a second trace, both carrying user.id and session.id, so
+// a skip that only covers root spans or the first trace is caught.
+func addChildAndSecondTrace(traces ptrace.Traces, user, sess string) {
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	rootTrace, rootSpan := spans.At(0).TraceID(), spans.At(0).SpanID()
+	child := spans.AppendEmpty()
+	child.SetTraceID(rootTrace)
+	child.SetSpanID(pcommon.SpanID([8]byte{0x71, 1}))
+	child.SetParentSpanID(rootSpan)
+	second := spans.AppendEmpty()
+	second.SetTraceID(pcommon.TraceID([16]byte{0x72, 2}))
+	second.SetSpanID(pcommon.SpanID([8]byte{0x72, 2}))
+	for _, sp := range []ptrace.Span{child, second} {
+		sp.SetName("agent.turn")
+		sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+		sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000001, 0)))
+		sp.Attributes().PutStr("user.id", user)
+		sp.Attributes().PutStr("session.id", sess)
+	}
+}
+
+func TestMarkedResourceWritesNoIdentityRows(t *testing.T) {
+	const user, sess = "sim-user@example.test", "sim-session-1"
+	wantEU := detid.EndUserID(stampProject, stampOrg, user, "").String()
+	wantSess := detid.TraceSessionID(stampProject, sess).String()
+
+	// The unmarked twin stamps both ids on every span and adds both rows, so
+	// the fixture would stamp if the mark were ignored.
+	twin := buildObserveSpanWith(user, true, "", false, sess, true)
+	addChildAndSecondTrace(twin, user, sess)
+	twinRows, twinIDs, err := ConvertWithIdentities(context.Background(), twin, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(twinRows) != 3 {
+		t.Fatalf("unmarked twin: rows=%d want 3", len(twinRows))
+	}
+	for i, r := range twinRows {
+		if r["end_user_id"] != wantEU || r["trace_session_id"] != wantSess {
+			t.Fatalf("unmarked twin row %d: end_user_id=%#v trace_session_id=%#v, want %s and %s",
+				i, r["end_user_id"], r["trace_session_id"], wantEU, wantSess)
+		}
+	}
+	if len(twinIDs.EndUsers()) != 1 || len(twinIDs.Sessions()) != 1 || len(twinIDs.Traces()) != 2 {
+		t.Fatalf("unmarked twin: end_users=%d sessions=%d traces=%d, want 1, 1 and 2",
+			len(twinIDs.EndUsers()), len(twinIDs.Sessions()), len(twinIDs.Traces()))
+	}
+
+	cases := []struct {
+		name string
+		mark func(pcommon.Map)
+		want any // the mark's value as resource_attrs keeps it
+	}{
+		{"string value", func(m pcommon.Map) { m.PutStr(simulationMarkKey, "simulation") }, "simulation"},
+		{"empty string", func(m pcommon.Map) { m.PutStr(simulationMarkKey, "") }, ""},
+		{"int value", func(m pcommon.Map) { m.PutInt(simulationMarkKey, 7) }, int64(7)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			traces := buildObserveSpanWith(user, true, "", false, sess, true)
+			addChildAndSecondTrace(traces, user, sess)
+			tc.mark(traces.ResourceSpans().At(0).Resource().Attributes())
+
+			rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 3 {
+				t.Fatalf("rows=%d want 3", len(rows))
+			}
+			for i, r := range rows {
+				for _, col := range []string{"end_user_id", "trace_session_id"} {
+					if v, ok := r[col]; !ok || v != nil {
+						t.Errorf("row %d: %s = %#v (present %v), want untyped nil", i, col, v, ok)
+					}
+				}
+				attrs := r["attrs_string"].(map[string]string)
+				if attrs["user.id"] != user || attrs["session.id"] != sess {
+					t.Errorf("row %d: attrs_string must keep the span's identity attributes: user.id=%q session.id=%q",
+						i, attrs["user.id"], attrs["session.id"])
+				}
+				res := r["resource_attrs"].(map[string]any)
+				if got, ok := res[simulationMarkKey]; !ok || got != tc.want {
+					t.Errorf("row %d: resource_attrs[%q] = %#v (present %v), want %#v", i, simulationMarkKey, got, ok, tc.want)
+				}
+			}
+			if n := len(ids.EndUsers()); n != 0 {
+				t.Errorf("end_users=%d want 0", n)
+			}
+			if n := len(ids.Sessions()); n != 0 {
+				t.Errorf("sessions=%d want 0", n)
+			}
+			trs := ids.Traces()
+			if len(trs) != 2 {
+				t.Fatalf("traces=%d want 2 (each root span still writes its trace)", len(trs))
+			}
+			for _, tr := range trs {
+				if tr.SessionID != "" {
+					t.Errorf("trace %s SessionID = %q, want empty", tr.ID, tr.SessionID)
+				}
+			}
+		})
+	}
+}
+
+func TestMarkedResourceOnlyIdentityDiffers(t *testing.T) {
+	const user, sess = "sim-user@example.test", "sim-session-2"
+	unmarked := buildObserveSpanWith(user, true, "email", true, sess, true)
+	marked := buildObserveSpanWith(user, true, "email", true, sess, true)
+	marked.ResourceSpans().At(0).Resource().Attributes().PutStr(simulationMarkKey, "simulation")
+
+	uRows, _, err := ConvertWithIdentities(context.Background(), unmarked, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mRows, _, err := ConvertWithIdentities(context.Background(), marked, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(uRows) != 1 || len(mRows) != 1 {
+		t.Fatalf("rows: unmarked=%d marked=%d, want 1 and 1", len(uRows), len(mRows))
+	}
+	u, m := uRows[0], mRows[0]
+
+	// Same key set: equal counts here, and every unmarked key found below.
+	if len(u) != len(m) {
+		t.Errorf("key count: unmarked=%d marked=%d", len(u), len(m))
+	}
+
+	// Every other column is identical.
+	differ := map[string]bool{"end_user_id": true, "trace_session_id": true, "resource_attrs": true, "_version": true}
+	for k, uv := range u {
+		mv, ok := m[k]
+		if !ok {
+			t.Errorf("marked row lacks key %q", k)
+			continue
+		}
+		if differ[k] {
+			continue
+		}
+		if !reflect.DeepEqual(uv, mv) {
+			t.Errorf("%s: marked %#v, unmarked %#v", k, mv, uv)
+		}
+	}
+
+	// The identity columns are the one difference: set on the unmarked row, nil on the marked one.
+	for _, col := range []string{"end_user_id", "trace_session_id"} {
+		if u[col] == nil {
+			t.Errorf("unmarked %s is nil, want a stamped id", col)
+		}
+		if m[col] != nil {
+			t.Errorf("marked %s = %#v, want nil", col, m[col])
+		}
+	}
+
+	// resource_attrs: the unmarked map plus exactly the mark.
+	uRes := u["resource_attrs"].(map[string]any)
+	mRes := m["resource_attrs"].(map[string]any)
+	if _, ok := uRes[simulationMarkKey]; ok {
+		t.Fatalf("unmarked twin must not carry the mark: %#v", uRes)
+	}
+	wantRes := make(map[string]any, len(uRes)+1)
+	for k, v := range uRes {
+		wantRes[k] = v
+	}
+	wantRes[simulationMarkKey] = "simulation"
+	if !reflect.DeepEqual(mRes, wantRes) {
+		t.Errorf("marked resource_attrs = %#v, want %#v", mRes, wantRes)
+	}
+
+	for name, r := range map[string]map[string]any{"unmarked": u, "marked": m} {
+		if v, _ := r["_version"].(uint64); v == 0 {
+			t.Errorf("%s _version must be nonzero, got %#v", name, r["_version"])
+		}
+	}
+}
+
+// appendIdentityResource appends an observe resource holding one root span
+// with user.id and session.id, marked or not, and returns the span's row id.
+func appendIdentityResource(traces ptrace.Traces, idx byte, user, sess string, marked bool) string {
+	rs := traces.ResourceSpans().AppendEmpty()
+	ra := rs.Resource().Attributes()
+	ra.PutStr("service.name", "sim-agent")
+	ra.PutStr("fi.project_id", stampProject)
+	ra.PutStr("fi.org_id", stampOrg)
+	ra.PutStr("project_type", "observe")
+	if marked {
+		ra.PutStr(simulationMarkKey, "simulation")
+	}
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	var tid [16]byte
+	var sid [8]byte
+	tid[0], tid[15], sid[0], sid[7] = idx, idx, idx, idx
+	sp.SetTraceID(tid)
+	sp.SetSpanID(sid)
+	sp.SetName("agent.turn")
+	sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+	sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000001, 0)))
+	sp.Attributes().PutStr("user.id", user)
+	sp.Attributes().PutStr("session.id", sess)
+	return pcommon.SpanID(sid).String()
+}
+
+func TestMarkedAndUnmarkedResourcesInOneBatch(t *testing.T) {
+	const (
+		markedUser, markedSess = "sim-user-m@example.test", "sim-session-m"
+		plainUser, plainSess   = "plain-user-u@example.test", "plain-session-u"
+	)
+	wantEU := detid.EndUserID(stampProject, stampOrg, plainUser, "").String()
+	wantSess := detid.TraceSessionID(stampProject, plainSess).String()
+
+	for _, markedFirst := range []bool{true, false} {
+		name := "unmarked first"
+		if markedFirst {
+			name = "marked first"
+		}
+		t.Run(name, func(t *testing.T) {
+			traces := ptrace.NewTraces()
+			var markedSpan, plainSpan string
+			if markedFirst {
+				markedSpan = appendIdentityResource(traces, 0x31, markedUser, markedSess, true)
+				plainSpan = appendIdentityResource(traces, 0x32, plainUser, plainSess, false)
+			} else {
+				plainSpan = appendIdentityResource(traces, 0x32, plainUser, plainSess, false)
+				markedSpan = appendIdentityResource(traces, 0x31, markedUser, markedSess, true)
+			}
+
+			rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 2 {
+				t.Fatalf("rows=%d want 2", len(rows))
+			}
+			byID := make(map[string]map[string]any, len(rows))
+			for _, r := range rows {
+				id, _ := r["id"].(string)
+				byID[id] = r
+			}
+			m, u := byID[markedSpan], byID[plainSpan]
+			if m == nil || u == nil {
+				t.Fatalf("rows by span id: marked %s found %v, unmarked %s found %v",
+					markedSpan, m != nil, plainSpan, u != nil)
+			}
+
+			// Per row: only the unmarked resource's span is stamped.
+			for _, col := range []string{"end_user_id", "trace_session_id"} {
+				if v := m[col]; v != nil {
+					t.Errorf("marked span %s = %#v, want nil", col, v)
+				}
+			}
+			if u["end_user_id"] != wantEU {
+				t.Errorf("unmarked span end_user_id = %#v, want %s", u["end_user_id"], wantEU)
+			}
+			if u["trace_session_id"] != wantSess {
+				t.Errorf("unmarked span trace_session_id = %#v, want %s", u["trace_session_id"], wantSess)
+			}
+
+			// Per batch: exactly the unmarked resource's identities.
+			if eus := ids.EndUsers(); len(eus) != 1 || eus[0].EndUserID != wantEU || eus[0].UserID != plainUser {
+				t.Errorf("end_users = %+v, want exactly the unmarked user %s", eus, wantEU)
+			}
+			if ss := ids.Sessions(); len(ss) != 1 || ss[0].TraceSessionID != wantSess || ss[0].ExternalSessionID != plainSess {
+				t.Errorf("sessions = %+v, want exactly the unmarked session %s", ss, wantSess)
+			}
+
+			// Both roots write their trace; only the unmarked one has a session.
+			mTrace, _ := m["trace_id"].(string)
+			uTrace, _ := u["trace_id"].(string)
+			trs := ids.Traces()
+			if len(trs) != 2 {
+				t.Fatalf("traces=%d want 2", len(trs))
+			}
+			for _, tr := range trs {
+				switch tr.ID {
+				case mTrace:
+					if tr.SessionID != "" {
+						t.Errorf("marked trace SessionID = %q, want empty", tr.SessionID)
+					}
+				case uTrace:
+					if tr.SessionID != wantSess {
+						t.Errorf("unmarked trace SessionID = %q, want %s", tr.SessionID, wantSess)
+					}
+				default:
+					t.Errorf("unexpected trace %q", tr.ID)
+				}
+			}
+		})
+	}
+}
+
+func TestSpanAttributeIsNotTheResourceMark(t *testing.T) {
+	const user, sess = "attr-user@example.test", "attr-session-1"
+	traces := buildObserveSpanWith(user, true, "", false, sess, true)
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes().PutStr(simulationMarkKey, "simulation")
+
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d want 1", len(rows))
+	}
+	wantEU := detid.EndUserID(stampProject, stampOrg, user, "").String()
+	wantSess := detid.TraceSessionID(stampProject, sess).String()
+	if rows[0]["end_user_id"] != wantEU {
+		t.Errorf("end_user_id = %#v, want %s", rows[0]["end_user_id"], wantEU)
+	}
+	if rows[0]["trace_session_id"] != wantSess {
+		t.Errorf("trace_session_id = %#v, want %s", rows[0]["trace_session_id"], wantSess)
+	}
+	if eus := ids.EndUsers(); len(eus) != 1 || eus[0].EndUserID != wantEU {
+		t.Errorf("end_users = %+v, want exactly one with id %s", eus, wantEU)
+	}
+	if ss := ids.Sessions(); len(ss) != 1 || ss[0].TraceSessionID != wantSess {
+		t.Errorf("sessions = %+v, want exactly one with id %s", ss, wantSess)
 	}
 }

@@ -9,6 +9,9 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+pytest.importorskip("ee.evals.localizer.error_localizer", reason="requires ee/")
+pytestmark = pytest.mark.requires_ee
+
 from ee.evals.localizer.error_localizer import LocalizerResult
 
 
@@ -335,7 +338,10 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        # The task fetches with select_related for version stamping.
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "single", "eval_id": "eval-123"})
 
@@ -351,7 +357,9 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "experiment", "eval_id": "eval-123"})
 
@@ -368,7 +376,9 @@ class TestProcessEvaluationSingleTask:
 
         mock_eval = MagicMock()
         mock_eval.source_id = "optim-123"
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         mock_optimizer = MagicMock()
         mock_optimizer_class.return_value = mock_optimizer
@@ -653,6 +663,7 @@ class TestTemporalActivityTimeouts:
         from model_hub.tasks.user_evaluation import process_single_error_localization
 
         assert callable(process_single_error_localization)
+        assert process_single_error_localization._metadata["queue"] == "tasks_xl"
 
     def test_process_eval_batch_async_task_timeout(self):
         """Verify process_eval_batch_async_task has 1-hour timeout."""

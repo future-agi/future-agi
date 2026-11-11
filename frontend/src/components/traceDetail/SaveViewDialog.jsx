@@ -11,14 +11,26 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
+const SaveViewPopover = ({
+  anchorEl,
+  open,
+  onClose,
+  onSave,
+  isLoading,
+  existingNames = [],
+}) => {
   const [name, setName] = useState("");
 
+  // Exact match — mirrors the backend's case-sensitive uniqueness check.
+  const trimmed = name.trim();
+  const isDuplicate =
+    trimmed.length > 0 && existingNames.some((n) => n === trimmed);
+
   const handleSave = useCallback(() => {
-    if (!name.trim()) return;
-    onSave(name.trim());
+    if (!trimmed || isDuplicate) return;
+    onSave(trimmed);
     setName("");
-  }, [name, onSave]);
+  }, [trimmed, isDuplicate, onSave]);
 
   const handleClose = useCallback(() => {
     setName("");
@@ -35,11 +47,10 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
       slotProps={{
         paper: {
           sx: {
-            width: 280,
-            borderRadius: "4px",
+            width: 320,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
             p: 1,
             mt: 0.5,
           },
@@ -59,7 +70,7 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
         <Box sx={{ flex: 1 }}>
           <Typography
             sx={{
-              fontSize: 15,
+              fontSize: 13,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -79,8 +90,8 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
             Save your current trace view for quick access later.
           </Typography>
         </Box>
-        <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
-          <Iconify icon="mdi:close" width={16} />
+        <IconButton size="small" onClick={handleClose}>
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       </Box>
 
@@ -93,7 +104,10 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           size="small"
           label={
             <span>
-              View Name<span style={{ color: "#d92d20" }}>*</span>
+              View Name
+              <Box component="span" sx={{ color: "accent.fail" }}>
+                *
+              </Box>
             </span>
           }
           placeholder="Enter your view name"
@@ -102,10 +116,12 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSave();
           }}
+          error={isDuplicate}
+          helperText={isDuplicate ? "A view with this name already exists." : ""}
           autoFocus
           InputLabelProps={{
             sx: {
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.secondary",
@@ -113,7 +129,7 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           }}
           InputProps={{
             sx: {
-              fontSize: 14,
+              fontSize: 13,
               fontFamily: "'IBM Plex Sans', sans-serif",
               borderRadius: "4px",
             },
@@ -138,15 +154,9 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           variant="outlined"
           onClick={handleClose}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
-            fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
             borderColor: "text.disabled",
             color: "text.primary",
-            borderRadius: "2px",
-            px: 2,
-            py: 0.25,
           }}
         >
           Cancel
@@ -155,22 +165,9 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           size="small"
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || isLoading}
+          disabled={!trimmed || isDuplicate || isLoading}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
-            fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            borderRadius: "2px",
-            px: 2,
-            py: 0.25,
-            ...(name.trim()
-              ? {}
-              : {
-                  bgcolor: "text.disabled",
-                  color: "background.paper",
-                  "&:hover": { bgcolor: "text.disabled" },
-                }),
             "&.Mui-disabled": {
               bgcolor: "text.disabled",
               color: "background.paper",
@@ -190,6 +187,7 @@ SaveViewPopover.propTypes = {
   onClose: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isLoading: PropTypes.bool,
+  existingNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default React.memo(SaveViewPopover);

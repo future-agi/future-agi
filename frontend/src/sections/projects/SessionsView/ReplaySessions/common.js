@@ -93,21 +93,21 @@ export const getReplaySessionsFormDefaultValues = (createdReplay) => {
 
   return {
     agentDefinition: {
-      id: createdReplay?.agentDefinitionId,
-      name: createdReplay?.suggestions?.agentName ?? "",
-      version: createdReplay?.suggestions?.versionName ?? "v1",
+      id: createdReplay?.agent_definition_id,
+      name: createdReplay?.suggestions?.agent_name ?? "",
+      version: createdReplay?.suggestions?.version_name ?? "v1",
       versionId: "",
-      prompt: createdReplay?.suggestions?.agentDescription ?? "",
+      prompt: createdReplay?.suggestions?.agent_description ?? "",
     },
-    scenarioName: createdReplay?.suggestions?.scenarioName ?? "",
+    scenarioName: createdReplay?.suggestions?.scenario_name ?? "",
     numOfScenarios: createdReplay?.numOfScenarios ?? 10,
     // numOfSessions: editData?.numOfSessions ?? 0,
     // columns: [],
     personas: [],
     addPersonaAutomatically: createdReplay?.addPersonaAutomatically ?? true,
-    hasAgentPrompt: Boolean(createdReplay?.suggestions?.agentDescription),
+    hasAgentPrompt: Boolean(createdReplay?.suggestions?.agent_description),
     agentDefExists: Boolean(agentDefinitionExists),
-    agentType: createdReplay?.suggestions?.agentType ?? "text",
+    agentType: createdReplay?.suggestions?.agent_type ?? "text",
     replaySessionId: createdReplay?.id,
   };
 };
@@ -198,26 +198,21 @@ const getEvaluationMappingPayload = (
 
     // Determine model for this eval
     let evalModel = globalModel;
-    if (evalItem.tags?.includes("FUTURE_EVALS")) {
-      // Use global model if it's in the eval's allowed models
-      const allowedEvalModels = evalItem.models || [];
-      if (
-        !allowedEvalModels.includes(globalModel) &&
-        allowedEvalModels.length > 0
-      ) {
-        evalModel = allowedEvalModels[0]; // Fallback to first allowed model
-      }
-    } else {
-      evalModel = ""; // No model needed for non-FUTURE_EVALS
+    const allowedEvalModels = evalItem.models || [];
+    if (
+      allowedEvalModels.length > 0 &&
+      !allowedEvalModels.includes(globalModel)
+    ) {
+      evalModel = allowedEvalModels[0];
     }
 
     return {
       name: evalItem.name,
-      templateId: evalItem.evalTemplateId,
+      template_id: evalItem.evalTemplateId,
       mapping: evalMapping,
       model: evalModel || undefined,
-      errorLocalizer: globalErrorLocalizer,
-      kbId: globalKbId || undefined,
+      error_localizer: globalErrorLocalizer,
+      kb_id: globalKbId || undefined,
       config: {
         mapping: evalMapping,
         config: {},
@@ -247,12 +242,12 @@ export const getRunSimulationPayload = (
         )
       : [];
   return {
-    agent_definition_id: data?.createdScenario?.agentDefinitionId,
-    agent_version: data?.createdScenario?.agentDefinitionLatestVersionId,
+    agent_definition_id: data?.createdScenario?.agent_definition_id,
+    agent_version: data?.createdScenario?.agent_definition_latest_version_id,
     name: name,
     description: description,
     enable_tool_evaluation: false,
-    scenario_ids: [data?.createdScenario?.scenarioId],
+    scenario_ids: [data?.createdScenario?.scenario_id],
     eval_config_ids: [],
     evaluations_config: evaluationsConfig,
     replay_session_id: data?.replaySessionId,
@@ -302,13 +297,14 @@ export const buildEvaluationMappingFormSchema = (requiredKeys) => {
 export const formatProjectEvals = (evalConfigs) => {
   if (!evalConfigs) return [];
   return evalConfigs?.map((evalItem) => ({
-    evalTemplateId: evalItem.evalTemplate?.id,
+    evalTemplateId: evalItem.eval_template?.id,
+    eval_template_id: evalItem.eval_template?.id,
     name: evalItem.name,
-    description: evalItem.evalTemplate?.description,
-    requiredKeys: evalItem.evalTemplate?.requiredKeys,
-    optionalKeys: evalItem.evalTemplate?.optionalKeys,
-    models: evalItem?.availableModels ?? [],
-    tags: evalItem.evalTemplate?.tags ?? [],
+    description: evalItem.eval_template?.description,
+    requiredKeys: evalItem.eval_template?.required_keys,
+    optionalKeys: evalItem.eval_template?.optional_keys,
+    models: evalItem?.available_models ?? [],
+    tags: evalItem.eval_template?.tags ?? [],
     fromProject: true,
   }));
 };

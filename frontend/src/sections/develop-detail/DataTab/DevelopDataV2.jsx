@@ -71,6 +71,7 @@ import { useDevelopDatasetList } from "src/api/develop/develop-detail";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import SingleImageViewerProvider from "../Common/SingleImageViewer/SingleImageViewerProvider";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import { MultiImageViewerProvider } from "../Common/MultiImageViewer";
 import DevelopFilterBox from "./DevelopFilters/DevelopFilterBox";
 import TopBanner from "./TopBanner";
@@ -498,7 +499,7 @@ export const getAverageColumnConfig = (columns, tableRows) => {
             }}
           >
             <Iconify
-              icon="material-symbols:schedule-outline"
+              icon="solar:clock-circle-linear"
               sx={{
                 display: "flex",
                 gap: 0.5,
@@ -521,7 +522,7 @@ export const getAverageColumnConfig = (columns, tableRows) => {
             />
             {Math.round(eachCol?.metadata?.averageTokens)}
             <Iconify
-              icon="material-symbols:attach-money"
+              icon="solar:dollar-minimalistic-linear"
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -1024,6 +1025,20 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             refreshAverage();
           }
 
+          // The grid still shows the processing placeholders, which an
+          // update transaction cannot replace (their ids match no real row).
+          // The refresh fired when processing ended may have been answered
+          // by a page request sent before it ended, so reload the grid from
+          // this response instead.
+          if (
+            !processingData &&
+            useProcessingStore.getState().isProcessingData
+          ) {
+            queryClient.setQueryData(queryOptions.queryKey, data);
+            gridApiRef.current.api.refreshServerSide();
+            continue;
+          }
+
           if (rows?.length === 0) {
             gridApiRef.current?.api.refreshServerSide({ purge: true });
             gridApiRef.current?.api.setGridOption("context", {
@@ -1072,10 +1087,19 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
 
   useEffect(() => {
     if (wasProcessingData.current && !averageMetaData?.isProcessingData) {
+      // The cached pages were read while processing (the filter box's
+      // observer refetches them on every poll), and getRows serves any
+      // page that is not invalidated, so mark them stale before reloading.
+      queryClient.invalidateQueries({ queryKey: ["dataset-detail", dataset] });
       gridApiRef.current?.api?.refreshServerSide();
     }
     wasProcessingData.current = Boolean(averageMetaData?.isProcessingData);
-  }, [averageMetaData?.isProcessingData, refetchTableData]);
+  }, [
+    averageMetaData?.isProcessingData,
+    refetchTableData,
+    queryClient,
+    dataset,
+  ]);
 
   const onColumnChanged = useCallback(
     (params) => {
@@ -1241,6 +1265,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         <DevelopFilterBox />
         <MultiImageViewerProvider>
           <SingleImageViewerProvider>
+            <CompositeEvalDialog />
             {isData === true ? (
               <>
                 <TopBanner />

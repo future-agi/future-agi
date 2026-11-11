@@ -15,6 +15,7 @@ stays in RunTestSerializer in simulate.serializers.run_test.
 from rest_framework import serializers
 
 from simulate.models import RunTest
+from simulate.serializers.harness_job import RunVersionLabelSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.serializers.filters import filter_list_field, json_object_field
 
@@ -36,6 +37,9 @@ class SimulateEvalConfigResponseSerializer(serializers.Serializer):
     status = serializers.CharField(read_only=True, allow_null=True)
     eval_group = serializers.CharField(read_only=True, allow_null=True)
     template_id = serializers.UUIDField(read_only=True, allow_null=True)
+    eval_type = serializers.CharField(read_only=True)
+    regradable = serializers.BooleanField(read_only=True)
+    editable = serializers.BooleanField(read_only=True)
 
 
 class RunTestResponseSerializer(serializers.ModelSerializer):
@@ -48,20 +52,23 @@ class RunTestResponseSerializer(serializers.ModelSerializer):
     agent_version snapshot handling, etc.) continues to use RunTestSerializer.
     """
 
-    agent_definition_detail = serializers.DictField(read_only=True, allow_null=True)
+    description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
+    agent_definition_detail = serializers.JSONField(read_only=True, allow_null=True)
     source_type_display = serializers.CharField(read_only=True, allow_null=True)
     scenarios_detail = serializers.ListField(
-        child=serializers.DictField(), read_only=True
+        child=serializers.JSONField(), read_only=True
     )
-    simulator_agent_detail = serializers.DictField(read_only=True, allow_null=True)
+    simulator_agent_detail = serializers.JSONField(read_only=True, allow_null=True)
     simulate_eval_configs_detail = SimulateEvalConfigResponseSerializer(
         many=True, read_only=True
     )
     evals_detail = SimulateEvalConfigResponseSerializer(many=True, read_only=True)
     last_run_at = serializers.DateTimeField(read_only=True, allow_null=True)
-    prompt_template_detail = serializers.DictField(read_only=True, allow_null=True)
-    prompt_version_detail = serializers.DictField(read_only=True, allow_null=True)
-    agent_version = serializers.DictField(read_only=True, allow_null=True)
+    prompt_template_detail = serializers.JSONField(read_only=True, allow_null=True)
+    prompt_version_detail = serializers.JSONField(read_only=True, allow_null=True)
+    agent_version = serializers.JSONField(read_only=True, allow_null=True)
 
     class Meta:
         model = RunTest
@@ -95,6 +102,19 @@ class RunTestResponseSerializer(serializers.ModelSerializer):
             "deleted_at",
         ]
         read_only_fields = fields
+
+
+class RunTestListPaginatedResponseSerializer(serializers.Serializer):
+    """Paginated envelope for GET /simulate/run-tests/ — matches
+    ExtendedPageNumberPagination shape (count/next/previous/results plus
+    total_pages/current_page)."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = RunTestResponseSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
 
 
 class AddEvalConfigResponseSerializer(serializers.Serializer):
@@ -137,11 +157,39 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     agent_type = serializers.CharField(read_only=True)
     total_number_of_fagi_agent_turns = serializers.IntegerField(read_only=True)
     source_type = serializers.CharField(read_only=True)
+    scenario_keys = serializers.ListField(child=serializers.CharField(), read_only=True)
+    selected_scenarios = serializers.IntegerField(read_only=True)
+    trials = serializers.IntegerField(read_only=True)
+    total_calls = serializers.IntegerField(read_only=True)
+    completed_calls = serializers.IntegerField(read_only=True)
+    failed_calls = serializers.IntegerField(read_only=True)
+    pending_calls = serializers.IntegerField(read_only=True)
+    completed_at = serializers.CharField(read_only=True, allow_null=True)
+    outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    environment_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    suite_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    # The run's agent is not the one its environment version was built with.
+    agent_differs = serializers.BooleanField(read_only=True)
 
 
-# Kept for backward compatibility — the swagger decorator references this name.
-# The actual per-item shape is TestExecutionItemResponseSerializer above.
-RunTestExecutionsResponseSerializer = TestExecutionItemResponseSerializer
+class RunTestExecutionsResponseSerializer(serializers.Serializer):
+    """Paginated envelope returned by GET /run-tests/{run_test_id}/executions/.
+
+    Runtime shape comes from ``paginator.get_paginated_response(...)``:
+    ``{count, next, previous, results: [TestExecutionItem, ...]}`` plus
+    ``covered_scenario_count``, the distinct scenarios every execution of the
+    run test has covered (not only this page).
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = TestExecutionItemResponseSerializer(many=True, read_only=True)
+    covered_scenario_count = serializers.IntegerField(read_only=True)
 
 
 class RunTestScenarioItemResponseSerializer(serializers.Serializer):

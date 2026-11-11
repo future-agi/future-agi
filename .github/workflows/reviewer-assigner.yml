@@ -18,7 +18,10 @@ on:
 
 jobs:
   assign:
-    if: github.repository == 'future-agi/future-agi' && github.event_name != 'schedule'
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      github.event_name != 'schedule' &&
+      github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

@@ -76,6 +76,7 @@ function Container({ children }) {
         const isRelativePath =
           returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//");
         if (isRelativePath) {
+          localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
           window.location.href = returnTo;
         } else {
@@ -105,6 +106,12 @@ function Container({ children }) {
 
       router.replace(href);
     } else {
+      const samlNext = sessionStorage.getItem("fai_saml_next");
+      if (samlNext) {
+        sessionStorage.removeItem("fai_saml_next");
+        router.replace(samlNext);
+        return;
+      }
       setChecked(true);
     }
   }, [authenticated, method, router, initialize]);

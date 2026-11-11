@@ -11,6 +11,7 @@ import {
   getMonthAndYear,
 } from "./common";
 import { useQuery } from "@tanstack/react-query";
+import { useWorkspacesList } from "src/api/workspaces/list";
 import axios from "src/utils/axios";
 import _ from "lodash";
 import { endpoints } from "../../../utils/axios";
@@ -32,14 +33,7 @@ export default function UsageSummaryView({ workspaceId }) {
   const isAll = !isLockedWorkspace && effectiveWorkspace === "all";
 
   // Fetch workspace list for dropdown (only needed for org-level view)
-  const { data: workspaceList } = useQuery({
-    queryKey: ["workspace-list-for-usage"],
-    queryFn: async () => {
-      const res = await axios.get(endpoints.workspace.workspaceList, {
-        params: { page: 1, limit: 100 },
-      });
-      return res?.data?.results || [];
-    },
+  const { data: workspaceList } = useWorkspacesList({
     enabled: !isLockedWorkspace,
   });
 

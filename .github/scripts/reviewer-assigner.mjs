@@ -150,6 +150,10 @@ async function assignForPr(prNumber) {
     log(`  state=${pr.state}, skipping`);
     return;
   }
+  if (pr.draft) {
+    log(`  draft PR, skipping`);
+    return;
+  }
   if ((pr.requested_reviewers?.length ?? 0) > 0 || (pr.requested_teams?.length ?? 0) > 0) {
     log(`  already has reviewers (${pr.requested_reviewers.map((r) => r.login).join(',')} + teams=${pr.requested_teams.length}), skipping`);
     return;

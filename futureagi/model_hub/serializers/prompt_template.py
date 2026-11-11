@@ -5,6 +5,7 @@ import django_filters
 import structlog
 import yaml
 from django.db.models import Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
@@ -447,6 +448,10 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
     prompt_config_snapshot = serializers.SerializerMethodField()
     labels = serializers.SerializerMethodField()
 
+    output = serializers.JSONField(read_only=True, allow_null=True)
+    metadata = serializers.JSONField(read_only=True, allow_null=True)
+    evaluation_configs = serializers.JSONField(read_only=True, allow_null=True)
+
     class Meta:
         model = PromptVersion
         fields = [
@@ -475,9 +480,11 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         self.model_manager = LiteLLMModelManager(model_name="", organization_id=None)
 
+    @swagger_serializer_method(serializer_or_field=serializers.CharField())
     def get_template_name(self, obj):
         return obj.original_template.name
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_prompt_config_snapshot(self, obj):
         """
         Get prompt_config_snapshot with backward compatibility for modelDetail.
@@ -496,6 +503,7 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
 
         return config_snapshot
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_labels(self, obj):
         # Single optimized query: join through table with PromptLabel
         # Uses values() to avoid ORM object instantiation overhead
@@ -552,6 +560,7 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
                             "type": "chat",
                         }
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_variable_names(self, obj):
         var_names = obj.variable_names.copy()
         if isinstance(var_names, list):

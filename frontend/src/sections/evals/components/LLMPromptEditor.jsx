@@ -8,6 +8,7 @@ import {
   MenuItem,
   Popover,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
@@ -51,6 +52,9 @@ const LLMPromptEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
 }) => {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -203,10 +207,9 @@ const LLMPromptEditor = ({
               size="small"
               onClick={() => handleSubmit(aiPrompt)}
               disabled={!aiPrompt.trim()}
-              sx={{ p: 0.5 }}
             >
               <Iconify
-                icon="mdi:arrow-up-circle"
+                icon="solar:round-arrow-up-linear"
                 width={20}
                 sx={{
                   color: aiPrompt.trim() ? "primary.main" : "text.disabled",
@@ -243,11 +246,8 @@ const LLMPromptEditor = ({
                 size="small"
                 onClick={handleReject}
                 sx={{
-                  textTransform: "none",
-                  fontSize: "12px",
                   color: "text.secondary",
                   minWidth: 0,
-                  px: 1,
                 }}
               >
                 Reject
@@ -257,20 +257,16 @@ const LLMPromptEditor = ({
                 variant="outlined"
                 onClick={handleAccept}
                 sx={{
-                  textTransform: "none",
-                  fontSize: "12px",
                   minWidth: 0,
-                  px: 1.5,
-                  fontWeight: 600,
                 }}
               >
                 Accept
               </Button>
             </>
           )}
-          <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+          <IconButton size="small" onClick={handleClose}>
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={16}
               sx={{ color: "text.disabled" }}
             />
@@ -319,13 +315,13 @@ const LLMPromptEditor = ({
       >
         <Typography typography="s1" fontWeight={600}>
           Prompt Messages
-          <Box component="span" sx={{ color: "error.main" }}>
+          <Box component="span" sx={{ color: "status.danger.fg" }}>
             *
           </Box>
         </Typography>
 
         <ShowComponent condition={Boolean(onTemplateFormatChange)}>
-          <Box
+          <ButtonBase
             onClick={(e) => !disabled && setFormatAnchor(e.currentTarget)}
             sx={{
               display: "inline-flex",
@@ -352,11 +348,15 @@ const LLMPromptEditor = ({
             </Typography>
             <Typography typography="s2">{currentFormat.label}</Typography>
             <Iconify
-              icon={formatAnchor ? "mdi:chevron-up" : "mdi:chevron-down"}
+              icon={
+                formatAnchor
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={14}
               sx={{ color: "text.disabled" }}
             />
-          </Box>
+          </ButtonBase>
           <Popover
             open={Boolean(formatAnchor)}
             anchorEl={formatAnchor}
@@ -364,7 +364,7 @@ const LLMPromptEditor = ({
             anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
             transformOrigin={{ vertical: "top", horizontal: "right" }}
             slotProps={{
-              paper: { sx: { borderRadius: "8px", p: 0.5, minWidth: 220 } },
+              paper: { sx: { borderRadius: "8px", p: 0.5, minWidth: 240 } },
             }}
           >
             {TEMPLATE_FORMATS.map((fmt) => (
@@ -379,8 +379,8 @@ const LLMPromptEditor = ({
               >
                 <Typography
                   sx={{
-                    fontSize: "14px",
-                    fontWeight: 700,
+                    fontSize: "13px",
+                    fontWeight: 600,
                     fontFamily: "monospace",
                     width: 40,
                     textAlign: "center",
@@ -402,7 +402,7 @@ const LLMPromptEditor = ({
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ fontSize: "11px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     {fmt.description}
                   </Typography>
@@ -423,6 +423,9 @@ const LLMPromptEditor = ({
         datasetJsonSchemas={datasetJsonSchemas}
         disabled={disabled}
         modelSelectorDisabled={modelSelectorDisabled}
+        openModelMenuSignal={openModelMenuSignal}
+        outputType={outputType}
+        choiceCount={choiceCount}
         aiBar={aiOpen ? aiBar : null}
         onFalconClick={() => setAiOpen(true)}
         aiOpen={aiOpen}
@@ -440,6 +443,9 @@ LLMPromptEditor.propTypes = {
   onModelChange: PropTypes.func,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
+  outputType: PropTypes.string,
+  choiceCount: PropTypes.number,
 };
 
 export default LLMPromptEditor;

@@ -20,7 +20,8 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.authentication import decrypt_message, generate_encrypted_message
@@ -44,12 +45,20 @@ from accounts.serializers.contracts import (
     LogoutRequestSerializer,
     PasswordResetConfirmRequestSerializer,
     PasswordResetInitiateRequestSerializer,
+    PasswordResetInitiateResponseSerializer,
     SignupRequestSerializer,
+    SignupResponseSerializer,
     UserFullNameUpdateRequestSerializer,
     UserIdsRequestSerializer,
 )
 from accounts.serializers.user import UpdateUserSerializer
-from accounts.utils import first_signup
+from accounts.services.token_service import issue_tokens
+from accounts.utils import (
+    WorkEmailRequired,
+    build_password_reset_link,
+    first_signup,
+    refresh_pending_invite_expiration,
+)
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -59,12 +68,14 @@ from analytics.utils import (
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
+from tfc.ee_gating import is_oss
 from tfc.permissions.rbac import IsOrganizationAdmin
 from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
 from tfc.utils.api_contracts import validated_api_request
-from tfc.utils.email import email_helper
+from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.install_setup import manage_py_command
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -77,6 +88,32 @@ logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
 
+def oss_reset_unavailable_message() -> str:
+    """What a self-hosted install without email delivery answers a reset
+    request with: the recovery command for the setup it runs in."""
+    command = manage_py_command("reset_password --email <address>")
+    return (
+        "Email delivery is not configured on this deployment, so the reset link "
+        "cannot be sent. An administrator can set a new password from the host "
+        f"with `{command}`, or configure email (MAILGUN_API_KEY). Setting "
+        "OSS_RETURN_PASSWORD_RESET_LINK=true returns reset links in the browser "
+        "instead — only on a network where every caller is already trusted, "
+        "since the link takes over the account it names."
+    )
+
+
+def oss_reset_link_in_response() -> bool:
+    """Whether ``initiate_password_reset`` may hand the reset link straight back
+    to the caller.
+
+    The endpoint is unauthenticated, and the link sets the password on the named
+    account, so returning it makes anyone who can reach the instance able to take
+    over any account on it. Off by default: an operator opts in only for a
+    deployment where network reach already implies full trust.
+    """
+    return os.getenv("OSS_RETURN_PASSWORD_RESET_LINK", "false").lower() == "true"
+
+
 class AccountActivationTokenGenerator(PasswordResetTokenGenerator):
     def _make_hash_value(self, user, timestamp):
         return str(user.pk) + str(timestamp) + str(user.is_active)
@@ -86,15 +123,22 @@ account_activation_token = AccountActivationTokenGenerator()
 
 
 def verify_recaptcha(token):
-    """Verify the reCAPTCHA token with Google"""
+    """Verify the reCAPTCHA token with Google.
+
+    Disabled (the self-hosted default unless RECAPTCHA_SECRET_KEY is set) it
+    passes without a network call. Enabled without a secret it fails closed:
+    RECAPTCHA_ENABLED=true was asked for explicitly, so a missing key is a
+    misconfiguration rather than a reason to skip the check.
+    """
     if not RECAPTCHA_ENABLED:
-        logger.info("recaptcha verification skipped (disabled)")
+        logger.debug("recaptcha verification skipped (disabled)")
         return True
 
     secret_key = RECAPTCHA_SECRET_KEY
     if not secret_key:
         logger.error(
-            "recaptcha enabled but RECAPTCHA_SECRET_KEY is missing",
+            "recaptcha enabled but RECAPTCHA_SECRET_KEY is missing; set the key "
+            "or RECAPTCHA_ENABLED=false",
         )
         return False
     if not token:
@@ -118,15 +162,41 @@ def verify_recaptcha(token):
     return result.get("success", False)
 
 
+def _login_payload(user):
+    """The body ``POST /accounts/token/`` returns on a successful login, built for
+    a user who has just signed up.
+
+    OSS signup logs the new owner straight in, so the frontend should be able to
+    treat the signup response exactly as it treats a login response — same
+    fields, same routing decision — instead of special-casing the one endpoint.
+    Selecting the organization here is part of that: login does it from the first
+    active membership, and the auth layer reads it back on the next request.
+    """
+    org = user.organization
+    if org:
+        user.config["selected_organization_id"] = str(org.id)
+        user.config["currentOrganizationId"] = str(org.id)
+        user.save(update_fields=["config"])
+    membership = get_org_membership(user)
+    new_org = bool(
+        org
+        and org.is_new
+        and membership
+        and membership.role == OrganizationRoles.OWNER.value
+    )
+
+    return {**issue_tokens(user), "new_org": new_org}
+
+
 @swagger_auto_schema(
     method="post",
     request_body=SignupRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=SignupRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     document=False,
 )
 def user_signup(request):
@@ -159,31 +229,85 @@ def user_signup(request):
 
         is_local = os.getenv("ENV_TYPE") == "local"
 
-        if not is_local:
-            if not verify_recaptcha(recaptcha_token):
-                logger.error("recaptcha verification failed")
-                return _gm.bad_request("reCAPTCHA verification failed")
-            else:
-                logger.info("recaptcha verification passed")
+        if is_local or is_oss():
+            logger.debug(
+                "recaptcha verification skipped",
+                reason="local environment" if is_local else "oss deployment",
+            )
+        elif not verify_recaptcha(recaptcha_token):
+            logger.error("recaptcha verification failed")
+            return _gm.bad_request("reCAPTCHA verification failed")
         else:
-            logger.info("recaptcha verification skipped (local environment)")
+            logger.info("recaptcha verification passed")
 
         # Check if a user with the provided email already exists
         if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
         # Allowlist fields to prevent hidden-parameter attacks
-        allowed_fields = {
-            "email",
-            "full_name",
-            "company_name",
-            "allow_email",
-        }
+        if is_oss():
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "password",
+            }
+        else:
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "allow_email",
+            }
+
         sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
-        first_signup(sanitized_data)
+        user = first_signup(sanitized_data)
+
+        if is_oss():
+            logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "user_logged_in",
+                    actor_type="human_user",
+                    actor_id=user.id,
+                    source="web",
+                    organization_id=user.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
+            return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
+        )
+
+    except WorkEmailRequired as exc:
+        logger.info(
+            "signup_rejected_personal_email",
+            email=request.data.get("email", "").lower(),
+        )
+        return _gm.bad_request(
+            {
+                "error": str(exc),
+                "error_code": "SIGNUP_VALIDATION_FAILED",
+                "field_errors": {"email": [str(exc)]},
+            }
+        )
+
+    except DRFValidationError as exc:
+        logger.info(
+            "signup_validation_failed",
+            email=request.data.get("email", "").lower(),
+            errors=exc.detail,
+        )
+        return _gm.bad_request(
+            {
+                "error": "Signup validation failed",
+                "error_code": "SIGNUP_VALIDATION_FAILED",
+                "field_errors": exc.detail,
+            }
         )
 
     except Exception:
@@ -230,18 +354,24 @@ def user_logout(request):
         return _gm.bad_request("Error in user logout.")
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
-    # Rate-limit by IP: 10 requests per minute.
-    ip = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", ""))
-    if ip:
-        ip = ip.split(",")[0].strip()
-    rate_key = f"activate_account_rate:{ip}"
-    attempts = cache.get(rate_key, 0)
-    if attempts >= 10:
-        return _gm.too_many_requests(
-            "Too many activation attempts. Please try again later."
+    # Rate-limit by IP: 10 requests per minute. Skipped in OSS mode where all
+    # traffic shares a single IP (localhost / Docker gateway).
+    if not is_oss():
+        ip = request.META.get(
+            "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")
         )
-    cache.set(rate_key, attempts + 1, timeout=60)
+        if ip:
+            ip = ip.split(",")[0].strip()
+        rate_key = f"activate_account_rate:{ip}"
+        attempts = cache.get(rate_key, 0)
+        if attempts >= 10:
+            return _gm.too_many_requests(
+                "Too many activation attempts. Please try again later."
+            )
+        cache.set(rate_key, attempts + 1, timeout=60)
 
     try:
         # Decode the uidb64 to the user ID
@@ -314,12 +444,18 @@ def activate_account(request, uidb64, token):
 @swagger_auto_schema(
     method="post",
     request_body=PasswordResetInitiateRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=PasswordResetInitiateRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
     document=False,
     reject_unknown_fields=True,
 )
@@ -343,6 +479,18 @@ def initiate_password_reset(request):
                 properties = get_mixpanel_properties(user=user)
                 track_mixpanel_event(MixpanelEvents.RESET_PASS.value, properties)
 
+                # A self-hosted install mails the link like Cloud does once
+                # email delivery is configured; without it there is no way to
+                # hand the link over short of the opt-in below.
+                if (
+                    is_oss()
+                    and not oss_reset_link_in_response()
+                    and not email_delivery_configured()
+                ):
+                    return _gm.success_response(
+                        {"message": oss_reset_unavailable_message()}
+                    )
+
                 # Send reset password email
                 # Generate a token
                 access_token = AuthToken.objects.create(
@@ -358,6 +506,18 @@ def initiate_password_reset(request):
                 # Generate uidb64
                 uidb64 = urlsafe_base64_encode(force_bytes(user.id))
 
+                reset_link = build_password_reset_link(str(uidb64), token)
+
+                if settings.DEBUG:
+                    logger.info(f"Password reset link {reset_link}")
+                if is_oss() and oss_reset_link_in_response():
+                    return _gm.success_response(
+                        {
+                            "message": "Use the link below to reset your password.",
+                            "reset_link": reset_link,
+                        }
+                    )
+
                 email_helper(
                     "Reset Password",
                     "reset_password.html",
@@ -370,19 +530,24 @@ def initiate_password_reset(request):
                     [user.email],
                 )
 
-                if settings.DEBUG:
-                    logger.info(
-                        f"Password reset link {settings.APP_URL}/auth/jwt/verify/{str(uidb64)}/{token}"
-                    )
-
                 return _gm.success_response(
                     {
                         "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
                     }
                 )
-        except (
-            User.DoesNotExist
-        ):  # Don't disclose that the user doesn't exist ,we just send a sucess response
+        except User.DoesNotExist:
+            if is_oss():
+                # Naming the address only helps where the caller can act on the
+                # answer. With the link withheld the response is identical for
+                # every address, so the endpoint tells an anonymous caller
+                # nothing about who has an account here.
+                if oss_reset_link_in_response():
+                    return _gm.bad_request(f"No account found for {email}.")
+                if not email_delivery_configured():
+                    return _gm.success_response(
+                        {"message": oss_reset_unavailable_message()}
+                    )
+            # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(
                 {
                     "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
@@ -408,9 +573,6 @@ def reset_password_confirm(request, uidb64, token):
     new_password = request.validated_data.get("new_password")
     repeat_password = request.validated_data.get("repeat_password")
 
-    if new_password != repeat_password:
-        return _gm.bad_request("Passwords do not match.")
-
     try:
         # Decode the uidb64 to the user ID
         uid = force_str(urlsafe_base64_decode(uidb64))
@@ -430,6 +592,12 @@ def reset_password_confirm(request, uidb64, token):
             )
         except AuthToken.DoesNotExist:
             return _gm.forbidden_response("Invalid token id.")
+
+        if auth_token_obj.auth_origin == "saml":
+            return _gm.forbidden_response("Invalid token.")
+
+        if new_password != repeat_password:
+            return _gm.bad_request("Passwords do not match.")
 
         if (
             not auth_token_obj.is_active
@@ -738,6 +906,12 @@ def resend_invitation_emails(request):
 
             if user:
                 logger.info(f"Resending invitation email to {user.email}")
+
+                # Refresh the matching OrganizationInvite's expiry too, so
+                # this bulk path behaves the same as the other resend
+                # endpoints (#2437).
+                refresh_pending_invite_expiration(organization, user.email)
+
                 # Generate a token
                 token = default_token_generator.make_token(user)
 

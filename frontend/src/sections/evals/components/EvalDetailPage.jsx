@@ -12,11 +12,12 @@ import {
   MenuItem,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, {
   useCallback,
   useEffect,
@@ -27,7 +28,12 @@ import React, {
 import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
@@ -61,10 +67,28 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+} from "../utils/decisionModels";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -126,7 +150,20 @@ const EvalDetailPage = () => {
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed). Seed the default model raw and
+  // only strip it on confirmed denial, so entitled users don't lose the
+  // "turing_large" default while capabilities are still loading.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
 
   const {
     data: evalData,
@@ -144,6 +181,13 @@ const EvalDetailPage = () => {
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
+  const [jevMapping, setJevMapping] = useState({});
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -165,6 +209,8 @@ const EvalDetailPage = () => {
       "mustache",
   );
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
 
   // Dataset columns for autocomplete
   const [datasetColumns, setDatasetColumns] = useState([]);
@@ -272,6 +318,7 @@ const EvalDetailPage = () => {
     if (!list.length) return null;
     const byFlag = list.find((v) => v.is_default || v.isDefault);
     if (byFlag) return byFlag;
+    // matches backend get_default: highest version_number when none flagged
     return [...list].sort(
       (a, b) =>
         (b.version_number ?? b.versionNumber ?? Number.MIN_SAFE_INTEGER) -
@@ -321,6 +368,7 @@ const EvalDetailPage = () => {
           }
           setCodeLanguage(config.language || "python");
           setModel(config.model || evalData.model || "turing_large");
+          setJevMapping(config.jev_mapping || {});
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -334,7 +382,13 @@ const EvalDetailPage = () => {
           {
             const scored = evalData.choice_scores;
             if (scored && Object.keys(scored).length > 0) {
-              setChoiceScores(scored);
+              // Authored order (see the initial-load effect below).
+              setChoiceScores(
+                orderChoiceScores(
+                  scored,
+                  config.jev_mapping?.choice?.labels || evalData.choices,
+                ),
+              );
             } else if (
               Array.isArray(evalData.choices) &&
               evalData.choices.length > 0
@@ -374,11 +428,9 @@ const EvalDetailPage = () => {
           } else if (evalData.eval_type === "llm" && promptText) {
             setMessages([{ role: "system", content: promptText }]);
           }
-          if (config.few_shot_examples || config.fewShotExamples) {
-            setFewShotExamples(
-              config.few_shot_examples || config.fewShotExamples || [],
-            );
-          }
+          setFewShotExamples(
+            config.few_shot_examples || config.fewShotExamples || [],
+          );
         }
         setIsDirty(false);
         setTimeout(() => {
@@ -451,6 +503,7 @@ const EvalDetailPage = () => {
       }
       setCodeLanguage(config.language || "python");
       setModel(config.model || versionToLoad.model || "turing_large");
+      setJevMapping(config.jev_mapping || {});
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -471,18 +524,21 @@ const EvalDetailPage = () => {
         );
       }
       setPassThreshold(config.passThreshold ?? config.pass_threshold ?? 0.5);
-      setChoiceScores(config.choiceScores || config.choice_scores || {});
+      setChoiceScores(
+        orderChoiceScores(
+          config.choiceScores || config.choice_scores || {},
+          config.jev_mapping?.choice?.labels || config.choices,
+        ),
+      );
       setMultiChoice(config.multiChoice ?? config.multi_choice ?? false);
       if (config.messages && config.messages.length > 0) {
         setMessages(config.messages);
       } else if (evalData.eval_type === "llm" && promptText) {
         setMessages([{ role: "system", content: promptText }]);
       }
-      if (config.few_shot_examples || config.fewShotExamples) {
-        setFewShotExamples(
-          config.few_shot_examples || config.fewShotExamples || [],
-        );
-      }
+      setFewShotExamples(
+        config.few_shot_examples || config.fewShotExamples || [],
+      );
       setCheckInternet(config.check_internet ?? false);
       setAgentMode(config.agent_mode || "agent");
       setSummaryType(resolve_summary_type(config.summary));
@@ -497,7 +553,7 @@ const EvalDetailPage = () => {
         isPopulatingRef.current = false;
       }, 0);
     },
-    [defaultVersion, evalData, isDirty, isComposite, setSearchParams, isOSS],
+    [defaultVersion, evalData, isDirty, isComposite, setSearchParams],
   );
 
   // Three-dot menu
@@ -578,6 +634,7 @@ const EvalDetailPage = () => {
             "python",
         );
         setModel(config.model || evalData.model || "turing_large");
+        setJevMapping(config.jev_mapping || {});
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -591,7 +648,14 @@ const EvalDetailPage = () => {
         {
           const scored = evalData.choice_scores;
           if (scored && Object.keys(scored).length > 0) {
-            setChoiceScores(scored);
+            // jsonb returns choice_scores keys shortest first; show and save
+            // them in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                scored,
+                config.jev_mapping?.choice?.labels || evalData.choices,
+              ),
+            );
           } else if (
             Array.isArray(evalData.choices) &&
             evalData.choices.length > 0
@@ -631,11 +695,9 @@ const EvalDetailPage = () => {
         } else if (evalData.eval_type === "llm" && promptText) {
           setMessages([{ role: "system", content: promptText }]);
         }
-        if (config.few_shot_examples || config.fewShotExamples) {
-          setFewShotExamples(
-            config.few_shot_examples || config.fewShotExamples || [],
-          );
-        }
+        setFewShotExamples(
+          config.few_shot_examples || config.fewShotExamples || [],
+        );
         setIsDirty(false);
         initialLoadDone.current = true;
         // Release the populating guard after React flushes this batch so
@@ -753,20 +815,84 @@ const EvalDetailPage = () => {
     return [...new Set([...requiredKeys, ...templateVars])];
   }, [instructions, evalData, evalType, isComposite, compositeDetail]);
 
+  // The existing mapping/editor props retain their legacy names on the wire.
+  const isJevModel = isDecisionModel(model);
+  const decisionCatalog = useDecisionModels(isJevModel);
+  const decisionGroup = findDecisionGroup(decisionCatalog.data || [], model);
+  const decisionLabel = isNativeJevModel(model)
+    ? "Jev"
+    : decisionGroup?.label || "This decision model";
+  const decisionLocked = isJevDecisionModel(model) && jevLocked;
+  const effectiveConfig = useMemo(
+    () =>
+      viewingVersion
+        ? viewingVersion.config_snapshot || viewingVersion.configSnapshot || {}
+        : evalData?.config || {},
+    [viewingVersion, evalData],
+  );
+  const jevPayload = useMemo(
+    () =>
+      isJevModel
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {},
+    [isJevModel, outputType, choiceScores, jevMapping],
+  );
+  const jevMessages =
+    evalType === "llm" ? messages : effectiveConfig.messages || [];
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        modelLabel: decisionLabel,
+        modelGroup: decisionGroup,
+        mapping: jevPayload.jev_mapping,
+        config: {
+          ...effectiveConfig,
+          // Only agent evals use agent_mode; an LLM judge drafted on the
+          // Agents tab keeps a stale "agent" value that the backend ignores.
+          agent_mode: undefined,
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: build_tools_payload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        inputDataTypes: evalData?.input_data_types,
+        messages: jevMessages,
+      })
+    : [];
+  const jevError = jevErrors[0];
+  const jevTestBlocked = Boolean(jevError || decisionLocked);
+
   // Save version
   const handleSaveVersion = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (jevError) {
+      enqueueSnackbar(jevError, { variant: "error" });
+      return;
+    }
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     try {
@@ -778,6 +904,7 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
+        ...jevPayload,
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
@@ -796,7 +923,7 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         // Send [] for LLM evals so the BE can persist a user-cleared list.
@@ -807,7 +934,8 @@ const EvalDetailPage = () => {
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
-        ...(evalData?.config || {}),
+        ...(isJevModel ? effectiveConfig : evalData?.config || {}),
+        ...jevPayload,
         rule_prompt: evalType === "code" ? "" : instructions,
         code: evalType === "code" ? code : undefined,
         language: evalType === "code" ? codeLanguage : undefined,
@@ -828,7 +956,7 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
@@ -859,16 +987,21 @@ const EvalDetailPage = () => {
         setViewingVersion(null);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
   }, [
+    jevError,
+    jevPayload,
+    isJevModel,
+    effectiveConfig,
+    templateFormat,
+    isComposite,
     evalType,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalData,
     instructions,
     code,
@@ -886,7 +1019,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -924,12 +1057,8 @@ const EvalDetailPage = () => {
       );
       setIsDirty(false);
     } catch (err) {
-      const message =
-        err?.response?.data?.result ||
-        err?.message ||
-        "Failed to save composite";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save composite"),
         { variant: "error" },
       );
     }
@@ -947,6 +1076,17 @@ const EvalDetailPage = () => {
 
   // Test evaluation — auto-saves current config before running
   const handleTestEvaluation = useCallback(async () => {
+    if (jevTestBlocked) {
+      enqueueSnackbar(jevError || "Not included in your plan", {
+        variant: "error",
+      });
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     setIsTesting(true);
     setTestError(null);
     setTestPassed(false);
@@ -961,6 +1101,7 @@ const EvalDetailPage = () => {
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
+          ...jevPayload,
           instructions:
             evalType === "code" ? undefined : instructions || undefined,
           code: evalType === "code" ? code : undefined,
@@ -977,7 +1118,7 @@ const EvalDetailPage = () => {
           knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
           data_injection: evalType === "agent" ? dataInjection : undefined,
           summary: evalType === "agent" ? summary : undefined,
-          error_localizer_enabled: errorLocalizerEnabled,
+          error_localizer_enabled: errorLocalizerActive,
           template_format: templateFormat,
           messages: evalType === "llm" ? messages : undefined,
           few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
@@ -1004,14 +1145,21 @@ const EvalDetailPage = () => {
       }
       testPlaygroundRef.current?.runTest?.(evalId);
     } catch (error) {
-      const message =
-        error?.response?.data?.result || error?.message || "Failed to run test";
-      handleTestResult(false, message);
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to run test"),
+      );
       setIsTesting(false);
     }
   }, [
+    jevError,
+    jevTestBlocked,
+    jevPayload,
+    templateFormat,
+    enqueueSnackbar,
     evalId,
     evalType,
+    fagiLocked,
     isSystemEval,
     isComposite,
     instructions,
@@ -1028,7 +1176,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -1070,19 +1218,7 @@ const EvalDetailPage = () => {
   }, [evalId, enqueueSnackbar, navigate]);
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100%",
-          py: 8,
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (fetchError || !evalData) {
@@ -1106,6 +1242,14 @@ const EvalDetailPage = () => {
       </Box>
     );
   }
+
+  const typeRole = isComposite
+    ? "info"
+    : evalType === "code"
+      ? "warning"
+      : evalType === "agent"
+        ? "success"
+        : "discovery";
 
   return (
     <Box
@@ -1152,34 +1296,10 @@ const EvalDetailPage = () => {
               px: 1,
               py: 0.25,
               borderRadius: "4px",
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 600,
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? isComposite
-                    ? "rgba(99,102,241,0.16)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.16)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.16)"
-                        : "rgba(124,77,255,0.16)"
-                  : isComposite
-                    ? "rgba(99,102,241,0.08)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.08)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.08)"
-                        : "rgba(124,77,255,0.08)",
-              color: (theme) =>
-                isComposite
-                  ? theme.palette.info.main
-                  : evalType === "code"
-                    ? theme.palette.mode === "light"
-                      ? "#B45309"
-                      : theme.palette.warning.main
-                    : evalType === "agent"
-                      ? theme.palette.success.main
-                      : theme.palette.primary.main,
+              backgroundColor: `status.${typeRole}.bg`,
+              color: `status.${typeRole}.fg`,
             }}
           >
             {(() => {
@@ -1219,7 +1339,7 @@ const EvalDetailPage = () => {
                 size="small"
                 onClick={(e) => setMenuAnchor(e.currentTarget)}
               >
-                <Iconify icon="solar:menu-dots-bold" width={18} />
+                <Iconify icon="solar:menu-dots-bold" width={20} />
               </IconButton>
               <Menu
                 anchorEl={menuAnchor}
@@ -1270,7 +1390,6 @@ const EvalDetailPage = () => {
                   <MenuItem
                     disabled={!canEditEvals}
                     onClick={handleDeleteClick}
-                    sx={{ color: "error.main" }}
                   >
                     <Iconify
                       icon="solar:trash-bin-trash-bold"
@@ -1295,33 +1414,10 @@ const EvalDetailPage = () => {
       />
 
       {/* Top Tabs */}
-      <Tabs
+      <SegmentedTabs
         value={activeTab}
         onChange={handleTabChange}
-        TabIndicatorProps={{ style: { display: "none" } }}
-        sx={{
-          minHeight: 32,
-          mb: 1.5,
-          flexShrink: 0,
-          "& .MuiTab-root": {
-            minHeight: 32,
-            px: 1.5,
-            py: 0,
-            mr: "0px !important",
-            textTransform: "none",
-            fontSize: "13px",
-            borderRadius: "6px",
-          },
-          border: "1px solid",
-          borderColor: "divider",
-          p: "2px",
-          borderRadius: "8px",
-          width: "fit-content",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.04)"
-              : "#f4f4f5",
-        }}
+        sx={{ mb: 1.5, flexShrink: 0, width: "fit-content" }}
       >
         {(evalType === "code" || isComposite
           ? ["details", "usage"]
@@ -1333,34 +1429,9 @@ const EvalDetailPage = () => {
             feedback: "Feedback",
             ground_truth: "Ground Truth",
           };
-          return (
-            <Tab
-              key={tab}
-              value={tab}
-              label={labels[tab]}
-              sx={{
-                bgcolor:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "#fff"
-                    : "transparent",
-                boxShadow:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: activeTab === tab ? 600 : 400,
-                color: activeTab === tab ? "text.primary" : "text.disabled",
-              }}
-            />
-          );
+          return <Tab key={tab} value={tab} label={labels[tab]} />;
         })}
-      </Tabs>
+      </SegmentedTabs>
 
       {/* ═══ Eval Details Tab — playground layout ═══ */}
       {activeTab === "details" && (
@@ -1403,10 +1474,7 @@ const EvalDetailPage = () => {
                         borderRadius: "8px",
                         border: "1px solid",
                         borderColor: "primary.main",
-                        backgroundColor: (theme) =>
-                          theme.palette.mode === "dark"
-                            ? "rgba(124,77,255,0.08)"
-                            : "rgba(124,77,255,0.04)",
+                        backgroundColor: "status.discovery.bg",
                       }}
                     >
                       <Iconify
@@ -1436,10 +1504,7 @@ const EvalDetailPage = () => {
                           handleVersionSelect(null);
                         }}
                         sx={{
-                          textTransform: "none",
-                          fontSize: "12px",
                           minWidth: 0,
-                          px: 1,
                         }}
                       >
                         Back to default
@@ -1505,6 +1570,9 @@ const EvalDetailPage = () => {
                 {/* Agent type — InstructionEditor with model bar */}
                 {!isComposite && evalType === "agent" && (
                   <InstructionEditor
+                    openModelMenuSignal={openModelMenuSignal}
+                    outputType={outputType}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     value={instructions}
                     onChange={(v) => {
                       setInstructions(v);
@@ -1560,6 +1628,9 @@ const EvalDetailPage = () => {
                 {!isComposite && evalType === "llm" && (
                   <>
                     <LLMPromptEditor
+                      openModelMenuSignal={openModelMenuSignal}
+                      outputType={outputType}
+                      choiceCount={Object.keys(choiceScores || {}).length}
                       messages={messages}
                       onMessagesChange={(msgs) => {
                         setMessages(msgs);
@@ -1580,6 +1651,8 @@ const EvalDetailPage = () => {
                       modelSelectorDisabled={false}
                     />
                     <FewShotExamples
+                      isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       selectedDatasets={fewShotExamples}
                       onChange={(v) => {
                         setFewShotExamples(v);
@@ -1605,6 +1678,23 @@ const EvalDetailPage = () => {
                     }}
                     datasetColumns={datasetColumns}
                     disabled={isSystemEval}
+                  />
+                )}
+
+                {isJevModel && !isComposite && evalType !== "code" && (
+                  <JevOutputConfig
+                    outputType={outputType}
+                    choiceScores={choiceScores}
+                    mapping={jevMapping}
+                    onChange={(next) => {
+                      setJevMapping(next);
+                      markDirty();
+                    }}
+                    errors={jevErrors}
+                    hasExtraMessages={hasExtraJevMessages(jevMessages)}
+                    disabled={isSystemEval}
+                    locked={decisionLocked}
+                    modelLabel={decisionLabel}
                   />
                 )}
 
@@ -1654,6 +1744,8 @@ const EvalDetailPage = () => {
                     </Box>
                   ) : (
                     <OutputTypeConfig
+                      isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       outputType={outputType}
                       onOutputTypeChange={(v) => {
                         setOutputType(v);
@@ -1679,37 +1771,48 @@ const EvalDetailPage = () => {
                     />
                   ))}
 
-                {/* Error Localization */}
-                {!isComposite && evalType !== "code" && (
-                  <Box>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={errorLocalizerEnabled}
-                          onChange={(e) => {
-                            setErrorLocalizerEnabled(e.target.checked);
-                            markDirty();
-                          }}
-                          size="small"
-                        />
-                      }
-                      label={
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                      }
-                      sx={{ ml: 0 }}
-                    />
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", ml: 3.5, mt: -0.5 }}
-                    >
-                      Pinpoints which parts of the input caused evaluation
-                      failures
-                    </Typography>
-                  </Box>
-                )}
+                {errorLocalizerAvailable &&
+                  !isComposite &&
+                  evalType !== "code" && (
+                    <Box>
+                      <CustomTooltip
+                        show={agentEvalLocked}
+                        type=""
+                        arrow
+                        title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                      >
+                        <Box sx={{ display: "inline-flex" }}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={errorLocalizerActive}
+                                disabled={agentEvalLocked}
+                                onChange={(e) => {
+                                  setErrorLocalizerEnabled(e.target.checked);
+                                  markDirty();
+                                }}
+                                size="small"
+                              />
+                            }
+                            label={
+                              <Typography variant="body2" fontWeight={500}>
+                                Error Localization
+                              </Typography>
+                            }
+                            sx={{ ml: 0 }}
+                          />
+                        </Box>
+                      </CustomTooltip>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block", ml: 3.5, mt: -0.5 }}
+                      >
+                        Pinpoints which parts of the input caused evaluation
+                        failures
+                      </Typography>
+                    </Box>
+                  )}
 
                 {/* Description */}
                 {!isComposite && (
@@ -1759,20 +1862,20 @@ const EvalDetailPage = () => {
                         // Icon mapping for backend semantic tags. Unknown tags
                         // get a generic bookmark/tag icon.
                         const BACKEND_TAG_ICONS = {
-                          SAFETY: "mdi:shield-alert-outline",
-                          RAG: "mdi:database-search-outline",
-                          HALLUCINATION: "mdi:alert-octagon-outline",
-                          CONVERSATION: "mdi:message-text-outline",
-                          CHAT: "mdi:robot-outline",
-                          AUDIO: "mdi:volume-high",
-                          TEXT: "mdi:format-text",
-                          IMAGE: "mdi:image-outline",
-                          VIDEO: "mdi:video-outline",
+                          SAFETY: "solar:shield-warning-linear",
+                          RAG: "solar:database-linear",
+                          HALLUCINATION: "solar:danger-circle-linear",
+                          CONVERSATION: "solar:chat-round-line-linear",
+                          CHAT: "solar:bot-linear",
+                          AUDIO: "solar:volume-loud-linear",
+                          TEXT: "solar:notes-linear",
+                          IMAGE: "solar:gallery-linear",
+                          VIDEO: "solar:videocamera-linear",
                           PDF: "mdi:file-pdf-box",
-                          FUNCTION: "mdi:function-variant",
-                          LLMS: "mdi:brain",
-                          FUTURE_EVALS: "mdi:star-four-points-outline",
-                          CUSTOM: "mdi:pencil-outline",
+                          FUNCTION: "solar:programming-linear",
+                          LLMS: "solar:brain-linear",
+                          FUTURE_EVALS: "solar:stars-minimalistic-linear",
+                          CUSTOM: "solar:pen-linear",
                         };
                         const humanize = (s) =>
                           String(s)
@@ -1805,9 +1908,7 @@ const EvalDetailPage = () => {
                               isSystemEval || !onDelete ? undefined : onDelete
                             }
                             sx={{
-                              fontSize: "12px",
                               cursor: isSystemEval ? "default" : "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
                             }}
                           />
                         );
@@ -1818,7 +1919,8 @@ const EvalDetailPage = () => {
                             {extraTags.map((t) =>
                               renderChip({
                                 key: `extra-${t}`,
-                                icon: BACKEND_TAG_ICONS[t] || "mdi:tag-outline",
+                                icon:
+                                  BACKEND_TAG_ICONS[t] || "solar:tag-linear",
                                 label: humanize(t),
                                 selected: true,
                                 onDelete: () => {
@@ -1883,7 +1985,7 @@ const EvalDetailPage = () => {
                     requiredKeys={variables}
                     multiChoice={multiChoice}
                     showVersions={!(isSystemEval && evalType === "code")}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onVersionSelect={handleVersionSelect}
@@ -1929,7 +2031,7 @@ const EvalDetailPage = () => {
                   {testError && (
                     <Typography
                       variant="caption"
-                      color="error.main"
+                      color="status.danger.fg"
                       sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                       noWrap
                     >
@@ -1946,13 +2048,13 @@ const EvalDetailPage = () => {
                       }}
                     >
                       <Iconify
-                        icon="mdi:check-circle"
+                        icon="solar:check-circle-bold"
                         width={16}
-                        sx={{ color: "success.main" }}
+                        sx={{ color: "status.success.fg" }}
                       />
                       <Typography
                         variant="caption"
-                        color="success.main"
+                        color="status.success.fg"
                         sx={{ fontSize: "12px" }}
                       >
                         Test completed
@@ -1963,11 +2065,8 @@ const EvalDetailPage = () => {
                     <Typography
                       variant="caption"
                       sx={{
-                        fontSize: "11px",
-                        color: (theme) =>
-                          theme.palette.mode === "light"
-                            ? theme.palette.amber[700]
-                            : theme.palette.warning.main,
+                        fontSize: "12px",
+                        color: "status.warning.fg",
                       }}
                     >
                       Unsaved changes
@@ -1985,10 +2084,11 @@ const EvalDetailPage = () => {
                   >
                     <span>
                       <Button
-                        variant={isComposite ? "contained" : "outlined"}
+                        variant="outlined"
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
+                          jevTestBlocked ||
                           isTesting ||
                           !isPlaygroundReady ||
                           needsTemplateVariable ||
@@ -1999,12 +2099,11 @@ const EvalDetailPage = () => {
                             <CircularProgress size={14} />
                           ) : (
                             <Iconify
-                              icon="mdi:play-circle-outline"
+                              icon="solar:play-circle-linear"
                               width={16}
                             />
                           )
                         }
-                        sx={{ textTransform: "none" }}
                       >
                         {isTesting
                           ? "Running..."
@@ -2029,6 +2128,7 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
+                            Boolean(jevError) ||
                             isSaving ||
                             !isDirty ||
                             needsTemplateVariable ||
@@ -2039,12 +2139,11 @@ const EvalDetailPage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Version"}
                         </Button>
@@ -2076,12 +2175,11 @@ const EvalDetailPage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Changes"}
                         </Button>

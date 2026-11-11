@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
 from django.db.models import DateTimeField, F, FloatField, Q
@@ -15,6 +16,9 @@ from model_hub.models.choices import (
 )
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+
+if TYPE_CHECKING:
+    from model_hub.models.annotation_queues import AutomationRule
 
 logger = structlog.get_logger(__name__)
 
@@ -153,7 +157,9 @@ def is_source_available_for_annotation(source_type, source_obj):
     if source_type != QueueItemSourceType.TRACE.value:
         return True, None
     root_span = getattr(source_obj, "root_span", None)
-    if root_span is None or _is_terminal_span_status(getattr(root_span, "status", None)):
+    if root_span is None or _is_terminal_span_status(
+        getattr(root_span, "status", None)
+    ):
         return True, None
     return False, TRACE_IN_PROGRESS_ADD_ERROR
 
@@ -171,14 +177,21 @@ def filter_available_source_ids_for_annotation(
     as in-progress). FAIL OPEN on a CH error — a transient read must not silently
     drop every add. ``organization`` / ``workspace`` are already applied upstream by
     ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
-    unavailable_message)`` preserving input order. Never query PG.
+    unavailable_message, previews_by_id)`` preserving input order. Never query PG.
+
+    ``previews_by_id`` ({trace_id: payload}) hands the caller the grid preview built
+    from the roots this function already read, so the add path can persist
+    ``QueueItem.source_preview`` without a second CH read (TH-7211). Empty for
+    non-trace types and whenever the roots could not be read.
     """
     ordered_ids = [str(source_id) for source_id in source_ids]
     if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
-        return ordered_ids, 0, None
+        return ordered_ids, 0, None, {}
 
     roots_by_trace = _batch_ch_trace_roots(
-        ordered_ids, project_id=str(project_id) if project_id else None
+        ordered_ids,
+        project_id=str(project_id) if project_id else None,
+        caller="add_items",
     )
 
     def _available(trace_id):
@@ -188,9 +201,14 @@ def filter_available_source_ids_for_annotation(
         return root is None or _is_terminal_span_status(getattr(root, "status", None))
 
     available_ids = [sid for sid in ordered_ids if _available(sid)]
+    previews_by_id = {
+        trace_id: _trace_preview_payload(root)
+        for trace_id, root in roots_by_trace.items()
+        if root is not None
+    }
     unavailable_count = len(ordered_ids) - len(available_ids)
     if unavailable_count <= 0:
-        return available_ids, 0, None
+        return available_ids, 0, None, previews_by_id
 
     if unavailable_count == 1:
         message = (
@@ -201,7 +219,7 @@ def filter_available_source_ids_for_annotation(
             f"{unavailable_count} traces are still in progress and "
             "were not added to the annotation queue."
         )
-    return available_ids, unavailable_count, message
+    return available_ids, unavailable_count, message, previews_by_id
 
 
 def source_project(source_obj, organization=None):
@@ -226,6 +244,31 @@ def source_project(source_obj, organization=None):
     if organization is not None:
         qs = qs.filter(organization=organization)
     return qs.first()
+
+
+_TRACER_SOURCE_TYPES = frozenset(
+    {
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    }
+)
+
+
+def tracer_project_id_for_source(source_type, source_obj):
+    """Denormalized ``tracer.Project`` id for a Score on *source_obj*, or ``None``.
+
+    Only tracer sources (trace/observation_span/trace_session) carry a tracer
+    project; other source types return ``None``. Reads ``project_id`` straight
+    off the source object (no DB hit) so it's safe on the hot write path.
+    """
+    if source_type not in _TRACER_SOURCE_TYPES:
+        return None
+    project_id = getattr(source_obj, "project_id", None)
+    if project_id is not None:
+        return project_id
+    project = getattr(source_obj, "project", None)
+    return getattr(project, "id", None) if project is not None else None
 
 
 def _resolve_default_queue_scope(source_type, source_obj, organization=None):
@@ -436,19 +479,26 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
         defaults={
             "organization": queue.organization,
             "workspace": queue.workspace,
+            # A tracer default queue is the source copy's project; stamp it as
+            # add_items does, so reads pinned to one copy can tell its notes
+            # from another copy's. Other default queues have no project.
+            "project_id": queue.project_id,
             "status": QueueItemStatus.PENDING.value,
         },
     )
     return item
 
 
-def resolve_source_object(source_type, source_id, organization=None, workspace=None):
+def resolve_source_object(
+    source_type, source_id, organization=None, workspace=None, project_id=None
+):
     """Look up a source object by type and ID.
 
     Tracer sources (trace / observation_span / trace_session) live only in
     ClickHouse — the tracer app is CH-native — so they resolve straight from CH and
     come back duck-typed (``.id`` / ``.project_id``); the CH resolver tenant-scopes
     them against the PG ``Project`` (which is not a tracer table), fail-closed.
+    ``project_id`` pins a trace / span id to the project it was opened from.
 
     Non-tracer source types (dataset_row / call_execution / prototype_run) are
     PG-backed models, verified to belong to *organization* / *workspace* (directly or
@@ -456,7 +506,11 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
     """
     if source_type in _CH_NATIVE_SOURCE_TYPES:
         return _resolve_ch_source_object(
-            source_type, source_id, organization=organization, workspace=workspace
+            source_type,
+            source_id,
+            organization=organization,
+            workspace=workspace,
+            project_id=project_id,
         )
 
     model = get_source_model(source_type)
@@ -467,6 +521,22 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
     if obj is None:
         return None
 
+    if not _source_passes_tenant_gate(
+        obj, source_type, source_id, organization=organization, workspace=workspace
+    ):
+        return None
+
+    return obj
+
+
+def _source_passes_tenant_gate(
+    obj, source_type, source_id, *, organization=None, workspace=None
+):
+    """Org + workspace gate for a PG-backed source, shared by the per-item
+    (:func:`resolve_source_object`) and bulk (:func:`_resolve_pg_sources_bulk`)
+    resolvers so both apply the identical rule. FAIL CLOSED: a missing/mismatched org,
+    or a workspace that doesn't match (allowing a null source workspace only under a
+    default workspace), denies. ``None`` org/workspace skips that check (unscoped call)."""
     if organization is not None:
         obj_org = _get_source_organization(obj)
         if obj_org is None or obj_org != organization:
@@ -477,7 +547,7 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
                 expected_org=str(organization.pk),
                 actual_org=str(obj_org.pk) if obj_org else None,
             )
-            return None
+            return False
 
     if workspace is not None:
         obj_ws = _get_source_workspace(obj)
@@ -492,9 +562,66 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
                 expected_workspace=str(workspace.pk),
                 actual_workspace=str(obj_ws.pk) if obj_ws else None,
             )
-            return None
+            return False
 
-    return obj
+    return True
+
+
+_MAX_SOURCE_SCOPE_PROJECTS = 4096
+
+
+def _tenant_scoped_project_ids(*, organization=None, workspace=None, project_id=None):
+    """Projects a CH trace / span id may resolve in, under the same gate as
+    :func:`_tenant_scoped_project`: ``[project_id]`` when it passes that gate,
+    otherwise every accessible project. FAIL CLOSED: an empty list denies.
+    """
+    if project_id:
+        project = _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        return [str(project.id)] if project is not None else []
+    if organization is None:
+        return []
+    from tracer.models.project import Project
+
+    projects = Project.objects.filter(organization=organization)
+    if workspace is not None:
+        workspace_q = Q(workspace=workspace)
+        if getattr(workspace, "is_default", False):
+            workspace_q |= Q(workspace__isnull=True)
+        projects = projects.filter(workspace_q)
+    project_ids = [
+        str(value)
+        for value in projects.values_list("id", flat=True)[
+            : _MAX_SOURCE_SCOPE_PROJECTS + 1
+        ]
+    ]
+    if len(project_ids) > _MAX_SOURCE_SCOPE_PROJECTS:
+        logger.warning("ch_source_scope_too_large", organization=str(organization.pk))
+        return []
+    return project_ids
+
+
+def pinned_source_project_ids(
+    source_type, project_id, *, organization=None, workspace=None
+):
+    """Projects a read of a trace / span is pinned to, or ``None`` for no pin.
+
+    A trace / span id can exist in several projects; a detail drawer pins its
+    reads to the copy it shows with ``project_id``, under the gate the score
+    write applies (:func:`_tenant_scoped_project_ids`). A pin that fails the
+    gate yields ``[]``: the caller answers like a source with nothing on it.
+    Session ids are derived from their project and other sources have no tracer
+    project, so only traces / spans pin.
+    """
+    if not project_id or source_type not in (
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE.value,
+    ):
+        return None
+    return _tenant_scoped_project_ids(
+        organization=organization, workspace=workspace, project_id=project_id
+    )
 
 
 def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
@@ -539,18 +666,34 @@ class _CHTraceSource:
 
 
 def _resolve_ch_source_object(
-    source_type, source_id, *, organization=None, workspace=None
+    source_type, source_id, *, organization=None, workspace=None, project_id=None
 ):
     """CH fallback for :func:`resolve_source_object` (collector data, no PG row).
     Returns a duck-typed CH object (``.id`` / ``.project_id``) or ``None``, tenant-
     verified against the PG ``Project``. CH errors are logged and denied (fail closed).
+
+    A trace / span id can exist in several projects (replays, re-imports, a shared
+    provider account). The read is restricted to the caller's projects — or to
+    ``project_id`` when the caller pins one — and the newest copy wins, as in the
+    trace-detail read, so a score never lands on another tenant's or an arbitrary
+    copy.
     """
+    if source_type in (
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE.value,
+    ):
+        project_ids = _tenant_scoped_project_ids(
+            organization=organization, workspace=workspace, project_id=project_id
+        )
+        if not project_ids:
+            return None
+
     if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
         from tracer.services.clickhouse.v2 import get_reader
 
         try:
             with get_reader() as reader:
-                span = reader.get(str(source_id))
+                span = reader.get(str(source_id), project_ids=project_ids)
         except Exception as exc:  # narrow: any CH read failure → deny
             logger.warning(
                 "ch_source_resolve_error",
@@ -586,7 +729,7 @@ def _resolve_ch_source_object(
         # Collector trace (no PG row): resolve its root span from CH for the
         # project_id, tenant-gate, and duck-type the trace so the add path
         # stores the soft trace_id. The item is annotated at this root span.
-        root_span = _ch_root_span_for_trace(source_id)
+        root_span = _ch_root_span_for_trace(source_id, project_ids=project_ids)
         if root_span is None:
             return None
         if (
@@ -645,17 +788,33 @@ def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
     )
 
 
-def _ch_span_for_item(span_id):
+def _queue_item_source_project_ids(item):
+    """Projects a queue item's CH trace / span may render from: the item's own
+    project when it was recorded at add time, else every project of the item's
+    org / workspace (the add path's scope), where the newest copy wins. A trace /
+    span id can exist in several projects and organizations, so a render read by
+    bare id would show an arbitrary tenant's copy. FAIL CLOSED: ``[]`` renders
+    the ``deleted`` sentinel."""
+    if item.project_id:
+        return [str(item.project_id)]
+    return _tenant_scoped_project_ids(
+        organization=item.organization, workspace=item.workspace
+    )
+
+
+def _ch_span_for_item(span_id, *, project_ids=None):
     """Best-effort CH point-read for a render path (preview/content). Returns the
     :class:`CHSpan` or ``None`` (genuinely-gone span OR CH error). FAIL OPEN on the
-    render (None → ``deleted`` sentinel) but logs — never raises into the page."""
+    render (None → ``deleted`` sentinel) but logs — never raises into the page.
+
+    ``project_ids`` restricts the read to those projects; the newest copy wins."""
     if not span_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            return reader.get(str(span_id))
+            return reader.get(str(span_id), project_ids=project_ids)
     except Exception as exc:
         logger.warning("ch_span_render_error", span_id=str(span_id), error=str(exc))
         return None
@@ -673,7 +832,7 @@ def _pick_conversation_root(root_spans):
     return root_spans[0]
 
 
-def _ch_root_span_for_trace(trace_id):
+def _ch_root_span_for_trace(trace_id, *, project_ids=None):
     """Best-effort CH read of a trace's root span (resolve/render path).
 
     Reads ONLY the parentless (root) spans, LEAN, via ``roots_by_trace_ids``: a
@@ -682,14 +841,31 @@ def _ch_root_span_for_trace(trace_id):
     shared cluster — this runs on every trace resolution. Prefers the conversation
     root, else the first parentless span; a trace with no parentless span in CH
     resolves to ``None`` (fail closed — never a full scan to find one root). FAIL
-    OPEN on CH error — logs, never raises into the page."""
+    OPEN on CH error — logs, never raises into the page.
+
+    ``project_ids`` restricts the read to those projects and takes the roots of
+    the one holding the newest copy of the trace (see ``newest_trace_project``)."""
     if not trace_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            roots = reader.roots_by_trace_ids([str(trace_id)], include_heavy=False)
+            project_id = None
+            if project_ids is not None:
+                project_id = (
+                    project_ids[0]
+                    if len(project_ids) == 1
+                    else reader.newest_trace_project(str(trace_id), project_ids)
+                )
+                if project_id is None:
+                    return None
+            roots = reader.roots_by_trace_ids(
+                [str(trace_id)],
+                include_heavy=False,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
+                project_id=project_id,
+            )
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
         return None
@@ -715,24 +891,94 @@ def _ch_session_fields_for_item(session_id):
         return None
 
 
-def _batch_ch_spans(span_ids):
+def _ch_batch_read_failed(
+    exc: Exception, *, raise_on_error: bool, source_type: str, count: int, caller: str
+) -> None:
+    """Handle a failed :class:`CollectorSourceCache` batch read from inside its
+    ``except`` block: re-raise it on a write path (``raise_on_error``), else log
+    ``ch_bulk_resolve_failed`` with the traceback so the caller can FAIL OPEN."""
+    if raise_on_error:
+        raise exc  # the write fails; its request boundary logs it once
+    logger.warning(
+        "ch_bulk_resolve_failed",
+        source_type=source_type,
+        count=count,
+        error_type=type(exc).__name__,
+        caller=caller,
+        exc_info=True,
+    )
+
+
+def _batch_ch_spans(
+    span_ids,
+    *,
+    project_id=None,
+    include_heavy=True,
+    caller="render",
+    reject_ambiguous_ids=False,
+    raise_on_error=False,
+):
     """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
     in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
-    renders the ``deleted`` sentinel, same as a single-read miss). Backs
-    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item."""
+    renders the ``deleted`` sentinel, same as a single-read miss), or re-raised with
+    ``raise_on_error`` (a write path, where a miss would drop data). Backs
+    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item.
+    ``project_id`` (optional) scopes the read to one tenant on the ``spans`` PK prefix;
+    omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``.
+    ``include_heavy`` defaults True (the render path needs the preview/content columns);
+    the add path passes ``False`` to read only the identity/status columns it gates and
+    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan.
+    ``reject_ambiguous_ids`` omits any bare id that resolves to more than one physical
+    span; the enumerated add path enables it because QueueItem cannot store the full
+    physical identity tuple."""
     if not span_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            spans = reader.list_by_ids([str(s) for s in span_ids])
+            spans = reader.list_by_ids(
+                [str(s) for s in span_ids],
+                project_id=project_id,
+                include_heavy=include_heavy,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
+            )
     except Exception as exc:
-        logger.warning(
-            "ch_span_batch_render_error", count=len(span_ids), error=str(exc)
+        _ch_batch_read_failed(
+            exc,
+            raise_on_error=raise_on_error,
+            source_type="span",
+            count=len(span_ids),
+            caller=caller,
         )
         return {}
-    return {str(span.id): span for span in spans}
+    if not reject_ambiguous_ids:
+        return {str(span.id): span for span in spans}
+
+    # QueueItem's existing API/storage contract accepts only a bare span id,
+    # while ClickHouse's physical span identity is (trace_id, id, start_time).
+    # Never let a dict overwrite silently choose one physical row when the OTel
+    # span id was reused in another trace. Omitting the ambiguous id makes the
+    # add-items response report it as unresolved instead of adding the wrong row.
+    resolved = {}
+    ambiguous_ids = set()
+    for span in spans:
+        span_id = str(span.id)
+        if span_id in ambiguous_ids:
+            continue
+        if span_id in resolved:
+            resolved.pop(span_id, None)
+            ambiguous_ids.add(span_id)
+            continue
+        resolved[span_id] = span
+
+    if ambiguous_ids:
+        logger.warning(
+            "annotation_queue_ambiguous_span_identity",
+            count=len(ambiguous_ids),
+            caller=caller,
+        )
+    return resolved
 
 
 # Chunk the trace-id IN-list so one batch can't grow unbounded; a queue's selection
@@ -741,7 +987,9 @@ def _batch_ch_spans(span_ids):
 _CH_TRACE_ID_BATCH = 500
 
 
-def _batch_ch_trace_roots(trace_ids, *, project_id=None):
+def _batch_ch_trace_roots(
+    trace_ids, *, project_id=None, caller="render", raise_on_error=False
+):
     """Batch CH read of each trace's root span for a render/availability path:
     ``{str(trace_id): CHSpan}`` over *trace_ids* (chunked, LEAN).
 
@@ -756,8 +1004,9 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None):
     an org filter would silently drop those roots and read them as "no root". When
     *project_id* is omitted the ``trace_ids`` are already tenant-scoped by the caller.
     CH error → ``{}`` (FAIL OPEN — the per-item branch then does its own point-read
-    or renders the ``deleted`` sentinel). Backs :class:`CollectorSourceCache` so a
-    list page over CH traces does one read per chunk, not one per item."""
+    or renders the ``deleted`` sentinel), or re-raised with ``raise_on_error``.
+    Backs :class:`CollectorSourceCache` so a list page over CH traces does one read
+    per chunk, not one per item."""
     if not trace_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -769,11 +1018,23 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None):
             for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
                 chunk = ids[start : start + _CH_TRACE_ID_BATCH]
                 for span in reader.roots_by_trace_ids(
-                    chunk, include_heavy=False, project_id=project_id
+                    chunk,
+                    include_heavy=False,
+                    project_id=project_id,
+                    # Dedup without FINAL: 25-id page 179ms/221MiB -> 50ms/40MiB
+                    # on dev, 500-id export chunk 2,358ms/3.4GiB -> 123ms/67MiB,
+                    # same rows. The memory is what 504s an export (TH-7226).
+                    dedup_via_limit_by=True,
                 ):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
     except Exception as exc:
-        logger.warning("ch_trace_roots_batch_error", count=len(ids), error=str(exc))
+        _ch_batch_read_failed(
+            exc,
+            raise_on_error=raise_on_error,
+            source_type="trace",
+            count=len(ids),
+            caller=caller,
+        )
         return {}
     return {
         trace_id: _pick_conversation_root(spans)
@@ -781,9 +1042,13 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None):
     }
 
 
-def _batch_ch_session_fields(session_ids):
+def _batch_ch_session_fields(
+    session_ids, *, project_id=None, caller="render", raise_on_error=False
+):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
-    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`."""
+    CH error → ``{}`` (FAIL OPEN), or re-raised with ``raise_on_error``. Companion
+    to :func:`_batch_ch_spans`. ``project_id`` (optional) scopes the read to one
+    tenant on the ``trace_sessions`` PK prefix."""
     if not session_ids:
         return {}
     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
@@ -791,12 +1056,64 @@ def _batch_ch_session_fields(session_ids):
     )
 
     try:
-        return resolve_session_fields([str(s) for s in session_ids]) or {}
+        return (
+            resolve_session_fields([str(s) for s in session_ids], project_id=project_id)
+            or {}
+        )
     except Exception as exc:
-        logger.warning(
-            "ch_session_batch_render_error", count=len(session_ids), error=str(exc)
+        _ch_batch_read_failed(
+            exc,
+            raise_on_error=raise_on_error,
+            source_type="session",
+            count=len(session_ids),
+            caller=caller,
         )
         return {}
+
+
+def _newest_ch_source_projects(
+    span_ids, trace_ids, *, item, caller="render", raise_on_error=False
+):
+    """``({span_id: project_id}, {trace_id: project_id})`` for queue items added
+    before their project was recorded: the project holding each id's newest copy
+    among *item*'s tenant projects (:func:`_queue_item_source_project_ids`), read
+    LEAN and chunked like :func:`_batch_ch_trace_roots`. An id with no copy in
+    scope is absent. CH error → ``({}, {})`` (FAIL OPEN on the render: the items
+    show the ``deleted`` sentinel, never another tenant's copy), or re-raised with
+    ``raise_on_error``."""
+    if not span_ids and not trace_ids:
+        return {}, {}
+    project_ids = _queue_item_source_project_ids(item)
+    if not project_ids:
+        return {}, {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    span_projects, trace_projects = {}, {}
+    span_ids, trace_ids = list(span_ids), list(trace_ids)
+    try:
+        with get_reader() as reader:
+            for start in range(0, len(span_ids), _CH_TRACE_ID_BATCH):
+                span_projects.update(
+                    reader.newest_span_projects(
+                        span_ids[start : start + _CH_TRACE_ID_BATCH], project_ids
+                    )
+                )
+            for start in range(0, len(trace_ids), _CH_TRACE_ID_BATCH):
+                trace_projects.update(
+                    reader.newest_trace_projects(
+                        trace_ids[start : start + _CH_TRACE_ID_BATCH], project_ids
+                    )
+                )
+    except Exception as exc:
+        _ch_batch_read_failed(
+            exc,
+            raise_on_error=raise_on_error,
+            source_type="project",
+            count=len(span_ids) + len(trace_ids),
+            caller=caller,
+        )
+        return {}, {}
+    return span_projects, trace_projects
 
 
 class CollectorSourceCache:
@@ -808,7 +1125,8 @@ class CollectorSourceCache:
     list/export page (CH has no ORM prefetch). Build one cache per page with
     :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
     per kind. A cache miss returns ``None`` → ``deleted`` sentinel, matching the
-    single-read fail-open.
+    single-read fail-open. A write path builds it with ``raise_on_error=True`` so a
+    CH error raises instead of reading as a miss.
     """
 
     __slots__ = ("_spans", "_sessions", "_trace_roots")
@@ -819,34 +1137,86 @@ class CollectorSourceCache:
         self._trace_roots = trace_roots or {}
 
     @classmethod
-    def for_items(cls, items):
+    def for_items(cls, items, *, caller="render", raise_on_error=False):
         """Collect the tracer source ids across *items* and batch-resolve each kind
-        from CH in one read. Traces resolve to their root span (LEAN), spans and
-        sessions by soft id. Empty id-sets short-circuit, so a page with no items of
-        a kind pays for no read of that kind."""
-        span_ids, session_ids, trace_ids = set(), set(), set()
+        from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
+
+        Reads are grouped by the item's denormalized ``project_id`` and scoped to it,
+        so each read prunes the ``spans`` PK prefix to one tenant instead of scanning
+        the whole multi-tenant table. A page's items can legitimately span projects
+        (add-items only tenant-scopes the source), so a single queue-wide scope would
+        drop off-project items and render them ``deleted`` — hence per-item project.
+        A trace / span item whose ``project_id`` is NULL (added before it was
+        recorded) joins the group of the project holding the newest copy of its id
+        in the item's org / workspace (one lean read per kind): a trace / span id can
+        exist in several organizations, and an unscoped read renders whichever copy
+        it meets. Session items keep the unscoped NULL group (a session id is derived
+        from its project). A page spans few distinct projects, so this is a handful
+        of scoped reads, not one per item. Empty id-sets short-circuit.
+
+        ``raise_on_error`` re-raises a CH error from any of these reads (a write
+        path); by default the failed kind resolves empty (FAIL OPEN)."""
+
+        def _buckets(groups, key):
+            return groups.setdefault(
+                key, {"spans": set(), "sessions": set(), "traces": set()}
+            )
+
+        # project_id (str, or None for pre-denorm sessions) -> per-kind soft-id sets
+        by_project: dict[object, dict] = {}
+        # (organization_id, workspace_id) -> soft-id sets of pre-denorm trace / span
+        # items, plus one item of the group to read the org / workspace from
+        unattributed: dict[tuple, dict] = {}
         for item in items or []:
             source_type = getattr(item, "source_type", None)
+            pid = getattr(item, "project_id", None)
+            if pid or source_type == QueueItemSourceType.TRACE_SESSION.value:
+                buckets = _buckets(by_project, str(pid) if pid else None)
+            else:
+                buckets = _buckets(
+                    unattributed,
+                    (item.organization_id, getattr(item, "workspace_id", None)),
+                )
+                buckets.setdefault("item", item)
             if (
                 source_type == QueueItemSourceType.OBSERVATION_SPAN.value
                 and item.observation_span_id
             ):
-                span_ids.add(str(item.observation_span_id))
+                buckets["spans"].add(str(item.observation_span_id))
             elif (
                 source_type == QueueItemSourceType.TRACE_SESSION.value
                 and item.trace_session_id
             ):
-                session_ids.add(str(item.trace_session_id))
+                buckets["sessions"].add(str(item.trace_session_id))
             elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
-                trace_ids.add(str(item.trace_id))
-        # A page's items can span projects, so the trace-root read isn't project-
-        # scoped; the ids are the tenant's own queue items. (No org_id scoping —
-        # a collector span row may carry a NULL org_id; see _batch_ch_trace_roots.)
-        return cls(
-            spans=_batch_ch_spans(span_ids),
-            sessions=_batch_ch_session_fields(session_ids),
-            trace_roots=_batch_ch_trace_roots(trace_ids),
-        )
+                buckets["traces"].add(str(item.trace_id))
+
+        for buckets in unattributed.values():
+            span_projects, trace_projects = _newest_ch_source_projects(
+                buckets["spans"],
+                buckets["traces"],
+                item=buckets["item"],
+                caller=caller,
+                raise_on_error=raise_on_error,
+            )
+            for span_id, pid in span_projects.items():
+                _buckets(by_project, pid)["spans"].add(span_id)
+            for trace_id, pid in trace_projects.items():
+                _buckets(by_project, pid)["traces"].add(trace_id)
+
+        # One queue holds a source id once, so the per-group results never collide
+        # on merge. NULL-project group (project_id=None) holds sessions only.
+        spans, sessions, trace_roots = {}, {}, {}
+        strict = {"caller": caller, "raise_on_error": raise_on_error}
+        for pid, buckets in by_project.items():
+            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid, **strict))
+            sessions.update(
+                _batch_ch_session_fields(buckets["sessions"], project_id=pid, **strict)
+            )
+            trace_roots.update(
+                _batch_ch_trace_roots(buckets["traces"], project_id=pid, **strict)
+            )
+        return cls(spans=spans, sessions=sessions, trace_roots=trace_roots)
 
     def span(self, span_id):
         return self._spans.get(str(span_id)) if span_id else None
@@ -856,6 +1226,33 @@ class CollectorSourceCache:
 
     def session_fields(self, session_id):
         return self._sessions.get(str(session_id)) if session_id else None
+
+
+def dataset_cells_by_row(items):
+    """Batch the dataset-row cell read for a render/export page: ``{row_id(str): [Cell]}``.
+
+    The Postgres companion to :class:`CollectorSourceCache`. ``resolve_source_content``
+    builds a dataset row's field map from its cells; run once per item that is an
+    unbatched ``Cell.objects.filter(row=…)`` — an N+1 across a list/export page. Build
+    this map once and pass it as ``cell_cache=`` so the page does a single ``row_id__in``
+    read. Every requested row_id is pre-seeded with ``[]``: a row with no cells is a
+    cache HIT (no fallback query); a row_id absent from the map was never batched, so
+    the caller falls back to its own per-row read (keys are ``str`` throughout to dodge
+    the UUID-vs-str lookup mismatch)."""
+    row_ids = [
+        str(item.dataset_row_id)
+        for item in items or []
+        if getattr(item, "source_type", None) == QueueItemSourceType.DATASET_ROW.value
+        and getattr(item, "dataset_row_id", None)
+    ]
+    if not row_ids:
+        return {}
+    from model_hub.models.develop_dataset import Cell
+
+    cells_by_row = {row_id: [] for row_id in row_ids}
+    for cell in Cell.objects.filter(row_id__in=row_ids).select_related("column"):
+        cells_by_row[str(cell.row_id)].append(cell)
+    return cells_by_row
 
 
 class _CHTraceSessionSource:
@@ -875,6 +1272,173 @@ class _CHTraceSessionSource:
         self.project_id = project_id
         self.name = name
         self.first_seen = first_seen
+
+
+# Above this many CH-native ids resolved without a project to scope by, the add path
+# takes the per-item CH fallback (bounded, but slow enough to be worth a log line).
+# 25 keeps that fallback's sequential point-reads well under the gateway timeout while
+# still flagging an unusually large no-project add: a project-scoped UI add takes the
+# batched path and never reaches here, so crossing this is an SDK/API caller.
+_CH_BULK_FALLBACK_WARN = 25
+
+# select_related paths that let the PG tenant gate traverse org/workspace off a batched
+# fetch without a lazy load per row. Only dataset_row is common on the enumerated add
+# path; the rarer kinds keep their multi-hop traversal lazy (small N).
+_PG_SOURCE_SELECT_RELATED = {
+    QueueItemSourceType.DATASET_ROW.value: ("dataset",),
+}
+
+
+def resolve_source_objects_bulk(
+    items_data, *, project_id=None, organization=None, workspace=None
+):
+    """Batch sibling of :func:`resolve_source_object` for the enumerated add path.
+
+    Returns ``{(source_type, str(source_id)): source_obj}`` for every resolved,
+    tenant-verified source in *items_data* (a missing or cross-tenant id is simply
+    absent — the caller reports it). One scoped CH read per tracer kind + one ``pk__in``
+    fetch per PG kind, replacing the former per-item N+1 (a fresh CH client + point read
+    + ``.exists()`` per item, which blew the 30s gateway on large adds).
+
+    The CH-native kinds need *project_id* (the payload's project) to scope the read to
+    the ``spans`` PK prefix — an unscoped batch of a few hundred ids scans the whole
+    multi-tenant table and times out, so batching without scoping is strictly worse than
+    the N+1. The tenant is gated against that project **once** here (fail closed); a
+    scoped read then only returns that project's rows, so no per-row project check is
+    needed. When *project_id* is absent (or not the caller's), the CH kinds fall back to
+    the per-item resolver (bounded — a point read per id). PG kinds resolve regardless."""
+    from collections import defaultdict
+
+    ids_by_type: dict[str, list[str]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for item in items_data:
+        source_type = item["source_type"]
+        source_id = str(item["source_id"])
+        if (source_type, source_id) in seen:
+            continue
+        seen.add((source_type, source_id))
+        ids_by_type[source_type].append(source_id)
+
+    ch_scope_ok = (
+        project_id is not None
+        and _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        is not None
+    )
+
+    resolved: dict[tuple[str, str], object] = {}
+    for source_type, ids in ids_by_type.items():
+        if source_type in _CH_NATIVE_SOURCE_TYPES:
+            resolved.update(
+                _resolve_ch_sources_bulk(
+                    source_type,
+                    ids,
+                    project_id=project_id if ch_scope_ok else None,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            )
+        else:
+            resolved.update(
+                _resolve_pg_sources_bulk(
+                    source_type,
+                    ids,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            )
+    return resolved
+
+
+def _resolve_ch_sources_bulk(source_type, ids, *, project_id, organization, workspace):
+    """Resolve CH-native sources (trace / observation_span / trace_session) for the add
+    path → ``{(source_type, str(id)): source_obj}``. With *project_id* (already tenant-
+    gated by the caller): one scoped, LEAN batch read — the only shape that stays under
+    the gateway timeout at scale. Without it: per-item fallback via
+    :func:`resolve_source_object` (bounded — a point read per id, never a full scan).
+    FAIL OPEN on CH errors is inherited from the batch helpers (a miss ⇒ the id is
+    absent ⇒ the caller reports it as an add error)."""
+    if not ids:
+        return {}
+
+    if not project_id:
+        if len(ids) > _CH_BULK_FALLBACK_WARN:
+            logger.warning(
+                "add_items_ch_resolve_unscoped_fallback",
+                source_type=source_type,
+                count=len(ids),
+            )
+        resolved = {}
+        for source_id in ids:
+            obj = resolve_source_object(
+                source_type,
+                source_id,
+                organization=organization,
+                workspace=workspace,
+            )
+            if obj is not None:
+                resolved[(source_type, str(source_id))] = obj
+        return resolved
+
+    pid = str(project_id)
+    if source_type == QueueItemSourceType.TRACE.value:
+        roots = _batch_ch_trace_roots(ids, project_id=pid, caller="add_items")
+        return {
+            (source_type, str(trace_id)): _CHTraceSource(trace_id, root)
+            for trace_id, root in roots.items()
+            if root is not None
+        }
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        spans = _batch_ch_spans(
+            ids,
+            project_id=pid,
+            include_heavy=False,
+            caller="add_items",
+            reject_ambiguous_ids=True,
+        )
+        return {(source_type, str(span_id)): span for span_id, span in spans.items()}
+    if source_type == QueueItemSourceType.TRACE_SESSION.value:
+        fields_by_id = _batch_ch_session_fields(ids, project_id=pid, caller="add_items")
+        resolved = {}
+        for session_id, fields in fields_by_id.items():
+            if not fields:
+                continue
+            session_pid = fields.get("project_id")
+            resolved[(source_type, str(session_id))] = _CHTraceSessionSource(
+                id=str(session_id),
+                project_id=str(session_pid) if session_pid else None,
+                name=fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                first_seen=fields.get("first_seen"),
+            )
+        return resolved
+    return {}
+
+
+def _resolve_pg_sources_bulk(source_type, ids, *, organization, workspace):
+    """Batch-fetch + tenant-gate PG-backed sources (dataset_row / call_execution /
+    prototype_run) for the add path → ``{(source_type, str(pk)): obj}``. One ``pk__in``
+    query for the fetch (vs one per item), gated per row through the SAME
+    :func:`_source_passes_tenant_gate` the per-item resolver uses (fail closed). A row
+    that isn't found or doesn't pass the gate is simply absent."""
+    if not ids:
+        return {}
+    model = get_source_model(source_type)
+    if model is None:
+        return {}
+    queryset = model.objects.filter(pk__in=list(ids))
+    select_related = _PG_SOURCE_SELECT_RELATED.get(source_type)
+    if select_related:
+        queryset = queryset.select_related(*select_related)
+    resolved = {}
+    for obj in queryset:
+        if _source_passes_tenant_gate(
+            obj, source_type, obj.pk, organization=organization, workspace=workspace
+        ):
+            resolved[(source_type, str(obj.pk))] = obj
+    return resolved
 
 
 def _get_source_organization(obj):
@@ -967,6 +1531,79 @@ def _get_source_workspace(obj):
     return None
 
 
+def _trace_preview_payload(root_span):
+    """Grid payload for a trace, from its CH root span."""
+    return {
+        "type": "trace",
+        "name": root_span.name or "",
+        "project_id": str(root_span.project_id) if root_span.project_id else None,
+        "input_preview": _truncate(str(root_span.input or ""), 200),
+        "output_preview": _truncate(str(root_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": root_span.latency_ms,
+        "response_time_ms": root_span.latency_ms,
+    }
+
+
+def _span_preview_payload(ch_span):
+    """Grid payload for an observation span."""
+    return {
+        "type": "observation_span",
+        "name": ch_span.name or "",
+        "observation_type": ch_span.observation_type or "",
+        "input_preview": _truncate(str(ch_span.input or ""), 200),
+        "output_preview": _truncate(str(ch_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": ch_span.latency_ms,
+        "response_time_ms": ch_span.latency_ms,
+    }
+
+
+def _session_preview_payload(session_id, fields):
+    """Grid payload for a trace session, from its CH identity fields."""
+    return {
+        "type": "trace_session",
+        "session_id": str(session_id),
+        "name": fields.get("display_name") or fields.get("external_session_id") or "",
+        "project_id": (str(fields["project_id"]) if fields.get("project_id") else None),
+    }
+
+
+def preview_payload_for_source(source_type, source_obj):
+    """Grid payload for an ALREADY-RESOLVED source object, or ``None``.
+
+    Lets the add path persist ``QueueItem.source_preview`` from the object it has
+    just resolved, so rendering a page never re-reads ClickHouse (TH-7211). Shares
+    the payload builders with :func:`resolve_source_preview`, so the cached dict and
+    the live one cannot drift.
+
+    Only the three CH-backed source types are captured — they are the ones whose
+    render costs a ``spans FINAL`` merge. ``dataset_row`` / ``prototype_run`` /
+    ``call_execution`` resolve from prefetched Postgres rows and are already cheap,
+    so they return ``None`` and keep using the live path. ``None`` is also the
+    answer when the source did not resolve; the serializer then falls back.
+    """
+    if source_obj is None:
+        return None
+    try:
+        if source_type == QueueItemSourceType.TRACE.value:
+            root_span = getattr(source_obj, "root_span", None)
+            return _trace_preview_payload(root_span) if root_span is not None else None
+        if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+            return _span_preview_payload(source_obj)
+        if source_type == QueueItemSourceType.TRACE_SESSION.value:
+            return _session_preview_payload(
+                getattr(source_obj, "id", ""),
+                {
+                    "display_name": getattr(source_obj, "name", ""),
+                    "project_id": getattr(source_obj, "project_id", None),
+                },
+            )
+    except Exception as exc:  # never block an add on a preview
+        logger.warning("source_preview_capture_failed", error=str(exc))
+    return None
+
+
 def resolve_source_preview(item, *, ch_cache=None):
     """Return a standardized preview dict for a QueueItem's source.
 
@@ -992,42 +1629,27 @@ def resolve_source_preview(item, *, ch_cache=None):
             root_span = (
                 ch_cache.trace_root(item.trace_id)
                 if ch_cache is not None
-                else _ch_root_span_for_trace(item.trace_id)
+                else _ch_root_span_for_trace(
+                    item.trace_id, project_ids=_queue_item_source_project_ids(item)
+                )
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
-            return {
-                "type": "trace",
-                "name": root_span.name or "",
-                "project_id": (
-                    str(root_span.project_id) if root_span.project_id else None
-                ),
-                "input_preview": _truncate(str(root_span.input or ""), 200),
-                "output_preview": _truncate(str(root_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": root_span.latency_ms,
-                "response_time_ms": root_span.latency_ms,
-            }
+            return _trace_preview_payload(root_span)
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
             # CH-only: resolve the span from CH by its soft id.
             ch_span = (
                 ch_cache.span(item.observation_span_id)
                 if ch_cache is not None
-                else _ch_span_for_item(item.observation_span_id)
+                else _ch_span_for_item(
+                    item.observation_span_id,
+                    project_ids=_queue_item_source_project_ids(item),
+                )
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
-            return {
-                "type": "observation_span",
-                "name": ch_span.name or "",
-                "observation_type": ch_span.observation_type or "",
-                "input_preview": _truncate(str(ch_span.input or ""), 200),
-                "output_preview": _truncate(str(ch_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": ch_span.latency_ms,
-                "response_time_ms": ch_span.latency_ms,
-            }
+            return _span_preview_payload(ch_span)
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
             run = item.prototype_run
@@ -1061,16 +1683,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if fields is None:
                 return {"type": "trace_session", "deleted": True}
-            return {
-                "type": "trace_session",
-                "session_id": str(item.trace_session_id),
-                "name": fields.get("display_name")
-                or fields.get("external_session_id")
-                or "",
-                "project_id": (
-                    str(fields["project_id"]) if fields.get("project_id") else None
-                ),
-            }
+            return _session_preview_payload(item.trace_session_id, fields)
 
     except Exception as e:
         logger.warning("source_preview_error", item_id=str(item.id), error=str(e))
@@ -1078,13 +1691,32 @@ def resolve_source_preview(item, *, ch_cache=None):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
-def resolve_source_content(item, *, ch_cache=None):
+def _queue_item_project_source(item) -> str | None:
+    """Returns the item's project ``source``, or ``None`` for an unset/dangling soft
+    FK (never raises)."""
+    if not item.project_id:
+        return None
+    try:
+        project = item.project  # None when select_related joined a dangling FK
+    except ObjectDoesNotExist:
+        logger.debug(
+            "queue_item_project_source_dangling_fk",
+            item_id=str(item.id),
+            project_id=str(item.project_id),
+        )
+        return None
+    return project.source if project else None
+
+
+def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     """Return full renderable content for a QueueItem's source (used in annotation view).
 
     Tracer sources (trace / observation_span / trace_session) are read CH-only.
     ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
-    from the page-batched map instead of a per-item CH point-read. Single-item
-    callers pass ``None`` and keep the per-item read."""
+    from the page-batched map instead of a per-item CH point-read. ``cell_cache``
+    (opt-in, from :func:`dataset_cells_by_row`): when supplied, a dataset row's cells
+    read from the page-batched map instead of a per-item ``Cell`` query. Single-item
+    callers pass ``None`` for both and keep the per-item reads."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1105,9 +1737,13 @@ def resolve_source_content(item, *, ch_cache=None):
             fields = {}
             field_types = {}
             try:
-                from model_hub.models.develop_dataset import Cell
+                row_key = str(row.id)
+                if cell_cache is not None and row_key in cell_cache:
+                    cells = cell_cache[row_key]
+                else:
+                    from model_hub.models.develop_dataset import Cell
 
-                cells = Cell.objects.filter(row=row).select_related("column")
+                    cells = Cell.objects.filter(row=row).select_related("column")
                 for cell in cells:
                     col_name = (
                         cell.column.name if cell.column else f"column_{cell.column_id}"
@@ -1139,7 +1775,9 @@ def resolve_source_content(item, *, ch_cache=None):
             root_span = (
                 ch_cache.trace_root(item.trace_id)
                 if ch_cache is not None
-                else _ch_root_span_for_trace(item.trace_id)
+                else _ch_root_span_for_trace(
+                    item.trace_id, project_ids=_queue_item_source_project_ids(item)
+                )
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
@@ -1155,6 +1793,9 @@ def resolve_source_content(item, *, ch_cache=None):
             data["type"] = "trace"
             data["trace_id"] = str(item.trace_id)
             data.pop("span_id", None)
+            # The FE picks the voice call UI off observation_type ==
+            # "conversation", with project_source == "simulator" as a fallback.
+            data["project_source"] = _queue_item_project_source(item)
             return data
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
@@ -1162,7 +1803,10 @@ def resolve_source_content(item, *, ch_cache=None):
             ch_span = (
                 ch_cache.span(item.observation_span_id)
                 if ch_cache is not None
-                else _ch_span_for_item(item.observation_span_id)
+                else _ch_span_for_item(
+                    item.observation_span_id,
+                    project_ids=_queue_item_source_project_ids(item),
+                )
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
@@ -1285,14 +1929,27 @@ def resolve_source_content(item, *, ch_cache=None):
     return {"type": item.source_type, "error": "Could not resolve content"}
 
 
-def assign_items_to_all_annotators(queue, items):
+_DEADLINE_CHECK_INTERVAL = settings.ANNOTATION_QUEUE_DEADLINE_CHECK_INTERVAL
+_DEADLINE_BULK_BATCH_SIZE = settings.ANNOTATION_QUEUE_DEADLINE_BULK_BATCH_SIZE
+
+
+def _assignment_deadline_checkpoint(deadline_check, *, index=None):
+    if deadline_check is not None and (
+        index is None or index % _DEADLINE_CHECK_INTERVAL == 0
+    ):
+        deadline_check()
+
+
+def assign_items_to_all_annotators(queue, items, *, deadline_check=None):
     """Assign every item to every queue member with the annotator role."""
     from model_hub.models.annotation_queues import (
         QueueItemAssignment,
         annotation_queue_role_q,
     )
 
+    _assignment_deadline_checkpoint(deadline_check)
     item_list = list(items or [])
+    _assignment_deadline_checkpoint(deadline_check)
     if not item_list:
         return 0
 
@@ -1302,28 +1959,63 @@ def assign_items_to_all_annotators(queue, items):
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids:
         return 0
 
-    assignments = [
-        QueueItemAssignment(queue_item=item, user_id=user_id)
-        for item in item_list
-        for user_id in annotator_ids
-    ]
-    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
-    return len(assignments)
+    if deadline_check is None:
+        assignments = [
+            QueueItemAssignment(queue_item=item, user_id=user_id)
+            for item in item_list
+            for user_id in annotator_ids
+        ]
+        QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+        return len(assignments)
+
+    # The request-owned filter-mode path can produce a large Cartesian product.
+    # Build and write it incrementally so a deadline failure is observed during
+    # Python materialization, while the caller's outer transaction still rolls
+    # every completed chunk back.
+    pending = []
+    assignment_count = 0
+    for item in item_list:
+        for user_id in annotator_ids:
+            assignment_count += 1
+            _assignment_deadline_checkpoint(
+                deadline_check,
+                index=assignment_count,
+            )
+            pending.append(QueueItemAssignment(queue_item=item, user_id=user_id))
+            if len(pending) == _DEADLINE_BULK_BATCH_SIZE:
+                QueueItemAssignment.objects.bulk_create(
+                    pending,
+                    batch_size=_DEADLINE_BULK_BATCH_SIZE,
+                    ignore_conflicts=True,
+                )
+                pending = []
+                _assignment_deadline_checkpoint(deadline_check)
+    if pending:
+        QueueItemAssignment.objects.bulk_create(
+            pending,
+            batch_size=_DEADLINE_BULK_BATCH_SIZE,
+            ignore_conflicts=True,
+        )
+    _assignment_deadline_checkpoint(deadline_check)
+    return assignment_count
 
 
-def auto_assign_items(queue, items):
+def auto_assign_items(queue, items, *, deadline_check=None):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
     from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
 
+    _assignment_deadline_checkpoint(deadline_check)
     annotator_ids = list(
         queue.queue_annotators.filter(deleted=False)
         .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids or queue.assignment_strategy == "manual":
         return
 
@@ -1334,7 +2026,9 @@ def auto_assign_items(queue, items):
             .exclude(assigned_to__isnull=True)
             .count()
         )
+        _assignment_deadline_checkpoint(deadline_check)
         for i, item in enumerate(items):
+            _assignment_deadline_checkpoint(deadline_check, index=i + 1)
             idx = (existing_count + i) % len(annotator_ids)
             item.assigned_to_id = annotator_ids[idx]
 
@@ -1352,13 +2046,17 @@ def auto_assign_items(queue, items):
             .values("assigned_to_id")
             .annotate(cnt=Count("id"))
         )
-        for row in qs:
+        for i, row in enumerate(qs, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             if row["assigned_to_id"] in counts:
                 counts[row["assigned_to_id"]] = row["cnt"]
-        for item in items:
+        _assignment_deadline_checkpoint(deadline_check)
+        for i, item in enumerate(items, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             uid = min(counts, key=counts.get)
             item.assigned_to_id = uid
             counts[uid] += 1
+    _assignment_deadline_checkpoint(deadline_check)
 
 
 def calculate_agreement(queue):
@@ -1914,6 +2612,17 @@ RULE_TRIGGER_INTERVALS = {
 # auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
 RULE_RUN_SYNC_THRESHOLD = 500
 
+# Automation writes are intentionally bounded.  The ClickHouse bulk selector
+# can prove an exact prefix plus one sentinel up to this size; if the sentinel
+# exists we fail before creating any QueueItem so a run is never a silent
+# partial selection.
+AUTOMATION_RULE_MATCH_LIMIT = 10_000
+AUTOMATION_RULE_MATCH_LIMIT_ERROR = (
+    "Automation rules support at most 10,000 matching items per run. "
+    "This rule matched more than 10,000 items, so nothing was added. "
+    "Narrow the filters or shorten the time range and run it again."
+)
+
 
 def is_automation_rule_due(rule, now=None):
     """Return True when a non-manual automation rule should run."""
@@ -2081,6 +2790,43 @@ def _apply_scalar_filter(qs, field_name, op, value):
     return qs.filter(**{lookup: value})
 
 
+# The six case-insensitive substring/equality operators shared by the
+# dataset-table filter and the annotation-queue cell filter. Kept separate from
+# _op_to_lookup, whose ``equals``/``not_equals`` map to a case-SENSITIVE exact
+# match — do not merge the two maps.
+TEXT_FILTER_LOOKUPS = {
+    "contains": "__icontains",
+    "not_contains": "__icontains",
+    "equals": "__iexact",
+    "not_equals": "__iexact",
+    "starts_with": "__istartswith",
+    "ends_with": "__iendswith",
+}
+_NEGATED_TEXT_OPS = ("not_contains", "not_equals")
+
+
+def or_text_filter_q(field, op, value):
+    """Build a case-insensitive text filter for ``op``, OR-ed across the terms.
+
+    The UI sends a list value for array-typed columns (e.g. ``["C"]``);
+    stringifying the whole list yields a Python repr (``"['c']"``) that never
+    matches a ``json.dumps`` cell, so match each element instead. ``value`` may
+    be a scalar or a list. ``not_contains`` / ``not_equals`` return the De
+    Morgan complement (matches none of the terms). Returns ``None`` for an
+    unrecognized op so the caller can reject it in its own way.
+    """
+    lookup = TEXT_FILTER_LOOKUPS.get(op)
+    if lookup is None:
+        return None
+    terms = value if isinstance(value, list) else [value]
+    condition = Q()
+    for term in terms:
+        condition |= Q(**{f"{field}{lookup}": "" if term is None else str(term)})
+    if op in _NEGATED_TEXT_OPS:
+        return ~condition
+    return condition
+
+
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
@@ -2137,20 +2883,9 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
             if filter_op == "not_in":
                 return cells.filter(~condition)
             return cells.filter(condition)
-        text_value = "" if filter_value is None else str(filter_value)
-        op_map = {
-            "contains": Q(value__icontains=text_value),
-            "not_contains": Q(value__icontains=text_value),
-            "equals": Q(value__iexact=text_value),
-            "not_equals": Q(value__iexact=text_value),
-            "starts_with": Q(value__istartswith=text_value),
-            "ends_with": Q(value__iendswith=text_value),
-        }
-        condition = op_map.get(filter_op)
+        condition = or_text_filter_q("value", filter_op, values)
         if condition is None:
             return cells.none()
-        if filter_op in ("not_contains", "not_equals"):
-            return cells.filter(~condition)
         return cells.filter(condition)
 
     if filter_type == "boolean":
@@ -2254,14 +2989,20 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
         rows = rows.filter(id__in=matching_cells.values_list("row_id", flat=True))
 
     rows = rows.order_by("order", "id")
-    total_matching = rows.count()
-    ids = list(rows.values_list("id", flat=True)[:cap])
+    # Fetch one bounded sentinel row instead of counting the full filtered
+    # queryset.  At or below the cap this is the exact total; above it the
+    # cap+1 value is sufficient for the caller's all-or-nothing overflow
+    # guard, without an unbounded COUNT(*) on a large dataset.
+    candidate_ids = list(rows.values_list("id", flat=True)[: cap + 1])
+    truncated = len(candidate_ids) > cap
+    ids = candidate_ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
     return total_matching, ids
 
 
-def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
-    from model_hub.models.annotation_queues import QueueItem
-
+def _add_source_ids_to_queue(
+    rule, source_ids, total_matching, dry_run=False, project_id=None
+):
     fk_field = get_fk_field_name(rule.source_type)
     if not fk_field:
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
@@ -2275,6 +3016,20 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
         if total_matching > len(source_ids):
             result["truncated"] = True
         return result
+
+    # The resolver returns at most ``cap`` ids plus an exact overflow signal.
+    # Refuse the entire run before any queue read/write when it cannot prove
+    # the full selection fits within the supported ceiling.
+    if total_matching > len(source_ids):
+        return {
+            "matched": total_matching,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
+
+    from model_hub.models.annotation_queues import QueueItem
 
     candidate_ids = list(dict.fromkeys(source_ids))
     existing_source_ids = {
@@ -2304,6 +3059,7 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
                 source_type=rule.source_type,
                 organization=rule.organization,
                 workspace=rule.queue.workspace,
+                project_id=project_id,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
             )
@@ -2516,10 +3272,24 @@ def _evaluate_filter_mode_rule(
         result.ids,
         result.total_matching,
         dry_run=dry_run,
+        # ``project_id`` here is a real project only for trace/span/session; for
+        # call_execution the same local holds an agent_definition_id (not a
+        # Project), so leave those items' project NULL — they aren't read through
+        # the project-scoped span path anyway.
+        project_id=(
+            project_id
+            if source_type != QueueItemSourceType.CALL_EXECUTION.value
+            else None
+        ),
     )
 
 
-def evaluate_rule(rule, dry_run=False, user=None, cap=1000):
+def evaluate_rule(
+    rule: "AutomationRule",
+    dry_run: bool = False,
+    user: Any | None = None,
+    cap: int = AUTOMATION_RULE_MATCH_LIMIT,
+) -> dict[str, Any]:
     """Evaluate an automation rule and add matching items to the queue.
     Returns dict with 'matched', 'added', 'duplicates' counts.
     """
@@ -2756,6 +3526,18 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
             result["truncated"] = True
         return result
 
+    if truncated:
+        # Deterministic all-or-nothing semantics: never enqueue only the first
+        # page of a larger selection.  This check precedes every QueueItem
+        # query, bulk_create, rule watermark update, assignment, and email.
+        return {
+            "matched": matched,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
+
     added = 0
     duplicates = 0
     max_order = (
@@ -2786,6 +3568,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     source_type=rule.source_type,
                     organization=rule.organization,
                     workspace=rule.queue.workspace,
+                    project_id=getattr(obj, "project_id", None),
                     order=max_order,
                     **{fk_field: obj},
                 )
@@ -2935,8 +3718,6 @@ def send_rule_completion_email(
     continue so the underlying queue writes (which succeeded) aren't rolled
     back.
     """
-    import os
-
     from tfc.utils.email import email_helper
 
     recipients = _rule_completion_recipients(
@@ -2951,10 +3732,8 @@ def send_rule_completion_email(
 
     queue = rule.queue
     queue_id = str(queue.id)
-    frontend_url = os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip(
-        "/"
-    )
-    queue_url = f"{frontend_url}/annotation-queues/{queue_id}"
+    # This install's UI: a self-hosted one never names app.futureagi.com.
+    queue_url = f"{settings.FRONTEND_BASE_URL}/annotation-queues/{queue_id}"
 
     triggered_by_name = "the rule schedule"
     if triggered_by_user_id:

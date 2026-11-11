@@ -5,21 +5,15 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from django.db.models import Q
 
 from model_hub.services import bulk_selection
 from model_hub.services.bulk_selection import (
-    _SESSION_FIELD_MAP,
-    _SESSION_PRE_AGG_FIELDS,
     _apply_call_execution_filters,
-    _apply_span_filters,
-    _apply_trace_filters,
-    _filter_col_type,
     _filter_column_id,
 )
 from model_hub.utils import annotation_queue_helpers
 from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
-from tracer.utils.filters import FilterEngine, apply_created_at_filters
+from tracer.utils.filters import apply_created_at_filters
 
 
 class RecordingQuerySet:
@@ -37,10 +31,6 @@ class RecordingQuerySet:
     def annotate(self, *args, **kwargs):
         self.calls.append(("annotate", args, kwargs))
         return self
-
-
-class FakeUser:
-    id = uuid.uuid4()
 
 
 def _filter(
@@ -93,9 +83,7 @@ def test_filter_helpers_read_canonical_snake_filter_payloads_only():
     }
 
     assert _filter_column_id(snake) == "label-1"
-    assert _filter_col_type(snake) == "ANNOTATION"
     assert _filter_column_id(camel) == ""
-    assert _filter_col_type(camel) == ""
 
 
 def test_rule_field_mapping_uses_canonical_snake_case_ids_only():
@@ -177,170 +165,6 @@ def test_call_execution_rejects_legacy_numeric_operator_aliases(legacy_op):
 
     assert unsupported == ["duration_seconds"]
     assert not qs.calls
-
-
-def _install_filter_engine_spies(monkeypatch):
-    calls = {}
-
-    def system(filters, *args, **kwargs):
-        calls["system"] = list(filters)
-        return Q()
-
-    def non_system(filters, *args, **kwargs):
-        calls["non_system"] = list(filters)
-        return Q()
-
-    def annotations(filters, *args, **kwargs):
-        calls["annotations"] = list(filters)
-        calls["annotation_kwargs"] = kwargs
-        return Q(), {}
-
-    def span_attributes(filters, *args, **kwargs):
-        calls["span_attributes"] = list(filters)
-        return Q()
-
-    def has_eval(filters, *args, **kwargs):
-        calls["has_eval"] = list(filters)
-        calls["has_eval_kwargs"] = kwargs
-        return Q()
-
-    def has_annotation(filters, *args, **kwargs):
-        calls["has_annotation"] = list(filters)
-        calls["has_annotation_kwargs"] = kwargs
-        return Q()
-
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_system_metrics",
-        staticmethod(system),
-    )
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_non_system_metrics",
-        staticmethod(non_system),
-    )
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_voice_call_annotations",
-        staticmethod(annotations),
-    )
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_span_attributes",
-        staticmethod(span_attributes),
-    )
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_has_eval",
-        staticmethod(has_eval),
-    )
-    monkeypatch.setattr(
-        FilterEngine,
-        "get_filter_conditions_for_has_annotation",
-        staticmethod(has_annotation),
-    )
-    return calls
-
-
-def _mixed_observe_filters():
-    return [
-        _filter("latency_ms", "SYSTEM_METRIC", "number", "greater_than", 10),
-        _filter("metric-1", "EVAL_METRIC", "number", "greater_than", 80),
-        _filter("label-snake", "ANNOTATION", "text", "contains", "alpha"),
-        _filter(
-            "label-category",
-            "ANNOTATION",
-            "categorical",
-            "in",
-            ["yes", "no"],
-        ),
-        _filter("annotator", "NORMAL", "annotator", "equals", str(uuid.uuid4())),
-        _filter(
-            "span_attributes.provider", "SPAN_ATTRIBUTE", "text", "equals", "openai"
-        ),
-        _filter("has_eval", "NORMAL", "boolean", "equals", True),
-    ]
-
-
-@pytest.mark.parametrize(
-    "apply_filters,expected_has_eval_type",
-    [
-        (
-            lambda qs, filters, calls: _apply_trace_filters(
-                qs,
-                filters,
-                user=FakeUser(),
-                organization=object(),
-                annotation_label_ids=[],
-            ),
-            "trace",
-        ),
-        (
-            lambda qs, filters, calls: _apply_span_filters(
-                qs, filters, user=FakeUser(), organization=object()
-            ),
-            "span",
-        ),
-    ],
-)
-def test_trace_and_span_filter_mode_do_not_route_annotation_filters_to_eval_branch(
-    monkeypatch, apply_filters, expected_has_eval_type
-):
-    calls = _install_filter_engine_spies(monkeypatch)
-
-    apply_filters(RecordingQuerySet(), _mixed_observe_filters(), calls)
-
-    non_system_columns = {_filter_column_id(f) for f in calls["non_system"]}
-    assert "metric-1" in non_system_columns
-    assert "label-snake" not in non_system_columns
-    assert "label-category" not in non_system_columns
-    assert "annotator" not in non_system_columns
-    assert calls["annotations"]
-    assert calls["has_eval_kwargs"] == {"observe_type": expected_has_eval_type}
-
-
-def test_span_filter_mode_passes_span_scoped_annotation_subquery_kwargs(monkeypatch):
-    calls = _install_filter_engine_spies(monkeypatch)
-
-    _apply_span_filters(
-        RecordingQuerySet(),
-        _mixed_observe_filters(),
-        user=FakeUser(),
-        organization=object(),
-    )
-
-    assert "span_filter_kwargs" in calls["annotation_kwargs"]
-    assert "observation_span_id" in calls["annotation_kwargs"]["span_filter_kwargs"]
-
-
-@pytest.mark.parametrize(
-    "column_id,filter_type,filter_op,field_map",
-    [
-        ("duration", "number", "between", _SESSION_FIELD_MAP),
-        ("first_message", "text", "starts_with", _SESSION_FIELD_MAP),
-        ("last_message", "text", "not_contains", _SESSION_FIELD_MAP),
-        ("total_cost", "number", "greater_than_or_equal", _SESSION_FIELD_MAP),
-        ("total_tokens", "number", "not_between", _SESSION_FIELD_MAP),
-        ("user_id", "text", "in", _SESSION_PRE_AGG_FIELDS),
-    ],
-)
-def test_session_field_maps_accept_contract_operator_shapes(
-    column_id, filter_type, filter_op, field_map
-):
-    q_filter = FilterEngine.get_filter_conditions_for_system_metrics(
-        [
-            _filter(
-                column_id,
-                "SYSTEM_METRIC",
-                filter_type,
-                filter_op,
-                _value_for(filter_type, filter_op),
-            )
-        ],
-        field_map=field_map,
-    )
-
-    assert q_filter
 
 
 def test_apply_created_at_filters_accepts_canonical_filter_payload():

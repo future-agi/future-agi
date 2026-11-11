@@ -249,9 +249,21 @@ function schemaToZod(schema, options = {}) {
       compiled = options.coercePrimitives
         ? z.coerce.number().int()
         : z.number().int();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "number":
       compiled = options.coercePrimitives ? z.coerce.number() : z.number();
+      if (typeof schema.minimum === "number") {
+        compiled = compiled.min(schema.minimum);
+      }
+      if (typeof schema.maximum === "number") {
+        compiled = compiled.max(schema.maximum);
+      }
       break;
     case "boolean":
       compiled = options.coercePrimitives
@@ -349,7 +361,30 @@ function parseMaybeJsonBody(data, headers = {}) {
     return Object.fromEntries(data.entries());
   }
 
-  if (typeof data !== "string") return data;
+  if (typeof data !== "string") {
+    // Validate the wire shape, not the in-memory object: axios serializes
+    // plain-object and array bodies with JSON.stringify, which drops
+    // undefined-valued keys (e.g. run_prompt_config.id: undefined).
+    // Validating the raw object would reject payloads whose serialized form
+    // is perfectly valid. Scoped to exactly the shapes axios JSON-serializes
+    // — Blob/File/ArrayBuffer bodies are sent raw and stay untouched here.
+    if (
+      Array.isArray(data) ||
+      (data &&
+        typeof data === "object" &&
+        (Object.getPrototypeOf(data) === Object.prototype ||
+          Object.getPrototypeOf(data) === null))
+    ) {
+      try {
+        return JSON.parse(JSON.stringify(data));
+      } catch {
+        // Circular refs / BigInt — fall back to the raw object, matching
+        // the pre-normalization behavior.
+        return data;
+      }
+    }
+    return data;
+  }
   const contentType =
     headers["Content-Type"] ||
     headers["content-type"] ||

@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, {
   useCallback,
@@ -42,9 +42,17 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 
 import { enqueueSnackbar } from "notistack";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import RenderCellRunningOptions from "./RenderCellRunningOptions";
 import { useRerunColumnInExperimentStoreShallow } from "./states";
 import { useGetExperimentDetails } from "src/hooks/useGetExperimentDetails";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import {
+  createExperimentRowsActionBudget,
+  readExperimentColumnConfig,
+  readExperimentRowsPage,
+} from "./experiment_rows_read";
+import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 // Constants
 // const RefreshStatus = ["Running", "NotStarted", "ExperimentEvaluation"]; // Status values that trigger refresh
 
@@ -113,6 +121,7 @@ function ExperimentDataView() {
   const [allRows, setAllRows] = useState([]);
   const [columnsInitialized, setColumnsInitialized] = useState(false);
   const [totalRows, setTotalRows] = useState(0);
+  const [readError, setReadError] = useState(null);
   const queryClient = useQueryClient();
 
   // Prevent text selection in grid headers
@@ -161,19 +170,31 @@ function ExperimentDataView() {
     setColumnDefs(defaultColumnDefs);
   }, [experimentId]);
 
-  const { data: columnConfigData, refetch: refetchExperimentColumns } =
-    useQuery({
-      queryFn: () =>
-        axios.get(endpoints.develop.experiment.experimentDetail(experimentId), {
-          params: { column_config_only: true },
-        }),
-      queryKey: ["experiment-column-config", experimentId],
-      refetchOnWindowFocus: false,
-      refetchOnMount: true,
-      refetchOnReconnect: false,
-      select: (data) => data.data,
-      enabled: !!experimentId,
-    });
+  const {
+    data: columnConfigData,
+    isError: isColumnConfigError,
+    refetch: refetchExperimentColumns,
+  } = useQuery({
+    queryFn: ({ signal }) =>
+      readExperimentColumnConfig(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(
+            endpoints.develop.experiment.experimentDetail(experimentId),
+            {
+              signal: requestSignal,
+              timeout,
+              params: { column_config_only: true },
+            },
+          ),
+        signal,
+      ),
+    queryKey: ["experiment-column-config", experimentId],
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    refetchOnReconnect: false,
+    enabled: !!experimentId,
+    retry: false,
+  });
   // Memoize storeAllDisplayedRows to prevent recreation on every render
   const storeAllDisplayedRows = useCallback(() => {
     if (!gridApiRef.current?.api) return;
@@ -213,15 +234,9 @@ function ExperimentDataView() {
       }
 
       // Check if any rows actually changed
-      const prevMap = new Map(
-        prev.map((row) => [row.data?.row_id, row]),
-      );
+      const prevMap = new Map(prev.map((row) => [row.data?.row_id, row]));
       const hasChanges = newRows.some(
-        (newRow) =>
-          !isEqual(
-            prevMap.get(newRow.data?.row_id),
-            newRow,
-          ),
+        (newRow) => !isEqual(prevMap.get(newRow.data?.row_id), newRow),
       );
 
       return hasChanges ? mergedArray : prev;
@@ -288,39 +303,28 @@ function ExperimentDataView() {
         }
       }
 
-      // Sort columns within each group to its right
       for (const groupId in columnsByGroup) {
-        const cols = columnsByGroup[groupId];
+        const cols = columnsByGroup[groupId] ?? [];
 
-        // Keep the first column untouched
-        const firstColumn = cols?.[0];
+        columnsByGroup[groupId] = [...cols].sort((a, b) => {
+          const nameA = a?.headerName ?? "";
+          const nameB = b?.headerName ?? "";
 
-        // Remaining columns to sort
-        const rest = cols?.slice(1);
-
-        // Sorting logic applied only to the rest
-        rest.sort((a, b) => {
-          const nameA = a?.headerName;
-          const nameB = b?.headerName;
-
-          const baseA = nameA?.replace(/-reason.*/, "");
-          const baseB = nameB?.replace(/-reason.*/, "");
+          const baseA = nameA.replace(/-reason.*/, "");
+          const baseB = nameB.replace(/-reason.*/, "");
 
           if (baseA !== baseB) {
-            return baseA?.localeCompare(baseB);
+            return baseA.localeCompare(baseB);
           }
 
-          const aIsReason = nameA?.endsWith("-reason");
-          const bIsReason = nameB?.endsWith("-reason");
+          const aIsReason = nameA.endsWith("-reason");
+          const bIsReason = nameB.endsWith("-reason");
 
           if (aIsReason && !bIsReason) return 1;
           if (!aIsReason && bIsReason) return -1;
 
           return 0;
         });
-
-        // Final result → first untouched, rest sorted
-        columnsByGroup[groupId] = [firstColumn, ...rest];
       }
 
       // Process grouped columns - organize in order: base columns, grouped columns, other columns
@@ -385,16 +389,25 @@ function ExperimentDataView() {
           let letterIndex = 0;
 
           for (let i = 0; i < col.children.length; i++) {
-            const colOrigin = col.children[i]?.col?.group?.origin;
+            const child = col.children[i];
+            const colOrigin = child?.col?.group?.origin;
+            const colOriginType = child?.col?.origin_type;
+            const childName = child?.col?.name ?? child?.headerName ?? "";
+            const isReasonColumn =
+              childName.includes("-reason") ||
+              colOriginType === "evaluation_reason";
+            const isBaseEvalColumn =
+              colOrigin === "Evaluation" && !child?.col?.source_id;
 
-            // Only assign letter when not hidden
-            const letter =
-              colOrigin === "Dataset" || (i === 0 && colOrigin === "Evaluation")
-                ? ""
-                : toExcelLetters(letterIndex++);
+            const skipLetter =
+              colOrigin === "Dataset" ||
+              isReasonColumn ||
+              isBaseEvalColumn ||
+              (colOrigin === "Evaluation" && col.children.length === 1);
+            const letter = skipLetter ? "" : toExcelLetters(letterIndex++);
 
-            col.children[i].headerComponentParams = {
-              ...col.children[i].headerComponentParams,
+            child.headerComponentParams = {
+              ...child.headerComponentParams,
               head: letter,
               index: letterIndex,
             };
@@ -477,8 +490,16 @@ function ExperimentDataView() {
 
     const totalPages = Object.keys(cacheState).length;
 
-    // need to update cache
-    const columnsData = (await refetchExperimentColumns())?.data;
+    const actionBudget = createExperimentRowsActionBudget();
+
+    // need to update cache; the remaining row pages share this same action.
+    const columnsResult = await refetchExperimentColumns();
+    if (columnsResult.isError) {
+      setReadError(QUERY_FAILED_RETRY_MESSAGE);
+      isRefreshingColumns.current = null;
+      return;
+    }
+    const columnsData = columnsResult.data;
 
     const newColumnCount =
       (columnsData?.result?.column_config || columnsData?.result?.columnConfig)
@@ -489,13 +510,29 @@ function ExperimentDataView() {
     // MATCH ORIGINAL REFRESH BEHAVIOR: Process each page sequentially
     for (let p = 0; p < totalPages; p++) {
       try {
-        const { data } = await axios.get(
-          endpoints.develop.experiment.experimentDetail(experimentId),
-          { params: { current_page_index: p, get_diff: diffMode } },
+        const result = await readExperimentRowsPage(
+          ({ signal, timeout }) =>
+            axios.get(
+              endpoints.develop.experiment.experimentDetail(experimentId),
+              {
+                signal,
+                timeout,
+                params: {
+                  current_page_index: p,
+                  page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                  get_diff: diffMode,
+                },
+              },
+            ),
+          undefined,
+          {
+            pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
+            timeoutMs: actionBudget.remainingMs(),
+          },
         );
 
-        const rows = data?.result?.table || [];
-        isRefreshingColumns.current = data?.result?.status !== "Completed";
+        const rows = result.table;
+        isRefreshingColumns.current = result.status !== "Completed";
 
         if (gridApiRef.current?.api) {
           // Apply server-side transaction exactly as in original code
@@ -505,8 +542,12 @@ function ExperimentDataView() {
           }
         }
         // Process column data
+        setReadError(null);
       } catch (error) {
         logger.warn(`Error refreshing page ${p}:`, error);
+        setReadError(QUERY_FAILED_RETRY_MESSAGE);
+        isRefreshingColumns.current = null;
+        break;
       }
     }
   }, [experimentId, diffMode, refetchExperimentColumns]);
@@ -813,29 +854,39 @@ function ExperimentDataView() {
         setFetchingData(true);
 
         const { request } = params;
-        const pageNumber = Math.floor(request.startRow / 10);
+        const pageSize = request.endRow - request.startRow;
+        const pageNumber = Math.floor(request.startRow / pageSize);
 
         try {
-          const { data } = await axios.get(
-            endpoints.develop.experiment.experimentDetail(experimentId),
-            {
-              params: {
-                current_page_index: pageNumber,
-                get_diff: diffMode,
-                search: experimentSearch,
-              },
-            },
+          const result = await readExperimentRowsPage(
+            ({ signal, timeout }) =>
+              axios.get(
+                endpoints.develop.experiment.experimentDetail(experimentId),
+                {
+                  signal,
+                  timeout,
+                  params: {
+                    current_page_index: pageNumber,
+                    page_size: pageSize,
+                    get_diff: diffMode,
+                    search: experimentSearch,
+                  },
+                },
+              ),
+            undefined,
+            { pageSize },
           );
 
           // Set column data with the appropriate flags
           // setColumnData(data);
-          const rows = data?.result?.table || [];
-          const metadata = data?.result?.metadata;
+          const rows = result.table;
+          const metadata = result.metadata;
 
           // Update experiment metadata
           setExperimentMeta(metadata);
-          setTotalRows(data?.result?.metadata?.total_rows);
-          isRefreshingColumns.current = data?.result?.status !== "Completed";
+          setTotalRows(metadata.total_rows);
+          isRefreshingColumns.current = result.status !== "Completed";
+          setReadError(null);
           params.success({
             rowData: rows,
             rowCount: metadata?.total_rows,
@@ -844,6 +895,7 @@ function ExperimentDataView() {
         } catch (error) {
           logger.error("Error fetching experiment data:", error);
           isRefreshingColumns.current = null;
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
         } finally {
           setFetchingData(false);
@@ -925,6 +977,36 @@ function ExperimentDataView() {
           experimentData={experimentData}
         />
       </Box>
+      {(readError || isColumnConfigError) && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            mb: 1,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError || QUERY_FAILED_RETRY_MESSAGE}
+          <Button
+            size="small"
+            onClick={() => {
+              if (isColumnConfigError) {
+                refetchExperimentColumns();
+                return;
+              }
+              setReadError(null);
+              gridApiRef.current?.api?.refreshServerSide({ purge: false });
+            }}
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       {/* Detail drawer for expanded rows */}
       <ExperimentDetailDrawer
         open={Boolean(expandRow)}
@@ -965,6 +1047,7 @@ function ExperimentDataView() {
         }}
       >
         <SingleImageViewerProvider>
+          <CompositeEvalDialog />
           <AgGridReact
             rowHeight={defaultRowHeightMapping["Short"]?.height}
             getRowHeight={getRowHeight}
@@ -976,13 +1059,13 @@ function ExperimentDataView() {
             suppressRowClickSelection={true}
             paginationPageSizeSelector={false}
             suppressServerSideFullWidthLoadingRow={true}
-            serverSideInitialRowCount={10}
+            serverSideInitialRowCount={INTERACTIVE_TABLE_PAGE_SIZE}
             rowModelType="serverSide"
             isApplyServerSideTransaction={() => true}
             serverSideDatasource={dataSource}
             maxBlocksInCache={10}
             pagination={false}
-            cacheBlockSize={10}
+            cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
             statusBar={statusBar}
             pinnedBottomRowData={pinnedBottomRowData}
             gridOptions={gridOptions}

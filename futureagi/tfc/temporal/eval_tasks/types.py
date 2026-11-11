@@ -4,7 +4,7 @@ Kept free of Django imports so ``workflows.py`` can import them inside the
 Temporal sandbox.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # How a workflow run ended (distinct from the EvalTask DB status enum).
 WF_STATUS_COMPLETED = "completed"
@@ -26,6 +26,21 @@ class EvalTaskWorkflowInput:
     processed: int = 0
     # Test/ops override; production relies on the server's CAN suggestion.
     continue_as_new_after_batches: int | None = None
+    # Set by the starter when a describe, taken immediately before this start,
+    # answered that no execution owned the task id. Deliberately NOT carried
+    # across continue-as-new: by then this execution is itself the workflow
+    # draining the task, so the evidence is stale. The historical workflow
+    # skips the first reap on a CAN hop anyway (``already_reconciled``); a
+    # finalize wait's reap on such a hop applies the blind floor.
+    workflow_confirmed_stopped: bool = False
+    # Seconds without a heartbeat after which an eval's attempt is given up
+    # (its worker died) and retried; None keeps the default five minutes.
+    # Instant eval sets a minute, since a person is watching the run.
+    heartbeat_s: int | None = None
+    # Bounded cache of entries given back once because their worker was lost.
+    # Legacy hops honour these IDs; the recovery activity also caps retries
+    # durably by the entry's attempts, including IDs omitted from this cache.
+    lost_entry_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -47,6 +62,13 @@ class ContinuousDrainState:
     processed: int = 0
     batches: int = 0
     continue_as_new_after_batches: int | None = None
+    # See ``EvalTaskWorkflowInput.workflow_confirmed_stopped``. The continuous
+    # workflow reaps once per execution, continue-as-new hops included, and
+    # again after an idle poll that still finds undrained work; leaving this
+    # out of the CAN state is what keeps the floor on those hops.
+    workflow_confirmed_stopped: bool = False
+    # See ``EvalTaskWorkflowInput.lost_entry_ids``.
+    lost_entry_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -87,8 +109,18 @@ class RunEntryOutput:
 @dataclass
 class ReapInput:
     task_id: str
+    # Left at 600 deliberately: this value is a workflow input, so changing it
+    # would change the payload of a command already recorded in the history of
+    # every open execution. Whether 600 is honoured or raised to the floor is
+    # decided activity-side, in ``_reap_sync`` via
+    # ``tracer.services.eval_tasks.reaper.effective_stale_seconds``.
     older_than_seconds: int = 600
     max_attempts: int = 3
+    # Carried from the workflow's own input: a describe taken just before this
+    # execution started said nothing was draining the task. A new field with a
+    # default, so an execution whose history predates it replays with False --
+    # exactly the behaviour that history recorded.
+    workflow_confirmed_stopped: bool = False
 
 
 @dataclass

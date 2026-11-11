@@ -121,7 +121,8 @@ func main() {
 
 		// Convert in both modes so the manifest is byte-identical: wire mode
 		// derives ids/counts locally while the collector converts server-side.
-		rows, ids, err := chexp.ConvertWithIdentities(batch)
+		// Cost is excluded from that byte-identical guarantee — direct mode converts with a nil pricer.
+		rows, ids, err := chexp.ConvertWithIdentities(ctx, batch, nil)
 		if err != nil {
 			fatalf("convert: %v", err)
 		}

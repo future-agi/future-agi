@@ -1,5 +1,7 @@
 import { alpha } from "@mui/material/styles";
 
+import { dsPalette } from "./ds-tokens";
+
 // ----------------------------------------------------------------------
 
 // SETUP COLORS
@@ -260,6 +262,28 @@ export const green = {
   o30: "#00A2514D",
 };
 
+// Role accents for status marks, badges and role chips. These are the hues the
+// product already ships in light mode; the dark counterparts below are lifted
+// so each one clears 4.5:1 on the dark surfaces (the light mid-tones sit at
+// 3.0-4.1:1 there, which is why they read as muddy in dark mode).
+export const accent = {
+  brand: "#7857FC",
+  pass: "#16A34A",
+  fail: "#DC2626",
+  agent: "#7C3AED",
+  tool: "#EA580C",
+  info: "#2563EB",
+  violet: "#8b5cf6",
+  neutral: "#6B7280",
+};
+
+// JSON / code token colours for the span and log viewers.
+export const syntax = {
+  string: "#b5520a",
+  number: "#1750EB",
+  boolean: "#9333EA",
+};
+
 const base = {
   primary,
   secondary,
@@ -283,6 +307,8 @@ const base = {
   red,
   green,
   orange,
+  accent,
+  syntax,
 };
 
 // ----------------------------------------------------------------------
@@ -319,86 +345,82 @@ const darkHull = {
   shadow: "#18181b",
 };
 
-export { darkSpace, darkText, darkBorder, darkHull };
+// Dark counterpart of `whiteScale`. The light ramp runs white -> light grey,
+// so surfaces and hovers that key off it turn near-white on a dark background.
+// This mirrors it as base-surface -> progressively lighter, keeping the same
+// 50..500 "increasing contrast" meaning in both modes.
+const darkWhiteScale = {
+  50: darkSpace.void,
+  100: darkSpace.nebulaDark,
+  200: darkSpace.asteroid,
+  300: darkHull.dark,
+  400: darkBorder.default,
+  500: darkBorder.hover,
+};
 
+// Dark counterparts of `accent` / `syntax`. Same roles, lifted luminance so
+// every one clears 4.5:1 against `darkSpace.nebulaDark`.
+const darkAccent = {
+  brand: "#A792FD",
+  pass: "#4ADE80",
+  fail: "#F87171",
+  agent: "#C4B5FD",
+  tool: "#FDBA74",
+  info: "#7DA9FB",
+  violet: "#C4B5FD",
+  neutral: darkText.distantStar,
+};
+
+// Values match the --syntax-* dark ramp already in global.css so the JSON
+// viewers read the same whichever styling path a component uses.
+const darkSyntax = {
+  string: "#e89b5a",
+  number: "#6ba8e6",
+  boolean: "#c4b5fd",
+};
+
+export {
+  darkSpace,
+  darkText,
+  darkBorder,
+  darkHull,
+  darkWhiteScale,
+  darkAccent,
+  darkSyntax,
+};
+
+// The light and dark palettes come from the Future AGI Design System
+// (frontend/design-system/tokens/tokens.json → ds-tokens.js). The ramps above stay
+// exported for files that import them directly.
 export function palette(mode) {
-  const light = {
+  const isLight = mode !== "dark";
+  const ds = dsPalette(isLight ? "light" : "dark");
+
+  return {
     ...base,
-    mode: "light",
-    text: {
-      primary: black[1000],
-      secondary: black[800],
-      disabled: black[300],
-      muted: black[800],
-      subtitle: black[600],
-    },
+    ...(isLight
+      ? {}
+      : {
+          hull: darkHull,
+          space: darkSpace,
+          whiteScale: darkWhiteScale,
+          accent: darkAccent,
+          syntax: darkSyntax,
+        }),
+    ...ds,
     background: {
-      paper: "#FFFFFF",
-      default: "#FBFBFB",
-      neutral: "#F8F8F8",
-      subtle: "#F8F8F8",
-      accent: grey[100],
+      ...ds.background,
       // Falcon AI surfaces (inline AI bar background + AI-action hover)
-      aiSurface: "#fafafe",
-      aiHover: "rgba(124, 77, 255, 0.06)",
-    },
-    action: {
-      ...base.action,
-      active: grey[600],
-      selected: alpha(grey[400], 0.12),
+      aiSurface: isLight ? "#fafafe" : "#1a1a2e",
+      aiHover: isLight
+        ? "rgba(124, 77, 255, 0.06)"
+        : "rgba(124, 77, 255, 0.12)",
     },
     border: {
-      default: grey[300],
-      hover: grey[400],
-      active: grey[500],
-      bright: grey[600],
-      light: black[100],
+      ...ds.border,
+      active: ds.action.active,
+      bright: ds.text.tertiary,
+      light: ds.border.default,
     },
   };
-
-  const dark = {
-    ...base,
-    mode: "dark",
-    // Dark mode: monochrome primary (no purple) — matching brand guide
-    primary: {
-      lighter: "#E4E4E7",
-      light: "#FFFFFF",
-      main: "#FAFAFA",
-      dark: "#D4D4D8",
-      darker: "#A1A1AA",
-      contrastText: "#0A0A0A",
-    },
-    text: {
-      primary: darkText.starBright,
-      secondary: darkText.distantStar,
-      disabled: darkText.faintStar, // #71717a — readable helper text
-      muted: darkText.distantStar,
-      subtitle: darkText.distantStar, // #a1a1aa — same as secondary
-    },
-    background: {
-      paper: darkSpace.nebulaDark,
-      default: darkSpace.void,
-      neutral: darkSpace.asteroid,
-      subtle: darkSpace.dust,
-      accent: darkSpace.shadow,
-      // Falcon AI surfaces (inline AI bar background + AI-action hover)
-      aiSurface: "#1a1a2e",
-      aiHover: "rgba(124, 77, 255, 0.12)",
-    },
-    divider: darkBorder.default,
-    action: {
-      ...base.action,
-      active: darkText.distantStar,
-      hover: alpha(common.white, 0.08),
-      selected: alpha(common.white, 0.12),
-      disabled: alpha(common.white, 0.3),
-      disabledBackground: alpha(common.white, 0.12),
-      focus: alpha(common.white, 0.12),
-    },
-    border: darkBorder,
-    hull: darkHull,
-    space: darkSpace,
-  };
-
-  return mode === "light" ? light : dark;
 }

@@ -2,6 +2,31 @@ import { getRandomId } from "src/utils/utils";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
+function readShowSummary() {
+  try {
+    const raw =
+      typeof window !== "undefined"
+        ? window.localStorage?.getItem("showSummary")
+        : null;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistShowSummary(value) {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage?.setItem("showSummary", JSON.stringify(value));
+    }
+  } catch {
+    // Storage can be unavailable in private/test contexts; the in-memory store
+    // must remain usable rather than crashing every consumer at module import.
+  }
+}
+
 export const DefaultFilter = {
   columnId: "",
   filterConfig: {
@@ -174,9 +199,9 @@ export const useConfigureEvalStore = create((set) => ({
 }));
 
 export const useShowSummaryStore = create((set) => ({
-  showSummary: JSON.parse(localStorage.getItem("showSummary")) || [],
+  showSummary: readShowSummary(),
   setShowSummary: (value) => {
-    localStorage.setItem("showSummary", JSON.stringify(value));
+    persistShowSummary(value);
     set(() => ({ showSummary: value }));
   },
   toggleSummary: (column) =>
@@ -184,7 +209,7 @@ export const useShowSummaryStore = create((set) => ({
       const newShowSummary = state.showSummary.includes(column.id)
         ? state.showSummary.filter((id) => id !== column.id)
         : [...state.showSummary, column.id];
-      localStorage.setItem("showSummary", JSON.stringify(newShowSummary));
+      persistShowSummary(newShowSummary);
       return { showSummary: newShowSummary };
     }),
 }));
@@ -251,6 +276,11 @@ export const useDevelopFilterStore = create((set) => ({
 export const useDevelopSearchStore = create((set) => ({
   search: "",
   setSearch: (value) => set(() => ({ search: value })),
+}));
+
+export const useCompositeEvalStore = create((set) => ({
+  compositeEval: null,
+  setCompositeEval: (value) => set(() => ({ compositeEval: value })),
 }));
 
 export const useDatapointDrawerStore = create((set) => ({

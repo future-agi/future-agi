@@ -38,7 +38,7 @@ const OutputMeta = ({ metadata }) => {
         }
       >
         <OutputMetaItem
-          icon="material-symbols:schedule-outline"
+          icon="solar:clock-circle-linear"
           value={`${metadata?.responseTime?.toFixed(2)}s`}
         />
       </ShowComponent>
@@ -49,7 +49,7 @@ const OutputMeta = ({ metadata }) => {
         }
       >
         <OutputMetaItem
-          icon="dashicons:money-alt"
+          icon="solar:dollar-minimalistic-linear"
           value={metadata?.cost < 0.1 ? `<0.1` : `${metadata?.cost}`}
         />
       </ShowComponent>
@@ -59,7 +59,7 @@ const OutputMeta = ({ metadata }) => {
         }
       >
         <OutputMetaItem
-          icon="ph:coins-light"
+          icon="solar:dollar-minimalistic-linear"
           value={`${metadata?.tokens ?? 0}`}
         />
       </ShowComponent>

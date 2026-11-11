@@ -13,9 +13,9 @@ import uuid
 from io import BytesIO
 from urllib.parse import urlparse
 
-import av
 import numpy as np
-import soundfile as sf
+from tfc.utils.lazy_extras import av
+from tfc.utils.lazy_extras import soundfile as sf
 import structlog
 from PIL import Image
 
@@ -26,7 +26,12 @@ logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
-from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
+from tfc.utils.storage_client import (
+    ensure_bucket,
+    extract_object_key,
+    get_object_url,
+    get_storage_client,
+)
 
 MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
 # safe_fetch default max_bytes is 25 MiB (a general safety cap); real
@@ -73,16 +78,20 @@ def is_own_storage_url(value, bucket_name):
     ):
         return True
 
-    # MinIO / custom S3-compatible endpoint: only trust hosts that match
-    # the configured MINIO_URL.
-    try:
-        own_host = (urlparse(MINIO_URL).hostname or "").lower()
-    except Exception:
-        own_host = ""
-    if own_host and host == own_host and (
-        path.startswith(bucket_path + "/") or path == bucket_path
-    ):
-        return True
+    # MinIO / custom S3-compatible endpoints: trust only the explicitly
+    # configured browser-facing and server-facing endpoints. Stored artifact
+    # URLs can use either form (for example ``localhost:9005`` outside Docker
+    # and ``minio:9000`` between services).
+    configured_endpoints = (MINIO_URL, os.getenv("S3_ENDPOINT_URL", ""))
+    for endpoint in configured_endpoints:
+        try:
+            own_host = (urlparse(endpoint).hostname or "").lower()
+        except Exception:
+            own_host = ""
+        if own_host and host == own_host and (
+            path.startswith(bucket_path + "/") or path == bucket_path
+        ):
+            return True
 
     return False
 
@@ -1349,8 +1358,8 @@ def audio_bytes_from_url_or_base64(
             elif audio_input.get("data"):
                 audio_bytes = base64.b64decode(str(audio_input["data"]))
             elif audio_input.get("url"):
-                audio_bytes = download_audio_from_url(
-                    audio_url=str(audio_input["url"]),
+                audio_bytes = _audio_bytes_from_url(
+                    str(audio_input["url"]),
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1358,8 +1367,8 @@ def audio_bytes_from_url_or_base64(
         elif isinstance(audio_input, str):
             s = audio_input.strip()
             if s.startswith(("http://", "https://")):
-                audio_bytes = download_audio_from_url(
-                    audio_url=s,
+                audio_bytes = _audio_bytes_from_url(
+                    s,
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1411,25 +1420,101 @@ def audio_bytes_from_url_or_base64(
     return audio_bytes
 
 
+def _read_own_storage_object(file_url: str, bucket_name: str) -> bytes:
+    """Read a verified first-party object without making an HTTP request.
+
+    Internal object-store hostnames correctly fail the generic SSRF guard.
+    For URLs that match one of our configured storage endpoints and the exact
+    upload bucket, use the authenticated storage client instead. This keeps
+    arbitrary/private URLs behind ``safe_fetch`` while allowing workers to
+    consume artifacts that the platform itself produced.
+    """
+    if not is_own_storage_url(file_url, bucket_name):
+        raise ValueError("URL is not a trusted platform storage URL")
+
+    object_key = extract_object_key(file_url, bucket_name)
+    if not object_key:
+        raise ValueError("Storage URL does not contain an object key")
+
+    response = get_storage_client().get_object(bucket_name, object_key)
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_AUDIO_FILE_SIZE:
+                raise ValueError(
+                    f"Audio file exceeds maximum size of {MAX_AUDIO_FILE_SIZE / (1024 * 1024):.1f}MB"
+                )
+            chunks.append(chunk)
+    finally:
+        response.close()
+        release_conn = getattr(response, "release_conn", None)
+        if callable(release_conn):
+            release_conn()
+    return b"".join(chunks)
+
+
+def _audio_bytes_from_url(
+    audio_url: str,
+    *,
+    min_duration_seconds: float | None,
+    pad_silence: bool,
+    timeout: int,
+) -> bytes:
+    if is_own_storage_url(audio_url, UPLOAD_BUCKET_NAME):
+        return _read_own_storage_object(audio_url, UPLOAD_BUCKET_NAME)
+    return download_audio_from_url(
+        audio_url=audio_url,
+        min_duration_seconds=min_duration_seconds,
+        pad_silence=pad_silence,
+        timeout=timeout,
+    )
+
+
 def download_audio_from_url(
     audio_url,
     max_retries=5,
     timeout=200,
     min_duration_seconds: float | None = 1.0,
     pad_silence: bool = True,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    call_id: str | None = None,
+    artifact_type: str | None = None,
 ):
-    # PYTHONWARNINGS="error::AssertionError"
-    """
-    Downloads an audio file from the provided URL with retries and error handling.
-    Processes audio data in memory and converts to MP3 format if needed.
-    """
-    # headers = {
-    #     "User-Agent": (
-    #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    #         "AppleWebKit/537.36 (KHTML, like Gecko) "
-    #         "Chrome/91.0.4472.124 Safari/537.36"
-    #     )
-    # }
+    """Download an audio file and return MP3 bytes; routes Vapi through the auth endpoint."""
+    from tracer.utils.vapi_recording import (
+        VapiArtifactNotReadyError,
+        VapiAuthError,
+        VapiRateLimitError,
+        VapiRecordingService,
+    )
+
+    if VapiRecordingService.is_authenticated_download(
+        provider, api_key, call_id, artifact_type
+    ):
+        try:
+            return VapiRecordingService.download_artifact_sync(
+                call_id=call_id,
+                artifact_type=artifact_type,
+                api_key=api_key,
+                timeout_seconds=timeout,
+            )
+        except (VapiAuthError, VapiArtifactNotReadyError, VapiRateLimitError):
+            raise
+        except Exception as exc:
+            logger.warning(
+                "vapi_authenticated_download_failed_falling_back",
+                audio_url=audio_url,
+                call_id=call_id,
+                artifact_type=artifact_type,
+                error=str(exc),
+            )
 
     for attempt in range(max_retries):
         audio_data = b""  # Reset audio_data for each attempt
@@ -1601,7 +1686,9 @@ def download_audio_from_url(
 
 def _ensure_min_duration(audio_bytes: bytes, min_duration_seconds: float) -> bytes:
     """Pads audio with silence to ensure at least min_duration_seconds. Returns MP3 bytes."""
-    import librosa  # Lazy load - pulls scipy/sklearn (~300MB)
+    from tfc.utils.lazy_extras import load_extra
+
+    librosa = load_extra("librosa", "audio")  # lazy — pulls scipy (~300MB)
 
     buf = None
     wav_buf = None
@@ -1677,6 +1764,17 @@ def upload_audio_to_s3(
         _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
+        logger.info(
+            "upload_audio_to_s3: ENTRY",
+            resolved_bucket=bucket_name,
+            upload_bucket_name_env=os.getenv("UPLOAD_BUCKET_NAME"),
+            minio_bucket_name_env=os.getenv("MINIO_BUCKET_NAME"),
+            object_key=object_key,
+            audio_data_type=type(audio_data).__name__,
+            org_id=org_id,
+            storage_backend=os.getenv("STORAGE_BACKEND"),
+            s3_endpoint=os.getenv("S3_ENDPOINT") or os.getenv("S3_ENDPOINT_URL"),
+        )
 
         if isinstance(audio_data, str) and is_own_storage_url(audio_data, bucket_name):
             return audio_data
@@ -1807,9 +1905,17 @@ def upload_audio_to_s3(
             object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client = get_storage_client()
+        logger.info(
+            "upload_audio_to_s3: about to ensure_bucket + put_object",
+            bucket=bucket_name,
+            object_key=object_key,
+            bytes=len(audio_bytes),
+            client_host=getattr(minio_client, "_base_url", None),
+        )
         ensure_bucket(minio_client, bucket_name)
 
         # Upload the audio bytes to S3
+        logger.info("s3_upload_start", bucket=bucket_name, object_key=object_key, bytes=len(audio_bytes))
         with BytesIO(audio_bytes) as audio_buffer:
             minio_client.put_object(
                 bucket_name=bucket_name,
@@ -1818,6 +1924,11 @@ def upload_audio_to_s3(
                 length=len(audio_bytes),
                 content_type=content_type,
             )
+        logger.info(
+            "upload_audio_to_s3: put_object OK",
+            bucket=bucket_name,
+            object_key=object_key,
+        )
 
         if org_id:
             try:
@@ -1849,7 +1960,8 @@ def upload_audio_to_s3(
         return url
 
     except Exception as e:
-        logger.exception(f"Error uploading audio to S3: {str(e)}")
+        error_code = str(e.code) if hasattr(e, "code") else str(e)
+        logger.error("s3_upload_failed", bucket=bucket_name, object_key=object_key, error_code=error_code, exc_info=True)
         raise ValueError(get_error_message("ERROR_AUDIO_UPLOAD").format(str(e))) from e
 
 
@@ -1923,7 +2035,9 @@ def open_audio_from_url(audio_url):
     Returns:
         tuple: (audio_waveform, sampling_rate) from librosa, or None if there's an error
     """
-    import librosa  # Lazy load - pulls scipy/sklearn (~300MB)
+    from tfc.utils.lazy_extras import load_extra
+
+    librosa = load_extra("librosa", "audio")  # lazy — pulls scipy (~300MB)
 
     try:
         # Process audio input using the existing download_audio_from_url function

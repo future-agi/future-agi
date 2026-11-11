@@ -22,6 +22,7 @@ from tracer.models.trace import Trace
 from tracer.services.clickhouse.span_attribute_lookups import (
     trace_ids_with_simulator_call_execution_id,
 )
+from tracer.utils.attribute_accessor import span_raw_log, vapi_customer
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.sql_queries import SQL_query_handler
 
@@ -100,11 +101,14 @@ def get_system_prompt(
     return prompt
 
 
-def _get_agent_definition_from_replay_sessions(
+def _resolve_agent_definition_for_project(
     project: Project,
 ) -> Optional[AgentDefinition]:
     """
-    Get agent definition from existing replay sessions for this project.
+    Get agent definition from existing replay sessions or observability provider for this project.
+
+    First checks if an agent definition was linked by a prior replay session.
+    Falls back to the agent definition linked via the project's observability provider.
 
     Args:
         project: The Project instance
@@ -125,7 +129,20 @@ def _get_agent_definition_from_replay_sessions(
 
     if replay_session:
         return replay_session.agent_definition
-    return None
+
+    # Fallback: check if an agent definition exists via the project's observability provider
+    agent_def_from_provider = (
+        AgentDefinition.objects.filter(
+            observability_provider__project=project,
+            observability_provider__deleted=False,
+            observability_provider__project__deleted=False,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    return agent_def_from_provider
 
 
 def _get_next_replay_scenario_version(
@@ -175,7 +192,7 @@ def get_agent_suggestions(
     date_suffix = now.strftime("%d_%m_%y")
     agent_name = f"{project.name}_replay_agent_{date_suffix}"
 
-    agent_def = _get_agent_definition_from_replay_sessions(project)
+    agent_def = _resolve_agent_definition_for_project(project)
     version_num = _get_next_replay_scenario_version(project, agent_def)
     scenario_name = f"{project.name}_replay_{date_suffix}_v{version_num}"
 
@@ -298,7 +315,7 @@ def get_or_create_agent_definition(
     """
     is_voice = original_voice_config and agent_type == AgentTypeChoices.VOICE
 
-    existing = _get_agent_definition_from_replay_sessions(project)
+    existing = _resolve_agent_definition_for_project(project)
     if existing:
         _update_agent_definition(
             agent_def=existing,
@@ -650,8 +667,7 @@ def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
         return None
 
     attrs = merge_span_attrs(_chspan_to_legacy_dict(conversation_span))
-    raw_log = attrs.get("raw_log")
-    return raw_log if isinstance(raw_log, dict) else None
+    return span_raw_log(attrs, span_id=str(conversation_span.id)) or None
 
 
 def _find_message_by_role(messages: list, role: str) -> str:
@@ -687,7 +703,7 @@ def _extract_phone_number_from_raw_log(raw_log: dict) -> str:
     phone = raw_log.get("phoneNumber") or {}
     number = phone.get("twilioPhoneNumber") or phone.get("number") or ""
     if not number:
-        number = (raw_log.get("customer") or {}).get("number", "")
+        number = vapi_customer(raw_log).get("number", "")
     return number
 
 

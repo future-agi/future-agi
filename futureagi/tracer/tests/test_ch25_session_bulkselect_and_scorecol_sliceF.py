@@ -176,11 +176,14 @@ def _purge_pg_project(project_id) -> None:
 def _raw_insert_session_score(
     *, score_id, trace_session_id, label_id, annotator_id, organization_id, value
 ):
-    """Insert a trace_session Score via RAW SQL, writing ONLY the columns that
-    exist on pg-test's (older) ``model_hub_score`` snapshot — the baked ORM
-    model declares newer columns (e.g. ``value_history``) absent there, so an
-    ORM ``.create()`` 500s. ``project_id`` is deliberately left NULL (the
-    production tracer-side write shape). ``value`` is JSONB."""
+    """Insert a trace_session Score via RAW SQL rather than the ORM, so
+    ``project_id`` can be left NULL — the production tracer-side write shape,
+    and the whole point of the assertions below. ``value`` is JSONB.
+
+    Every NOT NULL column must be listed explicitly: Django field defaults
+    (``value_history``'s ``default=list``) are applied in Python by the ORM and
+    do NOT exist as DB-level defaults, so a raw INSERT that omits one hits a
+    not-null violation."""
     import json
 
     from django.db import connection
@@ -191,10 +194,10 @@ def _raw_insert_session_score(
         cur.execute(
             "INSERT INTO model_hub_score "
             "(id, created_at, updated_at, deleted, source_type, value, "
-            " score_source, label_id, annotator_id, organization_id, "
-            " trace_session_id, project_id) "
-            "VALUES (%s, %s, %s, false, 'trace_session', %s, 'human', "
-            " %s, %s, %s, %s, NULL)",
+            " value_history, score_source, label_id, annotator_id, "
+            " organization_id, trace_session_id, project_id) "
+            "VALUES (%s, %s, %s, false, 'trace_session', %s, '[]'::jsonb, "
+            " 'human', %s, %s, %s, %s, NULL)",
             [
                 str(score_id),
                 now,
@@ -515,25 +518,6 @@ class TestSessionBulkSelectAndScoreColSliceF:
         assert result.truncated is True
         assert len(result.ids) == 1
         assert result.total_matching == 2  # cap + 1 sentinel
-
-    def test_bulkselect_pg_fallback_returns_historical(
-        self, ch_sessions, django_db_blocker, monkeypatch
-    ):
-        """When CH is unavailable the resolver falls back to the PG aggregate
-        (``_resolve_filtered_session_ids_pg``). This ALSO pins the exact
-        monkeypatch target string the existing PG-seeded unit suites patch
-        (``_resolve_session_ids_clickhouse`` → ``None``): if that path moved,
-        this fails. The historical session (real PG chain) is returned; the
-        net-new (CH-only, no PG row) is NOT — the very gap the CH path closes."""
-        monkeypatch.setattr(
-            "model_hub.services.bulk_selection._resolve_session_ids_clickhouse",
-            lambda **kwargs: None,
-        )
-        client, ids = ch_sessions
-        with django_db_blocker.unblock():
-            post = _post_bulkselect_session_ids(ids["proj"], ids["org"])
-        assert ids["hist_id"] in post  # PG fallback surfaces the historical
-        assert ids["netnew_id"] not in post  # ...but not the CH-only net-new
 
     def test_bulkselect_wrong_org_raises_does_not_exist(
         self, ch_sessions, django_db_blocker

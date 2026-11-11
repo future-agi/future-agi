@@ -5,8 +5,14 @@ additions are merged in at the bottom so the long-standing
 ``from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS``
 import keeps returning the full catalog. Standalone OSS installs fall back to
 the base list.
+
+Vertex AI models that litellm can only call through the ``vertexai`` SDK
+(google-cloud-aiplatform, the optional ``gcp`` extra) are left out of
+``AVAILABLE_MODELS`` when that SDK is not installed; see
+``vertex_model_requires_sdk``.
 """
 
+import importlib.util
 from copy import deepcopy
 
 OSS_AVAILABLE_MODELS = [
@@ -2375,6 +2381,117 @@ OSS_AVAILABLE_MODELS = [
         "pricing": {"input_per_1M_tokens": 15, "output_per_1M_tokens": 75},
     },
     {
+        "model_name": "claude-opus-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Frontier reasoning",
+            "Long-horizon agentic tasks",
+            "Advanced coding and research",
+        ],
+        "use_case": [
+            "Complex multi-step reasoning",
+            "Autonomous agent workflows",
+            "Research-grade problem solving",
+        ],
+        "cutoff": "07-2026",
+        "rate_limits": {
+            "requests_per_minute": 50,
+            "free": {"requests_per_minute": 5, "requests_per_day": 100},
+        },
+        "latency": 450,
+        "pricing": {"input_per_1M_tokens": 5, "output_per_1M_tokens": 25},
+    },
+    {
+        "model_name": "claude-sonnet-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Balanced speed and intelligence",
+            "Advanced coding and software development",
+            "Customer-facing AI agents",
+        ],
+        "use_case": [
+            "Agentic coding and end-to-end software development",
+            "Customer support and conversational AI",
+            "Data analysis, planning, and report generation",
+        ],
+        "cutoff": "06-2026",
+        "rate_limits": {
+            "requests_per_minute": 80,
+            "free": {"requests_per_minute": 10, "requests_per_day": 100},
+        },
+        "latency": 300,
+        "pricing": {"input_per_1M_tokens": 3, "output_per_1M_tokens": 15},
+        "notes": "Introductory pricing of $2/$10 in/out per 1M tokens through 2026-08-31; regular pricing $3/$15 kicks in Sep 1, 2026.",
+    },
+    {
+        "model_name": "claude-haiku-4-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Fastest, cheapest tier",
+            "High-volume user-facing chat",
+            "Rapid data extraction and labeling",
+        ],
+        "use_case": [
+            "Real-time content moderation",
+            "Customer service bots",
+            "Processing and categorizing datasets",
+        ],
+        "cutoff": "10-2025",
+        "rate_limits": {
+            "requests_per_minute": 100,
+            "free": {"requests_per_minute": 0, "requests_per_day": 0},
+        },
+        "latency": 280,
+        "pricing": {"input_per_1M_tokens": 1, "output_per_1M_tokens": 5},
+    },
+    {
+        "model_name": "claude-sonnet-5-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Balanced speed and intelligence",
+            "Agentic coding and tool use",
+            "Customer-facing AI agents",
+        ],
+        "use_case": [
+            "Agent workflows",
+            "Data analysis, planning, and report generation",
+            "Customer support and conversational AI",
+        ],
+        "context_window": 1000000,
+        "pricing": {"input_per_1M_tokens": 2, "output_per_1M_tokens": 10},
+        "notes": "Claude Sonnet 5.5; Anthropic list price, as the gateway prices it.",
+    },
+    {
+        "model_name": "claude-haiku-5-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Fastest, cheapest tier",
+            "High-volume processing",
+            "Rapid data extraction and labeling",
+        ],
+        "use_case": [
+            "Real-time chatbots",
+            "Bulk text processing",
+            "Classification and routing",
+        ],
+        "context_window": 1000000,
+        "pricing": {"input_per_1M_tokens": 0.1, "output_per_1M_tokens": 0.5},
+        "notes": (
+            "Claude Haiku 5.5; Anthropic list price for prompts up to 100K "
+            "tokens ($0.50 / $2.50 per 1M beyond), as the gateway prices it."
+        ),
+    },
+    {
         "model_name": "mistral/mistral-small",
         "providers": "mistral",
         "api_key_name": "MISTRAL_API_KEY",
@@ -3947,6 +4064,214 @@ OSS_AVAILABLE_MODELS = [
         },
         "notes": "Lite version for cost-effective, speedy processing at scale. Latest update: Feb "
         "2025.",
+    },
+    {
+        "model_name": "gemini/gemini-3.6-flash",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["latest Flash GA", "multimodal understanding", "adaptive thinking"],
+        "use_case": [
+            "fast inference",
+            "agentic AI tasks",
+            "content processing at scale",
+        ],
+        "cutoff": "06-2026",
+        "rate_limits": {
+            "requests_per_minute": 10,
+            "requests_per_day": 250,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 40,
+        "pricing": {"input_per_1M_tokens": 1.5, "output_per_1M_tokens": 7.5},
+        "notes": "Gemini 3.6 Flash; 1M context, 64K max output. Live API supported.",
+    },
+    {
+        "model_name": "gemini/gemini-3.5-flash",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["agentic and coding tasks", "multimodal understanding", "thinking"],
+        "use_case": [
+            "code generation and repair",
+            "agent orchestration",
+            "long-context reasoning",
+        ],
+        "cutoff": "04-2026",
+        "rate_limits": {
+            "requests_per_minute": 10,
+            "requests_per_day": 250,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 45,
+        "pricing": {"input_per_1M_tokens": 1.5, "output_per_1M_tokens": 9.0},
+        "notes": "Gemini 3.5 Flash; 1M context, 64K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.5-flash-lite",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["ultra-low latency", "cost-optimized workloads"],
+        "use_case": ["high volume batch processing", "real-time AI agents"],
+        "cutoff": "04-2026",
+        "rate_limits": {
+            "requests_per_minute": 15,
+            "requests_per_day": 1000,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 25,
+        "pricing": {"input_per_1M_tokens": 0.3, "output_per_1M_tokens": 2.5},
+        "notes": "Gemini 3.5 Flash-Lite; 1M context, 32K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.7-flash",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["agentic workflows", "coding", "multi-step reasoning"],
+        "use_case": ["tool-using agents", "code generation", "document analysis"],
+        "cutoff": "06-2026",
+        "rate_limits": {
+            "requests_per_minute": 15,
+            "requests_per_day": 1000,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 35,
+        "pricing": {
+            "input_per_1M_tokens": 0.75,
+            "cached_input_per_1M_tokens": 0.075,
+            "output_per_1M_tokens": 3.75,
+        },
+        "notes": "Gemini 3.7 Flash; 1M context, 64K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.8-flash",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["agentic workflows", "coding", "multi-step reasoning"],
+        "use_case": ["tool-using agents", "code generation", "document analysis"],
+        "cutoff": "06-2026",
+        "rate_limits": {
+            "requests_per_minute": 15,
+            "requests_per_day": 1000,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 35,
+        "pricing": {
+            "input_per_1M_tokens": 0.75,
+            "cached_input_per_1M_tokens": 0.075,
+            "output_per_1M_tokens": 3.75,
+        },
+        "notes": "Gemini 3.8 Flash; 1M context, 64K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.1-pro-preview",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "flagship reasoning",
+            "long-context multimodal analysis",
+            "advanced coding",
+        ],
+        "use_case": [
+            "complex reasoning over large datasets",
+            "STEM problem solving",
+            "long-document analysis",
+        ],
+        "cutoff": "04-2026",
+        "rate_limits": {
+            "requests_per_minute": 5,
+            "requests_per_day": 100,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 100,
+        "pricing": {"input_per_1M_tokens": 2.0, "output_per_1M_tokens": 12.0},
+        "notes": "Preview tier. Gemini 3.1 Pro; 1M context, 64K max output. Above 200K input tokens: $4/$18 in/out per 1M tokens.",
+    },
+    {
+        "model_name": "gemini/gemini-embedding-2",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "embedding",
+        "best_for": ["multimodal embeddings", "cross-modal retrieval"],
+        "use_case": [
+            "semantic search across text, image, audio, video, PDF",
+            "RAG over mixed-media corpora",
+        ],
+        "cutoff": "01-2026",
+        "latency": 60,
+        "pricing": {"input_per_1M_tokens": 0.2},
+        "embedding_dimension": 3072,
+        "notes": "GA multimodal embedding model; 8K input context. Replaces gemini-embedding-001 as recommended default.",
+    },
+    {
+        "model_name": "gemini/gemini-3-flash-preview",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["Gemini 3 base Flash", "fast multimodal responses"],
+        "use_case": ["chat", "agent orchestration", "fast inference"],
+        "cutoff": "04-2026",
+        "rate_limits": {
+            "requests_per_minute": 10,
+            "requests_per_day": 250,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 45,
+        "pricing": {"input_per_1M_tokens": 0.5, "output_per_1M_tokens": 3.0},
+        "notes": "Preview tier. Base Gemini 3 Flash; 1M context, 64K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.1-flash-lite",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["cost-optimized workloads", "high throughput"],
+        "use_case": ["batch processing", "real-time agents", "classification"],
+        "cutoff": "04-2026",
+        "rate_limits": {
+            "requests_per_minute": 15,
+            "requests_per_day": 1000,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 25,
+        "pricing": {"input_per_1M_tokens": 0.25, "output_per_1M_tokens": 1.5},
+        "notes": "GA Flash-Lite 3.1; 1M context, 64K max output.",
+    },
+    {
+        "model_name": "gemini/gemini-3.1-flash-image",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "image_generation",
+        "best_for": ["fast image generation", "text-to-image", "image editing"],
+        "use_case": ["marketing assets", "creative iteration", "in-app image gen"],
+        "cutoff": "04-2026",
+        "latency": 90,
+        # Gemini bills image output in tokens; 1K (~1MP) ≈ $0.067/image on the
+        # Gemini API paid tier. Catalog uses per_image so image_generation cost
+        # paths (images_generated) meter correctly — token keys would win the
+        # calculate_total_cost branch and ignore images_generated.
+        "pricing": {"per_image": 0.067},
+        "notes": "Gemini 3.1 Flash image generation (Nano Banana 2 tier); 64K input "
+        "context. per_image is the 1K (~1MP) equivalent ($0.045/512, $0.101/2K, $0.151/4K).",
+    },
+    {
+        "model_name": "gemini/gemini-2.5-flash-image",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "image_generation",
+        "best_for": ["cost-effective image generation", "text-to-image", "image editing"],
+        "use_case": ["batch image generation", "creative iteration"],
+        "cutoff": "01-2025",
+        "latency": 100,
+        # Same shape as imagen/dall-e: per_image for image_generation metering.
+        # 1K (~1MP) ≈ $0.039/image on the Gemini API paid tier.
+        "pricing": {"per_image": 0.039},
+        "notes": "GA Gemini 2.5 Flash image generation; 32K input context. "
+        "per_image is the 1K (~1MP) equivalent.",
     },
     {
         "model_name": "command-r",
@@ -7233,3 +7558,80 @@ else:
         OSS_AVAILABLE_MODELS,
         EE_ONLY_AVAILABLE_MODELS,
     )
+
+
+VERTEX_SDK_MISSING_MESSAGE = (
+    "This Vertex AI model needs the Vertex AI SDK (google-cloud-aiplatform), "
+    "which this backend image does not include. Rebuild the backend image "
+    "with --build-arg EXTRAS=gcp (futureagi/Dockerfile.oss), or use a Gemini "
+    "model on Vertex AI, which works without it."
+)
+
+# Vertex AI "partner" models: the model-name prefixes litellm routes through
+# VertexAIPartnerModels (litellm/llms/vertex_ai/vertex_ai_partner_models/main.py,
+# PartnerModelPrefixes, litellm 1.81.11).
+_VERTEX_PARTNER_PREFIXES = (
+    "meta/",
+    "deepseek-ai",
+    "mistral",
+    "codestral",
+    "jamba",
+    "claude",
+    "qwen",
+    "openai/gpt-oss-",
+    "minimaxai/",
+    "moonshotai/",
+    "zai-org/",
+)
+
+
+def vertex_ai_sdk_available() -> bool:
+    """Whether the ``vertexai`` package (google-cloud-aiplatform) is installed."""
+    try:
+        return importlib.util.find_spec("vertexai") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def vertex_model_requires_sdk(model_name, provider=None, mode=None) -> bool:
+    """True for a Vertex AI chat/completion model litellm calls via ``vertexai``.
+
+    Mirrors litellm's get_vertex_ai_model_route()
+    (litellm/llms/vertex_ai/common_utils.py): the partner-model, Gemma, Model
+    Garden and legacy (PaLM/Codey, "non-Gemini") routes import ``vertexai``;
+    the Gemini route, Imagen, embeddings and TTS do not.
+    model_hub/tests/test_vertex_sdk_gating.py checks this against litellm.
+    """
+    name = str(model_name or "")
+    if not (name.startswith("vertex_ai/") or provider == "vertex_ai"):
+        return False
+    if mode not in (None, "chat", "completion"):
+        return False
+    model = name.removeprefix("vertex_ai/")
+    if "agent_engine/" in model:
+        return False
+    if model.startswith(_VERTEX_PARTNER_PREFIXES):
+        return True
+    if "bge" in model.lower():
+        return False
+    if "gemma/" in model or "openai" in model:
+        return True
+    return "gemini" not in model
+
+
+def without_vertex_sdk_models(models):
+    """The catalog minus the models vertex_model_requires_sdk() flags."""
+    return [
+        model
+        for model in models
+        if not vertex_model_requires_sdk(
+            model.get("model_name"), model.get("providers"), model.get("mode")
+        )
+    ]
+
+
+if not vertex_ai_sdk_available():
+    # The default backend image ships without the `gcp` extra: do not offer
+    # models that would fail at call time with litellm's "vertexai import
+    # failed" error.
+    AVAILABLE_MODELS = without_vertex_sdk_models(AVAILABLE_MODELS)

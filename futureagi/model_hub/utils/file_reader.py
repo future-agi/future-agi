@@ -94,6 +94,104 @@ class FileProcessor:
         raise FileProcessingError("Unsupported file format")
 
     @staticmethod
+    def _normalize_smart_quotes(text: str) -> str:
+        return (
+            text.replace("\u201c", '"')
+            .replace("\u201d", '"')
+            .replace("\u201e", '"')
+            .replace("\u201f", '"')
+        )
+
+    @staticmethod
+    def _try_parse_csv_text(
+        text: str, fallback_delimiters: list[str]
+    ) -> tuple[pd.DataFrame | None, int, int, bool]:
+        """Attempt to parse CSV text.
+
+        Returns ``(df, col_count, max_row_count, saw_wider_inconsistent)``:
+
+        * ``df`` / ``col_count`` — the widest consistent parse found, if any.
+          Widest wins rather than first-consistent: a delimiter absent from
+          the file produces "1 column per line" rows that look consistent but
+          collapse every real column into a single string.
+        * ``max_row_count`` — the most rows any delimiter attempt produced;
+          used by the caller to distinguish header-only files from
+          inconsistent ones.
+        * ``saw_wider_inconsistent`` — True when some delimiter produced a
+          multi-column header whose data rows had mismatched counts. The
+          caller uses it to reject a degenerate 1-column "success" on a file
+          that clearly meant to be multi-column.
+        """
+        sample = text[:4096]
+        try:
+            # Restrict Sniffer to real CSV delimiters; otherwise it will
+            # happily pick a letter (e.g. 'n' from "first_name") whenever
+            # that character happens to split rows into equal counts.
+            delimiter = csv.Sniffer().sniff(
+                sample, delimiters="".join(fallback_delimiters)
+            ).delimiter
+        except csv.Error:
+            delimiter = None
+
+        delimiters_to_try = [delimiter] if delimiter else []
+        for d in fallback_delimiters:
+            if d not in delimiters_to_try:
+                delimiters_to_try.append(d)
+
+        try:
+            exotic = csv.Sniffer().sniff(sample).delimiter
+            if (
+                exotic
+                and not exotic.isalnum()
+                # csv.reader raises ValueError for these, they can never be
+                # real delimiters.
+                and exotic not in '"\r\n'
+                and exotic not in delimiters_to_try
+            ):
+                delimiters_to_try.append(exotic)
+        except csv.Error:
+            pass
+
+        best_df: pd.DataFrame | None = None
+        best_cols = 0
+        max_row_count = 0
+        saw_wider_inconsistent = False
+        for delim in delimiters_to_try:
+            try:
+                rows = list(
+                    csv.reader(StringIO(text), delimiter=delim, quotechar='"')
+                )
+            except (csv.Error, ValueError):
+                # ValueError: csv.reader rejects the delimiter char itself
+                # (e.g. a quote or newline) — skip it, never abort the whole
+                # candidate parse.
+                continue
+            max_row_count = max(max_row_count, len(rows))
+            if not rows or len(rows) < 2:
+                continue
+            header = rows[0]
+            expected_cols = len(header)
+            if any(len(r) != expected_cols for r in rows[1:]):
+                # Flag only when the delimiter actually appears in the *data*
+                # (some mismatching row splits into >1 column). A header-only
+                # split — e.g. a single-column file whose header contains an
+                # unquoted comma ("first,second\nhello\nworld") — is
+                # single-column intent, not a ragged multi-column file, and
+                # must keep parsing as one column (dev parity).
+                if expected_cols > 1 and any(len(r) > 1 for r in rows[1:]):
+                    saw_wider_inconsistent = True
+                continue
+            if expected_cols <= best_cols:
+                continue
+            header = FileProcessor._deduplicate_columns(header)
+            df = pd.DataFrame(rows[1:], columns=header)
+            df.reset_index(drop=True, inplace=True)
+            best_df = df
+            best_cols = expected_cols
+
+        return best_df, best_cols, max_row_count, saw_wider_inconsistent
+
+    @staticmethod
     def _read_csv_file(file_obj: Any) -> pd.DataFrame:
         encodings = ["utf-8", "latin1", "cp1252", "iso-8859-1"]
         fallback_delimiters = [",", "\t", ";", "|"]
@@ -105,61 +203,39 @@ class FileProcessor:
                 if isinstance(raw_data, bytes):
                     raw_data = raw_data.decode(encoding)
 
-                # Normalize smart/curly quotes to straight quotes so that
-                # csv.reader (which uses quotechar='"') can recognise them.
-                # Without this, CSVs exported from Excel or Google Sheets that
-                # use typographic quotes will have their quoted-field commas
-                # treated as delimiters, leading to wrong column counts and
-                # ultimately all columns being merged into one.
-                raw_data = (
-                    raw_data.replace("\u201c", '"')
-                    .replace("\u201d", '"')
-                    .replace("\u201e", '"')
-                    .replace("\u201f", '"')
-                )
+                candidates = [raw_data]
+                normalized = FileProcessor._normalize_smart_quotes(raw_data)
+                if normalized != raw_data:
+                    candidates.append(normalized)
 
-                # Try to detect delimiter using Sniffer with large sample
-                sample = raw_data[:4096]
-                try:
-                    dialect = csv.Sniffer().sniff(sample)
-                    delimiter = dialect.delimiter
-                except csv.Error:
-                    delimiter = None
-
-                # Candidate delimiters to try, prioritized
-                delimiters_to_try = [delimiter] if delimiter else []
-                for d in fallback_delimiters:
-                    if d not in delimiters_to_try:
-                        delimiters_to_try.append(d)
-
-                # Try each delimiter until rows are consistent
-                last_delimiter_rows = None
-                for delim in delimiters_to_try:
-                    reader = csv.reader(
-                        StringIO(raw_data), delimiter=delim, quotechar='"'
+                best_df: pd.DataFrame | None = None
+                best_cols = 0
+                max_row_count = 0
+                saw_wider_inconsistent = False
+                for candidate in candidates:
+                    df, cols, rows_seen, saw_wider = (
+                        FileProcessor._try_parse_csv_text(
+                            candidate, fallback_delimiters
+                        )
                     )
-                    rows = list(reader)
-                    last_delimiter_rows = len(rows) if rows else 0
-                    if not rows or len(rows) < 2:
-                        continue
-                    header = rows[0]
-                    expected_cols = len(header)
-                    # Check if all rows have matching number of columns
-                    bad_rows = [
-                        i + 2 for i, r in enumerate(rows[1:]) if len(r) != expected_cols
-                    ]
-                    if bad_rows:
-                        # inconsistent columns, try next delimiter
-                        continue
-                    # Handle duplicate column names
-                    header = FileProcessor._deduplicate_columns(header)
-                    # All rows consistent, create DataFrame
-                    df = pd.DataFrame(rows[1:], columns=header)
-                    df.reset_index(drop=True, inplace=True)
-                    return df
+                    if df is not None and cols > best_cols:
+                        best_df = df
+                        best_cols = cols
+                    max_row_count = max(max_row_count, rows_seen)
+                    saw_wider_inconsistent = saw_wider_inconsistent or saw_wider
 
-                # If no delimiter worked:
-                if last_delimiter_rows == 1:
+                # A 1-column "success" on a file where some delimiter split
+                # the header into multiple columns is almost certainly a
+                # malformed multi-column file (e.g. rows with extra/missing
+                # cells), not a genuine single-column dataset. Surface the
+                # data-quality error instead of silently importing every line
+                # as one string.
+                if best_df is not None and not (
+                    best_cols == 1 and saw_wider_inconsistent
+                ):
+                    return best_df
+
+                if max_row_count == 1:
                     raise FileProcessingError(
                         "The file contains only a header row with no data."
                     )
@@ -167,13 +243,10 @@ class FileProcessor:
                     "Unable to detect delimiter correctly; rows have inconsistent column counts."
                 )
             except UnicodeDecodeError:
-                # Try next encoding
                 continue
             except FileProcessingError:
-                # Re-raise file processing errors (e.g., inconsistent columns)
                 raise
             except Exception as e:
-                # Log and try next encoding
                 logger.warning(f"Error reading CSV with encoding {encoding}: {str(e)}")
                 continue
 

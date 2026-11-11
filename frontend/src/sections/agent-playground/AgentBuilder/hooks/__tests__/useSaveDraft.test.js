@@ -10,6 +10,10 @@ import logger from "src/utils/logger";
 const mockSaveDraftMutation = vi.fn();
 const mockCreateVersionMutation = vi.fn();
 
+vi.mock("../../../hooks/useCanEditAgent", () => ({
+  default: () => ({ canEditAgent: true, isReadOnly: false }),
+}));
+
 vi.mock("src/api/agent-playground/agent-playground", () => ({
   useSaveDraftVersion: () => ({ mutate: mockSaveDraftMutation }),
   useCreateVersion: () => ({ mutate: mockCreateVersionMutation }),

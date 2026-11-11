@@ -18,11 +18,15 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import (
     EvalTemplate,
+    EvalTemplateVersion,
     Feedback,
     UserEvalMetric,
 )
 from model_hub.models.experiments import ExperimentsTable
-from model_hub.selectors.feedback import resolve_feedback_edit_contexts
+from model_hub.selectors.feedback import (
+    resolve_feedback_edit_contexts,
+    resolve_feedback_template_data,
+)
 
 
 def _make_template(user, workspace):
@@ -170,3 +174,170 @@ def test_custom_eval_config_id_surfaces_for_observe(user, workspace):
     assert result[observe.id]["custom_eval_config_id"] == str(custom_eval_config_id)
     assert result[observe.id]["experiment_id"] == ""
     assert result[observe.id]["user_eval_metric_id"] == str(metric.id)
+
+
+def _template(user, workspace, **fields) -> EvalTemplate:
+    defaults = dict(
+        name=f"tpl-{uuid.uuid4().hex[:8]}",
+        description="",
+        organization=user.organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+    )
+    defaults.update(fields)
+    return EvalTemplate.objects.create(**defaults)
+
+
+def _metric_for(user, workspace, template, config=None) -> UserEvalMetric:
+    return UserEvalMetric.objects.create(
+        name=f"metric-{uuid.uuid4().hex[:8]}",
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        template=template,
+        dataset=_make_dataset(user, workspace, marker="tpldata"),
+        config=config if config is not None else {"mapping": {}},
+        status=StatusType.COMPLETED.value,
+    )
+
+
+@pytest.mark.django_db
+class TestResolveFeedbackTemplateData:
+    def test_pass_fail_returns_hardcoded_choices(self, user, workspace):
+        tpl = _template(user, workspace, config={"output": "Pass/Fail"})
+        metric = _metric_for(user, workspace, tpl)
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["output_type"] == "Pass/Fail"
+        assert data["choices"] == ["Passed", "Failed"]
+        assert data["eval_name"] == tpl.name
+        assert data["user_eval_name"] == metric.name
+
+    def test_choice_scores_surfaces_when_populated(self, user, workspace):
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "score"},
+            choice_scores={"Yes": 1.0, "No": 0.0},
+        )
+        metric = _metric_for(user, workspace, tpl)
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["choice_scores"] == {"Yes": 1.0, "No": 0.0}
+
+    def test_choice_scores_is_null_when_absent(self, user, workspace):
+        tpl = _template(user, workspace, config={"output": "score"})
+        metric = _metric_for(user, workspace, tpl)
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["choice_scores"] is None
+
+    def test_metric_choices_override_wins_over_template(self, user, workspace):
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "choices"},
+            choices=["Alpha", "Beta"],
+        )
+        metric = _metric_for(
+            user,
+            workspace,
+            tpl,
+            config={"config": {"choices": ["X", "Y", "Z"], "multi_choice": True}},
+        )
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["choices"] == ["X", "Y", "Z"]
+        assert data["multi_choice"] is False
+
+    def test_multi_choice_sourced_from_template_when_metric_asserts_true(
+        self, user, workspace
+    ):
+        """Metric-side ``multi_choice`` override is ignored; the
+        template's canonical multi_choice field is the single source of
+        truth."""
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "choices"},
+            choices=["neutral", "joy", "sadness"],
+            multi_choice=False,
+        )
+        metric = _metric_for(
+            user, workspace, tpl, config={"config": {"multi_choice": True}}
+        )
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["multi_choice"] is False
+        assert data["choices"] == ["neutral", "joy", "sadness"]
+
+    def test_multi_choice_from_template_ignores_metric_false(
+        self, user, workspace
+    ):
+        """Template says multi_choice=True; metric override is ignored."""
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "choices"},
+            choices=["A", "B"],
+            multi_choice=True,
+        )
+        metric = _metric_for(
+            user, workspace, tpl, config={"config": {"multi_choice": False}}
+        )
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["multi_choice"] is True
+
+    def test_multi_choice_from_pinned_version_beats_template_field(
+        self, user, workspace
+    ):
+        """When the metric resolves to a template version whose snapshot
+        captured a different multi_choice, honor the version. Templates
+        with multiple versions can toggle multi_choice per version; the
+        template's direct field only reflects the latest edit."""
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "choices"},
+            choices=["A", "B"],
+            multi_choice=False,
+        )
+        # v1 captured multi_choice=True in its snapshot; not the default.
+        version = EvalTemplateVersion.objects.create(
+            eval_template=tpl,
+            version_number=1,
+            config_snapshot={
+                "multi_choice": True,
+                "choices": ["A", "B"],
+                "output": "choices",
+            },
+            is_default=False,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        metric = _metric_for(user, workspace, tpl)
+        metric.pinned_version = version
+        metric.save(update_fields=["pinned_version"])
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["multi_choice"] is True
+
+    def test_choices_type_with_no_choices_anywhere_returns_empty(
+        self, user, workspace
+    ):
+        tpl = _template(user, workspace, config={"output": "choices"})
+        metric = _metric_for(user, workspace, tpl)
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["output_type"] == "choices"
+        assert data["choices"] == []
+        assert data["multi_choice"] is False

@@ -1,6 +1,12 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Box, Typography, Button, CircularProgress } from "@mui/material";
+import {
+  Box,
+  Typography,
+  Button,
+  CircularProgress,
+  ButtonBase,
+} from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import PropTypes from "prop-types";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
@@ -15,6 +21,10 @@ import DevelopDetailProvider from "src/sections/develop-detail/DevelopDetailProv
 import AddRowScenario from "./AddRowScenario";
 import ScenarioDetailRightSection from "./ScenarioDetailRightSection";
 import AddColumnScenario from "./AddColumnScenario";
+import {
+  isScenarioFailed,
+  isScenarioInProgress,
+} from "src/utils/scenarioStatus";
 
 const MetaChip = ({ label, value, icon }) => (
   <Box
@@ -24,7 +34,7 @@ const MetaChip = ({ label, value, icon }) => (
       gap: 0.75,
       border: "1px solid",
       borderColor: "divider",
-      borderRadius: 0.5,
+      borderRadius: "4px",
       px: 1.25,
       py: 0.5,
       backgroundColor: "background.default",
@@ -129,15 +139,17 @@ const ScenarioDatasetView = () => {
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.disabled"
+            <ButtonBase
+              disableRipple
               onClick={() => navigate("/dashboard/simulate/scenarios")}
-              sx={{ cursor: "pointer" }}
+              sx={{
+                typography: "m3",
+                fontWeight: "fontWeightMedium",
+                color: "text.disabled",
+              }}
             >
               All Scenarios
-            </Typography>
+            </ButtonBase>
             <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
             <Typography typography="m3" fontWeight="fontWeightMedium">
               {scenario?.name}
@@ -167,7 +179,7 @@ const ScenarioDatasetView = () => {
             height: "50%",
           }}
         >
-            <GraphPreview agentType={agentType} scenario={scenario} />
+          <GraphPreview agentType={agentType} scenario={scenario} />
           <PromptPreview scenario={scenario} />
         </Box>
         <Box
@@ -189,7 +201,7 @@ const ScenarioDatasetView = () => {
         </Box>
 
         <ShowComponent condition={!datasetId}>
-          <ShowComponent condition={scenario?.status === "Processing"}>
+          <ShowComponent condition={isScenarioInProgress(scenario?.status)}>
             <Box
               sx={{
                 display: "flex",
@@ -206,7 +218,7 @@ const ScenarioDatasetView = () => {
               </Typography>
             </Box>
           </ShowComponent>
-          <ShowComponent condition={scenario?.status === "Failed"}>
+          <ShowComponent condition={isScenarioFailed(scenario?.status)}>
             <Box
               sx={{
                 display: "flex",

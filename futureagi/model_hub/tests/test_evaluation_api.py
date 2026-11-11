@@ -27,6 +27,7 @@ from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
+    OwnerChoices,
     SourceChoices,
     StatusType,
 )
@@ -367,6 +368,76 @@ class TestAddUserEvalView:
             deleted=False,
         ).exists()
 
+    @pytest.mark.parametrize(
+        "output_type_normalized, choice_scores, pass_threshold",
+        [
+            ("pass_fail", None, 0.7),
+            ("deterministic", {"Good": 1.0, "Neutral": 0.5, "Bad": 0.0}, 0.5),
+            ("percentage", {"Good": 1.0, "Average": 0.7, "Bad": 0.0}, 0.5),
+            ("percentage", None, 0.5),
+            ("deterministic", None, 0.5),
+        ],
+        ids=[
+            "pass_fail",
+            "deterministic_with_choice_scores",
+            "percentage_with_choice_scores",
+            "percentage_no_choice_scores",
+            "deterministic_no_choice_scores",
+        ],
+    )
+    def test_add_user_eval_save_as_template_preserves_scoring_fields(
+        self,
+        auth_client,
+        dataset,
+        output_column,
+        valid_eval_config,
+        organization,
+        workspace,
+        output_type_normalized,
+        choice_scores,
+        pass_threshold,
+    ):
+        """The ``save_as_template=True`` branch clones the source template
+        into a new DB row. All three columnar scoring fields must propagate
+        so the clone can be scored via the same code path as the source.
+        """
+        cs_tag = "with-cs" if choice_scores else "no-cs"
+        source = EvalTemplate.objects.create(
+            name=f"src-{output_type_normalized}-{cs_tag}",
+            organization=organization,
+            workspace=workspace,
+            criteria="Evaluate {{output}}",
+            model="gpt-4o-mini",
+            output_type_normalized=output_type_normalized,
+            choice_scores=choice_scores,
+            pass_threshold=pass_threshold,
+            config={
+                "output": "Pass/Fail" if output_type_normalized == "pass_fail" else "choices",
+                "required_keys": ["output"],
+                "eval_type_id": "AgentEvaluator",
+            },
+        )
+        clone_name = f"clone-{output_type_normalized}-{cs_tag}"
+        payload = {
+            "name": clone_name,
+            "template_id": str(source.id),
+            "config": valid_eval_config,
+            "save_as_template": True,
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        clone = EvalTemplate.objects.get(name=clone_name, organization=organization)
+        assert clone.output_type_normalized == output_type_normalized
+        assert clone.choice_scores == choice_scores
+        assert clone.pass_threshold == pass_threshold
+
 
 # ==================== StartEvalsProcess Tests ====================
 
@@ -599,6 +670,46 @@ class TestEvalConfigContracts:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_get_eval_config_returns_multi_choice_true(self, auth_client, user):
+        """multi_choice is sourced from the template's direct field."""
+        template = EvalTemplate.objects.create(
+            name=f"multi-choice-{uuid.uuid4().hex[:8]}",
+            description="Multi-choice template",
+            organization=user.organization,
+            owner=OwnerChoices.USER.value,
+            config={"output": "choices", "eval_type_id": "test_eval_type"},
+            choices=["A", "B", "C"],
+            multi_choice=True,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/get-eval-config?eval_id={template.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        payload = response.json()["result"]["eval"]
+        assert payload["multi_choice"] is True
+
+    def test_get_eval_config_returns_multi_choice_false_when_absent(
+        self, auth_client, user
+    ):
+        template = EvalTemplate.objects.create(
+            name=f"single-choice-{uuid.uuid4().hex[:8]}",
+            description="Single-choice template",
+            organization=user.organization,
+            owner=OwnerChoices.USER.value,
+            config={"output": "choices", "eval_type_id": "test_eval_type"},
+            choices=["A", "B"],
+        )
+
+        response = auth_client.get(
+            f"/model-hub/get-eval-config?eval_id={template.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        payload = response.json()["result"]["eval"]
+        assert payload["multi_choice"] is False
+
     def test_get_eval_structure_rejects_legacy_eval_type_alias(
         self, auth_client, dataset
     ):
@@ -745,6 +856,8 @@ class TestDeleteEvalsView:
         )
         dataset.column_order.append(str(reason_col.id))
         dataset.save()
+        previous_eval_updated_at = eval_col.updated_at
+        previous_reason_updated_at = reason_col.updated_at
 
         response = auth_client.delete(
             f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
@@ -761,6 +874,11 @@ class TestDeleteEvalsView:
         assert reason_col.deleted is True
         assert eval_col.deleted_at is not None
         assert reason_col.deleted_at is not None
+        assert eval_col.updated_at == eval_col.deleted_at
+        assert reason_col.updated_at == reason_col.deleted_at
+        assert eval_col.updated_at > previous_eval_updated_at
+        assert reason_col.updated_at > previous_reason_updated_at
+        assert eval_col.updated_at == reason_col.updated_at
 
         # Both should be removed from column_order
         dataset.refresh_from_db()
@@ -792,6 +910,8 @@ class TestDeleteEvalsView:
         reason_cell = Cell.objects.create(
             dataset=dataset, row=row, column=reason_col, value="Looks grounded"
         )
+        previous_eval_updated_at = eval_cell.updated_at
+        previous_reason_updated_at = reason_cell.updated_at
 
         response = auth_client.delete(
             f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
@@ -806,6 +926,11 @@ class TestDeleteEvalsView:
         assert reason_cell.deleted is True
         assert eval_cell.deleted_at is not None
         assert reason_cell.deleted_at is not None
+        assert eval_cell.updated_at == eval_cell.deleted_at
+        assert reason_cell.updated_at == reason_cell.deleted_at
+        assert eval_cell.updated_at > previous_eval_updated_at
+        assert reason_cell.updated_at > previous_reason_updated_at
+        assert eval_cell.updated_at == reason_cell.updated_at
 
     def test_delete_column_of_running_eval_cancels_runner(
         self, auth_client, dataset, user_eval_metric
@@ -1736,8 +1861,12 @@ class TestPreviewRunEvalView:
         input_cell,
         organization,
         workspace,
+        settings,
     ):
         """Preview should pass function params to code eval kwargs."""
+        # No code-executor runs under pytest; let the eval use the local runner.
+        settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+        settings.CLOUD_DEPLOYMENT = ""
         template = EvalTemplate.objects.create(
             name="word_count_preview_test",
             organization=organization,

@@ -16,6 +16,7 @@ package adapter
 import (
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -201,6 +202,7 @@ type HotKeys struct {
 	CompletionTokens int32
 	TotalTokens      int32
 	Cost             float64
+	CostUserSet      bool
 }
 
 // DeriveHotKeys reads the typed-Map results from Split and pulls out the
@@ -212,32 +214,177 @@ func DeriveHotKeys(
 	attrsNumber map[string]float64,
 ) HotKeys {
 	hk := HotKeys{}
-	// Model: prefer gen_ai.request.model (OTel canonical), then llm.model_name (legacy).
-	if v, ok := attrsString["gen_ai.request.model"]; ok {
-		hk.Model = v
-	} else if v, ok := attrsString["llm.model_name"]; ok {
-		hk.Model = v
-	}
-	if v, ok := attrsString["gen_ai.system"]; ok {
-		hk.Provider = v
-		hk.GenAISystem = v
-	} else if v, ok := attrsString["llm.provider"]; ok {
-		hk.Provider = v
-	}
+	hk.Model = firstString(attrsString, modelNameKeys)
+	hk.Provider = firstString(attrsString, providerKeys)
+	// gen_ai_system is its own CH column: keep the raw deprecated key verbatim.
+	hk.GenAISystem = attrsString["gen_ai.system"]
 	if v, ok := attrsString["gen_ai.operation.name"]; ok {
 		hk.GenAIOperation = v
 	}
-	if v, ok := attrsNumber["gen_ai.usage.input_tokens"]; ok {
+	if v, ok := firstNumber(attrsString, attrsNumber, inputTokenKeys); ok {
 		hk.PromptTokens = int32(v)
 	}
-	if v, ok := attrsNumber["gen_ai.usage.output_tokens"]; ok {
+	if v, ok := firstNumber(attrsString, attrsNumber, outputTokenKeys); ok {
 		hk.CompletionTokens = int32(v)
 	}
-	if v, ok := attrsNumber["gen_ai.usage.total_tokens"]; ok {
+	if v, ok := firstNumber(attrsString, attrsNumber, totalTokenKeys); ok {
 		hk.TotalTokens = int32(v)
 	} else if hk.PromptTokens+hk.CompletionTokens > 0 {
 		// Derive total when only the parts are present (some SDKs don't emit total).
 		hk.TotalTokens = hk.PromptTokens + hk.CompletionTokens
 	}
+	// User-provided cost — Django calculate_cost precedence (otel.py:1666):
+	// cost.total wins; else input+output when either side present. An explicit
+	// user 0 is respected (CostUserSet gates the token-pricing fallback later).
+	//
+	// Only when no Django cost key is present, a sender's billed cost
+	// (gen_ai.usage.*_cost, e.g. OpenRouter Broadcast) is read with the same
+	// rule: total, else input+output. It is user-provided too, so it also wins
+	// over token pricing, and an explicit 0 (a free model) stays 0.
+	//
+	// Three precise deviations from Django here, all a consequence of
+	// firstNumber returning ok=false on an unparseable string instead of
+	// Django's int()/float() coercion (which raised and was caught to 0):
+	//
+	//  1. Unparseable cost string on BOTH sides, or on the only side present
+	//     (e.g. cost.total alone is garbage): we fall through to token-based
+	//     pricing below. Django: cost=0, and CostUserSet-equivalent stays
+	//     true (still user-set, just zero) — i.e. Django never falls back to
+	//     token pricing here, we do.
+	//  2. One side unparseable, the other side parseable (e.g. cost.input is
+	//     garbage but cost.output parses): we keep the parseable side's value
+	//     as the user cost (in + out, with the bad side contributing 0).
+	//     Django: the whole sum resolves to 0 (its int()/float() coercion
+	//     wraps the combined expression, not each side independently).
+	//  3. TotalTokens: when no total-tokens alias is present, we synthesize
+	//     TotalTokens = PromptTokens + CompletionTokens (see below). Django
+	//     never derived this — Django-backfilled rows have TotalTokens 0/NULL
+	//     in cases where a live (fi-collector-written) row for the same
+	//     shape has the derived sum.
+	if v, ok := userCost(attrsString, attrsNumber, costTotalKeys, costInputKeys, costOutputKeys); ok {
+		hk.Cost, hk.CostUserSet = v, true
+	} else if v, ok := userCost(attrsString, attrsNumber, senderCostTotalKeys, senderCostInputKeys, senderCostOutputKeys); ok {
+		hk.Cost, hk.CostUserSet = v, true
+	}
 	return hk
+}
+
+// ProviderIs reports whether any provider alias (providerKeys, which include
+// gen_ai.system) names provider, ignoring case. Unlike HotKeys.Provider it
+// looks past the first non-empty alias.
+func ProviderIs(attrsString map[string]string, provider string) bool {
+	for _, k := range providerKeys {
+		if v := attrsString[k]; v != "" && strings.EqualFold(v, provider) {
+			return true
+		}
+	}
+	return false
+}
+
+// userCost applies the cost rule to one set of keys: the first total key
+// present wins; else input + output when either side is present.
+func userCost(
+	attrsString map[string]string,
+	attrsNumber map[string]float64,
+	totalKeys, inputKeys, outputKeys []string,
+) (float64, bool) {
+	if v, ok := firstNumber(attrsString, attrsNumber, totalKeys); ok {
+		return v, true
+	}
+	in, okIn := firstNumber(attrsString, attrsNumber, inputKeys)
+	out, okOut := firstNumber(attrsString, attrsNumber, outputKeys)
+	if okIn || okOut {
+		return in + out, true
+	}
+	return 0, false
+}
+
+// Attribute alias tables — mirror (priority order preserved; providerKeys
+// documents its one deliberate reordering) of the Django AttributeRegistry
+// (futureagi/tracer/utils/semantic_conventions.py, class AttributeAliases) that
+// the retired OTLP converter used. PRIORITY ORDER IS LOAD-BEARING: it must match
+// Django so live rows agree with backfilled rows. Do not reorder.
+var (
+	modelNameKeys = []string{
+		"llm.model_name",        // FI / OpenInference
+		"gen_ai.request.model",  // OTel GenAI (request)
+		"gen_ai.response.model", // OTel GenAI (response — resolved model names)
+		"llm.request.model",     // OpenLLMetry
+	}
+	// Django checked SpanAttributes.PROVIDER_NAME ("gen_ai.provider.name")
+	// explicitly BEFORE the registry aliases (otel.py:1556), so it leads here.
+	// "llm.provider" was never a Django alias but is kept last so rows written
+	// by older fi-collector builds keep resolving the same way.
+	providerKeys = []string{
+		"gen_ai.provider.name", // OTel GenAI — current canonical
+		"llm.system",           // FI
+		"gen_ai.system",        // OTel GenAI — deprecated
+		"llm.vendor",           // OpenLLMetry
+		"llm.provider",         // legacy fi-collector
+	}
+	// The token lists end with keys Django's AttributeRegistry doesn't have.
+	// They come last, so a span carrying a Django key resolves exactly as
+	// before.
+	inputTokenKeys = []string{
+		"llm.token_count.prompt",    // FI / OpenInference
+		"gen_ai.usage.input_tokens", // OTel GenAI
+		"llm.usage.prompt_tokens",   // OpenLLMetry
+		// Deprecated OTel GenAI name, renamed to gen_ai.usage.input_tokens.
+		// OpenRouter Broadcast's webhook example and older OpenLLMetry still
+		// send it; Django's otel_genai / openllmetry adapters read it.
+		"gen_ai.usage.prompt_tokens",
+	}
+	outputTokenKeys = []string{
+		"llm.token_count.completion",
+		"gen_ai.usage.output_tokens",
+		"llm.usage.completion_tokens",
+		"gen_ai.usage.completion_tokens", // deprecated OTel GenAI name, as above
+	}
+	totalTokenKeys = []string{
+		"llm.token_count.total",
+		"gen_ai.usage.total_tokens",
+		"llm.usage.total_tokens",
+	}
+	costTotalKeys  = []string{"gen_ai.cost.total", "llm.cost.total"}
+	costInputKeys  = []string{"gen_ai.cost.input", "llm.cost.prompt"}
+	costOutputKeys = []string{"gen_ai.cost.output", "llm.cost.completion"}
+	// The cost the sender charged, in USD (OpenRouter Broadcast). Not a Django
+	// alias; DeriveHotKeys reads these only when no key above is present.
+	// OpenRouter's total includes its fees, so it can exceed input + output,
+	// and the total-first rule keeps it.
+	senderCostTotalKeys  = []string{"gen_ai.usage.total_cost"}
+	senderCostInputKeys  = []string{"gen_ai.usage.input_cost"}
+	senderCostOutputKeys = []string{"gen_ai.usage.output_cost"}
+)
+
+// firstString returns the value of the first alias present in attrsString.
+func firstString(attrsString map[string]string, keys []string) string {
+	for _, k := range keys {
+		if v, ok := attrsString[k]; ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// firstNumber walks aliases in priority order. For each key it checks the
+// typed-number map first, then falls back to parsing a string-typed value —
+// Django's get_attribute read the raw attribute dict and int()/float()-coerced,
+// so numeric-as-string payloads must not be dropped here.
+func firstNumber(
+	attrsString map[string]string,
+	attrsNumber map[string]float64,
+	keys []string,
+) (float64, bool) {
+	for _, k := range keys {
+		if v, ok := attrsNumber[k]; ok {
+			return v, true
+		}
+		if s, ok := attrsString[k]; ok {
+			if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+				return v, true
+			}
+		}
+	}
+	return 0, false
 }

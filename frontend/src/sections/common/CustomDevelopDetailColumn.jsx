@@ -1,4 +1,4 @@
-import { Box, IconButton, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
@@ -8,7 +8,6 @@ export const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
     props;
   const refButton = useRef(null);
-  const theme = useTheme();
 
   useEffect(() => {
     eGridHeader.style.padding = "0px";
@@ -29,6 +28,8 @@ export const CustomDevelopDetailColumn = (props) => {
     color: "text.secondary",
   };
 
+  // Dataset column-type icons keep their original set (design-system exception,
+  // agreed 2026-10-30); every other icon in this header is Solar.
   const renderIcon = () => {
     if (col.originType === "run_prompt") {
       return (
@@ -124,15 +125,13 @@ export const CustomDevelopDetailColumn = (props) => {
     ) {
       return "var(--surface-highlight)";
     } else if (originType === "run_prompt") {
-      return "info.lighter";
+      return "status.info.bg";
     } else if (originType === "optimisation") {
-      return "primary.lighter";
+      return "status.discovery.bg";
     } else if (originType === "annotation_label") {
-      return "primary.lighter";
+      return "status.discovery.bg";
     }
-    return theme.palette.mode === "dark"
-      ? "background.neutral"
-      : "whiteScale.100";
+    return "background.neutral";
   };
 
   return (
@@ -149,13 +148,13 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={500} fontSize="14px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="13px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>

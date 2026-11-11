@@ -33,8 +33,10 @@ import axios, { endpoints } from "src/utils/axios";
 import { getVersionLabel } from "src/utils/utils";
 import { format } from "date-fns";
 import { useGetScenarioList } from "src/api/scenarios/scenarios";
+import CustomTooltip from "src/components/tooltip";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { usePromptVersions } from "../hooks/use-prompt-versions";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Generate auto name based on date/time
 const generateAutoName = () => {
@@ -55,6 +57,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
     scenarioIds: [],
     versionId: "",
   });
+  const [isStarting, setIsStarting] = useState(false);
 
   // Fetch available scenarios using existing hook
   const {
@@ -121,9 +124,19 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
     }
   }, [versions, formData.versionId]);
 
+  const selectableScenarios = useMemo(
+    () => scenarios.filter((s) => (s.dataset_rows || 0) > 0),
+    [scenarios],
+  );
+
   const handleScenarioToggle = (scenarioId) => {
     setFormData((prev) => {
-      const newScenarioIds = prev.scenarioIds.includes(scenarioId)
+      const isSelected = prev.scenarioIds.includes(scenarioId);
+      if (!isSelected) {
+        const scenario = scenarios.find((s) => s.id === scenarioId);
+        if (scenario && (scenario.dataset_rows || 0) === 0) return prev;
+      }
+      const newScenarioIds = isSelected
         ? prev.scenarioIds.filter((id) => id !== scenarioId)
         : [...prev.scenarioIds, scenarioId];
       return { ...prev, scenarioIds: newScenarioIds };
@@ -131,12 +144,12 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
   };
 
   const handleSelectAll = () => {
-    if (formData.scenarioIds.length === scenarios.length) {
+    if (formData.scenarioIds.length === selectableScenarios.length) {
       setFormData((prev) => ({ ...prev, scenarioIds: [] }));
     } else {
       setFormData((prev) => ({
         ...prev,
-        scenarioIds: scenarios.map((s) => s.id),
+        scenarioIds: selectableScenarios.map((s) => s.id),
       }));
     }
   };
@@ -166,15 +179,37 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
         },
       );
     },
-    onSuccess: (response) => {
-      enqueueSnackbar("Simulation created successfully", {
-        variant: "success",
-      });
+    onSuccess: async (response) => {
+      const simulationId = response?.data?.result?.id;
       // Invalidate the simulations list cache to trigger a refresh
       queryClient.invalidateQueries({
         queryKey: ["run-tests", "prompt", promptTemplateId],
       });
-      onSuccess?.(response?.data?.result?.id);
+      if (simulationId) {
+        setIsStarting(true);
+        try {
+          await axios.post(
+            endpoints.promptSimulation.execute(promptTemplateId, simulationId),
+            {},
+          );
+          enqueueSnackbar("Simulation created and execution started", {
+            variant: "success",
+          });
+        } catch (error) {
+          enqueueSnackbar(
+            error?.response?.data?.error ||
+              "Simulation created, but failed to start execution",
+            { variant: "warning" },
+          );
+        } finally {
+          setIsStarting(false);
+        }
+      } else {
+        enqueueSnackbar("Simulation created successfully", {
+          variant: "success",
+        });
+      }
+      onSuccess?.(simulationId);
     },
     onError: (error) => {
       enqueueSnackbar(
@@ -199,24 +234,28 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
       });
       return;
     }
-    createSimulation(formData);
+    const scenarioIds = formData.scenarioIds.filter((id) => {
+      const scenario = scenarios.find((s) => s.id === id);
+      return !scenario || (scenario.dataset_rows || 0) > 0;
+    });
+    createSimulation({ ...formData, scenarioIds });
   };
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={false}
       fullWidth
       PaperProps={{
-        sx: { borderRadius: 2 },
+        sx: { maxWidth: 720, borderRadius: 2 },
       }}
     >
       <DialogTitle>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6">Create Chat Simulation</Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="eva:close-fill" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -266,8 +305,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                           color: "primary.contrastText",
                           px: 0.75,
                           py: 0.25,
-                          borderRadius: 0.5,
-                          fontSize: "0.65rem",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
                         }}
                       >
                         Default
@@ -282,8 +321,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                           color: "warning.contrastText",
                           px: 0.75,
                           py: 0.25,
-                          borderRadius: 0.5,
-                          fontSize: "0.65rem",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
                         }}
                       >
                         Draft
@@ -332,8 +371,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                     disabled={isFetchingScenarios}
                   >
                     <Iconify
-                      icon="mdi:refresh"
-                      width={18}
+                      icon="solar:refresh-linear"
+                      width={20}
                       sx={{
                         animation: isFetchingScenarios
                           ? "spin 1s linear infinite"
@@ -346,9 +385,9 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                     />
                   </IconButton>
                 </Tooltip>
-                {scenarios.length > 0 && (
+                {selectableScenarios.length > 0 && (
                   <Button size="small" onClick={handleSelectAll}>
-                    {formData.scenarioIds.length === scenarios.length
+                    {formData.scenarioIds.length === selectableScenarios.length
                       ? "Deselect All"
                       : "Select All"}
                   </Button>
@@ -358,7 +397,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
 
             {isLoadingScenarios ? (
               <Box display="flex" justifyContent="center" py={3}>
-                <CircularProgress size={24} />
+                <ContentSkeleton variant="panel" />
               </Box>
             ) : (
               <List
@@ -380,8 +419,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                   >
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       <Iconify
-                        icon="mdi:plus-circle-outline"
-                        width={20}
+                        icon="solar:add-circle-linear"
+                        width={16}
                         sx={{ color: theme.palette.primary.main }}
                       />
                     </ListItemIcon>
@@ -394,7 +433,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                       }}
                     />
                     <Iconify
-                      icon="mdi:open-in-new"
+                      icon="solar:arrow-right-up-linear"
                       width={16}
                       sx={{ color: theme.palette.text.secondary }}
                     />
@@ -418,32 +457,51 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                     />
                   </ListItem>
                 ) : (
-                  scenarios.map((scenario) => (
-                    <ListItem key={scenario.id} disablePadding>
-                      <ListItemButton
-                        onClick={() => handleScenarioToggle(scenario.id)}
-                        dense
+                  scenarios.map((scenario) => {
+                    const isEmpty = (scenario.dataset_rows || 0) === 0;
+                    return (
+                      <CustomTooltip
+                        key={scenario.id}
+                        show={isEmpty}
+                        title="This scenario has no datapoints to run against."
+                        placement="left"
+                        arrow
+                        size="small"
                       >
-                        <ListItemIcon sx={{ minWidth: 36 }}>
-                          <Checkbox
-                            edge="start"
-                            checked={formData.scenarioIds.includes(scenario.id)}
-                            tabIndex={-1}
-                            disableRipple
-                            size="small"
-                          />
-                        </ListItemIcon>
-                        <ListItemText
-                          primary={scenario.name}
-                          secondary={
-                            scenario.description || scenario.scenarioType
-                          }
-                          primaryTypographyProps={{ variant: "body2" }}
-                          secondaryTypographyProps={{ variant: "caption" }}
-                        />
-                      </ListItemButton>
-                    </ListItem>
-                  ))
+                        <ListItem disablePadding>
+                          <ListItemButton
+                            onClick={() => handleScenarioToggle(scenario.id)}
+                            disabled={isEmpty}
+                            dense
+                          >
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              <Checkbox
+                                edge="start"
+                                checked={formData.scenarioIds.includes(
+                                  scenario.id,
+                                )}
+                                disabled={isEmpty}
+                                tabIndex={-1}
+                                disableRipple
+                                size="small"
+                              />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={scenario.name}
+                              secondary={
+                                isEmpty
+                                  ? "No datapoints"
+                                  : scenario.description ||
+                                    scenario.scenarioType
+                              }
+                              primaryTypographyProps={{ variant: "body2" }}
+                              secondaryTypographyProps={{ variant: "caption" }}
+                            />
+                          </ListItemButton>
+                        </ListItem>
+                      </CustomTooltip>
+                    );
+                  })
                 )}
               </List>
             )}
@@ -469,12 +527,15 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
           onClick={handleSubmit}
           disabled={
             isCreating ||
+            isStarting ||
             !formData.name.trim() ||
             !formData.versionId ||
             formData.scenarioIds.length === 0
           }
           startIcon={
-            isCreating && <CircularProgress size={16} color="inherit" />
+            (isCreating || isStarting) && (
+              <CircularProgress size={16} color="inherit" />
+            )
           }
           sx={{
             backgroundColor: "primary.main",
@@ -483,7 +544,11 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
             },
           }}
         >
-          {isCreating ? "Creating..." : "Create Simulation"}
+          {isCreating
+            ? "Creating..."
+            : isStarting
+              ? "Starting..."
+              : "Create Simulation"}
         </Button>
       </DialogActions>
     </Dialog>

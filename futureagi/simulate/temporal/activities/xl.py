@@ -33,6 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -40,7 +41,11 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
+from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.test_execution_utils import eval_source
+from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
+from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
 
@@ -194,6 +199,15 @@ async def run_simulate_evaluations(
 # ============================================================================
 
 
+def hosted_assistant_recording(call_execution):
+    metadata = call_execution.call_metadata or {}
+    artifacts = metadata.get("hosted_harness_artifacts") or {}
+    recording = artifacts.get("recording_assistant")
+    if not isinstance(recording, dict):
+        return ""
+    return server_reachable_url(recording.get("url") or "")
+
+
 def _build_transcript_data(call_execution):
     """
     Build transcript data dict from DB records.
@@ -277,10 +291,11 @@ def _build_transcript_data(call_execution):
                 provider = SpeakerRoleResolver.detect_provider(
                     call_execution.provider_call_data
                 )
-                call_dir = (call_execution.call_metadata or {}).get(
-                    "call_direction", ""
-                )
-                is_outbound = str(call_dir).strip().lower() == "outbound"
+                # Use the resolver's own direction detection, which defaults to
+                # outbound on missing metadata. The prior inline check defaulted
+                # to inbound, which — combined with a provider that fell back to
+                # VAPI — swapped the agent/customer labels on the eval transcript.
+                is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
                 conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
                     if not transcript.content.strip():
@@ -311,13 +326,14 @@ def _build_transcript_data(call_execution):
         # Read assistant/customer recordings from provider_call_data
         if call_execution.provider_call_data:
             for (
-                provider_key,
+                _provider_key,
                 provider_data,
             ) in call_execution.provider_call_data.items():
                 if not isinstance(provider_data, dict):
                     continue
 
-                # Pre-stored S3 recording URLs
+                # Only consume normalized URLs. Raw artifact URLs may point to
+                # provider storage and must not leak into eval inputs.
                 recording = provider_data.get("recording", {})
                 if isinstance(recording, dict):
                     if (
@@ -340,6 +356,11 @@ def _build_transcript_data(call_execution):
                         and not transcript_data["voice_recording"]
                     ):
                         transcript_data["voice_recording"] = recording["combined"]
+
+        if not transcript_data["assistant_recording"]:
+            transcript_data["assistant_recording"] = hosted_assistant_recording(
+                call_execution
+            )
 
     except Exception as e:
         logger.error(f"Error building transcript data: {str(e)}")
@@ -375,10 +396,10 @@ CONTEXT_MAP_DOT_ALIASES = {
     "prompt_template": "prompt.name",
     "prompt_template_name": "prompt.name",
     "prompt_template_description": "prompt.description",
-    "scenario_info_name": "scenario.name",
-    "scenario_info_description": "scenario.description",
-    "scenario_info_type": "scenario.type",
-    "scenario_info_source": "scenario.source",
+    "scenario_info_name": "scenario.info.name",
+    "scenario_info_description": "scenario.info.description",
+    "scenario_info_type": "scenario.info.type",
+    "scenario_info_source": "scenario.info.source",
     "call_summary": "call.summary",
     "ended_reason": "call.ended_reason",
     "duration_seconds": "call.duration_seconds",
@@ -422,12 +443,34 @@ def stringify_leaf(v):
     return "" if v is None else str(v)
 
 
+# Blocked at both attribute and dict-key layers to keep secret-shaped values out of eval prompts.
+_BLOCKED_ATTRS = frozenset(
+    {
+        "api_key",
+        "api_secret",
+        "secret",
+        "secret_key",
+        "password",
+        "token",
+        "access_token",
+        "refresh_token",
+        "access_key",
+        "private_key",
+        "credentials",
+        "credentials_legacy",
+    }
+)
+
+
 def _step_segment(current, part):
     """One hop through `current`: dict key / list index / attribute, with snake<->camel coercion."""
     if current is None:
         return _STEP_MISS
+    candidates = (part, to_snake_case(part), to_camel_case(part))
+    if any(c in _BLOCKED_ATTRS for c in candidates):
+        return _STEP_MISS
     if isinstance(current, dict):
-        for candidate in (part, to_snake_case(part), to_camel_case(part)):
+        for candidate in candidates:
             if candidate in current:
                 return current[candidate]
         return _STEP_MISS
@@ -439,7 +482,7 @@ def _step_segment(current, part):
     # Reject dunder / private attrs and callables to block escapes to module globals.
     if part.startswith("_"):
         return _STEP_MISS
-    for candidate in (part, to_snake_case(part), to_camel_case(part)):
+    for candidate in candidates:
         if hasattr(current, candidate):
             value = getattr(current, candidate)
             if callable(value):
@@ -453,7 +496,7 @@ _MAX_PATH_SEGMENTS = 32  # cap traversal depth to bound FK descriptor chains
 
 def walk_subject_path(subjects, path):
     """Resolve a dotted path against any registered subject root at any depth."""
-    if not isinstance(path, str) or "." not in path:
+    if not isinstance(path, str) or not path:
         return PATH_MISSING
     if path.count(".") + 1 > _MAX_PATH_SEGMENTS:
         return PATH_MISSING
@@ -494,6 +537,41 @@ TRANSCRIPT_DOT_ALIASES = {
     "call.agent_prompt": "agent_prompt",
 }
 
+# Recording variable sources (bare transcript_data keys + their dot-form
+# aliases). An eval variable bound to one of these that resolves empty gets an
+# actionable error instead of the eval engine's opaque "No input received".
+_RECORDING_KEYS = frozenset(
+    {"voice_recording", "stereo_recording", "assistant_recording", "customer_recording"}
+)
+_RECORDING_SOURCES = _RECORDING_KEYS | frozenset(
+    dot for dot, legacy in TRANSCRIPT_DOT_ALIASES.items() if legacy in _RECORDING_KEYS
+)
+
+
+def assert_recording_slot_available(
+    mapping_key, source_value, resolved_value, transcript_data
+):
+    """Raise an actionable error when an eval variable is mapped to a recording
+    the call has no audio for. Combined-only providers (e.g. Bland) produce no
+    stereo or per-channel track, so a stereo/assistant/customer mapping resolves
+    empty; without this the eval engine only reports an opaque "No input
+    received for '<var>'". Whole-conversation evals should map to
+    call.voice_recording (the combined recording).
+    """
+    if source_value not in _RECORDING_SOURCES or resolved_value:
+        return
+    available = sorted(k for k in _RECORDING_KEYS if transcript_data.get(k))
+    hint = (
+        f"Available recordings: {', '.join(available)}."
+        if available
+        else "This call has no recordings."
+    )
+    raise ValueError(
+        f"'{mapping_key}' is mapped to '{source_value}', but this call has no such "
+        f"recording — combined-only providers produce no stereo or per-channel "
+        f"audio. {hint} Choose a recording that meets this eval's input requirements."
+    )
+
 
 def build_simulation_context_map(call_execution, agent_version):
     """
@@ -532,13 +610,28 @@ def build_simulation_context_map(call_execution, agent_version):
     # match the explicit flattening block in the frontend, not the raw
     # serializer field names.
     conv_metrics = call_execution.conversation_metrics_data or {}
-    rtm = call_execution.response_time_ms
+    # Cross-modality fallbacks: voice fields live on model, chat in conv_metrics.
+    _cm_lat = conv_metrics.get("avg_latency_ms")
+    _cm_atp = conv_metrics.get("agent_talk_percentage")
+    _cm_csat = conv_metrics.get("csat_score")
+    _tr = call_execution.talk_ratio
+    _rtm = call_execution.response_time_ms
+    _aal = call_execution.avg_agent_latency_ms
+    rtm = _rtm if _rtm is not None else _cm_lat
+    agent_latency_ms = _aal if _aal is not None else _cm_lat
+    avg_latency_ms = _cm_lat if _cm_lat is not None else agent_latency_ms
+    talk_ratio = (
+        _tr if _tr is not None else (_cm_atp / 100.0 if _cm_atp is not None else None)
+    )
+    agent_talk_percentage = (
+        _cm_atp if _cm_atp is not None else (_tr * 100.0 if _tr is not None else None)
+    )
+    csat_score = _cm_csat if _cm_csat is not None else call_execution.overall_score
     response_time_seconds = rtm / 1000.0 if rtm is not None else None
-    # Reuse the drawer's provider resolution so the eval column and the
-    # UI chip agree in every payload shape.
     from simulate.serializers.test_execution import CallExecutionDetailSerializer
 
-    provider_name = CallExecutionDetailSerializer().get_provider(call_execution)
+    _detail_serializer = CallExecutionDetailSerializer()
+    provider_name = _detail_serializer.get_provider(call_execution)
 
     ctx = {
         "simulation_name": _s(run_test.name),
@@ -546,17 +639,23 @@ def build_simulation_context_map(call_execution, agent_version):
         "call_summary": _s(call_execution.call_summary),
         "ended_reason": _s(call_execution.ended_reason),
         "duration_seconds": _s(call_execution.duration_seconds),
+        "duration": _s(_detail_serializer.get_duration(call_execution)),
+        "call_type": _s(_detail_serializer.get_call_type(call_execution)),
+        # Addressed for a server-side fetch; an unreachable URL is sniffed as text.
+        "audio_url": _s(server_reachable_url(call_execution.recording_url or "")),
         "status": _s(call_execution.status),
         "simulation_call_type": _s(call_execution.simulation_call_type),
         "phone_number": _s(call_execution.phone_number),
         "overall_score": _s(call_execution.overall_score),
-        "recording_url": _s(call_execution.recording_url),
-        "stereo_recording_url": _s(call_execution.stereo_recording_url),
+        "recording_url": _s(server_reachable_url(call_execution.recording_url or "")),
+        "stereo_recording_url": _s(
+            server_reachable_url(call_execution.stereo_recording_url or "")
+        ),
         "response_time": _s(response_time_seconds),
-        "response_time_ms": _s(call_execution.response_time_ms),
-        "avg_agent_latency": _s(call_execution.avg_agent_latency_ms),
-        "avg_agent_latency_ms": _s(call_execution.avg_agent_latency_ms),
-        "avg_latency_ms": _s(conv_metrics.get("avg_latency_ms")),
+        "response_time_ms": _s(rtm),
+        "avg_agent_latency": _s(agent_latency_ms),
+        "avg_agent_latency_ms": _s(agent_latency_ms),
+        "avg_latency_ms": _s(avg_latency_ms),
         "avg_stop_time_after_interruption": _s(
             call_execution.avg_stop_time_after_interruption_ms
         ),
@@ -567,15 +666,15 @@ def build_simulation_context_map(call_execution, agent_version):
         "user_interruption_rate": _s(call_execution.user_interruption_rate),
         "user_wpm": _s(call_execution.user_wpm),
         "bot_wpm": _s(call_execution.bot_wpm),
-        "talk_ratio": _s(call_execution.talk_ratio),
+        "talk_ratio": _s(talk_ratio),
         "ai_interruption_count": _s(call_execution.ai_interruption_count),
         "ai_interruption_rate": _s(call_execution.ai_interruption_rate),
         "total_tokens": _s(conv_metrics.get("total_tokens")),
         "input_tokens": _s(conv_metrics.get("input_tokens")),
         "output_tokens": _s(conv_metrics.get("output_tokens")),
         "turn_count": _s(conv_metrics.get("turn_count")),
-        "agent_talk_percentage": _s(conv_metrics.get("agent_talk_percentage")),
-        "csat_score": _s(conv_metrics.get("csat_score")),
+        "agent_talk_percentage": _s(agent_talk_percentage),
+        "csat_score": _s(csat_score),
         "cost_cents": _s(call_execution.cost_cents),
         "customer_cost_cents": _s(call_execution.customer_cost_cents),
         "provider": _s(provider_name),
@@ -633,12 +732,28 @@ def build_simulation_context_map(call_execution, agent_version):
         ctx["scenario_info_type"] = _s(scenario.scenario_type)
         ctx["scenario_info_source"] = _s(scenario.source)
 
-    # Expose every entry under its dot-hierarchy alias too. This lets the
-    # new frontend dropdowns persist `agent.name` style mapping values
-    # while pre-migration configs with `agent_name` keep resolving.
+    ctx["simulator_agent_name"] = _s(simulator_agent.name) if simulator_agent else ""
+    ctx["agent_definition_used_name"] = _s(agent_def.agent_name) if agent_def else ""
+    ctx["scenario"] = _s(scenario.name) if scenario else ""
+
     for underscore_key, dot_key in CONTEXT_MAP_DOT_ALIASES.items():
         if underscore_key in ctx:
             ctx[dot_key] = ctx[underscore_key]
+
+    try:
+        scenario_columns_subject = (
+            _detail_serializer.get_scenario_columns(call_execution) or {}
+        )
+        scenario_graph_subject = (
+            _detail_serializer.get_scenario_graph(call_execution) or {}
+        )
+    except Exception:
+        logger.warning(
+            "eval_ctx.subject_build_failed",
+            call_execution_id=str(call_execution.id),
+            exc_info=True,
+        )
+        scenario_columns_subject = scenario_graph_subject = {}
 
     # Walker dispatch roots; order is load-bearing (`call` first for bare heads).
     subjects = {
@@ -648,6 +763,8 @@ def build_simulation_context_map(call_execution, agent_version):
         "persona": simulator_agent,
         "prompt": prompt_template,
         "scenario": scenario,
+        "scenario_columns": scenario_columns_subject,
+        "scenario_graph": scenario_graph_subject,
         "simulation": run_test,
     }
     return ctx, subjects
@@ -672,7 +789,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         eval_template = eval_config.eval_template
 
         # Prepare mapping with transcript and recording data
-        mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+        mapping = effective_simulation_mapping(eval_template, eval_config.mapping or {})
 
         # Get scenario column order
         scenario_ids = call_execution.test_execution.scenario_ids
@@ -854,6 +971,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     "timestamp": timezone.now().isoformat(),
                     "output": None,
                     "output_type": derive_kpi_output_type(eval_template),
+                    "status": StatusType.FAILED.value,
                 }
                 call_execution.eval_outputs[str(eval_config.id)] = error_result
                 call_execution.save(update_fields=["eval_outputs"])
@@ -861,6 +979,14 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 eval_config.status = StatusType.FAILED.value
                 eval_config.save()
                 raise ValueError(error_message)
+
+        # A recording variable that resolved empty (e.g. stereo on a
+        # combined-only provider) fails here with an actionable message instead
+        # of an opaque "No input received" from the eval engine downstream.
+        for map_key, map_value in mapping.items():
+            assert_recording_slot_available(
+                map_key, map_value, updated_mapping.get(map_key), transcript_data
+            )
 
         # Prepare config and run evaluation
         config = eval_config.config.copy() if eval_config.config else {}
@@ -886,15 +1012,21 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 "call_type": call_execution.call_type,
                 "simulation_call_type": call_execution.simulation_call_type,
                 "phone_number": call_execution.phone_number,
-                "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                "started_at": str(call_execution.started_at)
+                if call_execution.started_at
+                else None,
+                "ended_at": str(call_execution.ended_at)
+                if call_execution.ended_at
+                else None,
                 "duration_seconds": call_execution.duration_seconds,
                 "recording_url": call_execution.recording_url,
                 "call_summary": call_execution.call_summary,
                 "ended_reason": call_execution.ended_reason,
                 "error_message": call_execution.error_message,
                 "message_count": call_execution.message_count,
-                "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                "overall_score": float(call_execution.overall_score)
+                if call_execution.overall_score is not None
+                else None,
             }
 
         eval_result = run_eval_func(
@@ -906,7 +1038,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             kb_id=eval_config.kb_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
+            source=eval_source(call_execution.test_execution_id),
             call_context=_call_context,
         )
 
@@ -971,6 +1103,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             "timestamp": timezone.now().isoformat(),
             "output": None,
             "output_type": derive_kpi_output_type(eval_config.eval_template),
+            "status": StatusType.FAILED.value,
         }
         call_execution.eval_outputs[str(eval_config.id)] = error_result
         call_execution.save(update_fields=["eval_outputs"])
@@ -1090,6 +1223,9 @@ def _run_evaluations_standalone(
     Runs all configured SimulateEvalConfig evaluations for a call execution.
     Does NOT run tool evaluation (handled by separate activity).
     Does NOT update test_execution status (workflow/rerun handles that).
+    With ``skip_existing`` on, a config that already holds a sealed verdict
+    is neither re-graded nor rewritten, mirroring
+    ``TestExecutor._run_simulate_evaluations``'s guard.
     """
     from simulate.models import SimulateEvalConfig, TestExecution
 
@@ -1136,12 +1272,26 @@ def _run_evaluations_standalone(
             if not call_execution.eval_outputs:
                 call_execution.eval_outputs = {}
             for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {
-                    "output": None,
-                    "reason": "No transcript data available",
-                    "output_type": derive_kpi_output_type(eval_config.eval_template),
-                    "name": eval_config.name,
-                }
+                # A stored verdict is sealed: with skip-existing on, write
+                # the "no transcript" payload only for a config whose row is
+                # still empty.
+                if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                    logger.info(
+                        f"Keeping the stored verdict for {eval_config.id} on call "
+                        f"{call_execution.id} - no-transcript payload not written"
+                    )
+                    continue
+                # The skipped payload's output_type is None; restore the
+                # derived KPI output_type so get_kpi_eval_metrics_query's
+                # `output_type IN (...)` filter still sees this row.
+                skipped_payload = build_skipped_eval_output_payload(
+                    eval_name=eval_config.name,
+                    reason="No transcript data available",
+                )
+                skipped_payload["output_type"] = derive_kpi_output_type(
+                    eval_config.eval_template
+                )
+                call_execution.eval_outputs[str(eval_config.id)] = skipped_payload
             if not call_execution.call_metadata:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_completed"] = True
@@ -1151,6 +1301,15 @@ def _run_evaluations_standalone(
         # Run each evaluation
         for eval_config in eval_configs:
             try:
+                # A stored verdict is sealed: with skip-existing on, this
+                # eval is not re-graded and nothing is written for it.
+                if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                    logger.info(
+                        f"Skipping evaluation {eval_config.id} for call "
+                        f"{call_execution.id} - already exists"
+                    )
+                    continue
+
                 if (
                     call_execution.eval_outputs
                     and str(eval_config.id) in call_execution.eval_outputs
@@ -1379,7 +1538,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.tool_eval_agent.tool_eval_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.tool_eval_agent.tool_eval_agent",
+                exc_info=True,
+            )
         return
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
@@ -1387,6 +1549,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
+
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1430,7 +1593,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             try:
@@ -1447,7 +1613,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             customer_api_key = resolve_api_key_for_version(agent_version)
@@ -1474,6 +1643,18 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
             logger.info(f"Using customer_call_id: {customer_call_id}")
 
             customer_provider = snapshot.get("provider", ProviderChoices.VAPI)
+            from simulate.semantics import ToolCallingSupportedProviders
+
+            provider_value = getattr(customer_provider, "value", customer_provider)
+            if provider_value not in [p.value for p in ToolCallingSupportedProviders]:
+                # Only some providers have a tool-call adapter; gate here so an
+                # unsupported provider (e.g. Bland) skips cleanly instead of
+                # raising into the broad except and silently no-op'ing.
+                logger.info(
+                    f"Tool evaluation not supported for provider "
+                    f"'{provider_value}' (call {call_execution.id}), skipping"
+                )
+                return
             adapter = get_tool_call_adapter(customer_provider)
             messages = adapter.get_tool_call_transcript(
                 call_execution=call_execution,
@@ -1628,7 +1809,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     organization=organization,
                     api_call_type=api_call_type,
                     config=source_config,
-                    source="simulate_tool_evaluation",
+                    source=eval_source(test_execution.id, "simulate_tool_evaluation"),
                     source_id=str(test_execution.id),
                     workspace=workspace,
                 )
@@ -1698,6 +1879,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
+
                         def llm_usage_properties(obj):
                             return {}
 

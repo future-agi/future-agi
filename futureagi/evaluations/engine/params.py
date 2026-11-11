@@ -48,8 +48,7 @@ def prepare_run_params(
 
     eval_type_id = eval_template.config.get("eval_type_id", "")
 
-    # FutureAGI evals: inject few-shots, criteria, eval_name, required_keys
-    if is_futureagi:
+    if is_futureagi or eval_type_id in ("CustomPromptEvaluator", "AgentEvaluator"):
         # Few-shot retrieval via RAG
         few_shots = _get_few_shot_examples(
             eval_template=eval_template,
@@ -59,6 +58,7 @@ def prepare_run_params(
         )
         run_params["few_shots"] = few_shots
 
+    if is_futureagi:
         # Criteria
         if "criteria" not in run_params:
             run_params["criteria"] = criteria if criteria else eval_template.criteria
@@ -118,7 +118,8 @@ def _get_few_shot_examples(
                 inputs=input_values,
                 input_cols=input_keys,
                 organization_id=organization_id,
-                workspace_id=workspace_id,
+                # Feedback retrieval is org-scoped; writes still tag workspace_id.
+                workspace_id=None,
             )
             # print(f"[FEEDBACK RETRIEVAL] RAG returned {len(examples)} examples for eval_template={eval_template.id}", flush=True)
 
@@ -139,7 +140,10 @@ def _get_few_shot_examples(
         finally:
             embedding_manager.close()
 
-    except Exception as e:
-        # print(f"[FEEDBACK RETRIEVAL] Failed for eval_template={eval_template.id}: {e}", flush=True)
-        logger.info(f"few_shot_retrieval_failed: {e}")
+    except Exception:
+        logger.warning(
+            "few_shot_retrieval_failed",
+            eval_template_id=str(getattr(eval_template, "id", "")),
+            exc_info=True,
+        )
         return []

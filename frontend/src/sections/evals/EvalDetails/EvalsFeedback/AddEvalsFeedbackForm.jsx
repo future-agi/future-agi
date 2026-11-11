@@ -29,6 +29,7 @@ const AddEvalsFeedbackForm = ({
   outputType,
   feedbackError,
   choices,
+  multiChoice = false,
   retuneOptions,
   handleSubmitForm,
   handleSubmit,
@@ -149,32 +150,50 @@ const AddEvalsFeedbackForm = ({
                     p: 2,
                   }}
                 >
-                  {choices?.map((choice, index) => (
-                    <div key={`${choice}-${index}`}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={field.value?.includes(choice) || false}
-                            onChange={(e) => {
-                              const currentValues = field.value || [];
-                              if (e.target.checked) {
-                                // Add choice to array
-                                field.onChange([...currentValues, choice]);
-                              } else {
-                                // Remove choice from array
-                                field.onChange(
-                                  currentValues.filter(
-                                    (item) => item !== choice,
-                                  ),
-                                );
-                              }
-                            }}
-                          />
-                        }
-                        label={choice}
-                      />
-                    </div>
-                  ))}
+                  {multiChoice ? (
+                    choices?.map((choice, index) => (
+                      <div key={`${choice}-${index}`}>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={field.value?.includes(choice) || false}
+                              onChange={(e) => {
+                                const currentValues = field.value || [];
+                                if (e.target.checked) {
+                                  field.onChange([...currentValues, choice]);
+                                } else {
+                                  field.onChange(
+                                    currentValues.filter(
+                                      (item) => item !== choice,
+                                    ),
+                                  );
+                                }
+                              }}
+                            />
+                          }
+                          label={choice}
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <RadioGroup
+                      value={
+                        Array.isArray(field.value)
+                          ? field.value[0] || ""
+                          : field.value || ""
+                      }
+                      onChange={(e) => field.onChange(e.target.value)}
+                    >
+                      {choices?.map((choice, index) => (
+                        <FormControlLabel
+                          key={`${choice}-${index}`}
+                          value={choice}
+                          control={<Radio />}
+                          label={choice}
+                        />
+                      ))}
+                    </RadioGroup>
+                  )}
                 </Box>
               </FormControl>
             )}
@@ -214,9 +233,9 @@ const AddEvalsFeedbackForm = ({
             to improve it automatically
           </Typography>
         </Box>
-        <IconButton onClick={handleClose} size="small" sx={{ height: "32px" }}>
+        <IconButton onClick={handleClose} size="small">
           {/* @ts-ignore */}
-          <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+          <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
         </IconButton>
       </Box>
       <Box
@@ -237,7 +256,7 @@ const AddEvalsFeedbackForm = ({
             overflowWrap: "break-word",
           }}
         >
-          <Typography fontWeight={500} fontSize={14} color="text.primary">
+          <Typography fontWeight={500} fontSize={13} color="text.primary">
             Explanation
           </Typography>
           <Box
@@ -249,7 +268,7 @@ const AddEvalsFeedbackForm = ({
               overflowY: "auto",
             }}
           >
-            <Typography fontWeight={400} fontSize={14} color="text.primary">
+            <Typography fontWeight={400} fontSize={13} color="text.primary">
               {typeof explanation === "string" ? (
                 explanation?.trim() ? (
                   <CellMarkdown spacing={0} text={explanation} />
@@ -288,8 +307,7 @@ const AddEvalsFeedbackForm = ({
             color="text.primary"
             mb={1}
           >
-            Write the right explanation{" "}
-            <span style={{ color: "red" }}>*</span>
+            Write the right explanation <span style={{ color: "red" }}>*</span>
           </Typography>
           <FormTextFieldV2
             // @ts-ignore
@@ -381,6 +399,7 @@ AddEvalsFeedbackForm.propTypes = {
   explanation: PropTypes.any,
   outputType: PropTypes.string,
   choices: PropTypes.array,
+  multiChoice: PropTypes.bool,
   feedbackError: PropTypes.bool,
   handleSubmitForm: PropTypes.func,
   handleSubmit: PropTypes.func,

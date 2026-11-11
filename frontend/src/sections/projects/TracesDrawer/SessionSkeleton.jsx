@@ -10,7 +10,7 @@ const SessionSkeleton = () => {
         marginTop: 2,
         marginBottom: "35px",
         border: "1px solid",
-        borderRadius: "10px",
+        borderRadius: "8px",
         borderColor: "text.disabled",
       }}
     >
@@ -23,8 +23,8 @@ const SessionSkeleton = () => {
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
-          borderTopLeftRadius: "10px",
-          borderBottomLeftRadius: "10px",
+          borderTopLeftRadius: "8px",
+          borderBottomLeftRadius: "8px",
           position: "relative",
           backgroundColor: "action.hover",
           paddingY: 4,
@@ -39,13 +39,10 @@ const SessionSkeleton = () => {
             top: -15,
             left: 15,
             zIndex: 10,
-            height: "25px",
-            paddingX: "2px",
             backgroundColor: "text.primary",
             color: "common.white",
             borderColor: "text.primary",
             borderWidth: 1,
-            borderRadius: 2,
             "&:hover": {
               backgroundColor: "text.primary",
             },

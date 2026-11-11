@@ -11,16 +11,11 @@ import {
   Checkbox,
   Radio,
   RadioGroup,
+  ButtonBase,
   useTheme,
 } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  FaceBadge,
-  FaceInfo,
-  FaceItem,
-  FaceRow,
-  FaceWrapper,
-} from "./huggingFaceStyle";
+import { FaceInfo, FaceItem, FaceRow, FaceWrapper } from "./huggingFaceStyle";
 import Divider from "@mui/material/Divider";
 import Iconify from "src/components/iconify";
 import { useLocation } from "react-router-dom";
@@ -31,6 +26,7 @@ import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import { useDebounce } from "src/hooks/use-debounce";
+import { seriesColor, seriesColors } from "src/theme/data-colors";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   HuggingFaceDatasetValidationSchema1,
@@ -83,7 +79,6 @@ const HuggingFaceView = () => {
   const [tempRowCount, setTempRowCount] = useState([0, 1000000000]);
   const [mainFilter, setMainFilter] = useState("Main");
   const [selectedTask, setSelectedTask] = useState(null);
-  const [, setTotalDatasets] = useState(0);
 
   // Add pagination state
   const [page, setPage] = useState(1); // Initialize page state here
@@ -99,16 +94,7 @@ const HuggingFaceView = () => {
   });
   const navigate = useNavigate();
   const datasetId = location?.state?.datasetId;
-  const colors = [
-    "primary.main",
-    "#2F7CF7",
-    "#B8AC47",
-    "#DB2F2D",
-    "#47B8AC",
-    "#F77C2F",
-    "#57FC78",
-    "#AC47B8",
-  ];
+  const colors = seriesColors(theme);
 
   // Filter options
   const modalityOptions = [
@@ -187,7 +173,7 @@ const HuggingFaceView = () => {
   };
 
   const getColor = (val) => {
-    if (!val) return "#DB2F2D";
+    if (!val) return seriesColor(theme, 0);
     const index = hashStringToIndex(val);
     return colors[index];
   };
@@ -267,12 +253,6 @@ const HuggingFaceView = () => {
         },
       );
     },
-    select: (data) => {
-      if (huggingFaceList?.data?.result?.totalDatasets !== undefined) {
-        setTotalDatasets(huggingFaceList?.data?.result?.totalDatasets);
-      }
-      return data;
-    },
   });
 
   // Modify the filtered datasets to include pagination
@@ -283,11 +263,11 @@ const HuggingFaceView = () => {
   const MAX_PAGES = 100; // Define maximum number of pages
 
   const totalPages = useMemo(() => {
-    const total = huggingFaceList?.data?.result?.totalDatasets || 0;
+    const total = huggingFaceList?.data?.result?.total_datasets || 0;
     const calculatedPages = Math.ceil(total / itemsPerPage);
     // Limit to maximum 100 pages
     return Math.min(MAX_PAGES, Math.max(1, calculatedPages));
-  }, [huggingFaceList?.data?.result?.totalDatasets, itemsPerPage]);
+  }, [huggingFaceList?.data?.result?.total_datasets, itemsPerPage]);
 
   const {
     mutate: createHuggingFaceDataset,
@@ -302,8 +282,9 @@ const HuggingFaceView = () => {
         variant: "success",
       });
       setShow(false);
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}`);
+      navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}`);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create dataset", {
@@ -489,14 +470,14 @@ const HuggingFaceView = () => {
             sx={{
               flex: 1,
               marginBottom: (theme) => theme.spacing(2.5),
-              borderRadius: "1px",
+              borderRadius: "4px",
               color: "text.primary",
             }}
           />
 
           {/* Computer Vision */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -520,10 +501,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -531,7 +509,7 @@ const HuggingFaceView = () => {
 
           {/* Natural Language Processing */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -556,10 +534,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -567,7 +542,7 @@ const HuggingFaceView = () => {
 
           {/* Audio */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -592,10 +567,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -603,7 +575,7 @@ const HuggingFaceView = () => {
 
           {/* Tabular */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -628,10 +600,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -639,7 +608,7 @@ const HuggingFaceView = () => {
 
           {/* Reinforcement Learning */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -664,10 +633,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -675,7 +641,7 @@ const HuggingFaceView = () => {
 
           {/* Others */}
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -700,10 +666,7 @@ const HuggingFaceView = () => {
                 sx={{
                   pl: 1,
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -714,7 +677,7 @@ const HuggingFaceView = () => {
       return (
         <>
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -735,10 +698,7 @@ const HuggingFaceView = () => {
                 label={modality}
                 sx={{
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -747,7 +707,7 @@ const HuggingFaceView = () => {
 
           <Box sx={{}}>
             <Typography
-              fontSize="14px"
+              fontSize="13px"
               fontWeight="500"
               color="text.primary"
               mb={1}
@@ -772,7 +732,7 @@ const HuggingFaceView = () => {
           </Box>
 
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="500"
             color="text.primary"
             mb={2}
@@ -792,10 +752,7 @@ const HuggingFaceView = () => {
                 label={format}
                 sx={{
                   "& .MuiFormControlLabel-label": {
-                    color:
-                      theme.palette.mode === "light"
-                        ? "text.primary"
-                        : "common.white",
+                    color: "text.primary",
                   },
                 }}
               />
@@ -867,7 +824,7 @@ const HuggingFaceView = () => {
             size="small"
             startIcon={
               <Iconify
-                icon="octicon:chevron-left-24"
+                icon="solar:alt-arrow-left-linear"
                 width="20px"
                 sx={{ color: "text.primary" }}
               />
@@ -880,7 +837,6 @@ const HuggingFaceView = () => {
               display: "flex",
               alignItems: "center",
               flexDirection: "row",
-              borderRadius: "4px",
               "& .MuiButton-startIcon": {
                 marginRight: "4px",
               },
@@ -901,7 +857,7 @@ const HuggingFaceView = () => {
             Experiment with Hugging Face Dataset 🤗
           </Typography>
           <Typography
-            fontSize="14px"
+            fontSize="13px"
             fontWeight="400"
             color="text.secondary"
             mb={3}
@@ -1009,14 +965,17 @@ const HuggingFaceView = () => {
               }}
             >
               <Typography fontSize="12px" color="text.secondary">
-                <b style={{ fontSize: "14px" }}>Total Datasets : </b>
-                {huggingFaceList?.data?.result?.totalDatasets || 0}
+                <b style={{ fontSize: "13px" }}>Total Datasets : </b>
+                {huggingFaceList?.data?.result?.total_datasets || 0}
               </Typography>
 
               {/* Sort controls */}
-              <Box
+              <ButtonBase
+                component="div"
                 onClick={handleSortClick}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   cursor: "pointer",
@@ -1026,10 +985,10 @@ const HuggingFaceView = () => {
                 }}
               >
                 <SortIcon />
-                <Typography fontSize="14px" color="text.primary" ml={1}>
+                <Typography fontSize="13px" color="text.primary" ml={1}>
                   Sort: {sortOption}
                 </Typography>
-              </Box>
+              </ButtonBase>
             </Box>
 
             {/* Sort dropdown menu */}
@@ -1039,7 +998,7 @@ const HuggingFaceView = () => {
               onClose={() => handleSortClose()}
               PaperProps={{
                 sx: {
-                  width: 150,
+                  width: 200,
                   maxHeight: 300,
                 },
               }}
@@ -1052,10 +1011,9 @@ const HuggingFaceView = () => {
                   sx={{
                     minWidth: 200,
                     "&.Mui-selected": {
-                      backgroundColor: "primary.lighter",
-                      color: "primary.main",
+                      backgroundColor: "action.selected",
                       "&:hover": {
-                        backgroundColor: "primary.lighter",
+                        backgroundColor: "action.selected",
                       },
                     },
                   }}
@@ -1073,24 +1031,18 @@ const HuggingFaceView = () => {
                   label={filter.label}
                   onDelete={() => handleFilterChipDelete(filter)}
                   deleteIcon={
-                    <Iconify icon="eva:close-fill" width={16} height={16} />
+                    <Iconify icon="solar:close-linear" width={16} height={16} />
                   }
                   sx={{
-                    backgroundColor:
-                      theme.palette.mode === "light"
-                        ? "primary.main"
-                        : "primary.light",
-                    color:
-                      theme.palette.mode === "light"
-                        ? "common.white"
-                        : "primary.dark",
-                    borderRadius: "4px",
+                    backgroundColor: "primary.main",
+                    color: "primary.contrastText",
+                    "& .MuiChip-deleteIcon": {
+                      color: "primary.contrastText",
+                      opacity: 0.7,
+                      "&:hover": { color: "primary.contrastText", opacity: 1 },
+                    },
                     "&:hover": {
-                      backgroundColor:
-                        theme.palette.mode === "light"
-                          ? theme.palette.primary.dark
-                          : theme.palette.primary.light,
-                      opacity: theme.palette.mode === "light" ? 1 : 0.8,
+                      backgroundColor: "primary.dark",
                       cursor: "default",
                     },
                   }}
@@ -1166,12 +1118,14 @@ const HuggingFaceView = () => {
                         </Typography>
                         <Stack direction="row" gap="10px">
                           {item?.author && (
-                            <FaceBadge
-                              color={getColor(item?.author)}
-                              bgcolor={getColor(item?.author) + "16"}
-                            >
-                              {item?.author}
-                            </FaceBadge>
+                            <Chip
+                              size="small"
+                              label={item?.author}
+                              sx={{
+                                color: getColor(item?.author),
+                                bgcolor: getColor(item?.author) + "16",
+                              }}
+                            />
                           )}
                           <Stack
                             direction="row"
@@ -1180,11 +1134,11 @@ const HuggingFaceView = () => {
                             ml="auto"
                           >
                             <FaceInfo>
-                              <Iconify icon="material-symbols:download-sharp" />{" "}
+                              <Iconify icon="solar:download-minimalistic-linear" />{" "}
                               {item?.downloads ? item?.downloads : 0}
                             </FaceInfo>
                             <FaceInfo>
-                              <Iconify icon="weui:like-outlined" />{" "}
+                              <Iconify icon="solar:like-linear" />{" "}
                               {item?.likes ? item?.likes : 0}
                             </FaceInfo>
                           </Stack>
@@ -1205,7 +1159,7 @@ const HuggingFaceView = () => {
             page={page}
             totalPages={isLoadingHuggingFaceList ? 1 : totalPages}
             onPageChange={handlePageChange}
-            totalItems={huggingFaceList?.data?.result?.totalDatasets || 0}
+            totalItems={huggingFaceList?.data?.result?.total_datasets || 0}
             itemsPerPage={itemsPerPage}
             isLoading={isLoadingHuggingFaceList}
           />

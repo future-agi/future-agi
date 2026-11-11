@@ -18,6 +18,8 @@ try:
 except ImportError:
     APICallLog = None
 
+pytestmark = pytest.mark.requires_ee
+
 
 def _make_datetime_filter(filter_op, filter_value, column_id="created_at"):
     """Helper to build a datetime filter payload."""

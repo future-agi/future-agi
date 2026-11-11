@@ -1,14 +1,17 @@
 import React, { useEffect } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PromptModalWrapper from "./PromptModalWrapper";
-import { Box, DialogContent, Stack, Typography, useTheme } from "@mui/material";
+import {
+  Box,
+  DialogContent,
+  Stack,
+  Typography,
+  useTheme,
+  Tab,
+} from "@mui/material";
 import { useForm } from "react-hook-form";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import PropTypes from "prop-types";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import { ShowComponent } from "src/components/show";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -250,6 +253,9 @@ export default function CustomToolModal({
             size="small"
             sx={{
               pt: "4px",
+              "& .MuiInputLabel-root": {
+                backgroundColor: "transparent !important",
+              },
             }}
           />
           <FormTextFieldV2
@@ -262,6 +268,9 @@ export default function CustomToolModal({
             required
             sx={{
               pt: "4px",
+              "& .MuiInputLabel-root": {
+                backgroundColor: "transparent !important",
+              },
             }}
           />
           <Stack direction={"column"} gap={"4px"}>
@@ -270,41 +279,31 @@ export default function CustomToolModal({
               fontWeight={"fontWeightRegular"}
               color={"text.primary"}
             >
-              Input Schema<sup>*</sup>
+              Input Schema
+              <Box component="span" sx={{ color: "error.main" }}>
+                {" *"}
+              </Box>
             </Typography>
             <Box
               sx={{
                 width: "fit-content",
               }}
             >
-              <TabWrapper
-                sx={{
-                  marginBottom: "0",
-                }}
-              >
-                <CustomTabs
-                  textColor="primary"
+              <Box sx={{ mb: 1.5 }}>
+                <SegmentedTabs
                   value={configType}
                   onChange={(e, value) => setValue("config_type", value)}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
-                      opacity: 0.08,
-                      height: "100%",
-                      borderRadius: "8px",
-                    },
-                  }}
                 >
                   {tabOptions.map((tab) => (
-                    <CustomTab
+                    <Tab
                       key={tab.value}
                       label={tab.label}
                       value={tab.value}
                       disabled={tab.disabled}
                     />
                   ))}
-                </CustomTabs>
-              </TabWrapper>
+                </SegmentedTabs>
+              </Box>
             </Box>
             <ShowComponent condition={configType === "json"}>
               <Box

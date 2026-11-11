@@ -9,7 +9,7 @@ import {
   EdgeLabelRenderer,
   useReactFlow,
 } from "@xyflow/react";
-import { Box, Stack, useTheme } from "@mui/material";
+import { Box, Stack, useTheme, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import {
 import { EDGE_STATE, NODE_X_OFFSET } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
 import NodeSelectionPopper from "../../components/NodeSelectionPopper";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
 import { useWorkflowRunStoreShallow } from "../../store";
 import useAddNodeOptimistic from "../hooks/useAddNodeOptimistic";
 import "../agent-graph.css";
@@ -69,6 +70,7 @@ export default function AnimatedEdge({
   const { ensureDraft } = useSaveDraftContext();
   const { setCenter, getZoom, getNode } = useReactFlow();
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
 
   const { addNode } = useAddNodeOptimistic();
 
@@ -132,7 +134,7 @@ export default function AnimatedEdge({
   const handleDelete = useCallback(
     async (e) => {
       e.stopPropagation();
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       // Always apply optimistic deletion first
       const { edges: prevEdges, nodes } = useAgentPlaygroundStore.getState();
@@ -175,14 +177,19 @@ export default function AnimatedEdge({
       onEdgesChange,
       setGraphData,
       isWorkflowRunning,
+      isReadOnly,
       queryClient,
     ],
   );
 
-  const handleAddClick = useCallback((e) => {
-    e.stopPropagation();
-    setPopperOpen(true);
-  }, []);
+  const handleAddClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      if (isReadOnly) return;
+      setPopperOpen(true);
+    },
+    [isReadOnly],
+  );
 
   const handlePopperClose = useCallback(() => {
     setPopperOpen(false);
@@ -191,17 +198,25 @@ export default function AnimatedEdge({
 
   const handleNodeSelect = useCallback(
     (nodeType, nodeTemplateId, initialConfig) => {
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       const sourceNode = getNode(source);
+      if (!sourceNode) {
+        // Only reachable from a *deferred* Agent insert (TH-4549 setup dialog):
+        // the source node was deleted while the dialog was open. Never attach
+        // a new node to a source that no longer exists (PRD R-13).
+        enqueueSnackbar(
+          "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+          { variant: "warning" },
+        );
+        return;
+      }
 
       // Position the new node branching from the source
-      const position = sourceNode
-        ? {
-            x: sourceNode.position.x + NODE_X_OFFSET,
-            y: sourceNode.position.y,
-          }
-        : undefined;
+      const position = {
+        x: sourceNode.position.x + NODE_X_OFFSET,
+        y: sourceNode.position.y,
+      };
 
       // One-to-many: add new node with edge from source, keep existing edge intact
       addNode({
@@ -223,10 +238,19 @@ export default function AnimatedEdge({
       setPopperOpen(false);
       setHovered(false);
     },
-    [source, isWorkflowRunning, getNode, getZoom, setCenter, addNode],
+    [
+      source,
+      isWorkflowRunning,
+      isReadOnly,
+      getNode,
+      getZoom,
+      setCenter,
+      addNode,
+    ],
   );
 
-  const showActions = hovered && !preview && !isActive && !isWorkflowRunning;
+  const showActions =
+    hovered && !preview && !isActive && !isWorkflowRunning && !isReadOnly;
 
   // When nodes are close, shift action buttons slightly above the edge to avoid
   // overlapping the source node's output label.
@@ -300,7 +324,8 @@ export default function AnimatedEdge({
           >
             <Stack direction="row" spacing={0.5}>
               {/* Add node button */}
-              <Box
+              <ButtonBase
+                component="div"
                 ref={addButtonRef}
                 sx={{
                   display: "flex",
@@ -311,11 +336,9 @@ export default function AnimatedEdge({
                   borderRadius: "4px",
                   bgcolor: "background.paper",
                   border: "1px solid",
-                  borderColor: "blue.500",
-                  cursor: "pointer",
+                  borderColor: "status.info.solid",
                   "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark" ? "black.800" : "blue.50",
+                    bgcolor: "action.hover",
                   },
                 }}
                 onClick={handleAddClick}
@@ -325,13 +348,14 @@ export default function AnimatedEdge({
                   sx={{
                     width: 14,
                     height: 14,
-                    bgcolor: "blue.500",
+                    bgcolor: "status.info.solid",
                   }}
                 />
-              </Box>
+              </ButtonBase>
 
               {/* Delete edge button */}
-              <Box
+              <ButtonBase
+                component="div"
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -341,11 +365,9 @@ export default function AnimatedEdge({
                   borderRadius: "4px",
                   bgcolor: "background.paper",
                   border: "1px solid",
-                  borderColor: "red.500",
-                  cursor: "pointer",
+                  borderColor: "status.danger.solid",
                   "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark" ? "black.800" : "red.50",
+                    bgcolor: "status.danger.bg",
                   },
                 }}
                 onClick={handleDelete}
@@ -355,10 +377,10 @@ export default function AnimatedEdge({
                   sx={{
                     width: 14,
                     height: 14,
-                    color: "red.500",
+                    color: "status.danger.fg",
                   }}
                 />
-              </Box>
+              </ButtonBase>
             </Stack>
           </Box>
         </EdgeLabelRenderer>
