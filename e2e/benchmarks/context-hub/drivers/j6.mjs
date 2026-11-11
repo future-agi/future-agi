@@ -358,6 +358,15 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(rejected.status === 409 && afterReject.length === afterAba.length, 'The stale ABA packet must be rejected without a label event');
         state.stalePacket = { id: stale.id, revision: stale.revision, fingerprint: stale.fingerprint };
         state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]) };
+        // The reviewer closes the stale request so it cannot linger as a pending approval.
+        await admin.fill(reviewerPage.getByRole('textbox', { name: 'Review comment' }), 'Production moved while this was pending; request a new packet.', 'comment-decline-stale-request');
+        await admin.click(reviewerPage.getByRole('button', { name: 'Request changes', exact: true }), 'decline-stale-request');
+        await expect.poll(async () => (await read(`release-requests/${stale.id}/`, signal)).status).toBe('changes_requested');
+        const declined = await read(`release-requests/${stale.id}/`, signal);
+        requireValue(declined.status === 'changes_requested', 'The stale request must be closed as changes requested');
+        state.stale.request_status = declined.status;
+        const afterDecline = await labelEvents();
+        requireValue(afterDecline.length === afterAba.length, 'Declining a stale packet must not move a label');
         const abaHash = await record('aba-rejection', state.stale);
         faultSeen(ledger, 'aba', abaHash, state.stale);
         // Operator starts a fresh review against the moved release revision.
