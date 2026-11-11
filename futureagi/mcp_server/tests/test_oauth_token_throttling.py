@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, BrokenBarrierError
+from threading import Barrier, Condition
 from unittest.mock import patch
 
 import pytest
@@ -713,6 +713,10 @@ def test_in_flight_attempts_count_toward_invalid_attempt_limit():
     with pytest.raises(throttles.MCPOAuthTokenThrottled) as excinfo:
         throttle.allow_request(request, view)
     assert excinfo.value.detail["error"] == "slow_down"
+    assert (
+        excinfo.value.detail["error_description"]
+        == "Too many concurrent token requests"
+    )
     assert int(excinfo.value.wait) > 0
 
     # Once the in-flight requests finish, the reservation is returned and a
@@ -735,22 +739,30 @@ def test_concurrent_burst_gets_at_most_the_invalid_attempt_limit(monkeypatch):
     from mcp_server.views import oauth as oauth_views
 
     burst = 6
-    # With the limit at 2, only two requests may be verifying at once; the
-    # barrier holds them together so the rest of the burst arrives mid-flight.
-    started = Barrier(2)
+    throttled = []
+    all_throttled = Condition()
     verified = []
 
-    def slow_lookup(client_id, protocol="management"):
-        # Hold admitted requests together so the rest of the burst arrives
-        # while they are still verifying. A request left without a partner
-        # (only possible without in-flight accounting) carries on after the
-        # timeout, so the count assertion below reports the failure.
+    real_allow = throttles.MCPOAuthTokenLockoutThrottle.allow_request
+
+    def counting_allow(self, request, view):
         try:
-            started.wait(timeout=2)
-        except BrokenBarrierError:
-            pass
+            return real_allow(self, request, view)
+        finally:
+            with all_throttled:
+                throttled.append(1)
+                all_throttled.notify_all()
+
+    def slow_lookup(client_id, protocol="management"):
+        # Hold every admitted request at client verification until the whole
+        # burst has passed (or been refused by) the lockout throttle.
+        with all_throttled:
+            all_throttled.wait_for(lambda: len(throttled) >= burst, timeout=10)
         return None, None
 
+    monkeypatch.setattr(
+        throttles.MCPOAuthTokenLockoutThrottle, "allow_request", counting_allow
+    )
     real_record = throttles.record_invalid_token_attempt
 
     def counting_record(request):
@@ -776,3 +788,6 @@ def test_concurrent_burst_gets_at_most_the_invalid_attempt_limit(monkeypatch):
     assert len(verified) <= 2
     assert statuses.count(401) == len(verified)
     assert all(status in (401, 429) for status in statuses)
+    assert all(
+        r.data["error"] == "slow_down" for r in responses if r.status_code == 429
+    )

@@ -152,6 +152,10 @@ def reserve_token_attempt(request: Request) -> bool:
             except ValueError:
                 cache.set(key, 1, timeout=_RESERVATION_TIMEOUT_SECONDS)
                 in_flight = 1
+            else:
+                # incr keeps the original TTL; extend it so the counter only
+                # expires after a quiet period, not under requests in flight.
+                cache.touch(key, _RESERVATION_TIMEOUT_SECONDS)
         setattr(request, _RESERVATION_ATTR, key)
         recorded = int(cache.get(_invalid_attempt_key(request)) or 0)
     except (ConnectionInterrupted, RedisError) as exc:
@@ -170,7 +174,10 @@ def release_token_attempt_reservation(request: Request | None) -> None:
         return
     setattr(request, _RESERVATION_ATTR, None)
     try:
-        cache.decr(key)
+        if cache.decr(key) < 0:
+            # The counter expired under this request and was recreated;
+            # never let a stale release undercount newer reservations.
+            cache.delete(key)
     except ValueError:
         # The reservation already expired.
         pass
@@ -264,6 +271,17 @@ class MCPOAuthTokenLockoutThrottle(BaseThrottle):
             detail="Too many invalid token attempts",
         )
 
+    def _raise_in_flight_limit(self, request: Request) -> None:
+        log_token_warning(
+            request,
+            "mcp_oauth_token_in_flight_limit",
+            retry_after_seconds=1,
+        )
+        raise MCPOAuthTokenThrottled(
+            1,
+            detail="Too many concurrent token requests",
+        )
+
     def allow_request(self, request: Request, view: object) -> bool:
         wait = get_invalid_attempt_lockout_wait(request)
         if wait > 0:
@@ -272,7 +290,7 @@ class MCPOAuthTokenLockoutThrottle(BaseThrottle):
         if not reserve_token_attempt(request):
             # In-flight attempts already fill the remaining budget. Retry once
             # they finish; by then they are recorded or cleared.
-            self._raise_lockout(request, 1)
+            self._raise_in_flight_limit(request)
 
         # A request that finished between the first check and the reservation
         # may have set the lockout and reset the attempt counter.
