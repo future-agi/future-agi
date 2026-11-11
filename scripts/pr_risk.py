@@ -33,6 +33,9 @@ TIER_MARKER = "<!-- pr-autopilot:tier -->"
 ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
 APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
 MERGE_BLOCKED_MARKER = "<!-- pr-autopilot:merge-blocked -->"
+APPROVER_UNAVAILABLE_MARKER = "<!-- pr-autopilot:approver-unavailable -->"
+# The first line after a note's marker once the bot has marked it superseded.
+NO_LONGER_APPLIES = "\n**No longer applies.**"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATCH_ID = re.compile(r"[0-9a-f]{32}\Z")
 ZERO_SHA = "0" * 40
@@ -49,6 +52,14 @@ class PolicyError(Exception):
 
 class NeedsPerson(PolicyError):
     """Review history is truncated, unreadable or edited: a person decides."""
+
+
+class ApproverUnavailable(PolicyError):
+    """The approver App could not approve. `cause` is fixed text for the PR note."""
+
+    def __init__(self, message, cause):
+        super().__init__(message)
+        self.cause = cause
 
 
 class ApiError(PolicyError):
@@ -438,15 +449,24 @@ def bot_comment(comment):
     return user.get("login") == ACTIONS_BOT and user.get("type") == "Bot"
 
 
+NO_APPROVER_TOKEN = (
+    "the workflow did not receive the App's token or login (the token step "
+    "failed, or the App, its environment variable or its secret is not set up)."
+)
+
+
 def approver_identity(settings):
     """The approver App's login. Never the workflow token's: with "Allow GitHub
     Actions to create and approve pull requests" on, any writer's branch
     workflow could approve as that login too, and with it off GitHub refuses."""
     login = settings.get("approver_login", "")
     if not isinstance(login, str) or not APPROVER_LOGIN.fullmatch(login) or login == ACTIONS_BOT:
-        raise PolicyError(
+        raise ApproverUnavailable(
             "approver-identity: the approver App's token or login is missing or "
-            "is the workflow token's; nothing was approved or merged"
+            "is the workflow token's; nothing was approved or merged",
+            "the login it was given is the workflow token's."
+            if login == ACTIONS_BOT
+            else NO_APPROVER_TOKEN,
         )
     return login
 
@@ -811,8 +831,9 @@ def status_record(api, head, status, cache, context=None):
 
 
 def attempt_outcome(api, record, context, cache):
-    # In the run that reserved this attempt, the merge step runs only after its
-    # publish step reported "passed"; the jobs API can lag behind its own steps.
+    # In the run that reserved this attempt, the merge job runs only after its
+    # publish step reported "passed" (REVIEW_OUTCOME is the gate job's output);
+    # the jobs API can lag behind the run's own steps.
     if (
         own_run(context)
         and record == {key: context.get(key) for key in ATTEMPT_KEYS}
@@ -1080,28 +1101,56 @@ def comment(api, number, body):
     return api.request("POST", f"issues/{number}/comments", {"body": body})
 
 
-def standing_escalation(comments):
+def standing_note(comments, marker):
+    """The bot's comment under `marker`. Each marker has one per PR."""
     return next(
         (
             c
             for c in comments
-            if bot_comment(c) and (c.get("body") or "").startswith(ESCALATION_MARKER)
+            if bot_comment(c) and (c.get("body") or "").startswith(marker)
         ),
         None,
     )
 
 
-def escalate(api, number, comments, head, reason):
-    body = f"{ESCALATION_MARKER}\n{reason}\n\nHead: `{head}`. No automatic approval or merge was performed."
-    previous = standing_escalation(comments)
+def standing_escalation(comments):
+    return standing_note(comments, ESCALATION_MARKER)
+
+
+def post_note(api, number, comments, marker, text, head, after=""):
+    """Post the bot's note under `marker`, or update it when its text changed.
+    Every note names the head it is about in the same form, which the sweep
+    reads (NOTED_HEAD)."""
+    body = f"{marker}\n{text}\n\nHead: `{head}`.{after}"
+    previous = standing_note(comments, marker)
     if previous and previous["body"] != body:
         api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
     elif not previous:
         comment(api, number, body)
+
+
+def clear_note(api, number, marker, text):
+    """Mark the bot's note under `marker` as no longer applying, with fixed
+    text only: anyone with write access can edit the bot's comment, so its
+    current body is never posted again."""
+    previous = standing_note(api.pages(f"issues/{number}/comments"), marker)
+    if previous and not previous["body"].startswith(marker + NO_LONGER_APPLIES):
+        api.request(
+            "PATCH",
+            f"issues/comments/{previous['id']}",
+            {"body": f"{marker}{NO_LONGER_APPLIES} {text}"},
+        )
+
+
+def escalate(api, number, comments, head, reason):
+    post_note(
+        api, number, comments, ESCALATION_MARKER, reason, head,
+        " No automatic approval or merge was performed.",
+    )
     summary(reason)
 
 
-RESOLVED = ESCALATION_MARKER + "\n**No longer applies.**"
+RESOLVED = ESCALATION_MARKER + NO_LONGER_APPLIES
 
 
 def resolve_escalation(api, comments, context):
@@ -1288,7 +1337,13 @@ AUDIT_READS_PER_SWEEP = 50
 DISPATCH_PAUSE_SECONDS = 1
 # A secondary rate limit answers 403 or 429: stop dispatching for this sweep.
 THROTTLED = frozenset({403, 429})
-AUDITED_HEAD = re.compile(r"Head: `([0-9a-f]{40})`")
+# The head a tier comment or a bot note names (tier_audit, post_note).
+NOTED_HEAD = re.compile(r"Head: `([0-9a-f]{40})`")
+# A trusted LOW PR that waits for a person or the owner is dispatched on one
+# sweep in this many (about hourly), not on every sweep.
+PARKED_SWEEPS = 4
+# Notes that hand a head to a person or the owner; a new head ends them.
+PARKING_NOTES = (ESCALATION_MARKER, MERGE_BLOCKED_MARKER, APPROVER_UNAVAILABLE_MARKER)
 
 
 def rotation(items, limit, slot):
@@ -1305,9 +1360,29 @@ def audited_head(api, number):
     for item in api.pages(f"issues/{number}/comments"):
         body = item.get("body") or ""
         if bot_comment(item) and body.startswith(TIER_MARKER):
-            match = AUDITED_HEAD.search(body)
+            match = NOTED_HEAD.search(body)
             return match[1] if match else None
     return None
+
+
+def parked(api, pr):
+    """The PR waits on a person or the owner at its current head: a standing
+    escalation, merge-blocked or approver note names that head, or a maintainer
+    dismissed the autopilot's approval of it. Its runs would only stop again.
+    Suppression only, never evidence: a run still checks everything. On a read
+    failure the PR is not parked, so missing evidence never delays it."""
+    number, head = pr["number"], pr["head"]["sha"]
+    try:
+        comments = api.pages(f"issues/{number}/comments")
+        for marker in PARKING_NOTES:
+            note = standing_note(comments, marker)
+            if note and not note["body"].startswith(marker + NO_LONGER_APPLIES):
+                match = NOTED_HEAD.search(note["body"])
+                if match and match[1] == head:
+                    return True
+        return bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), head, None)
+    except PolicyError:
+        return False
 
 
 def sweep(api, policy, settings):
@@ -1315,24 +1390,31 @@ def sweep(api, policy, settings):
     runs dev's controller. Dispatch a run on dev for each PR that can act, so
     all later policy and workflow code comes from dev.
 
-    First every trusted LOW PR without a hold, uncapped. Then, capped and
-    rotated, PRs to classify: those with no tier label yet (the one-time
-    backfill) and labelled PRs whose head moved since their last tier audit.
+    First every trusted LOW PR without a hold, uncapped; one that waits on a
+    person or the owner at its current head (parked) only about hourly. Then,
+    capped and rotated, PRs to classify: those with no tier label yet (the
+    one-time backfill) and labelled PRs whose head moved since their last tier
+    audit.
     The second kind keeps classification working, more slowly, if GitHub
     blocks this workflow's pull_request_target runs.
     """
-    act, backfill, labelled = [], [], []
+    act, backfill, labelled, waiting = [], [], [], 0
+    slot = int(now_utc().timestamp() // SWEEP_SECONDS)
     for pr in api.pages("pulls?state=open&base=dev"):
         if not same_repo_ready(pr, api.repository):
             continue
         tier = tier_label(pr, policy)
         if tier is None:
             backfill.append(pr)
-        elif actionable(pr, tier, policy, settings):
+        elif not actionable(pr, tier, policy, settings):
+            labelled.append(pr)
+        elif not parked(api, pr):
+            act.append(pr)
+        elif (slot + pr["number"]) % PARKED_SWEEPS == 0:
+            # Staggered by PR number, so parked PRs do not all run together.
             act.append(pr)
         else:
-            labelled.append(pr)
-    slot = int(now_utc().timestamp() // SWEEP_SECONDS)
+            waiting += 1
     failed, sent, throttled = [], 0, False
 
     def send(prs):
@@ -1370,7 +1452,8 @@ def sweep(api, policy, settings):
                 summary("The autopilot labels could not be checked; each run creates its own.")
         send(classify)
     summary(
-        f"Scheduled dev PR sweep dispatched {sent} run(s). Trusted LOW PRs: {len(act)}. "
+        f"Scheduled dev PR sweep dispatched {sent} run(s). Trusted LOW PRs: {len(act)}, "
+        f"and {waiting} waiting on a person or the owner (dispatched about hourly). "
         f"PRs to classify: {len(backfill)} unlabelled, {len(moved)} pushed since their "
         "tier audit. No PR content was executed."
     )
@@ -1755,23 +1838,34 @@ def approve(approver, login, number, head, body):
     except ApiError as exc:
         if exc.status not in (403, 422):
             raise
-        raise PolicyError(
+        raise ApproverUnavailable(
             f"GitHub refused the approver App's approval (HTTP {exc.status}). Check that "
             "the App is installed on this repository with Pull requests: write; nothing "
-            "was merged"
+            "was merged",
+            f"GitHub refused the approval (HTTP {exc.status}).",
         ) from None
     user = (review.get("user") or {}) if isinstance(review, dict) else {}
     # A review recorded under another login would never be found as this
     # autopilot's own again: every later run would approve once more.
     if user.get("login") != login or user.get("type") != "Bot":
-        raise PolicyError("approver-identity: GitHub recorded the approval under another login")
+        raise ApproverUnavailable(
+            "approver-identity: GitHub recorded the approval under another login",
+            "GitHub recorded the approval under another login than the App's.",
+        )
 
 
 def merge(api, policy, settings, context, approver):
-    # Before any request: approvals come only from the approver App.
-    login = approver_identity(settings)
-    if approver is None:
-        raise PolicyError("approver-identity: the approver App's token is missing")
+    # Before any label, audit comment or approval: approvals come only from
+    # the approver App. Without it the PR is told, never left silent.
+    try:
+        login = approver_identity(settings)
+        if approver is None:
+            raise ApproverUnavailable(
+                "approver-identity: the approver App's token is missing", NO_APPROVER_TOKEN
+            )
+    except ApproverUnavailable as exc:
+        approver_unavailable(api, context, exc)
+        raise
     pr, checks = validate_live(api, policy, settings, context)
     number = context["pr"]
     audit = (
@@ -1799,7 +1893,19 @@ def merge(api, policy, settings, context, approver):
         # The audit writes and duplicate-approval lookup can race a new hold or
         # change request. Refresh every gate after them, immediately before APPROVE.
         validate_live(api, policy, settings, context)
-        approve(approver, login, number, context["head"], APPROVAL_MARKER + "\n" + audit)
+        try:
+            approve(approver, login, number, context["head"], APPROVAL_MARKER + "\n" + audit)
+        except ApproverUnavailable as exc:
+            approver_unavailable(api, context, exc)
+            raise
+    # The App's approval of this head exists, so a note that it could not
+    # approve no longer applies (and no longer slows the sweep for this PR).
+    clear_note(
+        api,
+        number,
+        APPROVER_UNAVAILABLE_MARKER,
+        f"The approver App approved head `{context['head']}`.",
+    )
     summary(audit)
     # Re-read AFTER approval. GitHub can take a moment to update protection; a
     # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
@@ -1873,29 +1979,47 @@ def merge(api, policy, settings, context, approver):
 def merge_blocked(api, number, head, state):
     """Say once per head why an approved PR does not merge, and exit green.
     Not an escalation: a later run that reuses the pass would mark that as no
-    longer applying on every sweep. The sweep keeps dispatching the PR, because
-    only it notices when a person supplies what the rule needs."""
-    body = (
-        f"{MERGE_BLOCKED_MARKER}\nThe autopilot approved head `{head}`, but GitHub still "
-        f"reports this PR as `{safe_text(str(state))}`. A branch rule needs something the "
-        "autopilot cannot give, for example a code-owner review, another approval, "
-        "resolved conversations, or an approval GitHub does not count. A person must "
-        "review or merge this PR. The autopilot keeps checking and merges it if the rule "
-        "is satisfied later."
+    longer applying on every sweep. The sweep still dispatches the PR, about
+    once an hour while this note names its head, because only it notices when
+    a person supplies what the rule needs."""
+    post_note(
+        api,
+        number,
+        api.pages(f"issues/{number}/comments"),
+        MERGE_BLOCKED_MARKER,
+        f"The autopilot approved this head, but GitHub still reports this PR as "
+        f"`{safe_text(str(state))}`. A branch rule needs something the autopilot cannot "
+        "give, for example a code-owner review, another approval, resolved conversations, "
+        "or an approval GitHub does not count. A person must review or merge this PR. The "
+        "autopilot checks again about once an hour and merges it if the rule is "
+        "satisfied later.",
+        head,
     )
-    previous = next(
-        (
-            c
-            for c in api.pages(f"issues/{number}/comments")
-            if bot_comment(c) and (c.get("body") or "").startswith(MERGE_BLOCKED_MARKER)
-        ),
-        None,
-    )
-    if previous and previous["body"] != body:
-        api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
-    elif not previous:
-        comment(api, number, body)
     summary(f"Waiting: approved, but GitHub reports the PR as {state}; a person was told.")
+
+
+def approver_unavailable(api, context, exc):
+    """Tell the PR, once per head, that the approver App could not approve it.
+    The run still fails: the owner has to fix the App. A failed note must not
+    hide the original error."""
+    try:
+        post_note(
+            api,
+            context["pr"],
+            api.pages(f"issues/{context['pr']}/comments"),
+            APPROVER_UNAVAILABLE_MARKER,
+            f"The AI review of this head passed, but the approver App could not approve "
+            f"it: {exc.cause} Nothing was approved or merged.\n\nThe repository owner must "
+            "check the approver App setup in `docs/pr-autopilot.md` (Approver App and "
+            "owner settings): the environment `pr-autopilot`, its variable "
+            "`AUTOPILOT_APPROVER_CLIENT_ID` and secret `AUTOPILOT_APPROVER_PRIVATE_KEY`, "
+            "and the App's installation on this repository with Pull requests: write. A "
+            "person may approve or merge this PR. The autopilot tries again about once "
+            "an hour.",
+            context["head"],
+        )
+    except PolicyError:
+        summary("The note that the approver App could not approve was not posted.")
 
 
 def post_merge_plan(policy, files, settings):
@@ -1951,8 +2075,9 @@ def main():
                     os.environ.get("AI_JOB_RESULT", ""),
                 )
                 return 0
-            approver_identity(settings)
-            approver = GitHub(settings["repository"], os.environ.get("APPROVER_TOKEN", ""))
+            # No token (a failed token step): merge() tells the PR and stops.
+            token = os.environ.get("APPROVER_TOKEN", "")
+            approver = GitHub(settings["repository"], token) if token else None
             merge(api, policy, settings, context, approver)
         return 0
     except (PolicyError, ValueError, KeyError, TypeError, OSError) as exc:

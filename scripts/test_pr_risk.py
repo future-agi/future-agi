@@ -160,7 +160,7 @@ class FakeGitHub:
 
     def __init__(self, permissions=None):
         self.permissions = (
-            workflow_permissions("review-gate-and-merge")
+            workflow_permissions("approve-and-merge")
             if permissions is None
             else permissions
         )
@@ -206,8 +206,9 @@ class FakeGitHub:
         self.push_log = [(risk.ZERO_SHA, HEAD, "trusted-author")]
         self.activity = None
         self.open_prs = None
-        # Comments of PRs other than #42, by number (the sweep reads them).
+        # Comments and reviews of PRs other than #42, by number (the sweep reads them).
         self.pr_comments = {}
+        self.pr_reviews = {}
         # PR number (string) -> HTTP status its dispatch fails with.
         self.failing_dispatches = {}
         self.dev_tip = BASE
@@ -260,7 +261,7 @@ class FakeGitHub:
                 "name": template.format(head=context["head"], base=context["base"], patch=context["patch"]),
                 "conclusion": "success" if name == outcome else "skipped",
             })
-        self.add_job(run_id, "Publish review gate and recheck merge", steps)
+        self.add_job(run_id, "Publish the review gate", steps)
 
     def drop_outcome(self, run_id):
         """The run reserved but its gate job never ran (or is not listed yet)."""
@@ -286,6 +287,9 @@ class FakeGitHub:
             return copy.deepcopy(self.pr_comments.get(int(other[1]), []))
         if base == "pulls/42/reviews":
             return copy.deepcopy(self.reviews)
+        other = re.fullmatch(r"pulls/(\d+)/reviews", base)
+        if other:
+            return copy.deepcopy(self.pr_reviews.get(int(other[1]), []))
         if base == "labels":
             return copy.deepcopy(self.labels)
         if base.startswith("commits/") and base.endswith("/check-runs"):
@@ -840,8 +844,8 @@ class EvidenceTests(unittest.TestCase):
             risk.protection(api, POLICY)
 
     def test_non_admin_protection_query_and_exact_job_permissions(self):
-        # prepare posts the reservation status; the gate job only reads statuses.
-        for job, statuses in (("prepare", "write"), ("review-gate-and-merge", "read")):
+        # prepare posts the reservation status; the merge job only reads statuses.
+        for job, statuses in (("prepare", "write"), ("approve-and-merge", "read")):
             permissions = workflow_permissions(job)
             self.assertEqual(permissions["statuses"], statuses)
             self.assertNotIn("administration", permissions)
@@ -2554,11 +2558,18 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(len(audits), 1)
                 self.assertFalse(self.api.reviews)
                 self.assertFalse(self.api.writes("pulls/42/merge"))
-                # Once GitHub accepts it, the approval and merge go ahead.
+                # The PR is told once, not only the Actions tab.
+                [note] = self.approver_notes()
+                self.assertIn(f"GitHub refused the approval (HTTP {status})", note)
+                self.assertIn(f"Head: `{HEAD}`.", note)
+                # Once GitHub accepts it, the approval and merge go ahead, and
+                # the note says it no longer applies.
                 self.api.refuse_approval = None
                 risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 self.assertTrue(self.api.writes("pulls/42/merge"))
                 self.assertEqual(len([c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)]), 1)
+                [note] = self.approver_notes()
+                self.assertTrue(note.startswith(risk.APPROVER_UNAVAILABLE_MARKER + risk.NO_LONGER_APPLIES), note)
         # A server error is not a refusal: it fails as itself, and still posts
         # no second audit comment on the next run.
         self.api = FakeGitHub()
@@ -2569,6 +2580,8 @@ class ControllerTests(unittest.TestCase):
                 risk.merge(self.api, POLICY, settings(), context, self.api.approver)
             self.assertNotIn("refused", str(caught.exception))
         self.assertEqual(len([c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)]), 1)
+        # A server error is not the App's setup: no note.
+        self.assertFalse(self.approver_notes())
 
     def test_dismissed_bot_approval_is_a_hold(self):
         context = self.passing_review()
@@ -2600,18 +2613,82 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.api.writes("pulls/42/merge"))
         self.assertTrue(all(c["user"]["login"] == "github-actions[bot]" for c in self.api.comments))
 
-    def test_missing_or_unsafe_approver_identity_stops_before_any_request(self):
-        context = self.passing_review()
-        for login in ("", "github-actions[bot]", "pr-approver", "pr approver[bot]"):
-            with self.subTest(login=login):
-                self.api.requests.clear()
-                with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
-                    risk.merge(self.api, POLICY, settings(approver_login=login), context, self.api.approver)
-                self.assertEqual(self.api.requests, [])
-        with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
-            risk.merge(self.api, POLICY, settings(), context, None)
-        self.assertEqual(self.api.requests, [])
+    def approver_notes(self):
+        return [c["body"] for c in self.api.comments if c["body"].startswith(risk.APPROVER_UNAVAILABLE_MARKER)]
+
+    def assert_nothing_approved(self):
+        """No review request, approval audit, approved label or merge."""
         self.assertFalse(self.api.approver.calls)
+        self.assertFalse(self.api.reviews)
+        self.assertFalse([c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)])
+        self.assertNotIn("autopilot-approved", {label["name"] for label in self.api.pr["labels"]})
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+
+    def test_missing_or_unsafe_approver_identity_tells_the_pr_once_and_approves_nothing(self):
+        cases = (("", "did not receive"), ("[bot]", "did not receive"), ("pr-approver", "did not receive"),
+                 ("pr approver[bot]", "did not receive"), ("github-actions[bot]", "workflow token's"))
+        for login, cause in cases:
+            with self.subTest(login=login):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                for _ in range(3):
+                    with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+                        risk.merge(self.api, POLICY, settings(approver_login=login), context, self.api.approver)
+                self.assert_nothing_approved()
+                # One note, by the workflow token, across repeated runs.
+                [note] = self.approver_notes()
+                self.assertIn(cause, note)
+                self.assertIn(f"Head: `{HEAD}`.", note)
+                self.assertIn("A person may approve or merge this PR", note)
+                posts = [w for w in self.api.writes("issues/42/comments")
+                         if w[2]["body"].startswith(risk.APPROVER_UNAVAILABLE_MARKER)]
+                self.assertEqual(len(posts), 1)
+                self.assertFalse([w for w in self.api.requests if w[0] == "PATCH" and w[1].startswith("issues/comments/")])
+        # No token at all (the token step failed): the same note.
+        self.api = FakeGitHub()
+        context = self.passing_review()
+        for _ in range(2):
+            with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+                risk.merge(self.api, POLICY, settings(), context, None)
+        self.assert_nothing_approved()
+        [note] = self.approver_notes()
+        self.assertIn("did not receive", note)
+
+    def test_a_note_that_cannot_be_posted_does_not_hide_the_approver_error(self):
+        context = self.passing_review()
+        self.failing(lambda m, r, d: m == "POST" and r == "issues/42/comments", 1)
+        with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+            risk.merge(self.api, POLICY, settings(approver_login=""), context, self.api.approver)
+        self.assertFalse(self.approver_notes())
+        self.assert_nothing_approved()
+
+    def test_merge_step_without_an_app_token_tells_the_pr(self):
+        # The workflow wiring when the token step failed (continue-on-error):
+        # an empty token and the login "[bot]". main() must still reach merge().
+        context = self.passing_review()
+        clients = []
+
+        def client(repository, token):
+            clients.append(token)
+            self.assertEqual((repository, token), (REPO, "workflow-token"))
+            return self.api
+
+        environment = {
+            "PR_AUTOPILOT": "on", "PR_AUTOPILOT_TRUSTED_AUTHORS": "trusted-author",
+            "REVIEW_KEY_PRESENT": "true", "GITHUB_REPOSITORY": REPO, "GH_TOKEN": "workflow-token",
+            "APPROVER_TOKEN": "", "APPROVER_LOGIN": "[bot]", "PR_CONTEXT": json.dumps(context),
+            "REVIEW_OUTCOME": "passed",
+        }
+        with (
+            patch.dict(os.environ, environment),
+            patch.object(risk, "GitHub", side_effect=client),
+            patch("sys.argv", ["pr_risk.py", "merge"]),
+        ):
+            self.assertEqual(risk.main(), 1)
+        self.assertEqual(clients, ["workflow-token"])
+        [note] = self.approver_notes()
+        self.assertIn("did not receive", note)
+        self.assert_nothing_approved()
 
     def test_approval_recorded_under_another_login_stops_the_merge(self):
         context = self.passing_review()
@@ -2619,6 +2696,8 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
             risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/merge"))
+        [note] = self.approver_notes()
+        self.assertIn("under another login", note)
 
     def test_only_the_approver_apps_reviews_are_the_autopilots_own(self):
         # A workflow-token approval of this head with the marker is not ours:
@@ -2908,6 +2987,77 @@ class ControllerTests(unittest.TestCase):
         reads = [r for r in self.api.requests if re.fullmatch(r"issues/\d+/comments.*", r[1])]
         self.assertEqual(len(reads), risk.AUDIT_READS_PER_SWEEP)
 
+    def sweeps_dispatching(self, number):
+        """How many of PARKED_SWEEPS consecutive sweeps dispatch PR `number`."""
+        sent = 0
+        for index in range(risk.PARKED_SWEEPS):
+            with patch.object(risk, "now_utc", return_value=NOW + dt.timedelta(minutes=15 * index)):
+                sent += self.sweep().count(str(number))
+        return sent
+
+    def test_sweep_dispatches_a_pr_waiting_on_a_person_about_hourly(self):
+        self.api.pr["labels"] = [{"name": "autopilot-low"}]
+        self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+        refused = risk.ApproverUnavailable("refused", "GitHub refused the approval (HTTP 422).")
+        notes = {
+            # The real writers, so the sweep parses what they post.
+            "escalation": lambda: risk.escalate(self.api, 42, self.api.comments, HEAD, "A person must review this PR."),
+            "merge-blocked": lambda: risk.merge_blocked(self.api, 42, HEAD, "blocked"),
+            "approver": lambda: risk.approver_unavailable(self.api, {"pr": 42, "head": HEAD}, refused),
+        }
+        clear = {
+            "escalation": lambda: risk.resolve_escalation(self.api, self.api.comments, {"head": HEAD, "base": BASE}),
+            "approver": lambda: risk.clear_note(self.api, 42, risk.APPROVER_UNAVAILABLE_MARKER, "Approved."),
+        }
+        for name, write in notes.items():
+            with self.subTest(note=name):
+                self.api.comments = []
+                write()
+                # Parked: one sweep in PARKED_SWEEPS, not every sweep.
+                self.assertEqual(self.sweeps_dispatching(42), 1)
+                # A push ends it at once: the note names an older head.
+                self.api.pr["head"]["sha"] = OTHER
+                self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+                self.api.pr["head"]["sha"] = HEAD
+                if name in clear:
+                    clear[name]()
+                    self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+        # A dismissed autopilot approval of this head parks it too.
+        self.api.comments = []
+        dismissed = {"id": 1, "user": {"login": APPROVER, "type": "Bot"}, "state": "DISMISSED",
+                     "commit_id": HEAD, "body": risk.APPROVAL_MARKER + "\naudit"}
+        self.api.reviews = [dismissed]
+        self.assertEqual(self.sweeps_dispatching(42), 1)
+        self.api.reviews = [{**dismissed, "commit_id": OTHER}]
+        self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+
+    def test_sweep_never_parks_on_a_copied_note_or_unreadable_evidence(self):
+        self.api.pr["labels"] = [{"name": "autopilot-low"}]
+        # A person's comment that copies the marker and head is not the bot's note.
+        self.api.comments = [{"id": 1, "user": {"login": "someone", "type": "User"},
+                              "body": f"{risk.ESCALATION_MARKER}\nstop\n\nHead: `{HEAD}`."}]
+        self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+        # Unreadable comments or reviews: dispatch, never delay on missing evidence.
+        risk.escalate(self.api, 42, [], HEAD, "A person must review this PR.")
+        for route in ("issues/42/comments", "pulls/42/reviews"):
+            with self.subTest(route=route):
+                if route == "pulls/42/reviews":
+                    # Only the dismissed approval could park it now.
+                    self.api.comments = []
+                    self.api.reviews = [{"id": 1, "user": {"login": APPROVER, "type": "Bot"},
+                                         "state": "DISMISSED", "commit_id": HEAD,
+                                         "body": risk.APPROVAL_MARKER + "\naudit"}]
+                original = self.api.pages
+
+                def pages(path, key=None, route=route, original=original):
+                    if path.startswith(route):
+                        raise risk.ApiError("GitHub API denied or failed a request (HTTP 502)", 502)
+                    return original(path, key)
+
+                self.api.pages = pages
+                self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
+                self.api.pages = original
+
     def test_one_failed_dispatch_does_not_stop_the_sweep(self):
         self.api.open_prs = [{**pr(), "number": n} for n in (1, 2, 3)]
         self.api.failing_dispatches = {"1": 502}
@@ -3013,13 +3163,20 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(not_started["run"], "true")
         self.assertEqual(len(prepare), prepare.index(policy) + 3)
-        merge = steps[-1]
+        # The gate job ends with the markers and hands the outcome on.
+        jobs = yaml.safe_load(WORKFLOW_TEXT)["jobs"]
+        self.assertTrue(names[-1].startswith("Review retryable: "))
+        self.assertEqual(jobs["review-gate-and-merge"]["outputs"],
+                         {"outcome": "${{ steps.publish.outputs.outcome }}"})
+        approving = jobs["approve-and-merge"]
+        merge = approving["steps"][-1]
         self.assertIn("python3 -I scripts/pr_risk.py merge", merge["run"])
-        self.assertEqual(
-            merge["if"],
-            "steps.publish.outputs.outcome == 'passed' || !fromJSON(needs.prepare.outputs.context).check_id",
-        )
-        self.assertEqual(merge["env"]["REVIEW_OUTCOME"], "${{ steps.publish.outputs.outcome }}")
+        self.assertNotIn("if", merge)
+        # Only after a pass published in this run, or for a reused pass.
+        self.assertTrue(approving["if"].endswith(
+            "(needs.review-gate-and-merge.outputs.outcome == 'passed' || "
+            "!fromJSON(needs.prepare.outputs.context).check_id)"), approving["if"])
+        self.assertEqual(merge["env"]["REVIEW_OUTCOME"], "${{ needs.review-gate-and-merge.outputs.outcome }}")
         self.assertNotIn("pr_risk.py finish", WORKFLOW_TEXT)
 
 
@@ -3044,7 +3201,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", text)
 
     def test_all_privileged_jobs_and_ai_job_reject_partial_or_full_reruns(self):
-        for name in ("prepare", "ai-review", "review-gate-and-merge"):
+        for name in ("prepare", "ai-review", "review-gate-and-merge", "approve-and-merge"):
             job = workflow_job(name)
             condition = job.split("    if:", 1)[1].split("    runs-on:", 1)[0]
             self.assertIn("github.run_attempt == '1'", condition)
@@ -3058,22 +3215,34 @@ class WorkflowContractTests(unittest.TestCase):
         except ImportError:
             self.skipTest("PyYAML is not installed")
         workflow = yaml.safe_load(WORKFLOW_TEXT)
-        for name in ("policy-tests", "prepare", "ai-review"):
+        # The job with the outcome markers names no environment: an environment
+        # that refuses or holds a job would stop the markers and bar the diff.
+        for name in ("policy-tests", "prepare", "ai-review", "review-gate-and-merge"):
             with self.subTest(job=name):
                 self.assertNotIn("environment", workflow["jobs"][name])
                 self.assertNotIn("AUTOPILOT_APPROVER", workflow_job(name))
                 self.assertNotIn("APPROVER_", workflow_job(name))
-        gate = workflow["jobs"]["review-gate-and-merge"]
-        self.assertEqual(gate["environment"], "pr-autopilot")
-        steps = gate["steps"]
+        self.assertTrue(any(str(step.get("name", "")).startswith("Review passed: ")
+                            for step in workflow["jobs"]["review-gate-and-merge"]["steps"]))
+        approving = workflow["jobs"]["approve-and-merge"]
+        self.assertEqual(approving["environment"], "pr-autopilot")
+        # It starts only once the gate job finished, so the verdict is recorded
+        # first; always() keeps a skipped ai-review (a reused pass) from skipping it.
+        self.assertEqual(approving["needs"], ["prepare", "review-gate-and-merge"])
+        for part in ("always() && !cancelled()", "needs.prepare.result == 'success'",
+                     "needs.review-gate-and-merge.result == 'success'",
+                     "needs.prepare.outputs.context != '' &&"):
+            self.assertIn(part, approving["if"])
+        self.assertLess(approving["if"].index("needs.prepare.outputs.context != ''"),
+                        approving["if"].index("fromJSON("))
+        steps = approving["steps"]
+        self.assertFalse(any(str(step.get("name", "")).startswith("Review ") for step in steps))
         mint = next(step for step in steps if step.get("id") == "approver")
         merge = steps[-1]
-        markers = [i for i, step in enumerate(steps) if str(step.get("name", "")).startswith("Review ")]
-        # After every outcome marker, so a broken key never loses a verdict.
-        self.assertEqual(len(markers), 3)
-        self.assertGreater(steps.index(mint), max(markers))
         self.assertEqual(steps.index(mint), len(steps) - 2)
-        self.assertEqual(mint["if"], merge["if"])
+        # A failed token step must not skip the merge step, which tells the PR.
+        self.assertIs(mint["continue-on-error"], True)
+        self.assertNotIn("if", mint)
         self.assertEqual(mint["uses"], "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
         self.assertEqual(mint["with"], {
             "client-id": "${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}",
@@ -3088,7 +3257,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(WORKFLOW_TEXT.count("secrets.AUTOPILOT_APPROVER_PRIVATE_KEY"), 1)
 
     def test_review_and_merge_jobs_run_only_in_dispatch_runs_on_dev(self):
-        for name in ("ai-review", "review-gate-and-merge"):
+        for name in ("ai-review", "review-gate-and-merge", "approve-and-merge"):
             condition = workflow_job(name).split("    if:", 1)[1].split("    runs-on:", 1)[0]
             self.assertIn("github.event_name == 'workflow_dispatch'", condition)
             self.assertIn("github.ref == 'refs/heads/dev'", condition)
