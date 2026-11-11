@@ -171,7 +171,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target }) {
     </Alert>}
     {run.result && !active && <Typography variant="s1">Historical failure: {run.result.reproduction.replaceAll('_', ' ')} · Repair {run.result.repair_verified ? 'verified' : 'not verified'}{run.result.regressed_cases?.length ? ` · ${run.result.regressed_cases.length} neighboring case(s) regressed` : ''}</Typography>}
     {!active && canWrite && run.result?.reproduction === 'reproduced' && referenceArm && <Box>
-      <Button variant="contained" size="small" onClick={() => navigate(`${paths.dashboard.skills.contextEdit(contextId)}?from=${referenceArm.version}&preserve=1`)}>{`Repair from recorded v${referenceArm.version}`}</Button>
+      <Button variant="outlined" size="small" onClick={() => navigate(`${paths.dashboard.skills.contextEdit(contextId)}?from=${referenceArm.version}&preserve=1`)}>{`Repair from recorded v${referenceArm.version}`}</Button>
     </Box>}
     {run.runtime && <Typography variant="s3" color="text.secondary">Runtime proved read-only source {String(run.runtime.read_only_source)}, read-only context {String(run.runtime.read_only_context)}, closed paid egress {String(run.runtime.controlled_paid_egress)}.</Typography>}
     {run.cells && <TableContainer>
@@ -211,6 +211,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   const isChosen = (id) => (id in chosenOver ? chosenOver[id] : seed?.caseId ? id === seed.caseId : true);
   const isHistorical = (id) => (id in historicalOver ? historicalOver[id] : seed?.caseId ? id === seed.caseId : previousHistorical.includes(id));
   const [fresh, setFresh] = useState('');
+  const [ack, setAck] = useState(false);
   const [key, setKey] = useState(uuid);
   const [error, setError] = useState('');
   const caseIds = reviewed.filter((item) => isChosen(item.id)).map((item) => item.id);
@@ -225,6 +226,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   // changes make a plan, so the ceiling is already on the button when the reviewer decides.
   useEffect(() => {
     setFresh('');
+    setAck(false);
     if (!ready) { preview.reset(); return; }
     preview.mutate(plan, { onSuccess: () => setFresh(planKey) });
   }, [planKey, ready]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -232,7 +234,7 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
   const current = Boolean(result) && fresh === planKey;
   const run = async () => {
     setError('');
-    try { onStarted(await create.mutateAsync({ idempotencyKey: key, plan, executionFingerprint: result.executionFingerprint, acknowledgeSpend: true })); setKey(uuid()); setFresh(''); preview.reset(); }
+    try { onStarted(await create.mutateAsync({ idempotencyKey: key, plan, executionFingerprint: result.executionFingerprint, acknowledgeSpend: ack })); setKey(uuid()); setFresh(''); setAck(false); preview.reset(); }
     catch (reason) { setError(reason?.response?.data?.error?.message || 'The verification did not start. Review the plan again before retrying.'); }
   };
   const versionOptions = numbers.map((number) => <MenuItem key={number} value={number}>v{number}</MenuItem>);
@@ -257,8 +259,10 @@ function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onS
           <Typography variant="s1" component="div">Not reproduced: required historical inputs are missing, so nothing can launch.</Typography>
           {result.missingInputs.map((item) => <Typography key={`${item.caseId}/${item.input}`} variant="s1" component="div">{(cases.find((c) => c.id === item.caseId) || {}).title || item.caseId}: {item.input}. {item.detail}</Typography>)}
         </Alert> : <Alert severity="info">{result.cells} cells · paid ceiling ${result.ceilingUsd} · {result.arms.map((arm) => `${ARM[arm.variant]} v${arm.version}`).join(' · ')}</Alert>}
+        {/* The plan is made for the reviewer; the paid run still needs the reviewer's own acceptance of its ceiling. */}
+        <FormControlLabel control={<Checkbox size="small" checked={ack} disabled={!result.reproducible || !current} onChange={(event) => setAck(event.target.checked)} />} label={<Typography variant="s1">I accept up to ${result.ceilingUsd} in provider charges for this run.</Typography>} />
         {error && <Alert severity="error">{error}</Alert>}
-        <Box><Button variant="contained" size="small" disabled={!canWrite || !result.reproducible || !current || create.isPending} onClick={run}>{`Run on the application · accept up to $${result.ceilingUsd}`}</Button></Box>
+        <Box><Button variant="contained" size="small" disabled={!canWrite || !result.reproducible || !current || !ack || create.isPending} onClick={run}>Run on the application</Button></Box>
       </Stack>}
     </Stack>
   </Section>;

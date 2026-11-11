@@ -88,7 +88,8 @@ export async function createDriver({ jobId, runId, registration }) {
         await op.click(page.getByRole('option', { name: option, exact: typeof option === 'string' }), `choose-${target}`);
       };
       const receipt = (source, hash, decision = null) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: hash, actionSequences: [], ...(decision ? { decision } : {}) });
-      const RUN_BUTTON = /^Run on the application · accept up to \$/;
+      const RUN_BUTTON = { name: 'Run on the application', exact: true };
+      const CEILING = /I accept up to/;
       const group = () => page.getByRole('group', { name: 'Examples to run' });
       /** The plan is preselected from stored data. Each default is asserted visibly (never assumed) before the
        * reviewer decides; the single counted gesture is the button that names the paid ceiling. */
@@ -98,12 +99,14 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(page.getByLabel('Recorded reference version', { exact: true })).toContainText(`v${reference}`, ready);
         for (const title of titles) await expect(group().getByRole('checkbox', { name: title, exact: true })).toBeChecked(ready);
         await expect(group().getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked(ready);
-        await expect(page.getByRole('button', { name: RUN_BUTTON })).toBeEnabled({ timeout: 120_000 });
+        await expect(page.getByRole('checkbox', { name: CEILING })).toBeEnabled({ timeout: 120_000 });
       };
       /** Accept the paid ceiling named on the button and start the run through the public Tests UI. Returns the evidence id. */
       const startRun = async (tag) => {
         const created = page.waitForResponse((res) => res.url().endsWith('/native/runs/') && res.request().method() === 'POST');
-        await op.click(page.getByRole('button', { name: RUN_BUTTON }), `${tag}-run`);
+        // The reviewer accepts the named paid ceiling themselves; the plan above was made for them.
+        await op.click(page.getByRole('checkbox', { name: CEILING }), `${tag}-accept-ceiling`);
+        await op.click(page.getByRole('button', RUN_BUTTON), `${tag}-run`);
         const response = await created;
         requireValue(response.ok(), 'Native run was refused');
         return (await response.json()).result.evidence_id;

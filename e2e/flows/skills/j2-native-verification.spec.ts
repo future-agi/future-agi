@@ -183,7 +183,8 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     for (const title of ['Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
     await expect(page.getByText(/9 cells/)).toBeVisible();
     await shot('J2-native-preview');
-    await page.getByRole('button', { name: /^Run on the application · accept up to \$/ }).click();
+    await page.getByRole('checkbox', { name: /I accept up to/ }).check();
+    await page.getByRole('button', { name: 'Run on the application', exact: true }).click();
     await expect(page.getByText(/Release-ready on the application|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
     await expect(page.getByText('Release-ready on the application')).toBeVisible();
     await shot('J2-native-result');

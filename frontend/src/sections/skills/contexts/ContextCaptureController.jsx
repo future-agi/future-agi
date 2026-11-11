@@ -43,7 +43,7 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeConte
     const params = new URLSearchParams({ tab: 'tests', reproduce: caseId, ...(latest ? { version: String(latest) } : {}), ...(recorded ? { reference: String(recorded) } : {}) });
     return <Stack spacing={1}>
       {unrecorded && <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert>}
-      <Button variant="contained" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>
+      <Button variant="outlined" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>
     </Stack>;
   };
   return <ContextCaptureDialog open onClose={onClose} scopeKey={`${access.identity}:${contextId}`}

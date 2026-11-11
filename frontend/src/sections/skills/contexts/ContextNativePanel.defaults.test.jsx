@@ -28,13 +28,15 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it('plans the matched run from stored data and starts it with one click that names the paid ceiling', async () => {
+it('plans the matched run from stored data and starts it only after the reviewer accepts the paid ceiling', async () => {
   renderPanel();
-  const button = await screen.findByRole('button', { name: 'Run on the application · accept up to $1.5' });
+  const button = await screen.findByRole('button', { name: 'Run on the application' });
+  expect(button).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I accept up to $1.5 in provider charges for this run.' }));
+  await waitFor(() => expect(button).toBeEnabled());
   expect(h.preview.plans.at(-1)).toMatchObject({ candidateVersion: 7, baselines: { reference: 4, production: 6 }, caseIds: ['refund', 'chargeback'], historicalCaseIds: ['refund'], repetitions: 1 });
   expect(screen.getByRole('checkbox', { name: 'Original refund failure' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Working chargeback case' })).toBeChecked();
-  expect(screen.queryByRole('checkbox', { name: /I accept up to/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Preview application run' })).not.toBeInTheDocument();
   fireEvent.click(button);
   await waitFor(() => expect(h.create).toHaveBeenCalledOnce());
@@ -43,14 +45,14 @@ it('plans the matched run from stored data and starts it with one click that nam
 it('reproduces only the example just captured against its recorded version', async () => {
   h.runs = [];
   renderPanel({ viewed: { number: 6 }, productionVersion: 6, seed: { caseId: 'refund', reference: 4 } });
-  await screen.findByRole('button', { name: /Run on the application/ });
+  await screen.findByRole('button', { name: 'Run on the application' });
   expect(h.preview.plans.at(-1)).toMatchObject({ candidateVersion: 6, baselines: { reference: 4 }, caseIds: ['refund'], historicalCaseIds: ['refund'] });
   expect(h.preview.plans.at(-1).baselines.production).toBeUndefined();
   expect(screen.getByRole('checkbox', { name: 'Working chargeback case' })).not.toBeChecked();
 });
 it('re-plans after the reviewer deselects an example and refuses a stale plan', async () => {
   renderPanel();
-  await screen.findByRole('button', { name: /Run on the application/ });
+  await screen.findByRole('button', { name: 'Run on the application' });
   fireEvent.click(screen.getByRole('checkbox', { name: 'Working chargeback case' }));
   await waitFor(() => expect(h.preview.plans.at(-1).caseIds).toEqual(['refund']));
 });
@@ -59,5 +61,5 @@ it('plans nothing without a recorded reference or production baseline', async ()
   renderPanel({ productionVersion: undefined });
   expect((await screen.findAllByText('Recorded reference version')).length).toBeGreaterThan(0);
   expect(h.preview.plans).toHaveLength(0);
-  expect(screen.queryByRole('button', { name: /Run on the application/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Run on the application' })).not.toBeInTheDocument();
 });
