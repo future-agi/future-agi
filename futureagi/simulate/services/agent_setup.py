@@ -371,6 +371,8 @@ def store_agent(
             outcome = "replaced"
         else:
             raise AgentStoreError("setup_outcome_already_stored")
+        if outcome != "unchanged":
+            _fill_version_prompt(version, agent)
     except AgentStoreError as error:
         logger.warning(
             "agent_setup_rejected",
@@ -388,6 +390,22 @@ def store_agent(
         outcome=outcome,
     )
     return outcome
+
+
+def _fill_version_prompt(version: AgentVersion, agent: dict) -> None:
+    """Give a version whose prompt is still blank the one its document found, so the
+    evals and simulations that read the version's prompt get it."""
+    units = agent.get("behaviour") or []
+    prompt = str((units[0] or {}).get("instructions") or "").strip() if units else ""
+    if not prompt or str(version.description or "").strip():
+        return
+    AgentVersion.no_workspace_objects.filter(id=version.id).update(
+        description=prompt,
+        configuration_snapshot={
+            **(version.configuration_snapshot or {}),
+            "description": prompt,
+        },
+    )
 
 
 def store_setup_failure(

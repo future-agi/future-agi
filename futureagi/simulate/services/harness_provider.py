@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import uuid
 from typing import Any
 
 from django.conf import settings
@@ -1241,12 +1242,30 @@ def _rerun_credentials_agent(
     return version
 
 
+def _builds_connected_agent(organization, payload) -> bool:
+    """Whether a creation binds to an agent connected on the Agents page, whose
+    version already passed its own check and lends the environment its credentials."""
+    from simulate.models import AgentDefinition
+    from simulate.services.harness_agent_versions import environment_owned
+
+    raw = ((payload.get("metadata") or {}).get("agent_definition_id")) or ""
+    try:
+        definition_id = uuid.UUID(str(raw))
+    except ValueError:
+        return False
+    found = AgentDefinition.no_workspace_objects.filter(
+        id=definition_id, organization=organization, deleted=False
+    ).exists()
+    return found and not environment_owned(definition_id)
+
+
 def _environment_agent_maker(
     organization, payload, secret_values, analysis, user, repository_id=None
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
     from simulate.services.harness_agent_versions import (
+        CreationCheck,
         check_creation_credentials,
         ensure_environment_agent,
         submitted_credentials,
@@ -1255,8 +1274,12 @@ def _environment_agent_maker(
     secret_submitted = submitted_credentials(
         organization, payload["agent"]["secret_refs"], secret_values
     )
-    check = check_creation_credentials(
-        organization, payload, secret_submitted, analysis
+    check = (
+        CreationCheck(report={}, required_variable_names=[])
+        if _builds_connected_agent(organization, payload)
+        else check_creation_credentials(
+            organization, payload, secret_submitted, analysis
+        )
     )
 
     def make(job) -> None:
