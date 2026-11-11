@@ -20237,6 +20237,8 @@ export interface EvidenceImportApi {
   agent_version_id: string;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
+  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
+  simulated: boolean;
   /** True while the environment's builder is drafting cases. */
   drafting: boolean;
   cases: EvidenceImportCaseApi[];

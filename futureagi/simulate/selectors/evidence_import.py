@@ -15,7 +15,7 @@ from dataclasses import asdict, replace
 from django.db.models import Q, QuerySet
 
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.selectors.observe_evidence import (
     Label,
     SourceEvidence,
@@ -72,6 +72,12 @@ def evidence_project(
         .filter(id=project_id)
         .first()
     )
+
+
+def is_simulated(evidence_import: EvidenceImport) -> bool:
+    """Whether the import's sources come from a Simulator project: our own
+    simulated conversations, never production evidence."""
+    return evidence_import.project.source == ProjectSourceChoices.SIMULATOR.value
 
 
 def environment_evidence_import(
@@ -139,6 +145,7 @@ def import_bundle(
         "source_kind": evidence_import.source_kind,
         "created_at": evidence_import.created_at,
         "drafting": evidence_import.drafting_job_id is not None,
+        "simulated": is_simulated(evidence_import),
         "cases": [_case(case, current.get(case.source_id)) for case in cases],
         "redaction": _redaction(cases, current),
     }
@@ -508,9 +515,16 @@ def evidence_document(
         (case.id, part, index, field): redact(text, hits)
         for (case, part, index, field, text), hits in zip(values, found, strict=True)
     }
+    kind = evidence_import.source_kind
     lines = [
-        f"# Evidence import {evidence_import.id}: {evidence_import.source_kind}s "
+        f"# Evidence import {evidence_import.id}: {kind}s "
         f"from Observe project {evidence_import.project_id}.",
+        (
+            f"# These {kind}s come from a Simulator project: simulated, not "
+            "production. Never write a case as something a customer did."
+            if is_simulated(evidence_import)
+            else f"# These are production {kind}s: each case is regression evidence."
+        ),
         "# Personal data is replaced with tokens such as <EMAIL_ADDRESS>."
         + (f" {reason}" if reason else ""),
         "# Observe never records the starting state: anything you assume about "

@@ -507,6 +507,47 @@ def test_the_turn_says_what_each_case_records(cases, user, scheduled):
     assert evidence_drafts.SHOWN["failure"] in content
     assert evidence_drafts.SHOWN["success"] in content
     assert "contradicts what the person says it records" in content
+    # Production sources are regression evidence, and never called simulated.
+    assert "Draft one regression scenario" in content
+    assert "from the production evidence" in content
+    assert "Simulator project" not in content
+
+
+def test_a_simulator_projects_calls_are_never_called_production(cases, user, scheduled):
+    from simulate.selectors.evidence_import import evidence_document, import_bundle
+
+    evidence_import = cases[0].evidence_import
+    case_ids = [str(case.id) for case in cases]
+    found = {case.source_id: _evidence(case.source_id) for case in cases}
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence", return_value=found
+    ):
+        production = import_bundle(evidence_import)
+        production_text = evidence_document(evidence_import, case_ids)
+        project = evidence_import.project
+        project.source = "simulator"
+        project.save(update_fields=["source"])
+        simulated = import_bundle(evidence_import)
+        simulated_text = evidence_document(evidence_import, case_ids)
+
+    assert production["simulated"] is False
+    assert "These are production sessions: each case is regression evidence." in (
+        production_text
+    )
+    assert "Simulator project" not in production_text
+    assert simulated["simulated"] is True
+    assert (
+        "These sessions come from a Simulator project: simulated, not production."
+        in simulated_text
+    )
+    assert "production sessions" not in simulated_text
+
+    # The builder is told the same.
+    conversation = _start(cases, user)
+    content = _command(conversation).content
+    assert "from the simulated sessions" in content
+    assert "not production" in content
+    assert "production evidence" not in content
 
 
 def test_the_bundle_says_while_drafting_runs(cases, user, scheduled):

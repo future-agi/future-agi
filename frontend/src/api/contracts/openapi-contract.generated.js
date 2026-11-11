@@ -63523,6 +63523,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version_id",
         "source_kind",
         "created_at",
+        "simulated",
         "drafting",
         "cases",
         "redaction",
@@ -63559,6 +63560,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        simulated: {
+          title: "Simulated",
+          description:
+            "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+          type: "boolean",
         },
         drafting: {
           title: "Drafting",

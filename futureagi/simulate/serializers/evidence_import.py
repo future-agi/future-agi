@@ -152,6 +152,10 @@ class EvidenceImportSerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(allow_null=True)
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     created_at = serializers.DateTimeField()
+    simulated = serializers.BooleanField(
+        help_text="True when the sources come from a Simulator project: simulated "
+        "conversations, not production evidence."
+    )
     drafting = serializers.BooleanField(
         help_text="True while the environment's builder is drafting cases."
     )

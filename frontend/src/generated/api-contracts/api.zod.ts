@@ -40240,6 +40240,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   agent_version_id: zod.string().uuid(),
   source_kind: zod.enum(["session", "call"]),
   created_at: zod.string().datetime({ offset: true }),
+  simulated: zod
+    .boolean()
+    .describe(
+      "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+    ),
   drafting: zod
     .boolean()
     .describe("True while the environment's builder is drafting cases."),
@@ -40509,6 +40514,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       agent_version_id: zod.string().uuid(),
       source_kind: zod.enum(["session", "call"]),
       created_at: zod.string().datetime({ offset: true }),
+      simulated: zod
+        .boolean()
+        .describe(
+          "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+        ),
       drafting: zod
         .boolean()
         .describe("True while the environment's builder is drafting cases."),
