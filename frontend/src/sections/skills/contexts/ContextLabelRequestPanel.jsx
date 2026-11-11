@@ -12,9 +12,14 @@ import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadRevie
 // Hierarchy/signature: current -> proposed pointer, compiled digest, reviewer.
 // Palette/depth/surfaces: shared neutral paper and warning roles, flat groups.
 // Typography: m3/s1/s3; 12px spacing. No bulk approval or success-green shortcut.
+// The last reviewer a person chose is a per-viewer convenience for requesting several parents in a row;
+// it is shown in the field, validated like typed input, and never submitted without the explicit confirmation below.
+const LAST_REVIEWER_KEY = 'skills.releaseRequest.lastReviewer';
+const readReviewer = () => { try { return window.localStorage.getItem(LAST_REVIEWER_KEY) || ''; } catch { return ''; } };
+const writeReviewer = (value) => { try { window.localStorage.setItem(LAST_REVIEWER_KEY, value); } catch { /* Storage is optional. */ } };
 function Request({ contextId, version, scopeKey, authorId }) {
   const [label, setLabel] = useState('production');
-  const [reviewerId, setReviewerId] = useState('');
+  const [reviewerId, setReviewerId] = useState(readReviewer);
   const [preview, setPreview] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [receipt, setReceipt] = useState(null);
@@ -26,7 +31,7 @@ function Request({ contextId, version, scopeKey, authorId }) {
   const current = preview?.packet.candidate_version_id === version?.id && preview?.packet.candidate_digest === version?.digest && preview?.packet.transition.label === label;
   const send = async () => {
     const result = await operation.run((input, extra) => submit.mutateAsync({ ...input, ...extra }), { packet: preview.packet, fingerprint: preview.fingerprint, reviewerId });
-    if (result) setReceipt(result);
+    if (result) { setReceipt(result); writeReviewer(reviewerId); }
   };
   return <Stack spacing={1.5}>
     <Section title="Request a label move" description="Publication and promotion are separate. A different authorized person must review this exact parent before a label can move." />

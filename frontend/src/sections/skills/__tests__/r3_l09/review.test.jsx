@@ -538,11 +538,12 @@ describe("publication and explicit spending", () => {
         onPublish={publish}
       />,
     );
-    fireEvent.click(
+    // The acknowledged head carries the person's recorded attestation; it is visible, not requested again.
+    expect(
       screen.getByRole("checkbox", {
         name: /saved candidate against its content origin/,
       }),
-    );
+    ).toBeChecked();
     click("Publish version");
     await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
     expect(publish.mock.calls[0][0]).toMatchObject({

@@ -353,8 +353,11 @@ export async function createDriver({ jobId, runId, registration }) {
           const packets = [];
           for (const [index, parent] of followers.entries()) {
             await navigate(`/dashboard/skills/contexts/${parent.id}?version=2&tab=versions`, `parent-${index}-label-request`);
-            await operator.reconcile(`parent-${index}-reviewer-identity`, () => Promise.resolve(input.owner.userId));
-            await fill('Independent reviewer user ID', input.owner.userId, `parent-${index}-reviewer`);
+            // The panel keeps the last reviewer visible; the person looks the identity up only when it differs.
+            if (await page.getByRole('textbox', { name: 'Independent reviewer user ID', exact: true }).inputValue() !== input.owner.userId) {
+              await operator.reconcile(`parent-${index}-reviewer-identity`, () => Promise.resolve(input.owner.userId));
+              await fill('Independent reviewer user ID', input.owner.userId, `parent-${index}-reviewer`);
+            }
             await click('Preview parent label move', `parent-${index}-label-preview`);
             await click('Request independent review of this exact parent transition. Do not move its label yet.', `parent-${index}-request-confirmation`, 'checkbox');
             const submitted = watch(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');

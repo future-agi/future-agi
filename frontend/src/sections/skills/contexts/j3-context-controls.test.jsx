@@ -87,6 +87,16 @@ it('requires an independent reviewer and only submits a label request, not a lab
   expect(state.submitLabel.mock.calls[0][0]).toMatchObject({ packet: labelPreview.packet, fingerprint: 'packet' });
   expect(await screen.findByText(/No label move has been confirmed/)).toBeVisible();
 });
+it('keeps the last chosen reviewer visible for the next parent without submitting anything for the author', async () => {
+  window.localStorage.setItem('skills.releaseRequest.lastReviewer', '00000000-0000-4000-8000-000000000002');
+  mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
+  expect(screen.getByRole('textbox', { name: 'Independent reviewer user ID' })).toHaveValue('00000000-0000-4000-8000-000000000002');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview parent label move' }));
+  await screen.findByRole('button', { name: 'Send parent release request' });
+  expect(screen.getByRole('button', { name: 'Send parent release request' })).toBeDisabled();
+  expect(state.submitLabel).not.toHaveBeenCalled();
+  window.localStorage.removeItem('skills.releaseRequest.lastReviewer');
+});
 it('shows dependent failures rather than claiming an empty inventory', () => {
   state.dependents = { isError: true, refetch: vi.fn() };
   mount(<ContextDependentsPanel skillId="child" />);
