@@ -280,6 +280,9 @@ export async function createDriver({ jobId, runId, registration }) {
             && detail.packet.evidence.every((ref) => input.evidenceIds.includes(ref.source_id) && ref.visibility === 'workspace'), 'Submitted identity differs');
           await shot(author, 'share-and-submit');
           await stamp('author-submission', detail);
+          // The owner and author are done: finalize their recordings now so
+          // teardown stays inside the runner's bounded deadline.
+          for (const role of ['admin', 'author']) if (pages[role]) await pages[role].context().close();
           return;
         }
         const reviewer = await page('reviewer');
@@ -467,7 +470,7 @@ export async function createDriver({ jobId, runId, registration }) {
       return { source, value, artifact_sha256: await record(`oracle-${check.id}`, raw) };
     },
     async teardown() {
-      for (const context of contexts) await context.close();
+      await Promise.all(contexts.map((context) => context.close().catch(() => {})));
       await browser?.close();
       // Verify the environment was returned to the configured state: the
       // reviewer's authority and the registered target configuration.
