@@ -120,6 +120,17 @@ def occurrence(setup, monkeypatch, **overrides):
     )
 
 
+def occurrence_on(setup, monkeypatch, span_id):
+    """An occurrence whose authenticated parent is another span of TRACE."""
+    current, _ = core.session(setup)
+    association = {
+        "capture_session_id": str(current.client_id),
+        "correlation_nonce": str(current.correlation_nonce),
+        "parent": {"trace_id": core.TRACE, "span_id": span_id},
+    }
+    return occurrence(setup, monkeypatch, current=current, association=association)
+
+
 class LiveSession(LiveAuthority):
     """The real source rule; only the application-session check is a double."""
 
@@ -355,9 +366,9 @@ def test_transient_bind_fence_parks_and_never_erases(setup, monkeypatch):
 
 def test_claims_walk_past_a_full_batch_of_waiting_rows(setup, monkeypatch):
     scope, _ = setup
-    first = occurrence(setup, monkeypatch)
+    first = occurrence_on(setup, monkeypatch, "1111111111111111")
     second = occurrence(setup, monkeypatch)
-    spans = Spans()
+    spans = Spans()  # first's span never arrives
     spans.put(scope.project_id, span_for(second))
     store = control_plane.OccurrenceBindingStore()
     assert [link.internal_id for link in store.claim_pending(timezone.now(), 1)] == [
@@ -419,7 +430,7 @@ def test_reader_is_dark_when_disabled(setup, settings, django_assert_num_queries
 def test_reader_returns_only_bound_authorized_occurrences(setup, user, monkeypatch):
     scope, _ = setup
     bound = occurrence(setup, monkeypatch)
-    unbound = occurrence(setup, monkeypatch)
+    unbound = occurrence_on(setup, monkeypatch, "1111111111111111")
     spans = Spans()
     spans.put(scope.project_id, span_for(bound, refs=[ref_for(bound)]))
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
@@ -594,7 +605,11 @@ def test_waiting_rows_never_starve_another_scope(setup, other_setup, monkeypatch
 def test_waiting_rows_rotate_within_a_scope(setup, monkeypatch):
     """A parked row goes to the back, so a newer bindable row is reached."""
     scope, _ = setup
-    waiting = [occurrence(setup, monkeypatch) for _ in range(2)]
+    # The waiting rows' spans never arrive.
+    waiting = [
+        occurrence_on(setup, monkeypatch, span_id)
+        for span_id in ("1111111111111111", "2222222222222222")
+    ]
     bindable = occurrence(setup, monkeypatch)
     spans = Spans()
     spans.put(scope.project_id, span_for(bindable))
