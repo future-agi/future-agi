@@ -47,7 +47,7 @@ const DeleteEvalConfirm = ({
             Are you sure you want delete this evaluation?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -68,7 +68,7 @@ const DeleteEvalConfirm = ({
             borderColor: "error.main",
             "&:hover": {
               borderColor: "error.main",
-              backgroundColor: "red.o10",
+              backgroundColor: "status.danger.bg",
             },
           }}
         >

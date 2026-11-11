@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
@@ -12,12 +13,21 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Switch from "@mui/material/Switch";
+import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  toolActionErrorMessage,
+} from "src/sections/falcon-ai/components/connectorTools";
+import { useConnectorToolPermissions } from "src/sections/falcon-ai/hooks/useConnectorToolPermissions";
 import {
   fetchConnectors,
   useConnector,
@@ -27,7 +37,6 @@ import {
   testConnector,
   discoverConnectorTools,
   authenticateConnector,
-  updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import { buildConnectorSavePayload } from "./utils";
 
@@ -41,10 +50,10 @@ function getConnectorIcon(connector) {
   if (name.includes("jira")) return "mdi:jira";
   if (name.includes("slack")) return "mdi:slack";
   if (name.includes("notion")) return "simple-icons:notion";
-  if (name.includes("linear")) return "mdi:view-kanban-outline";
-  if (name.includes("sentry")) return "mdi:bug-outline";
-  if (name.includes("postgres")) return "mdi:database";
-  return "mdi:puzzle-outline";
+  if (name.includes("linear")) return "solar:kanban-linear";
+  if (name.includes("sentry")) return "solar:bug-linear";
+  if (name.includes("postgres")) return "solar:database-linear";
+  return "solar:widget-linear";
 }
 
 function getStatusInfo(connector) {
@@ -53,16 +62,6 @@ function getStatusInfo(connector) {
   if (!isActive) return { label: "Inactive", color: "default" };
   if (isVerified) return { label: "Connected", color: "success" };
   return { label: "Pending", color: "warning" };
-}
-
-function getActionErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.response?.data?.error ||
-    error?.response?.data?.message ||
-    error?.message ||
-    fallback
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +76,13 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
-  const { data: selectedConnector, refetch: refetchSelectedConnector } =
-    useConnector(selectedId, {
-      enabled: Boolean(selectedId) && !isNew,
-    });
+  const {
+    data: selectedConnector,
+    refetch: refetchSelectedConnector,
+    isLoading: isConnectorLoading,
+  } = useConnector(selectedId, {
+    enabled: Boolean(selectedId) && !isNew,
+  });
 
   const loadConnectors = useCallback(async ({ showSpinner = true } = {}) => {
     try {
@@ -191,9 +193,7 @@ export default function ConnectorSettingsPage() {
   };
 
   if (loading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   return (
@@ -230,7 +230,7 @@ export default function ConnectorSettingsPage() {
         <Button
           type="button"
           variant="contained"
-          startIcon={<Iconify icon="mdi:plus" width={18} />}
+          startIcon={<Iconify icon="solar:add-linear" width={20} />}
           onClick={handleNew}
           sx={{ flexShrink: 0 }}
         >
@@ -248,8 +248,9 @@ export default function ConnectorSettingsPage() {
       <Box
         sx={{
           display: "flex",
-          border: (t) => `1px solid ${t.palette.divider}`,
-          borderRadius: "12px",
+          border: "1px solid",
+          borderColor: "border.default",
+          borderRadius: "8px",
           overflow: "hidden",
           minHeight: 500,
           bgcolor: "background.paper",
@@ -258,9 +259,10 @@ export default function ConnectorSettingsPage() {
         {/* Left: Connector list */}
         <Box
           sx={{
-            width: 300,
+            width: 280,
             flexShrink: 0,
-            borderRight: (t) => `1px solid ${t.palette.divider}`,
+            borderRight: "1px solid",
+            borderColor: "border.default",
             display: "flex",
             flexDirection: "column",
           }}
@@ -277,7 +279,7 @@ export default function ConnectorSettingsPage() {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="mdi:magnify"
+                      icon="solar:magnifier-linear"
                       width={16}
                       sx={{ color: "text.disabled" }}
                     />
@@ -317,10 +319,11 @@ export default function ConnectorSettingsPage() {
                   selected={isActive}
                   onClick={() => handleSelect(conn.id)}
                   sx={{
-                    borderRadius: "8px",
+                    borderRadius: "6px",
                     mb: "2px",
                     px: 1.5,
-                    py: "7px",
+                    py: 0,
+                    height: 28,
                     minHeight: 0,
                     "&.Mui-selected": {
                       bgcolor: theme.palette.action.selected,
@@ -328,24 +331,23 @@ export default function ConnectorSettingsPage() {
                     "&:hover": { bgcolor: theme.palette.action.hover },
                   }}
                 >
-                  <ListItemIcon sx={{ minWidth: 32, color: "text.secondary" }}>
-                    <Iconify icon={getConnectorIcon(conn)} width={18} />
+                  <ListItemIcon sx={{ minWidth: 28, color: "text.secondary" }}>
+                    <Iconify icon={getConnectorIcon(conn)} width={16} />
                   </ListItemIcon>
                   <ListItemText
                     primary={conn.name}
                     primaryTypographyProps={{
                       noWrap: true,
                       fontSize: 13,
-                      fontWeight: isActive ? 600 : 500,
+                      fontWeight: isActive ? 500 : 400,
                     }}
                   />
-                  <Chip
-                    label={statusInfo.label}
-                    size="small"
-                    variant="outlined"
-                    color={statusInfo.color}
-                    sx={{ height: 18, fontSize: 9, fontWeight: 600, ml: 0.5 }}
-                  />
+                  <Typography
+                    component="span"
+                    sx={{ ml: 0.5, fontSize: 12, color: "text.tertiary" }}
+                  >
+                    {statusInfo.label}
+                  </Typography>
                 </ListItemButton>
               );
             })}
@@ -373,55 +375,39 @@ export default function ConnectorSettingsPage() {
           ) : selected ? (
             <ConnectorDetail
               connector={selected}
+              loading={isConnectorLoading}
               onEdit={() => setIsEditing(true)}
               onDelete={() => handleDelete(selected.id)}
               onRefresh={() => refreshSelected(selected.id)}
             />
           ) : (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                px: 4,
-              }}
-            >
-              <Iconify
-                icon="mdi:puzzle-outline"
-                width={48}
-                sx={{ color: "text.disabled", mb: 2 }}
-              />
-              <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
-                {connectors.length === 0
-                  ? "No connectors configured"
-                  : "Select a connector"}
-              </Typography>
-              <Typography
-                sx={{
-                  fontSize: 13,
-                  color: "text.secondary",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                {connectors.length === 0
+            <EmptyState
+              icon="solar:widget-linear"
+              title={
+                connectors.length === 0
+                  ? "No connectors yet"
+                  : "Select a connector"
+              }
+              description={
+                connectors.length === 0
                   ? "Add an external MCP server to give Falcon AI access to additional tools."
-                  : "Choose a connector from the list to view its details and tools."}
-              </Typography>
-              {connectors.length === 0 && (
-                <Button
-                  type="button"
-                  variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" width={16} />}
-                  onClick={handleNew}
-                  sx={{ mt: 2, textTransform: "none", borderRadius: "8px" }}
-                >
-                  Add your first connector
-                </Button>
-              )}
-            </Box>
+                  : "Choose a connector from the list to view its details and tools."
+              }
+              action={
+                connectors.length === 0 ? (
+                  <Button
+                    type="button"
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    onClick={handleNew}
+                  >
+                    Add connector
+                  </Button>
+                ) : undefined
+              }
+              sx={{ pt: 6, pb: 6, justifyContent: "center" }}
+            />
           )}
         </Box>
       </Box>
@@ -432,14 +418,25 @@ export default function ConnectorSettingsPage() {
 // ---------------------------------------------------------------------------
 // Connector Detail (read-only)
 // ---------------------------------------------------------------------------
-function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
+function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const statusInfo = getStatusInfo(connector);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [reauthing, setReauthing] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  // Ordering, the last-tool guard, optimistic display and rollback are shared
+  // with the Customize pane. The switch reads through the react-query cache
+  // this writes to, so no local copy of the record is needed here.
+  const {
+    toolError,
+    pendingNames,
+    handleToolToggle: toggleTool,
+  } = useConnectorToolPermissions({
+    connector,
+    onApply: () => {},
+    onDrained: onRefresh,
+  });
 
   const tools = connector.discovered_tools || [];
   const enabledTools = connector.enabled_tool_names || [];
@@ -475,7 +472,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Connection test failed."),
+        message: toolActionErrorMessage(error, "Connection test failed."),
       });
     } finally {
       setTesting(false);
@@ -510,7 +507,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Tool discovery failed."),
+        message: toolActionErrorMessage(error, "Tool discovery failed."),
       });
     } finally {
       setDiscovering(false);
@@ -542,30 +539,14 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Authentication failed."),
+        message: toolActionErrorMessage(error, "Authentication failed."),
       });
     } finally {
       setReauthing(false);
     }
   };
 
-  const handleToolToggle = async (toolName) => {
-    let updated;
-    if (isToolEnabled(toolName)) {
-      updated = enabledTools.filter((t) => t !== toolName);
-    } else {
-      updated = [...enabledTools, toolName];
-    }
-    try {
-      await updateConnectorTools(connector.id, updated);
-      await onRefresh();
-    } catch (error) {
-      setFeedback({
-        severity: "error",
-        message: getActionErrorMessage(error, "Failed to update tools."),
-      });
-    }
-  };
+  const handleToolToggle = (toolName) => toggleTool(connector.id, toolName);
 
   return (
     <Box
@@ -591,7 +572,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -599,11 +580,11 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
               color: "primary.main",
             }}
           >
-            <Iconify icon={getConnectorIcon(connector)} width={22} />
+            <Iconify icon={getConnectorIcon(connector)} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {connector.name}
               </Typography>
               <Chip
@@ -611,7 +592,6 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
                 size="small"
                 variant="outlined"
                 color={statusInfo.color}
-                sx={{ height: 20, fontSize: 10, fontWeight: 600 }}
               />
             </Box>
             {connector.description && (
@@ -631,9 +611,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           p: 2,
           borderRadius: "8px",
           mb: 2,
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.03)
-            : alpha(theme.palette.common.black, 0.02),
+          bgcolor: "background.neutral",
           border: (t) => `1px solid ${t.palette.divider}`,
         }}
       >
@@ -641,7 +619,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -656,7 +634,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -671,7 +649,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           <Box>
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.disabled",
                 mb: 0.25,
@@ -688,14 +666,20 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 
       {/* Error */}
       {connector.last_error && (
-        <Alert severity="error" sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {connector.last_error}
         </Alert>
       )}
 
       {feedback && (
-        <Alert severity={feedback.severity} sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity={feedback.severity} sx={{ mb: 2 }}>
           {feedback.message}
+        </Alert>
+      )}
+
+      {toolError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {toolError}
         </Alert>
       )}
 
@@ -705,9 +689,8 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:pencil-outline" width={14} />}
+          startIcon={<Iconify icon="solar:pen-linear" width={14} />}
           onClick={onEdit}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           Edit
         </Button>
@@ -716,10 +699,9 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
             type="button"
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mdi:refresh" width={14} />}
+            startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
             onClick={handleReauth}
             disabled={reauthing}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
           >
             {reauthing ? "Authenticating..." : "Re-authenticate"}
           </Button>
@@ -728,10 +710,9 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:magnify" width={14} />}
+          startIcon={<Iconify icon="solar:magnifier-linear" width={14} />}
           onClick={handleDiscover}
           disabled={discovering}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           {discovering ? "Discovering..." : "Discover Tools"}
         </Button>
@@ -739,10 +720,9 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           type="button"
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:connection" width={14} />}
+          startIcon={<Iconify icon="solar:plug-circle-linear" width={14} />}
           onClick={handleTest}
           disabled={testing}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
         >
           {testing ? "Testing..." : "Test Connection"}
         </Button>
@@ -751,12 +731,9 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           size="small"
           variant="outlined"
           color="error"
-          startIcon={<Iconify icon="mdi:delete-outline" width={14} />}
+          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
           onClick={onDelete}
           sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            fontSize: 12,
             ml: "auto",
           }}
         >
@@ -766,30 +743,32 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 
       {/* Tools */}
       <Divider sx={{ mb: 2 }} />
-      <Typography sx={{ fontSize: 13, fontWeight: 700, mb: 1.5 }}>
+      <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1.5 }}>
         Discovered Tools{" "}
         {tools.length > 0 && (
           <Chip
             label={tools.length}
             size="small"
             variant="outlined"
-            sx={{ height: 18, fontSize: 10, ml: 0.5 }}
+            sx={{ ml: 0.5 }}
           />
         )}
       </Typography>
 
-      {tools.length === 0 ? (
-        <Box sx={{ textAlign: "center", py: 4 }}>
-          <Iconify
-            icon="mdi:tools"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
-          />
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
-            No tools discovered yet. Click &ldquo;Discover Tools&rdquo; or
-            &ldquo;Re-authenticate&rdquo; to fetch available tools.
-          </Typography>
-        </Box>
+      {loading ? (
+        <ToolsSkeleton
+          title={null}
+          subtitle={null}
+          groupHeader={false}
+          trailing="switch"
+        />
+      ) : tools.length === 0 ? (
+        <EmptyState
+          icon="solar:toolbox-linear"
+          title="No tools yet"
+          description="Click Discover Tools or Re-authenticate to fetch available tools."
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <Box
           sx={{
@@ -823,17 +802,35 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
                   {desc && (
                     <Typography
                       noWrap
-                      sx={{ fontSize: 11, color: "text.secondary" }}
+                      sx={{ fontSize: 12, color: "text.secondary" }}
                     >
                       {desc}
                     </Typography>
                   )}
                 </Box>
-                <Switch
-                  size="small"
-                  checked={enabled}
-                  onChange={() => handleToolToggle(name)}
-                />
+                {/* The guard refuses this click; say so before it. */}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  {pendingNames.includes(name) && (
+                    <CircularProgress
+                      size={14}
+                      role="status"
+                      aria-label="Saving"
+                    />
+                  )}
+                  <CustomTooltip
+                    show={isOnlyEnabledTool(connector, name)}
+                    arrow
+                    size="small"
+                    placement="left"
+                    title={LAST_ENABLED_TOOL_HINT}
+                  >
+                    <Switch
+                      size="small"
+                      checked={enabled}
+                      onChange={() => handleToolToggle(name)}
+                    />
+                  </CustomTooltip>
+                </Box>
               </Box>
             );
           })}
@@ -844,6 +841,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 }
 
 ConnectorDetail.propTypes = {
+  loading: PropTypes.bool,
   connector: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     name: PropTypes.string,
@@ -937,12 +935,12 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
         p: 3,
       }}
     >
-      <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 2.5 }}>
+      <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 2.5 }}>
         {isEdit ? "Edit Connector" : "Add Connector"}
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2, fontSize: 12 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
@@ -1101,12 +1099,6 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
           size="small"
           onClick={handleSave}
           disabled={saving}
-          sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            fontSize: 13,
-            px: 3,
-          }}
         >
           {saving ? "Saving..." : isEdit ? "Save" : "Create"}
         </Button>
@@ -1115,7 +1107,6 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
           variant="outlined"
           size="small"
           onClick={onCancel}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
         >
           Cancel
         </Button>

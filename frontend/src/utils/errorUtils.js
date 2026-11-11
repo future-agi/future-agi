@@ -1,3 +1,4 @@
+import { DatasetLimitCheckFailedErrorApiCode } from "src/generated/api-contracts/api.schemas";
 import { RESPONSE_CODES } from "./constants";
 
 const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
@@ -9,6 +10,53 @@ const pickMessage = (...messages) =>
   messages.find(
     (message) => typeof message === "string" && message.trim().length > 0,
   ) || "";
+
+const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
+// Typed API error codes whose message the backend writes for users
+// (futureagi/tfc/utils/error_codes.py), shown whatever their status.
+const USER_FACING_ERROR_CODES = new Set(
+  Object.values(DatasetLimitCheckFailedErrorApiCode),
+);
+const INTERNAL_ERROR_MARKERS =
+  /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|maximum:\s*\d+|elapsed\s+\d+/i;
+
+/**
+ * Return concise validation feedback, but never expose infrastructure/query
+ * details from a failed mutation. Server-side failures without a user-facing
+ * code, and suspiciously large or multiline payloads, intentionally collapse
+ * to the caller's safe fallback.
+ */
+export function getSafeActionErrorMessage(error, fallback) {
+  const responseData = error?.response?.data || {};
+  const statusCode = Number(
+    error?.response?.status ||
+      responseData?.statusCode ||
+      error?.status ||
+      error?.statusCode,
+  );
+  const code = responseData?.code || error?.code;
+  const message = pickMessage(
+    responseData?.message,
+    responseData?.detail,
+    responseData?.error,
+    responseData?.result,
+    error?.result,
+  ).trim();
+
+  if (
+    !(
+      SAFE_VALIDATION_STATUS_CODES.has(statusCode) ||
+      USER_FACING_ERROR_CODES.has(code)
+    ) ||
+    !message ||
+    message.length > 240 ||
+    /[\r\n]/.test(message) ||
+    INTERNAL_ERROR_MARKERS.test(message)
+  ) {
+    return fallback;
+  }
+  return message;
+}
 
 function withRetryGuidance(message, retryAction) {
   const baseMessage = (message || DEFAULT_RATE_LIMIT_MESSAGE).trim();

@@ -10,7 +10,10 @@ dunning/invoice/budget runs break at call time instead of import time.
 These tests pin the import paths to the modules that actually exist.
 """
 
+import builtins
 import pathlib
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -25,6 +28,7 @@ _MOVED_BILLING_MODULES = (
     "ee.usage.services.budget_enforcement",
     "ee.usage.services.stripe_service",
     "ee.usage.services.billing_engine",
+    "ee.usage.tasks.monthly_reset",
 )
 
 
@@ -59,3 +63,49 @@ def test_cloud_billing_symbols_resolve_when_cloud_package_present():
 
     assert callable(DunningService.process_dunning_step)
     assert InvoiceGenerationService is not None
+
+
+def test_monthly_reset_uses_cloud_overlay_path():
+    source = _temporal_source("billing/activities.py")
+    assert "from ee.cloud.tasks.monthly_reset import run_monthly_reset" in source
+    assert "ee.usage.tasks.monthly_reset" not in source
+
+
+def test_monthly_reset_runs_when_cloud_overlay_is_present(monkeypatch):
+    from tfc.temporal.billing import activities
+
+    run_monthly_reset = Mock()
+    real_import = builtins.__import__
+
+    def import_with_cloud_reset(name, *args, **kwargs):
+        if name == "ee.cloud.tasks.monthly_reset":
+            return SimpleNamespace(run_monthly_reset=run_monthly_reset)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_with_cloud_reset)
+    monkeypatch.setattr(activities, "close_old_connections", Mock())
+
+    activities._run_monthly_reset_sync("2026-08")
+
+    run_monthly_reset.assert_called_once_with(period="2026-08")
+
+
+def test_monthly_reset_skips_cleanly_without_cloud_overlay(monkeypatch):
+    from tfc.temporal.billing import activities
+
+    real_import = builtins.__import__
+
+    def import_without_cloud_reset(name, *args, **kwargs):
+        if name == "ee.cloud.tasks.monthly_reset":
+            raise ImportError("cloud overlay is not installed")
+        return real_import(name, *args, **kwargs)
+
+    logger = SimpleNamespace(info=Mock())
+    monkeypatch.setattr(builtins, "__import__", import_without_cloud_reset)
+    monkeypatch.setattr(activities.activity, "logger", logger)
+
+    activities._run_monthly_reset_sync("2026-08")
+
+    logger.info.assert_called_once_with(
+        "monthly_reset_skipped_billing_is_cloud_only"
+    )
