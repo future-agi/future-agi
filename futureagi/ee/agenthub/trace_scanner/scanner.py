@@ -29,6 +29,7 @@ from ee.agenthub.trace_scanner.prompt import (
     VALID_SUBCATEGORIES,
     build_prompt_v8,
 )
+from ee.agenthub.untrusted_content import neutralize
 from agentic_eval.core.utils.model_config import (
     LiteLlmProvider,
     ModelConfig,
@@ -204,6 +205,81 @@ def _evidence_is_quotable(evidence, haystack_norm: str) -> bool:
     grams = [" ".join(words[i : i + 3]) for i in range(len(words) - 2)]
     hits = sum(1 for g in grams if g in haystack_norm)
     return hits / len(grams) >= _EVIDENCE_TRIGRAM_FLOOR
+
+
+# The two recorded fields a span carries, as the prompt names them.
+_FIELD_KEYS = {"in": "input.value", "out": "output.value"}
+_FIELD_ALIASES = {"in": "in", "input": "in", "out": "out", "output": "out"}
+# A quote is bound to the passages it was copied from. GOAL, TOOLS and
+# INSTRUCTION each ask for two passages that usually live in different fields;
+# a third is slack. Citing more than that binds the quote to nothing in
+# particular, so it is refused rather than truncated.
+_MAX_CITES = 3
+
+
+def _cites(verdict: dict[str, Any]):
+    """The (span id, field) pairs a FAIL says its evidence came from.
+
+    ``[]`` when it cites nothing; ``None`` when it cites something that cannot
+    be read as a span field, or more passages than a quote can be bound to.
+    A bare ``span``/``field`` pair on the verdict is read as one citation.
+    """
+    raw = verdict.get("cite")
+    if raw is None and verdict.get("span"):
+        raw = [{"span": verdict.get("span"), "field": verdict.get("field")}]
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > _MAX_CITES:
+        return None
+    pairs = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        span_id = str(entry.get("span") or "").strip()
+        name = _FIELD_ALIASES.get(str(entry.get("field") or "").strip().lower())
+        if not span_id or not name:
+            return None
+        pairs.append((span_id, name))
+    return pairs
+
+
+def _cited_text(trace, pairs) -> str | None:
+    """Recorded text of exactly the cited fields, or None if one is not there.
+
+    Read from the trace itself, never from the prompt: the prompt also carries
+    our instructions and framing, and a quote that only matches those is not a
+    quote from the trace. Neutralised as the prompt neutralised it, so a quote
+    of a field that contained a marker still matches. Every copy of a duplicated
+    span id counts, as it does for the completion gate.
+    """
+    texts = []
+    for span_id, name in pairs:
+        values = [
+            str((s.get("span_attributes") or {}).get(_FIELD_KEYS[name]) or "")
+            for s in _named_spans(trace, span_id)
+        ]
+        values = [v for v in values if v.strip()]
+        if not values:
+            return None
+        texts.extend(neutralize(v) for v in values)
+    return "\n".join(texts)
+
+
+def _unbound_reason(verdict: dict[str, Any], trace) -> str | None:
+    """Why this FAIL's evidence is not bound to the trace, or None if it is."""
+    pairs = _cites(verdict)
+    if pairs is None:
+        return "unreadable_cite"
+    if not pairs:
+        return "uncited"
+    text = _cited_text(trace, pairs)
+    if text is None:
+        return "cited_field_missing"
+    if not _evidence_is_quotable(verdict.get("evidence"), _norm_for_match(text)):
+        return "not_in_cited_field"
+    return None
 
 
 # Share of the shorter quote's word-trigrams that must appear in the longer one
@@ -432,13 +508,15 @@ class TraceScanner:
                 parsed = {
                     first_label: self._v8_to_trace_output(
                         parsed,
-                        # The gate compares evidence against the exact text the
-                        # model was shown, so a legitimate quote always matches.
-                        user_prompt,
-                        # The raw trace: the completion gate verifies the named
-                        # span's real output, not a pre-selected result.
-                        trace_map[first_label][0],
-                        _trace_has_captured_content(trace_map[first_label][0]),
+                        # The raw trace, not the prompt: every quote is checked
+                        # against the span fields it cites, and the completion
+                        # gate verifies the named span's real output. The
+                        # prompt also holds our own instructions and framing,
+                        # which are not evidence of anything the agent did.
+                        trace=trace_map[first_label][0],
+                        trace_has_content=_trace_has_captured_content(
+                            trace_map[first_label][0]
+                        ),
                     )
                 }
         except Exception as e:
@@ -613,16 +691,25 @@ class TraceScanner:
         enforced by the model on itself — nothing checked that the quote it
         returned was ever in front of it, and the quote was then discarded.
 
-        ``seen_text`` is what the model was actually shown. A FAIL whose evidence
-        cannot be found there is dropped: the model asserting a quote it did not
-        receive is the definition of the failure this gate exists to stop. This
-        is deliberately fail-closed — a dropped real issue costs recall, a kept
-        invented one costs the user's trust in every other row.
+        With the ``trace`` in hand, a FAIL's evidence must be found in the
+        recorded text of the span fields it cites (span id + "in"/"out"), read
+        from the trace itself. Matching against the prompt instead would accept
+        a quote of our own instructions or framing, and would not say where in
+        the trace the quote came from. A FAIL that cites nothing, cites a field
+        that does not hold its quote, or cites a span that does not exist is
+        dropped: the model asserting a quote it cannot place is the definition
+        of the failure this gate exists to stop. This is deliberately
+        fail-closed — a dropped real issue costs recall, a kept invented one
+        costs the user's trust in every other row.
+
+        ``seen_text`` is consulted only when no trace is supplied; the scanner
+        always supplies one.
         """
         dims = parsed.get("dimensions") or {}
-        hay = _norm_for_match(seen_text)
+        hay = "" if trace is not None else _norm_for_match(seen_text)
         failed = set()
         unverified = []
+        reasons = set()
         for k, v in dims.items():
             if not isinstance(v, dict) or str(v.get("verdict", "")).upper() != "FAIL":
                 continue
@@ -658,14 +745,23 @@ class TraceScanner:
                     # told apart by the same floor that defines an absence, not
                     # by mere non-emptiness: an empty provider envelope unwraps
                     # to a short placeholder, which is still an absence and has
-                    # nothing to quote.
+                    # nothing to quote. The quote is bound to the span the claim
+                    # names: the cut-off ending has to be that span's output.
                     or (
-                        hay
-                        and _is_truncation_not_absence(named_output)
-                        and not _evidence_is_quotable(v.get("evidence"), hay)
+                        _is_truncation_not_absence(named_output)
+                        and not _evidence_is_quotable(
+                            v.get("evidence"),
+                            _norm_for_match(neutralize(named_output)),
+                        )
                     )
                 ):
                     unverified.append(k)
+                    continue
+            elif trace is not None:
+                reason = _unbound_reason(v, trace)
+                if reason:
+                    unverified.append(k)
+                    reasons.add(reason)
                     continue
             elif hay and not _evidence_is_quotable(v.get("evidence"), hay):
                 unverified.append(k)
@@ -674,10 +770,13 @@ class TraceScanner:
         if unverified:
             # Suppression is a measurement, not a silent behaviour: without this
             # count there is no way to tell a precise scanner from a mute one.
+            # The reasons separate a model that stopped citing from one that
+            # cites the wrong place.
             logger.info(
                 "scanner_evidence_gate_dropped",
                 dimensions=sorted(unverified),
                 dropped=len(unverified),
+                reasons=sorted(reasons),
             )
         # Collapse after gating, not before: a dimension whose evidence was
         # invented must not be the one that survives a merge.
