@@ -8,6 +8,8 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    # Keep accounts at 0024: depending on a later accounts migration lets an
+    # accounts rollback unapply this table along with it.
     dependencies = [
         ("accounts", "0024_sosloginproxy"),
         ("model_hub", "0122_backfill_queueitem_source_preview"),
@@ -31,6 +33,12 @@ class Migration(migrations.Migration):
                         serialize=False,
                     ),
                 ),
+                ("storage_key", models.CharField(default="", max_length=255)),
+                (
+                    "activity_execution",
+                    models.CharField(default="", max_length=255),
+                ),
+                ("activity_attempt", models.PositiveIntegerField(default=0)),
                 (
                     "export_format",
                     models.CharField(
@@ -80,7 +88,9 @@ class Migration(migrations.Migration):
                 (
                     "organization",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
                         related_name="annotation_export_jobs",
                         to="accounts.organization",
                     ),
@@ -88,7 +98,9 @@ class Migration(migrations.Migration):
                 (
                     "queue",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
                         related_name="export_jobs",
                         to="model_hub.annotationqueue",
                     ),
@@ -98,7 +110,7 @@ class Migration(migrations.Migration):
                     models.ForeignKey(
                         blank=True,
                         null=True,
-                        on_delete=django.db.models.deletion.CASCADE,
+                        on_delete=django.db.models.deletion.SET_NULL,
                         related_name="annotation_export_jobs",
                         to="accounts.workspace",
                     ),

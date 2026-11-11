@@ -168,34 +168,6 @@ def test_queue_deleted_during_render_does_not_upload(organization, workspace, us
 
 
 @pytest.mark.django_db(transaction=True)
-def test_retention_migration_preserves_existing_object_keys(
-    organization, workspace, user
-):
-    from importlib import import_module
-    from types import SimpleNamespace
-
-    from django.apps import apps
-
-    seed = _build_dataset_queue(
-        organization=organization, workspace=workspace, user=user, n_rows=1
-    )
-    jobs = [
-        _make_job(seed["queue"], organization, workspace, user, fmt)
-        for fmt in ("csv", "json")
-    ]
-    migration = import_module("model_hub.migrations.0124_annotation_export_retention")
-    editor = SimpleNamespace(connection=connection)
-    migration.preserve_export_storage_keys(apps, editor)
-    migration.preserve_export_storage_keys(apps, editor)
-    for job in jobs:
-        job.refresh_from_db()
-        assert (
-            job.storage_key
-            == f"annotation-exports/{job.queue_id}/{job.pk}.{job.export_format}"
-        )
-
-
-@pytest.mark.django_db(transaction=True)
 def test_concurrent_reorder_keeps_export_snapshot(organization, workspace, user):
     from model_hub.tasks.annotation_export import render_export
     from model_hub.views.annotation_queues import build_queue_export_rows
