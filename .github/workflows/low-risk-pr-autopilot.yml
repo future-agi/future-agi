@@ -31,8 +31,9 @@ on:
 permissions:
   contents: read
 
-# Serialize all review reservations and approvals for one PR, including dispatch
-# and pull_request_target runs. Cancellation must never reset the review budget.
+# Serialize every run for one PR, dispatch and pull_request_target alike, so
+# reservations and approvals never overlap. Cancellation must never reset the
+# review budget.
 concurrency:
   group: pr-autopilot-${{ github.event_name == 'pull_request' && 'tests-' || '' }}${{ github.event.pull_request.number || inputs.pr_number || 'sweep' }}
   cancel-in-progress: false
@@ -70,7 +71,7 @@ jobs:
       issues: write
       checks: write
       statuses: read # legacy commit-status evidence is a separate permission
-      actions: write # schedule -> workflow_dispatch on dev; no PR code runs here
+      actions: write # schedule and pull_request_target -> workflow_dispatch on dev; no PR code runs here
     outputs:
       review: ${{ steps.policy.outputs.review }}
       context: ${{ steps.policy.outputs.context }}

@@ -84,11 +84,26 @@ variable **replaces**, rather than extends, the config list. Login comparison is
 case-insensitive; malformed entries stop automation. Start with a small,
 explicitly approved list. A fork, even from a trusted author, is never eligible.
 
+Trust covers **who pushed**, not only who opened the PR. Before it reserves a
+review, and again before approval and merge, the controller reads the branch's
+push history (`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<branch>`,
+one page of up to 100 rows). Every row must name a trusted author. A push by
+anyone else, including an "Update branch" click by someone not on the list,
+sends the PR to a person for good; the author has to update the branch
+themselves. An empty history, or a full page that may hide older pushes, also
+goes to a person. If the newest push in the feed is not yet the PR head, the
+run waits. If the endpoint does not answer, the run stops and approves nothing.
+
 An invalid or overnight working-hours window denies automation. Use one
 same-day UTC window; there is no local-time/DST conversion or implicit fallback.
-A sweep reconsiders waiting PRs about every 15 minutes, subject to GitHub's
-scheduler delay. A dispatch on `dev` with input `pr_number` can also re-evaluate
-a PR; it cannot reset the review budget.
+A sweep about every 15 minutes, subject to GitHub's scheduler delay, dispatches
+a run on `dev` only for PRs that run can act on: a PR with no tier label yet
+(a one-time backfill, so PRs opened before enablement get classified) and a
+trusted author's `autopilot-low` PR without `autopilot-hold`. Drafts, forks and
+PRs whose head repository no longer exists are skipped. One refused dispatch
+does not stop the rest; the sweep then fails and names the PRs it could not
+dispatch. A dispatch on `dev` with input `pr_number` can also re-evaluate a PR;
+it cannot reset the review budget.
 
 The existing E2E suite remains **advisory**, given the observed failure rate.
 It is not added to the minimum required checks. If an administrator explicitly
@@ -99,17 +114,28 @@ number of human approvals.
 
 ## Trust boundary and merge decision
 
-1. `pull_request_target` handles PRs targeting `dev`. Privileged jobs sparsely
-   check out only `dev`'s controller and policy, with checkout credentials not
-   persisted. The checkout SHA must be the current `dev` tip, and the PR must
-   already contain that tip (GitHub's compare shows it is not behind). The
-   PR's recorded base SHA can be older than the tip; that is fine. A PR that is
-   behind `dev` waits quietly and spends no review round. Schedule runs
-   dispatch separate evaluations on `dev`; manual dispatches on other branches
-   are rejected. The scheduled entry needs to exist on the default branch.
+1. A `pull_request_target` run for a PR into `dev` only classifies the PR,
+   writes its tier label and comment, and, for a trusted author's LOW PR
+   without a hold, dispatches this workflow on `dev` with `pr_number`. Review,
+   approval and merge happen **only in `workflow_dispatch` runs on `dev`**
+   (from that dispatch, the sweep or a person). `pull_request_target` takes the
+   workflow file from the PR's base branch, which any writer can create, so its
+   runs never produce review evidence. Privileged jobs sparsely check out only
+   `dev`'s controller and policy, with checkout credentials not persisted. A
+   dispatch run stops and waits for a fresh run if `dev` moved after it was
+   dispatched (the checkout is not `GITHUB_SHA`, the run's `head_sha`) or after
+   checkout (the checkout is not the live `dev` tip). The PR must already contain that tip:
+   the controller always asks GitHub's compare API, because a recorded base
+   SHA equal to the tip only means the PR was opened after that commit, not
+   that its branch contains it. A PR that is behind `dev` waits quietly and
+   spends no review round. Manual dispatches on other branches are rejected.
+   The scheduled entry needs to exist on the default branch.
 2. The controller classifies and audits the tier. It requires an open,
    non-draft, non-fork PR from an explicitly trusted author, a LOW classification,
    a present review key, no hold label, an allowed time and known mergeability.
+   Every push to the PR's branch must also come from a trusted author (see
+   above), and a bot approval of this head that a maintainer dismissed counts
+   as a hold.
 3. It reads classic check contexts through GraphQL `Ref.refUpdateRule`, the
    non-admin protection view, and applicable active rules through
    `GET /repos/{owner}/{repo}/rules/branches/dev`. Required checks are the union
@@ -131,23 +157,44 @@ number of human approvals.
    tools, MCP tools and skills are disabled. No PR checkout, dependency install,
    shell interpolation of the diff, write token or patch execution is allowed.
 5. A trusted follow-up job validates the structured output and publishes the
-   separate **`PR Autopilot review`** Check Run on the **PR head SHA**, not the
-   `pull_request_target` job's base SHA. Blocking findings, incomplete output,
-   malformed JSON, action failure or a changed head/base produce a failed check.
+   separate **`PR Autopilot review`** Check Run on the **PR head SHA**. The
+   publish step decides one outcome and exits 0 whenever it published:
+   - **blocked** (check conclusion `failure`): a valid verdict with blocking
+     findings, even if the head or `dev` moved during the review; or
+     malformed, incomplete or wrong-SHA output from an AI job that reported
+     success.
+   - **retryable** (conclusion `cancelled`): a non-blocking verdict whose head
+     or `dev` base moved (or could not be confirmed) during the review, or an
+     AI job that was skipped, cancelled, failed or timed out. The Claude step
+     has a 12-minute step timeout under the job's 15, so a slow review fails
+     the step instead of timing out the job.
+   - **passed** (conclusion `success`): everything else.
+
+   Then exactly one of three marker steps runs; each only runs `true`. They are
+   named `Review passed: head <head> base <base> patch <patch>`, `Review
+   blocked: ...` and `Review retryable: ...`, rendered from the trusted prepare
+   output (templates in `OUTCOME_STEPS` in `scripts/pr_risk.py`; a test checks
+   that the workflow matches them). The merge step runs only after `passed` in
+   the same run, or for a reused pass with no reservation in this run. A failed
+   result comment does not change the outcome or fail the step.
 6. Before approval and again before merge, the controller re-reads the PR,
-   files, rules, current-head CI, hold/draft/author state, time, and review result.
-   Outstanding human change requests block it. A cached AI pass must match both
-   head and base and come from this trusted workflow's run **for this PR number**
-   (the run name is `PR autopilot #N`). That run must also show a successful
-   step named `Publish review verdict: head <head> base <base>`. The workflow
-   renders that name from the trusted prepare output, and the step succeeds only
-   for a passing verdict. Anyone who can create a check run can cite a real run
-   ID, but nobody can add a step to a finished run. If any review check on the
-   same revision is not a success, the pass is not used. It labels and comments
-   each automated approval, refreshes every gate **after** the audit writes and
-   existing-approval lookup, then approves with `GITHUB_TOKEN`. Existing matching
-   bot approvals are not duplicated. An audit label/comment without a submitted
-   approval can remain if this final refresh catches a hold or another changed gate.
+   files, rules, current-head CI, push history, hold/draft/author state, time,
+   and review result. Outstanding human change requests block it, and so does
+   a dismissed bot approval for this head. Review evidence comes **only from
+   step names in the cited run**, read from attempt 1
+   (`GET .../actions/runs/{id}/attempts/1/jobs`). It never comes from a check
+   run's conclusion or `external_id`, because any Actions token in the
+   repository can edit those, while a finished run's step names cannot change.
+   A cited run must be a `workflow_dispatch` run of this workflow on `dev`,
+   for this PR number (the run name is `PR autopilot #N`), in this repository,
+   and its `head_sha` must equal the base the record names. A pass is reused
+   only when that run shows the `Review passed` marker for exactly this head,
+   base and diff digest, and no attempt of the same diff was blocked or never
+   finished. It labels and comments each automated approval, refreshes every
+   gate **after** the audit writes and existing-approval lookup, then approves
+   with `GITHUB_TOKEN`. Existing matching bot approvals are not duplicated. An
+   audit label/comment without a submitted approval can remain if this final
+   refresh catches a hold or another changed gate.
 7. It waits for GitHub's mergeability/protection state to be `clean` or
    `unstable` (`unstable` means a check that is not required is failing or still
    running; the required checks were already verified above), then calls
@@ -195,41 +242,75 @@ reasons. There is no string-to-boolean coercion. Binary, missing, inconsistent
 or oversized patches require a person; the model never certifies a truncated
 diff. Review findings and the decision are recorded, without logging raw diffs.
 
-A bot-authored PR comment reserves each attempt **before** the AI call. The
-reservation survives force pushes and workflow reruns. The budget counts
-**different diffs**, not commits: each attempt records a digest of the exact
-patches the model reviews (hunk line numbers ignored). At most **three different
-diffs per PR** are reviewed, including failed and cancelled attempts.
+Each attempt is reserved **before** the AI call, twice: a bot-authored PR
+comment and an in-progress `PR Autopilot review` check run on the head, both
+carrying the same record (PR, head, base, run ID, round, diff digest). The
+budget counts **different diffs**, not commits: the digest covers the exact
+patches the model reviews (hunk line numbers ignored).
 
-- A previously attempted head/base pair is never re-reviewed.
-- A diff whose earlier attempt did not pass is never re-reviewed, even on a new
-  base, so a blocking verdict cannot be re-rolled by merging dev in.
+The controller builds a PR's attempt history from the ledger comments **and**
+the review check runs (name `PR Autopilot review`, app `github-actions`) on
+every head the PR has had. The heads are the PR's commits, both sides of each
+force push in its timeline (GraphQL `HEAD_REF_FORCE_PUSHED_EVENT`), and both
+sides of each push in the branch's activity feed. Anyone with write access can
+delete or edit a comment, but a check run cannot be deleted, so removing or
+editing a reservation comment does not remove the attempt. The following go
+to a person (an escalation comment, no review, no merge):
+
+- a history list that is truncated (more than 100 commits or force pushes) or
+  unavailable;
+- a review check on one of the PR's heads whose record cannot be parsed;
+- a record that cites a run that is not the trusted `dev` dispatch run for its
+  revision, or whose run or jobs cannot be read (for example, a deleted run);
+- two records for one run that disagree, or a run whose marker names a
+  different head, base or diff than its record.
+
+For each attempt the controller reads the outcome marker of its run. An attempt
+whose run has no marker never finished (for example, the run was cancelled)
+and counts like a blocked one.
+
+- A diff is **barred** if any attempt of it, on any head or base, was blocked
+  or never finished. It is not reviewed again; a person must resolve the
+  finding or review the PR. Merging dev in does not re-roll a blocking verdict.
+- A diff whose attempt was **retryable** (stale head or `dev`, or a failed AI
+  job) is reviewed again after the branch changes. The same head and base pair
+  is not retried, so an outage cannot spend attempts every 15 minutes; the
+  run waits quietly, and the bot's result comment tells the author to update
+  the branch from `dev` or push a commit. This is the first of the two options
+  the round-two review offered.
 - Merging dev into the branch without changing the author's own diff gets a
-  fresh review on the new base at no cost to the budget. This matters because
-  `dev` requires branches to be up to date and moves often. These re-reviews are
-  capped at nine attempts per PR in total.
+  fresh review on the new base at no cost to the diff budget. This matters
+  because `dev` requires branches to be up to date and moves often.
+- At most **three different diffs** and **nine attempts** per PR are reviewed,
+  counted from the union of comments and check runs. After that the controller
+  posts a human escalation.
+- A record that names another PR (the same head pushed to two PRs) counts only
+  toward barring this diff, not toward this PR's budget or reuse.
 
-After the budget is spent, the controller posts a human escalation. The bot does not modify code or dismiss findings. The author fixes
-blocking findings with a reason and submits a new revision; a person takes over
-if the budget or automated path cannot complete. Do not delete/edit reservation
-comments to bypass the cap: check runs cannot be deleted, so a review check
-for the same head and base, on this PR or any other, still counts as an attempt
-if its comment is removed or the change is reopened as a new PR. A passing
-exact-pair review can be reused while the
-other merge gates are rechecked.
+The bot does not modify code or dismiss findings. The author fixes blocking
+findings with a reason and submits a new revision; a person takes over if the
+budget or automated path cannot complete. A passing review of the exact head,
+base and diff can be reused while the other merge gates are rechecked.
+
+**Accepted limit, for the owner to confirm:** the budget and the barred-diff
+rule are per PR. Opening a **new PR** with the same diff from a new commit
+starts with no history, so a blocked diff can be reviewed again that way. A
+repository-wide record keyed by the diff digest would close this. Until the
+owner decides, this is a documented limit; the trusted-author list,
+LOW-only paths and the review on every attempt still apply.
 
 **Workflow reruns do not invoke review or approve/merge.** All three controller/
 review jobs require `github.run_attempt == '1'`; a runtime guard also precedes
 any AI action. This includes “Re-run failed jobs”, a specific AI-job rerun, and
 full workflow reruns. They cannot reuse the successful prepare job's saved
 reservation to buy extra invocations. Use a **new** dispatch on `dev` or the next
-scheduled evaluation instead; the durable ledger still rejects a previously
-attempted head/base pair and still caps the whole PR at three different diffs. A failed
+scheduled evaluation instead; the attempt history still applies. A failed
 or cancelled first attempt is not refunded. The verdict publisher checks the
 original run identity and pending check record before writing. Completed
 verdicts cannot be overwritten by replay, even within the original attempt.
-If a finalization job failed after recording success, a fresh evaluation can
-reuse that exact-pair success without republishing it.
+Evidence is read from attempt 1 of each run, so a rerun of a failed merge step
+does not hide the original `Review passed` marker: a fresh evaluation reuses
+that pass without republishing it.
 
 References checked while implementing the adapter:
 
@@ -319,7 +400,10 @@ trust list also prevents new automatic approvals/merges, but explicit off plus
 cancellation is the clearest emergency procedure. Do not remove normal required
 checks to make a stopped PR mergeable. A bot approval already recorded remains
 visible; a maintainer can dismiss it if it must not count toward a later manual
-merge. A merged change must be reverted through the usual reviewed process.
+merge. Dismissing the bot's approval also stops automation for that head, like
+`autopilot-hold`: the bot does not approve it again, and only a new revision
+(or a person merging by hand) moves the PR on. A merged change must be
+reverted through the usual reviewed process.
 
 Suggested rollout:
 
@@ -332,14 +416,32 @@ Suggested rollout:
    `refUpdateRule` query, active branch rules, check runs and commit statuses must
    all succeed. Confirm missing-scope/error cases deny automation, classic-only
    strictness is rejected, and a partial AI-job rerun makes no new model call.
+   Also confirm these GitHub behaviors, which development could not observe:
+   - `actions/runs/{id}/attempts/1/jobs` lists the three marker steps with
+     their rendered names, the run object of a dispatch run has `head_branch`
+     `dev` and `head_sha` equal to the dispatched commit, and these hold after
+     "Re-run failed jobs";
+   - the branch activity endpoint and the GraphQL commits and
+     `HEAD_REF_FORCE_PUSHED_EVENT` timeline query succeed with the job token;
+   - whether deleting a workflow run also deletes the check runs it created.
+     The controller sends a record whose run is gone to a person, but if the
+     check disappears with the run and the comment is also deleted, nothing
+     is left to read and that attempt drops out of the history;
+   - when the Claude step hits its 12-minute step timeout, `needs.ai-review.result`
+     is `failure` and the gate job still runs, so the outcome is retryable.
+     If the gate job does not run, no marker is written and the diff is barred.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
    list**. Check tier comments on docs, tests, sensitive paths, forks and drafts.
-   This emits audit labels/comments but cannot run AI review or merge.
+   This emits audit labels/comments but cannot run AI review or merge. The first
+   sweep dispatches one run per unlabelled open PR (the backfill); later sweeps
+   dispatch none until the trust list is set.
 4. Provision the review key, set a weekday window and a very small approved trust
    list. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
-   pending/failed checks, three-diff escalation, a dev catch-up with an unchanged diff, and post-merge dispatches.
+   pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
+   diff, a push by an account not on the list, a dismissed bot approval, and
+   post-merge dispatches.
    Confirm the medium/high human path and every relevant dev push consumer.
 5. Expand only after the audit trail, post-merge verification and revert/incident
    guardrails behave as expected. Policy widening is itself HIGH-risk.
@@ -349,7 +451,12 @@ classification (including compound credentials and nested non-test filenames),
 size/deletion/rename boundaries, metadata completeness, author and fork restrictions,
 missing switches/key, hours, non-admin protection queries, declared evidence scopes,
 required-check provenance, stale/rerun checks, structured verdicts, immutable completed
-verdicts, persistent budgets and the workflow's runtime partial-rerun guard,
+verdicts, the three review outcomes and their marker steps, attempt-1 evidence
+after reruns, trusted-run rules (a `pull_request_target` run or a run on another
+commit never vouches), attempt history built from comments and per-commit check
+runs across force pushes, tampered or unreadable records, persistent budgets,
+pusher trust, dismissed approvals, the compare-only behind-dev rule, the sweep's
+dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads), audit
 ordering and dispatch selection. No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
