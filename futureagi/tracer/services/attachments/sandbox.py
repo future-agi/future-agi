@@ -49,7 +49,9 @@ def run(operation, input_path, *args, output=None, output_limit=0):
             operation,
             str(source),
             str(out_fd),
-            str(max(output_limit, 1)),
+            # RLIMIT_FSIZE also covers the stdout file, so it is at least the
+            # stdout cap; the parent re-checks the exact output size anyway.
+            str(max(output_limit, STDOUT_LIMIT + 1)),
             *(str(value) for value in args),
         ]
         with tempfile.TemporaryFile() as stdout:

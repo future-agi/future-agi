@@ -431,6 +431,14 @@ def submit(importer, *, scope_id, body):
     recording, source = parse_request(body)
     scope = AttachmentScope.objects.get(pk=scope_id)
     session = _session(scope, importer, recording)
+    digest = fingerprint(
+        {"importer": [importer.kind, importer.id], "recording": recording, **source}
+    )
+    # Identical scoped replay returns the same job, even after its one-shot
+    # source envelope was consumed; a changed request conflicts.
+    replay = _replay(scope, recording, digest)
+    if replay is not None:
+        return _response(replay), replay
     limits = server_limits()
     facts, envelope_id, registration = _resolve_source(importer, scope, source)
     direction = "mixed" if "mixed" in {facts.direction, recording["direction"]} else (
@@ -444,22 +452,12 @@ def submit(importer, *, scope_id, body):
         raise AttachmentError("conflict", 409)
     if recording["mime_type"] not in SEGMENTABLE_MIME_TYPES:
         raise AttachmentError("validation_failed", 422)
-    digest = fingerprint(
-        {"importer": [importer.kind, importer.id], "recording": recording, **source}
-    )
     with transaction.atomic():
         rows = _lock_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
-        existing = AttachmentRecording.objects.filter(
-            scope=scope, client_id=recording["recording_id"]
-        ).first()
-        if existing is not None:
-            job = AttachmentImportJob.objects.filter(
-                scope=scope, recording=existing
-            ).first()
-            if job is None or job.request_fingerprint != digest:
-                raise AttachmentError("conflict", 409)
-            return _response(job), job
+        replay = _replay(scope, recording, digest)
+        if replay is not None:
+            return _response(replay), replay
         reservation = admission_check(
             recording=recording,
             limits=limits,
@@ -503,6 +501,18 @@ def submit(importer, *, scope_id, body):
             reserved_bytes=reservation,
         )
     return _response(job), job
+
+
+def _replay(scope, recording, digest):
+    existing = AttachmentRecording.objects.filter(
+        scope=scope, client_id=recording["recording_id"]
+    ).first()
+    if existing is None:
+        return None
+    job = AttachmentImportJob.objects.filter(scope=scope, recording=existing).first()
+    if job is None or job.request_fingerprint != digest:
+        raise AttachmentError("conflict", 409)
+    return job
 
 
 def _response(job):
