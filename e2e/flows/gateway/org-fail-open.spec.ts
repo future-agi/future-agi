@@ -48,13 +48,15 @@ test('GW-E2E-004: an organization explicitly opts into continuing after a guardr
     return route.abort();
   });
   const name = `e2e-optin-${testInfo.workerIndex}-${Date.now().toString(36)}`;
-  const provider = `${name}-provider`;
+  // gateway.e2e.yaml's `openai` entry is the managed mock. An org provider with that
+  // ID and no base_url inherits its upstream (OrgProviderCache.baseConfig), so the
+  // stack keeps refusing private provider URLs.
+  const provider = 'openai';
   const check = `${name}-check`;
   // Bodies pinned from the provider credential, key and org-config serializers.
   const credential = await actor.api.post<{ result: { id: string } }>('/agentcc/provider-credentials/', {
     provider_name: provider,
     credentials: { api_key: 'synthetic-local-only' },
-    base_url: LOCAL_MOCK,
     api_format: 'openai',
     models_list: ['gpt-4o-mini'],
   });
