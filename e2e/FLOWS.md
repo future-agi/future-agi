@@ -1250,6 +1250,33 @@
 - both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
 - the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
 
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
+
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
+
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
+
+**Backend state verified:**
+
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
