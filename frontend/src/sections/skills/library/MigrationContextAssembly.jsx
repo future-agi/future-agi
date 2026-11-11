@@ -71,6 +71,7 @@ export default function MigrationContextAssembly({ published, proposal, onBusyCh
     </>}
     {result && <>
       <Alert severity="success">{`Published ${prepared.name} v${result.receipt.version.number} · ${result.receipt.version.digest}. No labels moved; production is unchanged.`}</Alert>
+      <Alert severity="warning">A released package and a verified host/version profile are required. This capability is not qualified yet. A pilot install of this exact version is a preview, not delivery evidence.</Alert>
       <ContextPilotCredentials contextId={result.contextId} canIssue={result.canIssueCredentials}
         snapshot={{ kind: "agent_context", name: prepared.name, version: result.receipt.version.number, versionId: result.receipt.version.id, digest: result.receipt.version.digest }} />
     </>}

@@ -124,8 +124,10 @@ export async function performUpdate(stage, tools, state) {
     }, decision);
     // Independent API read: the retained checkpoint is exactly the personal draft.
     const checkpoints = (await read(`${id}/draft/checkpoints/?page_size=100`, signal)).results;
-    state.checkpoint = checkpoints.find(item => item.reason === 'suspension' && item.draft_revision === state.personal.revision);
-    requireValue(state.checkpoint && state.checkpoint.digest === state.personal.recovery_digest, 'The personal draft must be retained as a private checkpoint');
+    // The recovery digest binds the exact personal files; the editor may save the
+    // same bytes again (a later revision) before suspension.
+    state.checkpoint = checkpoints.find(item => item.reason === 'suspension' && item.digest === state.personal.recovery_digest && item.draft_revision >= state.personal.revision);
+    requireValue(state.checkpoint && checkpoints.length === 1, 'The personal draft must be retained as exactly one private checkpoint');
     // Suspension returns to the same retained review: the immutable plan and
     // fingerprint are reloaded with live destination/draft state, no re-upload.
     await expect(page.getByRole('heading', { name: 'Review all items', exact: true })).toBeVisible();

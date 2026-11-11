@@ -123,10 +123,13 @@ test('SKILLS-E2E-013: preview one inventory packet, publish the reviewed set and
     const publish = page.getByRole('button', { name: 'Publish agent context', exact: true });
     await expect(publish).toBeDisabled();
     await page.getByRole('checkbox', { name: 'Accept these 3 exact pinned versions and this compiled candidate.', exact: true }).check();
+    const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+    if (await warning.count()) await warning.check();
     const published = page.waitForResponse(res => res.url().endsWith(`/contexts/${contextId}/draft/publish/`) && res.request().method() === 'POST');
     await publish.click();
     assert.equal((await published).status(), 201);
     await expect(page.getByText(/^Published .* v1 · sha256:[a-f0-9]{64}\. No labels moved; production is unchanged\.$/)).toBeVisible();
+    await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
     const inspection = await read<{ manifest: { version_id: string; digest: string }; descriptor: { links: Lock[] } }>(`/model-hub/skills/contexts/${contextId}/versions/1/inspection/`);
     linkOracle(inspection.descriptor.links);
     assert.throws(() => linkOracle(inspection.descriptor.links.slice(1)));

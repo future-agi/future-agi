@@ -85,7 +85,9 @@ export async function createDriver({ jobId, runId, registration }) {
     '--source-origin', 'local:synthetic-j1', '--source-project', input.sourceProject, '--source-revision', 'v1'];
   // One inventory command also writes the private migration packet the browser
   // review consumes, so no source is chosen twice and no identity is copied.
-  const packetPath = resolve(output, 'migration-packet.json');
+  // It holds private source bytes, so it stays beside the private fixture, never
+  // in retained evidence; the report keeps only its digest.
+  const packetPath = resolve(input.folder, '..', `migration-packet-${runId}.json`);
   const local = async operator => {
     await terminal(operator);
     const result = await operator.command('local-library-inventory', 'bash', [resolve(input.productRoot, 'bin/skills-inventory'), ...baseArgs,
@@ -307,8 +309,10 @@ export async function createDriver({ jobId, runId, registration }) {
             manifest.push(...next.manifest.files);
             offset = next.manifest.next_file_offset;
           }
-          assert.equal(manifest.length, inventory.compiled_closure.file_count);
-          assert.deepEqual(manifest.map(file => file.path).sort(), [...inventory.compiled_closure.paths].sort());
+          // The published closure is exactly the local projection of the reviewed supported subset.
+          const projected = supportedSubset(inventory).compiled_closure;
+          assert.equal(manifest.length, projected.file_count);
+          assert.deepEqual(manifest.map(file => file.path).sort(), [...projected.paths].sort());
           assert.deepEqual((await read(`contexts/${contextId}/`, signal)).release_state.labels, []);
           assert.equal(candidate.manifest.digest, preview.candidate_digest, 'The published context must be the reviewed candidate');
           await page.screenshot({ path: resolve(output, 'shots', 'published-agent-context.png'), fullPage: true });
@@ -322,6 +326,7 @@ export async function createDriver({ jobId, runId, registration }) {
           // the operator still uses the SDK CLI's explicit preview opt-in.
           const page = plans[0].page;
           lastPage = page;
+          await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
           const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
           await click(page, 'button', 'Issue pilot credential');
           const issuedResponse = await issued;

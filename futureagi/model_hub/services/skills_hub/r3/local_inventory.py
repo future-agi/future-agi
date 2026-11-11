@@ -538,9 +538,7 @@ def inventory(
         supported = [member for member in members if not member["blockers"]]
         proposed = {
             "selected": [member["key"] for member in supported],
-            "excluded": [
-                member["key"] for member in members if member["blockers"]
-            ],
+            "excluded": [member["key"] for member in members if member["blockers"]],
             "compiled_closure": _closure(supported, name, description, owned),
         }
     if capture is not None:
