@@ -105,7 +105,7 @@ class InboxQuery(ctx.PageQuery):
             "released",
             "superseded",
         ],
-        required=False
+        required=False,
     )
 
 

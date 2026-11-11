@@ -33,7 +33,11 @@ def main(argv=None):
     parser.add_argument("--order-id")
     parser.add_argument("--request")
     args = parser.parse_args(argv)
-    flags = {"case_id": args.case_id, "order_id": args.order_id, "request": args.request}
+    flags = {
+        "case_id": args.case_id,
+        "order_id": args.order_id,
+        "request": args.request,
+    }
     typed = [name for name, value in flags.items() if value is not None]
     if args.review is not None:
         if typed:

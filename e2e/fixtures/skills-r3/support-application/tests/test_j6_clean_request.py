@@ -123,7 +123,9 @@ def test_reconstruction_flags_equal_the_reviewed_file_and_cannot_mix_or_be_parti
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert json.loads(capsys.readouterr().out)["executed"] is False
     review = tmp_path / "review.json"
-    review.write_text(json.dumps({"schema": 1, "case": CASE, "reconstruction_reviewed": True}))
+    review.write_text(
+        json.dumps({"schema": 1, "case": CASE, "reconstruction_reviewed": True})
+    )
     for argv in (
         [*flags, str(review), "--output", str(tmp_path / "mixed.json")],
         ["--case-id", "x", "--output", str(tmp_path / "partial.json")],
