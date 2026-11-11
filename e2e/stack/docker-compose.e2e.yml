@@ -45,11 +45,15 @@ services:
       SLACK_API_URL: http://mock-slack:8080/api
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # Environment versions and drafts, as production runs them. Evidence imports and
+      # the suite's unsaved changes exist only with versioning on.
+      HARNESS_VERSIONING_ENABLED: "true"
   worker:
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
     environment:
+      HARNESS_VERSIONING_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e

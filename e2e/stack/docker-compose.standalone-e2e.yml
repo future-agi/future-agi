@@ -25,6 +25,8 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # Environment versions and drafts, as production runs them (see docker-compose.e2e.yml).
+      HARNESS_VERSIONING_ENABLED: "true"
     volumes:
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
