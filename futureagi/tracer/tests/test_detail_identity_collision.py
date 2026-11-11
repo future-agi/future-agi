@@ -53,6 +53,9 @@ def _copy(project, trace_id, span_id, *, version, parent="", kind="conversation"
         "parent_span_id": parent,
         "name": span_id,
         "observation_type": kind,
+        # The production detail projection includes the physical tag identity.
+        "service_name": "svc",
+        "start_hour": STARTED.replace(minute=0, second=0, microsecond=0),
         "start_time": STARTED,
         "end_time": STARTED + timedelta(seconds=1),
         "input": json.dumps({"copy": project.name}),
@@ -100,6 +103,11 @@ class _PhysicalCopies:
             if row["project_id"] in params.get("detail_project_ids", ())
         ]
         if "latest_physical_spans" in query:
+            # Keep this fake aligned with the real reader, rather than masking a
+            # missing identity projection with invented data in product code.
+            assert "service_name," in query
+            assert "toStartOfHour(grouped_start_time) AS start_hour" in query
+            assert "toString(latest_version) AS _version" in query
             wanted = {
                 (project_id, trace_id, span_id)
                 for project_id, trace_id, span_id, _start_us in params[
@@ -225,6 +233,9 @@ def test_span_detail_serves_newest_in_scope_copy(auth_client, replayed_trace):
     assert span["id"] == "child"
     assert span["project"] == str(replayed_trace.newer.id)
     assert span["input"] == {"copy": "newer"}
+    assert span["tag_target"]["project_id"] == str(replayed_trace.newer.id)
+    assert span["tag_target"]["service_name"] == "svc"
+    assert span["tag_target"]["expected_version"] == "20"
     assert _read_projects(replayed_trace.analytics) == {str(replayed_trace.newer.id)}
 
 

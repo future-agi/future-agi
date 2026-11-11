@@ -4658,8 +4658,28 @@ class TestMetricsEndpoint:
         auth_client,
         observe_project,
     ):
+        # Discovery now reads bounded physical winners and enriches their
+        # names, not a scalar `val` projection. Preserve the source-tag proof.
+        started = datetime.now(UTC)
         mock_analytics_cls.return_value.execute_ch_query.return_value = MagicMock(
-            data=[{"val": "production"}]
+            data=[
+                {
+                    "project_id": str(observe_project.id),
+                    "trace_id": str(uuid.uuid4()),
+                    "id": "root",
+                    "observation_type": "span",
+                    "service_name": "svc",
+                    "start_time": started,
+                    "start_hour": started.replace(minute=0, second=0, microsecond=0),
+                    "parent_span_id": "",
+                    "_version": 1,
+                    "project_version_id": None,
+                    "tags": '["production"]',
+                    "attrs_string": {},
+                    "attributes_extra": "{}",
+                    "trace_tags": "[]",
+                }
+            ]
         )
 
         response = auth_client.get(
@@ -4670,11 +4690,16 @@ class TestMetricsEndpoint:
 
         assert response.status_code == 200
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args.args[0]
-        assert "argMax(tuple(tags), _version).1 AS raw_value" in sql_arg
-        assert (
-            "arrayJoin(JSONExtract(latest_spans.raw_value, 'Array(String)'))" in sql_arg
-        )
-        assert "trace_tags" not in sql_arg
+        assert response.json()["result"]["values"] == [
+            {"value": "production", "label": "production"}
+        ]
+        assert "argMax(tuple(start_time, parent_span_id, is_deleted, tags," in sql_arg
+        assert "l.winner.4 AS tags" in sql_arg
+        assert "PREWHERE project_id IN %(tag_projects)s" in sql_arg
+        assert "start_time >= %(tag_hour_start)s" in sql_arg
+        assert "start_time < %(tag_hour_end)s" in sql_arg
+        assert "HAVING winner.3 = 0" in sql_arg
+        assert "LIMIT %(tag_row_limit)s" in sql_arg
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
