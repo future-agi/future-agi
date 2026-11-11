@@ -130,6 +130,12 @@ class HarnessSandboxClient:
             raise HarnessSandboxUnavailable(
                 f"ALK sandbox is unavailable at {self.base_url}: {exc}"
             ) from exc
+        if response.status_code in (401, 403):
+            # The frontend treats any 401 as an expired session, so a token
+            # mismatch with the sandbox must reach the browser as a 503.
+            raise HarnessSandboxUnavailable(
+                f"ALK sandbox rejected the platform's token ({response.status_code})"
+            )
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")

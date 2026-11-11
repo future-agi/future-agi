@@ -2199,6 +2199,18 @@ Read only by `docker-compose.dev.yml` and `docker-compose.distributed.dev.yml`.
     setups = ["dev"]
     text = "Organization API key pair the local sandbox server files results with. Never set on the simulation runner."
 
+    [[part.section.row]]
+    keys = ["ALK_HARNESS_SANDBOX_TOKEN"]
+    default = "required by the local sandbox server"
+    setups = ["dev"]
+    text = "Token the backend authenticates to the local sandbox server with. Required whenever the `local-sandbox` profile runs: the sandbox refuses to start without it. One line in `.env` sets the same value for both sides; any long random string works, with no spaces or quotes."
+
+    [[part.section.row]]
+    keys = ["ALK_HARNESS_SANDBOX_URL"]
+    default = "`http://host.docker.internal:8788`"
+    setups = ["dev"]
+    text = "Address the backend reaches the local sandbox server at. Read by the backend from `.env`, not by the overlay."
+
 [[part]]
 heading = "5. Internal: set by the compose files"
 role = "internal"
