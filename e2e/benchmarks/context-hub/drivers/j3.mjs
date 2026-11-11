@@ -124,30 +124,21 @@ export async function createDriver({ jobId, runId, registration }) {
       try {
         if (stage.id === 'configure-three-contexts') {
           requireValue(input.parents.every(parent => parent.id === null), 'Cold fixture must not pre-author the parents');
+          // One shared plan over every parent: the shared standing instructions are written once, every published skill follows
+          // its default label, and the deliberate exact pin is the one per-context exception shown to the reviewer.
+          await operator.configurationEdit('write-shared-standing-instructions', async () => {});
+          const file = planPath('create-plan');
+          const pin = `${input.parents[2].name}:${child.name}=7`;
+          const plan = await cli('plan-create-contexts', 'fi.context.authoring', ['plan-create', ...input.parents.map(parent => parent.name), '--description', 'Synthetic shared-policy context',
+            '--root', '# Synthetic policy\nConsult approved linked skills.\n', '--pin', pin, '--out', file]);
+          const items = input.parents.flatMap((_, index) => input.leaves.map((_, n) => `parent-${index}-linked-skill-${n}`));
+          await operator.review('create-set-dependency-review', items, ['parent-2-linked-skill-0'], async () => {
+            requireValue(plan.contexts.length === 3 && plan.contexts.every((row, index) => row.name === input.parents[index].name && row.errors === 0 && row.resolved.length === input.leaves.length
+              && row.exceptions.length === (index === 2 ? 1 : 0)), 'The printed plan does not describe the three contexts');
+          });
+          await cli('apply-create-contexts', 'fi.context.authoring', ['apply-create', '--plan', file, '--reviewed-plan', plan.plan_digest, '--accept-resolved-versions']);
           for (const [index, parent] of input.parents.entries()) {
-            await navigate('/dashboard/skills/contexts', `cold-parent-${index}-library`);
-            await operator.click(page.getByRole('button', { name: /^(New agent context|Write AGENTS.md)$/ }).first(), `cold-parent-${index}-new`);
-            await fill('Immutable name', parent.name, `cold-parent-${index}-name`);
-            await fill('Purpose', 'Synthetic shared-policy context', `cold-parent-${index}-purpose`);
-            await fill('AGENTS.md', '# Synthetic policy\nConsult approved linked skills.\n', `cold-parent-${index}-root`);
-            const created = watch(res => res.url().endsWith('/skills/contexts/') && res.request().method() === 'POST');
-            await click('Create draft', `cold-parent-${index}-create`);
-            parent.id = (await (await created).json()).result.context_id;
-            // The deliberate exact pin is the one per-skill exception; every other published
-            // skill follows the default label and is added as one reviewed set.
-            if (index === 2) {
-              await click('Published leaf skill', `cold-parent-${index}-choose-pin`, 'combobox');
-              await click(input.leaves[0].name, `cold-parent-${index}-skill-pin`, 'option');
-              await operator.click(page.getByRole('combobox', { name: /^Update policy/ }), `cold-parent-${index}-policy-pin`);
-              await click('Pin version', `cold-parent-${index}-selector-pin`, 'option');
-              await fill('Version', '7', 'cold-deliberate-v7-pin');
-              await click('Add to proposed links', `cold-parent-${index}-add-pin`);
-            }
-            await click(`Add all ${index === 2 ? input.leaves.length - 1 : input.leaves.length} remaining published skills`, `cold-parent-${index}-add-remaining`);
-            await click('Preview dependency changes', `cold-parent-${index}-preview`);
-            await operator.review(`cold-parent-${index}-dependency-review`, input.leaves.map((_, n) => `linked-skill-${n}`), index === 2 ? ['linked-skill-0'] : [], () => expect(page.getByText(/Compiled candidate/)).toBeVisible());
-            await click('Accept these exact resolved versions and selector policies.', `cold-parent-${index}-accept`, 'checkbox');
-            await click('Apply selected updates to draft', `cold-parent-${index}-apply`);
+            parent.id = plan.contexts[index].context_id;
             await expect.poll(async () => compiled(await read(`contexts/${parent.id}/draft/`, signal))).toBe(7);
           }
           await publishSet('cold', input.parents, 1);
@@ -204,8 +195,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await receipt(stage, ledger, observations.dependents); return;
         }
         if (stage.id === 'accept-followers') {
-          // One reviewed update over the preselected followers, started from the dependents inventory.
-          await navigate(`/dashboard/skills/${child.id}?tab=dependents`, 'follower-update-inventory');
+          // One reviewed update over the preselected followers, started from the dependents inventory the person is already viewing.
           await click(`Preview updates for ${followers.length} selected contexts`, 'followers-preview');
           await expect(page.getByRole('button', { name: `Apply selected updates to ${followers.length} context drafts`, exact: true })).toBeVisible();
           const reviewPlans = (target, exceptions = []) => operator.review(target, followers.map((_, index) => `parent-${index}-shared-policy-v8`), exceptions, () => expect(page.getByText('Compiled candidate')).toHaveCount(followers.length));
