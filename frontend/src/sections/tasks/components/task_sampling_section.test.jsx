@@ -9,6 +9,7 @@ import {
   screen,
   userEvent,
   waitFor,
+  within,
 } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import TaskSamplingSection from "./task_sampling_section";
@@ -364,6 +365,12 @@ describe("two-choice task data selection", () => {
         const input = screen.getByRole("spinbutton", { name: label });
         await userEvent.clear(input);
         await userEvent.type(input, amount);
+        // The unit is on screen too, not only in the accessible name.
+        const unit = within(input.closest(".MuiInputBase-root")).queryByText(
+          "%",
+        );
+        if (live) expect(unit).toBeVisible();
+        else expect(unit).toBeNull();
       }
       const saved = NewTaskValidationSchema().parse(
         form.getValues(),
@@ -397,8 +404,19 @@ describe("two-choice task data selection", () => {
     });
     choice.focus();
     await userEvent.keyboard(" ");
-    expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "retained, not truncated",
+    // A year is longer than group picking allows: the dialog proposes the
+    // latest 31 days of it instead of an unrelated last-24-hours window.
+    const dialog = await screen.findByRole("dialog", {
+      name: "Use the last 31 days of your time window?",
+    });
+    expect(dialog).toHaveTextContent(
+      "uses the most recent 31 days of your time window",
+    );
+    expect(screen.getByLabelText("New UTC window start")).toHaveValue(
+      "2026-08-31T00:00",
+    );
+    expect(screen.getByLabelText("New UTC window end")).toHaveValue(
+      "2026-10-01T00:00",
     );
     expect(form.getValues()).toEqual(before);
     await userEvent.keyboard("{Escape}");
@@ -411,8 +429,69 @@ describe("two-choice task data selection", () => {
     );
     await closeDialog();
     expect(form.getValues("samplingPolicy.default")).toEqual({ target_n: 100 });
+    expect(form.getValues("samplingPolicy.window")).toEqual({
+      start: "2026-08-31T00:00:00.000Z",
+      end: "2026-10-01T00:00:00.000Z",
+    });
     expect(form.getValues("startDate")).toBe(before.startDate);
     expect(form.getValues("endDate")).toBe(before.endDate);
+  });
+
+  it("keeps a rolling time window that ends in the future without asking, ending it now", async () => {
+    const startDate = new Date(Date.now() - 7 * 86400000).toISOString();
+    show({
+      startDate,
+      endDate: new Date(Date.now() + 86400000).toISOString(),
+    });
+    await enable();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const { start, end } = form.getValues("samplingPolicy.window");
+    expect(start).toBe(startDate);
+    expect(Date.parse(end)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(end) - Date.parse(start)).toBeGreaterThan(6 * 86400000);
+    expect(samplingContextError(form.getValues())).toBe("");
+  });
+
+  it("asks for a past window when the time window is entirely in the future", async () => {
+    show({
+      startDate: new Date(Date.now() + 86400000).toISOString(),
+      endDate: new Date(Date.now() + 2 * 86400000).toISOString(),
+    });
+    await enable();
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Choose a fixed sample window",
+      }),
+    ).toHaveTextContent("nothing in the past to pick from");
+    expect(form.getValues("samplingPolicy")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Use group picking" }),
+    ).toBeEnabled();
+  });
+
+  it("explains the disabled group option directly under it", async () => {
+    show();
+    const input = screen.getByRole("spinbutton", {
+      name: "Custom percentage (%)",
+    });
+    await userEvent.clear(input);
+    const option = screen.getByRole("radio", {
+      name: "Pick whole groups of spans",
+    });
+    const caption = screen.getByText(
+      "Enter a valid percentage to switch to group picking.",
+    );
+    // Same radio group, right after the option it explains, not after the
+    // percentage controls.
+    expect(
+      screen.getByRole("radiogroup", { name: "Data selection method" }),
+    ).toContainElement(caption);
+    expect(
+      option.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      caption.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it.each(["light", "dark"])(
@@ -554,7 +633,7 @@ describe("two-choice task data selection", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     await closeDialog();
     await userEvent.click(
@@ -583,7 +662,7 @@ describe("two-choice task data selection", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     await closeDialog();
     await userEvent.click(
@@ -701,6 +780,43 @@ describe("two-choice task data selection", () => {
     ).toBeVisible();
   });
 
+  it.each([
+    [
+      "historical",
+      {},
+      "Switch to 50% of matching spans, with your processing limit of 100,000 rows? Your group settings stay available if you switch back before leaving.",
+    ],
+    [
+      "historical",
+      { samplingRate: 100, spansLimit: "" },
+      "Switch to all matching spans? Your group settings stay available if you switch back before leaving.",
+    ],
+    [
+      "continuous",
+      {},
+      "Switch to 50% of matching spans? Your group settings stay available if you switch back before leaving.",
+    ],
+  ])(
+    "names the percentage it switches back to, as the radio does (%s)",
+    async (runType, values, text) => {
+      const policy = simpleSamplingPolicy(defaults("spans", runType));
+      show({ ...values, samplingPolicy: policy, runType });
+      await userEvent.click(
+        screen.getByRole("radio", { name: "A percentage of matching spans" }),
+      );
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toHaveTextContent(text);
+      expect(
+        within(dialog).getByRole("button", { name: "Use a percentage" }),
+      ).toBeVisible();
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      );
+      await closeDialog();
+      expect(form.getValues("samplingPolicy")).toEqual(policy);
+    },
+  );
+
   it("does not confuse a saved-form reset with a deliberate switch to incoming data", async () => {
     show();
     const loaded = {
@@ -725,7 +841,7 @@ describe("two-choice task data selection", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     await closeDialog();
     await act(async () => form.setValue("rowType", "sessions"));
@@ -873,7 +989,7 @@ describe("two-choice task data selection", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     await closeDialog();
     await userEvent.click(
@@ -919,4 +1035,135 @@ describe("two-choice task data selection", () => {
       }
     },
   );
+});
+
+describe("per-group counts and the preview by group", () => {
+  const addGroups = async () => {
+    await enable();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Set a count per group" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Choose group field" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Choose values" }),
+    );
+  };
+
+  it("lists every count after the groups, says what the first count now covers, and totals them", async () => {
+    show();
+    await addGroups();
+    expect(
+      screen.queryByRole("spinbutton", { name: "How many conversations?" }),
+    ).not.toBeInTheDocument();
+    const list = screen.getByLabelText("Counts per group");
+    const inputs = within(list).getAllByRole("spinbutton");
+    expect(inputs.map((input) => input.getAttribute("aria-label"))).toEqual([
+      "French",
+      "English",
+      "All other conversations (not French or English)",
+    ]);
+    expect(inputs.map((input) => input.value)).toEqual(["50", "50", "100"]);
+    expect(within(list).getByRole("status")).toHaveTextContent(
+      "The count of 100 you set now applies only to conversations outside these groups.",
+    );
+    expect(
+      within(list).getByLabelText("Requested group selection"),
+    ).toHaveTextContent(/^Up to 200 conversations in total$/);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove per-group counts" }),
+    );
+    expect(
+      screen.getByRole("spinbutton", { name: "How many conversations?" }),
+    ).toHaveValue(100);
+    expect(screen.queryByLabelText("Counts per group")).toBeNull();
+  });
+
+  it("shows requested, available and picked per group and says why the sample is short", async () => {
+    show();
+    await addGroups();
+    const cell = (name, eligible, selected, rows) => ({
+      stratum: JSON.stringify([name, []]),
+      eligible_units: eligible,
+      selected_units: selected,
+      selected_rows: rows,
+      expected_units: selected,
+    });
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          strata: [cell("Group 1", 8, 8, 80), cell("default", 400, 100, 900)],
+          evaluator_count: 1,
+          expected_evaluations: 980,
+        },
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Preview sample" }),
+    );
+    expect(
+      await screen.findByLabelText("Sampling preview summary"),
+    ).toHaveTextContent("108 conversations · 980 spans evaluated");
+    expect(
+      screen.getByLabelText("Sampling preview shortfall"),
+    ).toHaveTextContent(
+      "French (8 of 50) and English (0 of 50) have fewer than requested, so 108 of 200 conversations can be picked. Widen the window or lower those counts.",
+    );
+    const table = screen.getByRole("table", { name: "Preview by group" });
+    expect(
+      within(table)
+        .getAllByRole("row")
+        .map((row) =>
+          within(row)
+            .queryAllByRole("cell")
+            .map((node) => node.textContent),
+        )
+        .filter((cells) => cells.length),
+    ).toEqual([
+      ["French", "50", "8", "8", "80"],
+      ["English", "50", "0", "0", "0"],
+      ["All other conversations", "100", "400", "100", "900"],
+    ]);
+  });
+
+  it("keeps a one-group preview to the summary and states a short count plainly", async () => {
+    show();
+    await enable();
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          strata: [
+            {
+              stratum: '["default",[]]',
+              eligible_units: 18,
+              selected_units: 18,
+              selected_rows: 288,
+              expected_units: 18,
+            },
+          ],
+          evaluator_count: 0,
+          expected_evaluations: null,
+        },
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Preview sample" }),
+    );
+    expect(
+      await screen.findByLabelText("Sampling preview shortfall"),
+    ).toHaveTextContent(
+      "Only 18 conversations match in this window, fewer than the 100 requested. Widen the window or lower the count.",
+    );
+    expect(
+      screen.getByText(
+        "Picked from 18 matching conversations. Add evaluators to estimate runs.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("table", { name: "Preview by group" }),
+    ).toBeNull();
+    // Said once, not again as a second "select evaluators" line.
+    expect(screen.queryAllByText(/evaluators to estimate/)).toHaveLength(1);
+  });
 });

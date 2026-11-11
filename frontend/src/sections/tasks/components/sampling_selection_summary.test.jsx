@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import SavedTaskSelection from "./sampling_selection_summary";
 import { defaultSamplingPolicy } from "./samplingPolicyForm";
+import { samplingLocalDate } from "./simpleSamplingPolicy";
 import { productionTheme } from "./__tests__/samplingContrastTestUtils";
 
 const show = (policy, mode, overrides = {}) => {
@@ -26,7 +27,7 @@ describe.each(["light", "dark"])("saved selection in %s", (mode) => {
       mode,
     );
     expect(summary).toHaveTextContent(
-      "100 conversations; evaluate every matching span in each picked group",
+      "Up to 100 conversations, picked at random; every matching span in a picked conversation is evaluated.",
     );
     expect(summary).not.toHaveTextContent("100 evaluations");
   });
@@ -56,8 +57,15 @@ describe.each(["light", "dark"])("saved selection in %s", (mode) => {
       { ...defaultSamplingPolicy(), window, default: { target_n: 2 } },
       mode,
     );
-    expect(summary).toHaveTextContent("local time");
-    await userEvent.click(screen.getByText("Exact UTC window"));
+    // Local dates whose format names the zone, so no "(local time)" suffix.
+    expect(summary).toHaveTextContent(
+      `Fixed window: ${samplingLocalDate(window.start)} – ${samplingLocalDate(window.end)}`,
+    );
+    expect(summary).not.toHaveTextContent("local time");
+    const toggle = screen.getByRole("button", { name: "Exact UTC window" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(summary).toHaveTextContent(window.start);
     expect(summary).toHaveTextContent(window.end);
   });

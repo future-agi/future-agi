@@ -4,7 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -17,6 +16,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { useController, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
+import { ClosableDialog } from "src/components/custom-dialog";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import { formatTimeWindow } from "src/sections/projects/timeWindowPresets";
 import {
@@ -24,6 +24,7 @@ import {
   pickNames,
   resetHistoricalSamplingCounts,
   rowNames,
+  samplingLocalDay,
   samplingWindowInvalid,
 } from "./simpleSamplingPolicy";
 
@@ -78,10 +79,16 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
       value: "continuous",
       icon: "solar:play-circle-linear",
       title: "New incoming data",
+      // Say what choosing the card does: a simple count policy becomes a
+      // share of new groups (see changeSchedule); only a policy that stays
+      // closed keeps evaluating late rows from the groups already picked.
       description:
-        policy?.mode === "closed"
+        policy?.mode === "closed" &&
+        (runType.value === "continuous" || !isSimpleSamplingPolicy(policy))
           ? "Continue evaluating late rows from the selected groups"
-          : `Evaluate matching ${rows} as they arrive`,
+          : policy?.mode === "closed"
+            ? `Pick a share of new ${pickNames(policy.sampling_unit)} as they arrive`
+            : `Evaluate matching ${rows} as they arrive`,
     },
   ];
   return (
@@ -176,8 +183,10 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
       )}
       {runType.value === "historical" &&
         (policy ? (
-          <Typography variant="caption" color="text.secondary">
-            The fixed UTC window is set in Data to evaluate.
+          <Typography variant="s1" component="div" color="text.secondary">
+            {policy.mode === "closed" && !samplingWindowInvalid(policy)
+              ? `Group picking uses its own window of at most 31 days: ${samplingLocalDay(policy.window.start)} – ${samplingLocalDay(policy.window.end)}. Change it in Data to evaluate.`
+              : "Group picking uses its own window of at most 31 days, set in Data to evaluate."}
           </Typography>
         ) : (
           <Box>
@@ -212,7 +221,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
             />
           </Box>
         ))}
-      <Dialog
+      <ClosableDialog
         open={pendingLive}
         onClose={() => setPendingLive(false)}
         maxWidth="sm"
@@ -223,7 +232,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
           Use percentages for new incoming data?
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2">
+          <Typography variant="s1" component="div">
             Fixed counts do not apply to new incoming data. Use 10% for each
             group, then adjust the shares. Cancel keeps your counts and
             Historical data schedule.
@@ -256,8 +265,8 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
             Use percentages
           </Button>
         </DialogActions>
-      </Dialog>
-      <Dialog
+      </ClosableDialog>
+      <ClosableDialog
         open={Boolean(pendingHistorical)}
         onClose={() => setPendingHistorical(null)}
         maxWidth="sm"
@@ -271,7 +280,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
           <Box
             sx={{ display: "flex", flexDirection: "column", gap: 1.5, pt: 1 }}
           >
-            <Typography variant="body2">
+            <Typography variant="s1" component="div">
               Reset each group and All other{" "}
               {pickNames(pendingHistorical?.sampling_unit)} to 100, bounded by
               what exists. Adjust the counts after switching. Choose a past
@@ -323,7 +332,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
             Use historical counts
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </Box>
   );
 }

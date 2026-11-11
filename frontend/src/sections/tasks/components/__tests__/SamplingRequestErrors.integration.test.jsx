@@ -189,10 +189,10 @@ it("clears stale counts, planner and shared summary on a 503 without changing th
   });
   await userEvent.click(preview);
   expect(await screen.findByLabelText("Sampling summary")).toHaveTextContent(
-    "Preview: 1 of 2 sessions; 4 spans × 1 evaluator = 4 runs",
+    "Picked 1 of 2 conversations; 4 spans × 1 evaluator = 4 runs",
   );
   expect(screen.getByLabelText("Sampling preview summary")).toHaveTextContent(
-    "1 conversations · 4 spans evaluated",
+    "1 conversation · 4 spans evaluated",
   );
   await userEvent.click(preview);
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -207,7 +207,7 @@ it("clears stale counts, planner and shared summary on a 503 without changing th
   await userEvent.click(preview);
   await waitFor(() =>
     expect(screen.getByLabelText("Sampling summary")).toHaveTextContent(
-      "Preview: 1 of 2 sessions",
+      "Picked 1 of 2 conversations",
     ),
   );
   expect(request.mock.calls.map((call) => call[1].sampling_policy)).toEqual(

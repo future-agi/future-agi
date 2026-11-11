@@ -124,7 +124,7 @@ const preview = async () => {
   await userEvent.click(screen.getByRole("button", { name: "Preview sample" }));
   return screen.findByLabelText("Sampling preview summary");
 };
-const summaryText = "1 conversations · 4 spans evaluated";
+const summaryText = "1 conversation · 4 spans evaluated";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -137,7 +137,9 @@ describe("persistent sampling preview", () => {
     expect(
       within(
         screen.getByRole("region", { name: "Persistent preview" }),
-      ).getByText("Filter-matching row — not sampled membership"),
+      ).getByText(
+        "A row that matches your filters. It may not be in the sample.",
+      ),
     ).toBeVisible();
   });
 
@@ -158,7 +160,7 @@ describe("persistent sampling preview", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     expect(form.getValues("samplingPolicy")).toBeNull();
     // The harness schedule is New incoming data.
@@ -231,7 +233,7 @@ describe("persistent sampling preview", () => {
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
+      screen.getByRole("button", { name: "Use a percentage" }),
     );
     expect(
       screen.queryByLabelText("Sampling preview summary"),
@@ -307,10 +309,10 @@ describe("persistent sampling preview", () => {
     expect(await preview()).toHaveTextContent(
       "0 conversations · 0 spans evaluated",
     );
-    await userEvent.click(screen.getByText("Evaluation work"));
+    // The evaluation work is shown with the result, not behind a disclosure.
     expect(
       screen.getByText(
-        "Preview: 0 of 2 sessions; 0 spans × 1 evaluator = 0 runs",
+        "Picked from 2 matching conversations. Each span runs 1 evaluator: 0 runs.",
       ),
     ).toBeVisible();
     axios.post.mockResolvedValueOnce({
@@ -324,12 +326,11 @@ describe("persistent sampling preview", () => {
       },
     });
     expect(await preview()).toHaveTextContent(
-      "1 conversations · 4 spans evaluated",
+      "1 conversation · 4 spans evaluated",
     );
-    await userEvent.click(screen.getByText("Evaluation work"));
     expect(
       screen.getByText(
-        "Preview: 1 of 2 sessions; 4 spans; select evaluators to estimate runs",
+        "Picked from 2 matching conversations. Add evaluators to estimate runs.",
       ),
     ).toBeVisible();
   });

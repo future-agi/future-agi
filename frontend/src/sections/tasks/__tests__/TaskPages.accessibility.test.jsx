@@ -1,7 +1,13 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, userEvent, cleanup } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  userEvent,
+  cleanup,
+  within,
+} from "src/utils/test-utils";
 import TaskCreatePage from "../TaskCreatePage";
 import { Box } from "@mui/material";
 import TaskDetailPage from "../TaskDetailPage";
@@ -140,9 +146,15 @@ describe.each(["light", "dark"])(
             timeZoneName: "short",
           }).format(new Date(window.start)),
         );
-        const utc = summary.querySelector("details");
-        expect(utc).not.toHaveAttribute("open");
-        await userEvent.click(utc.querySelector("summary"));
+        const toggle = within(summary).getByRole("button", {
+          name: "Exact UTC window",
+        });
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        await userEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        const utc = document.getElementById(
+          toggle.getAttribute("aria-controls"),
+        );
         expect(utc).toHaveTextContent(window.start);
         expect(utc).toHaveTextContent(window.end);
         if (advanced) {

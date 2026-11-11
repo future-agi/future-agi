@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
-import { pickNames, rowNames } from "./simpleSamplingPolicy";
+import { pickName, pickNames, rowNames } from "./simpleSamplingPolicy";
 
 // Schematic only: these boxes explain containment, never pretend to be data or
 // a preview. All essential information is in the visible text equivalent.
@@ -19,7 +19,7 @@ export default function SamplingPickIllustration({ unit, rowType }) {
   const text =
     unit === rowUnit
       ? `Pick individual ${rows}. Only the picked ${rows} are evaluated.`
-      : `Pick ${pickNames(unit)}. Every matching ${rows.replace(/s$/, "")} in each picked group is evaluated.`;
+      : `Pick ${pickNames(unit)}. Every matching ${rows.replace(/s$/, "")} in each picked ${pickName(unit)} is evaluated.`;
   const names = {
     span: "Spans",
     trace: "Traces",

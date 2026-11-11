@@ -291,10 +291,12 @@ describe("sampling preview and validation boundaries", () => {
     expect(
       await screen.findByLabelText("Sampling preview summary"),
     ).toHaveTextContent("0 conversations · 0 spans evaluated");
-    await userEvent.click(screen.getByText("Evaluation work"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "How this is counted" }),
+    );
     expect(screen.getByText(/Expected evaluation runs: 14/)).toBeVisible();
     expect(screen.getByLabelText("Shared preview")).toHaveTextContent(
-      "0 of 20 sessions; 0 spans × 2 evaluators = 0 runs",
+      "0 of 20 conversations; 0 spans × 2 evaluators = 0 runs",
     );
   });
 

@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { useForm } from "react-hook-form";
 import TaskSchedulingSection from "../TaskSchedulingSection";
+import { samplingLocalDay } from "../simpleSamplingPolicy";
 
 let form;
 const Harness = ({ defaults, isEdit = true }) => {
@@ -52,6 +53,46 @@ describe("TaskSchedulingSection preset", () => {
       ).not.toBeInTheDocument();
     },
   );
+
+  it("says choosing New incoming data turns historical counts into shares, and where the group window is", () => {
+    render(
+      <Harness
+        defaults={{
+          runType: "historical",
+          rowType: "spans",
+          samplingPolicy: {
+            version: 1,
+            sampling_unit: "session",
+            missing_id: "exclude",
+            mode: "closed",
+            window: {
+              start: "2026-10-01T00:00:00.000Z",
+              end: "2026-10-08T00:00:00.000Z",
+            },
+            default: { target_n: 10 },
+            strata: [],
+            group_by: [],
+          },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Pick a share of new conversations as they arrive"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(
+        "Continue evaluating late rows from the selected groups",
+      ),
+    ).not.toBeInTheDocument();
+    const caption = screen.getByText(
+      /^Group picking uses its own window of at most 31 days: /,
+    );
+    expect(caption).toHaveTextContent("Change it in Data to evaluate.");
+    // The same local date format as the window in Data to evaluate.
+    expect(caption).toHaveTextContent(
+      `${samplingLocalDay("2026-10-01T00:00:00.000Z")} – ${samplingLocalDay("2026-10-08T00:00:00.000Z")}.`,
+    );
+  });
 
   it("keeps live sampling distinct from frozen cohorts", () => {
     render(

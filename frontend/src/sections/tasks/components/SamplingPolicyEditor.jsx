@@ -2,14 +2,21 @@ import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
-  Box,
   Button,
+  InputAdornment,
   MenuItem,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
 } from "@mui/material";
 import { useController, useWatch } from "react-hook-form";
+import Iconify from "src/components/iconify";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import axios, { endpoints } from "src/utils/axios";
 import { getNewTaskFilters } from "../schema";
 import { samplingRequestError } from "./samplingRequestError";
@@ -26,7 +33,10 @@ import {
   SamplingFieldPicker,
   SamplingValuePicker,
 } from "./sampling_field_picker";
-import { SamplingWindow } from "./sampling_selection_summary";
+import {
+  SamplingDisclosure,
+  SamplingWindow,
+} from "./sampling_selection_summary";
 import SamplingPickIllustration from "./sampling_pick_illustration";
 import {
   advancedSamplingSummary,
@@ -35,13 +45,70 @@ import {
   pickLabel,
   pickLevels,
   pickNames,
+  rowNames,
+  samplingPreviewGroups,
+  samplingPreviewShortfall,
+  samplingPreviewWork,
+  samplingShortfallText,
   samplingWindowInvalid,
   simpleGroupsForValues,
   simpleGroupSelectionText,
   samplingGroupValueLabel,
+  unitCount,
 } from "./simpleSamplingPolicy";
 
-function AmountField({ label, rule, live, onChange, error }) {
+const numeric = { fontVariantNumeric: "tabular-nums" };
+
+// Requested versus available per group: the reason a preview is short.
+function PreviewGroupsTable({ groups, live, rowType }) {
+  const rows = rowNames(rowType);
+  return (
+    <Table size="small" aria-label="Preview by group">
+      <TableHead>
+        <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+          <TableCell>Group</TableCell>
+          <TableCell align="right">{live ? "Share" : "Requested"}</TableCell>
+          <TableCell align="right">Available</TableCell>
+          <TableCell align="right">Picked</TableCell>
+          <TableCell align="right">
+            {`${rows[0].toUpperCase()}${rows.slice(1)}`} evaluated
+          </TableCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {groups.map((group) => (
+          <TableRow key={group.key} sx={{ height: ROW_HEIGHT.default }}>
+            <TableCell sx={{ overflowWrap: "anywhere" }}>
+              {group.label}
+            </TableCell>
+            <TableCell align="right" sx={numeric}>
+              {live ? `${group.requested}%` : group.requested.toLocaleString()}
+            </TableCell>
+            <TableCell align="right" sx={numeric}>
+              {group.eligible.toLocaleString()}
+            </TableCell>
+            <TableCell align="right" sx={numeric}>
+              {group.selected.toLocaleString()}
+            </TableCell>
+            <TableCell align="right" sx={numeric}>
+              {group.rows.toLocaleString()}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+PreviewGroupsTable.propTypes = {
+  groups: PropTypes.arrayOf(PropTypes.object).isRequired,
+  live: PropTypes.bool,
+  rowType: PropTypes.string,
+};
+
+// `label` is shown on the field; `inputLabel` names an unlabelled field in a
+// quota row, whose visible label sits beside it. A share shows its "%" in
+// the field, so a share never reads as a count.
+function AmountField({ label, inputLabel, rule, live, onChange, error, sx }) {
   const key = live ? "rate" : "target_n";
   return (
     <TextField
@@ -52,22 +119,61 @@ function AmountField({ label, rule, live, onChange, error }) {
       value={rule[key] ?? ""}
       error={Boolean(error)}
       helperText={error}
-      inputProps={{ min: 0, max: live ? 100 : 1000000, step: live ? "any" : 1 }}
+      inputProps={{
+        min: 0,
+        max: live ? 100 : 1000000,
+        step: live ? "any" : 1,
+        ...(inputLabel && { "aria-label": inputLabel }),
+      }}
+      InputProps={
+        live
+          ? { endAdornment: <InputAdornment position="end">%</InputAdornment> }
+          : undefined
+      }
       onChange={(event) =>
         onChange({
           ...rule,
           [key]: event.target.value === "" ? "" : Number(event.target.value),
         })
       }
+      sx={{ "& input": numeric, ...sx }}
     />
   );
 }
 AmountField.propTypes = {
-  label: PropTypes.string.isRequired,
+  label: PropTypes.string,
+  inputLabel: PropTypes.string,
   rule: PropTypes.object.isRequired,
   live: PropTypes.bool,
   onChange: PropTypes.func.isRequired,
   error: PropTypes.string,
+  sx: PropTypes.object,
+};
+
+// One line of the per-group list: the group, then its count or share.
+function QuotaRow({ label, inputLabel, ...field }) {
+  return (
+    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+      <Typography
+        variant="s1"
+        component="div"
+        title={label}
+        noWrap
+        sx={{ flex: 1, minWidth: 0, pt: 0.75 }}
+      >
+        {label}
+      </Typography>
+      <AmountField
+        inputLabel={inputLabel}
+        {...field}
+        sx={{ width: 160, flexShrink: 0 }}
+      />
+    </Stack>
+  );
+}
+QuotaRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  inputLabel: PropTypes.string.isRequired,
 };
 
 export default function SamplingPolicyEditor({ control, getValues }) {
@@ -88,6 +194,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [groupDraft, setGroupDraft] = useState(null);
+  const [remainderNotice, setRemainderNotice] = useState("");
   const policy = field.value;
   const simple = policy && isSimpleSamplingPolicy(policy);
   const live = policy?.mode === "live";
@@ -106,6 +213,10 @@ export default function SamplingPolicyEditor({ control, getValues }) {
   const compact = invalid
     ? null
     : compactSamplingPreview(preview, policy, rowType);
+  const previewGroups = invalid ? null : samplingPreviewGroups(preview, policy);
+  const shortfall = samplingPreviewShortfall(previewGroups, policy);
+  // The work line adds only what the headline lacks: the pool and the runs.
+  const work = invalid ? null : samplingPreviewWork(preview, policy, rowType);
   useEffect(() => {
     request.current += 1;
     setResult(null);
@@ -174,7 +285,15 @@ export default function SamplingPolicyEditor({ control, getValues }) {
     ? policy.strata.map((rule) => rule.filters[0].values[0])
     : [];
   const key = live ? "rate" : "target_n";
+  // Null while any count is invalid, so no total is shown for a half-typed one.
   const groupSummary = simpleGroupSelectionText(policy);
+  const groupTotal =
+    groupSummary && !live
+      ? policy.strata.reduce(
+          (sum, rule) => sum + rule.target_n,
+          policy.default.target_n || 0,
+        )
+      : null;
   const excludedValues = groupValues.length
     ? ` (not ${new Intl.ListFormat("en", { type: "disjunction" }).format(groupValues.map(samplingGroupValueLabel))})`
     : "";
@@ -183,7 +302,8 @@ export default function SamplingPolicyEditor({ control, getValues }) {
       {!simple ? (
         <Typography
           role="status"
-          variant="body2"
+          variant="s1"
+          component="div"
           aria-label="Advanced sampling settings"
         >
           {advancedSamplingSummary(policy)}
@@ -212,19 +332,24 @@ export default function SamplingPolicyEditor({ control, getValues }) {
           {policy.sampling_unit === "attribute" && (
             // Shown in place, not behind a disclosure: the attribute is
             // required whenever the project has no contact attribute set.
-            <SamplingFieldPicker
-              project={project}
-              label="Custom ID attribute"
-              value={policy.unit_attribute}
-              emptyLabel="Project’s contact attribute (if set)"
-              helperText="Leave empty to use the project’s contact attribute (if one is set in project settings); otherwise choose an attribute."
-              onChange={(attribute) => {
-                const next = { ...policy };
-                if (attribute.key) next.unit_attribute = attribute;
-                else delete next.unit_attribute;
-                update(next);
-              }}
-            />
+            // Indented like the group block, so the two field rows differ.
+            <Stack
+              sx={{ borderLeft: "1px solid", borderColor: "divider", pl: 1.5 }}
+            >
+              <SamplingFieldPicker
+                project={project}
+                label="Custom ID attribute"
+                value={policy.unit_attribute}
+                emptyLabel="Project’s contact attribute (if set)"
+                helperText="Leave empty to use the project’s contact attribute (if one is set in project settings); otherwise choose an attribute."
+                onChange={(attribute) => {
+                  const next = { ...policy };
+                  if (attribute.key) next.unit_attribute = attribute;
+                  else delete next.unit_attribute;
+                  update(next);
+                }}
+              />
+            </Stack>
           )}
           {!unitInvalid && (
             <SamplingPickIllustration
@@ -232,28 +357,18 @@ export default function SamplingPolicyEditor({ control, getValues }) {
               rowType={rowType}
             />
           )}
-          {groupSummary && (
-            <Typography
-              variant="body2"
-              aria-label="Requested group selection"
-              sx={{ fontWeight: 500, overflowWrap: "anywhere" }}
-            >
-              {groupSummary}
-            </Typography>
+          {!groupValues.length && (
+            <AmountField
+              label={
+                live ? `What share of new ${units}? (%)` : `How many ${units}?`
+              }
+              rule={policy.default}
+              live={live}
+              error={errors[`default.${key}`]}
+              onChange={(rule) => update({ ...policy, default: rule })}
+              sx={{ maxWidth: 280 }}
+            />
           )}
-          <AmountField
-            label={
-              groupValues.length
-                ? `All other ${units}${excludedValues}${live ? " (%)" : ""}`
-                : live
-                  ? `What share of new ${units}? (%)`
-                  : `How many ${units}?`
-            }
-            rule={policy.default}
-            live={live}
-            error={errors[`default.${key}`]}
-            onChange={(rule) => update({ ...policy, default: rule })}
-          />
           {!groupField ? (
             <Button
               size="small"
@@ -274,6 +389,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 value={groupField}
                 onChange={(next) => {
                   setGroupDraft(next);
+                  setRemainderNotice("");
                   update({ ...policy, strata: [] });
                 }}
               />
@@ -283,42 +399,99 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 project={project}
                 distinctGroups
                 predicate={{ ...groupField, op: "in", values: groupValues }}
-                onChange={(values) =>
-                  update({
-                    ...policy,
-                    strata: simpleGroupsForValues(
-                      policy,
-                      {
-                        source: groupField.source || "span",
-                        key: groupField.key,
-                      },
-                      values,
-                    ),
-                  })
-                }
+                onChange={(values) => {
+                  const strata = simpleGroupsForValues(
+                    policy,
+                    {
+                      source: groupField.source || "span",
+                      key: groupField.key,
+                    },
+                    values,
+                  );
+                  // The count set before any group silently changing meaning
+                  // is what users miss; say it once, when it happens.
+                  setRemainderNotice(
+                    !policy.strata.length && strata.length
+                      ? `${
+                          typeof policy.default[key] === "number"
+                            ? `The ${live ? `${policy.default.rate}% share` : `count of ${policy.default.target_n.toLocaleString()}`} you set`
+                            : `The ${live ? "share" : "count"} you set`
+                        } now applies only to ${units} outside these groups.`
+                      : strata.length
+                        ? remainderNotice
+                        : "",
+                  );
+                  update({ ...policy, strata });
+                }}
               />
-              {policy.strata.map((rule, index) => (
-                <AmountField
-                  key={rule.name}
-                  label={`${String(rule.filters[0].values[0])}${live ? " (%)" : ""}`}
-                  rule={rule}
-                  live={live}
-                  error={errors[`strata.${index}.${key}`]}
-                  onChange={(next) =>
-                    update({
-                      ...policy,
-                      strata: policy.strata.map((item, i) =>
-                        i === index ? next : item,
-                      ),
-                    })
-                  }
-                />
-              ))}
+              {groupValues.length > 0 && (
+                <Stack
+                  spacing={0.75}
+                  role="group"
+                  aria-label="Counts per group"
+                >
+                  {policy.strata.map((rule, index) => (
+                    <QuotaRow
+                      key={rule.name}
+                      label={samplingGroupValueLabel(rule.filters[0].values[0])}
+                      inputLabel={`${String(rule.filters[0].values[0])}${live ? " (%)" : ""}`}
+                      rule={rule}
+                      live={live}
+                      error={errors[`strata.${index}.${key}`]}
+                      onChange={(next) =>
+                        update({
+                          ...policy,
+                          strata: policy.strata.map((item, i) =>
+                            i === index ? next : item,
+                          ),
+                        })
+                      }
+                    />
+                  ))}
+                  <QuotaRow
+                    label={`All other ${units}`}
+                    inputLabel={`All other ${units}${excludedValues}${live ? " (%)" : ""}`}
+                    rule={policy.default}
+                    live={live}
+                    error={errors[`default.${key}`]}
+                    onChange={(rule) => update({ ...policy, default: rule })}
+                  />
+                  {groupSummary && (
+                    <Typography
+                      variant="s1"
+                      component="div"
+                      aria-label="Requested group selection"
+                      sx={{
+                        fontWeight: 500,
+                        overflowWrap: "anywhere",
+                        borderTop: "1px solid",
+                        borderColor: "divider",
+                        pt: 0.75,
+                      }}
+                    >
+                      {live
+                        ? `Each group keeps its own share of new ${units}; shares are not added together.`
+                        : `Up to ${groupTotal.toLocaleString()} ${units} in total`}
+                    </Typography>
+                  )}
+                  {remainderNotice && (
+                    <Typography
+                      role="status"
+                      variant="s3"
+                      component="div"
+                      color="text.secondary"
+                    >
+                      {remainderNotice}
+                    </Typography>
+                  )}
+                </Stack>
+              )}
               <Button
                 size="small"
                 sx={{ alignSelf: "flex-start" }}
                 onClick={() => {
                   setGroupDraft(null);
+                  setRemainderNotice("");
                   update({ ...policy, strata: [] });
                 }}
               >
@@ -332,47 +505,48 @@ export default function SamplingPolicyEditor({ control, getValues }) {
         start={policy.window?.start}
         end={policy.window?.end}
         ongoing={live}
-      />
-      {simple && (
-        <Box
-          component="details"
-          sx={{ "& > summary": { cursor: "pointer", fontSize: 12 } }}
-        >
-          <summary>Change time window</summary>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ mt: 1 }}
-          >
-            {(live ? ["start"] : ["start", "end"]).map((bound) => (
-              <TextField
-                key={bound}
-                fullWidth
-                size="small"
-                type="datetime-local"
-                label={`UTC window ${bound}`}
-                InputLabelProps={{ shrink: true }}
-                value={(policy.window?.[bound] || "").slice(0, 16)}
-                onChange={(event) => {
-                  const date = new Date(`${event.target.value}Z`);
-                  update({
-                    ...policy,
-                    window: {
-                      ...policy.window,
-                      [bound]: Number.isFinite(+date) ? date.toISOString() : "",
-                    },
-                  });
-                }}
-              />
-            ))}
-          </Stack>
-          <Typography variant="caption" color="text.secondary">
-            {live
-              ? "New groups are admitted from this start time."
-              : "Choose a past window of at most 31 days. Counts are bounded by what exists."}
-          </Typography>
-        </Box>
-      )}
+      >
+        {simple && (
+          // The inputs are the exact UTC bounds, so no separate read-only copy.
+          <SamplingDisclosure label="Change time window">
+            <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
+              {(live ? ["start"] : ["start", "end"]).map((bound) => (
+                <TextField
+                  key={bound}
+                  fullWidth
+                  size="small"
+                  type="datetime-local"
+                  label={`UTC window ${bound}`}
+                  InputLabelProps={{ shrink: true }}
+                  value={(policy.window?.[bound] || "").slice(0, 16)}
+                  onChange={(event) => {
+                    const date = new Date(`${event.target.value}Z`);
+                    update({
+                      ...policy,
+                      window: {
+                        ...policy.window,
+                        [bound]: Number.isFinite(+date)
+                          ? date.toISOString()
+                          : "",
+                      },
+                    });
+                  }}
+                />
+              ))}
+            </Stack>
+            <Typography
+              variant="s3"
+              component="div"
+              color="text.secondary"
+              sx={{ mt: 0.5 }}
+            >
+              {live
+                ? "New groups are admitted from this start time."
+                : "Choose a past window of at most 31 days. Counts are bounded by what exists."}
+            </Typography>
+          </SamplingDisclosure>
+        )}
+      </SamplingWindow>
       {unitInvalid && (
         <Alert severity="warning">
           This pick level is finer than the rows being evaluated. Replace the
@@ -395,51 +569,95 @@ export default function SamplingPolicyEditor({ control, getValues }) {
         {busy ? "Previewing sample…" : "Preview sample"}
       </Button>
       {Object.keys(errors).length > 0 && (
-        <Typography role="status" variant="caption" color="error.main">
+        <Typography
+          role="status"
+          variant="s3"
+          component="div"
+          color="error.main"
+        >
           Fix the highlighted sampling values before previewing or saving.
         </Typography>
       )}
       {error && <Alert severity="error">{error}</Alert>}
       {preview && (
-        <Box aria-label="Sampling population preview">
+        <Stack
+          spacing={0.75}
+          aria-label="Sampling population preview"
+          sx={{ minWidth: 0 }}
+        >
           <Typography
             role="status"
             aria-label="Sampling preview summary"
-            variant="body2"
+            variant="s1"
+            component="div"
+            sx={{ fontWeight: 500 }}
           >
             {compact || "Selected groups and evaluated rows: Unavailable."}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          {shortfall && (
+            <Stack direction="row" spacing={0.75} alignItems="flex-start">
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                width={16}
+                sx={{ color: "status.warning.fg", flexShrink: 0, mt: 0.125 }}
+              />
+              <Typography
+                variant="s1"
+                component="div"
+                aria-label="Sampling preview shortfall"
+              >
+                {policy.strata.length
+                  ? samplingShortfallText(shortfall, policy.sampling_unit)
+                  : `Only ${unitCount(shortfall.selected, policy.sampling_unit)} ${shortfall.selected === 1 ? "matches" : "match"} in this window, fewer than the ${shortfall.requested.toLocaleString()} requested. Widen the window or lower the count.`}
+              </Typography>
+            </Stack>
+          )}
+          <Typography variant="s1" component="div" color="text.secondary">
+            {(detailSummary && work) || "Evaluation work is unavailable."}
+          </Typography>
+          {previewGroups && previewGroups.length > 1 && (
+            <PreviewGroupsTable
+              groups={previewGroups}
+              live={live}
+              rowType={rowType}
+            />
+          )}
+          <Typography variant="s3" component="div" color="text.secondary">
             Preview only, not a reservation or executed results.{" "}
             {live
               ? "New groups continue to arrive; these counts cover the preview window only."
               : "Membership freezes at first execution, not when previewed or saved."}
           </Typography>
-          <Box
-            component="details"
-            sx={{ mt: 1, "& > summary": { cursor: "pointer", fontSize: 12 } }}
-          >
-            <summary>Evaluation work</summary>
-            <Typography variant="caption" component="div">
-              {detailSummary || "Evaluation work is unavailable."}
-            </Typography>
-            <Typography variant="caption" component="div">
-              {preview.expected_evaluations == null
-                ? "Select evaluators to estimate evaluation runs."
-                : `Expected evaluation runs: ${Number(preview.expected_evaluations.toFixed(2)).toLocaleString()} across ${preview.evaluator_count} evaluator(s).`}
-            </Typography>
-            {preview.population_note && (
-              <Typography variant="caption" component="div">
-                {preview.population_note}
-              </Typography>
-            )}
-            {preview.cost_note && (
-              <Typography variant="caption" component="div">
-                {preview.cost_note}
-              </Typography>
-            )}
-          </Box>
-        </Box>
+          {(preview.expected_evaluations != null ||
+            preview.population_note ||
+            preview.cost_note) && (
+            <SamplingDisclosure label="How this is counted">
+              <Stack spacing={0.5}>
+                {preview.expected_evaluations != null && (
+                  <Typography
+                    variant="s3"
+                    component="div"
+                    color="text.secondary"
+                  >
+                    {`Expected evaluation runs: ${Number(preview.expected_evaluations.toFixed(2)).toLocaleString()} across ${preview.evaluator_count} evaluator(s).`}
+                  </Typography>
+                )}
+                {[preview.population_note, preview.cost_note]
+                  .filter(Boolean)
+                  .map((note) => (
+                    <Typography
+                      key={note}
+                      variant="s3"
+                      component="div"
+                      color="text.secondary"
+                    >
+                      {note}
+                    </Typography>
+                  ))}
+              </Stack>
+            </SamplingDisclosure>
+          )}
+        </Stack>
       )}
     </Stack>
   );

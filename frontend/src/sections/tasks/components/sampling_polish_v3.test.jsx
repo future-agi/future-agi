@@ -119,9 +119,8 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
     const before = structuredClone(policy);
     render(<Harness policy={policy} />, { theme: productionTheme(mode) });
     const summary = screen.getByLabelText("Requested group selection");
-    expect(summary).toHaveTextContent(
-      "Up to 2 conversations in total: fr 1 · en 1 · all other 0",
-    );
+    // The total sits under the per-group rows, which carry each count.
+    expect(summary).toHaveTextContent(/^Up to 2 conversations in total$/);
     const remainder = screen.getByRole("spinbutton", {
       name: "All other conversations (not fr or en)",
     });
@@ -148,9 +147,7 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
     await userEvent.type(remainder, "3");
     expect(
       screen.getByLabelText("Requested group selection"),
-    ).toHaveTextContent(
-      "Up to 5 conversations in total: fr 1 · en 1 · all other 3",
-    );
+    ).toHaveTextContent(/^Up to 5 conversations in total$/);
     expect(samplingPolicyForApi(form.getValues("samplingPolicy"))).toEqual({
       ...before,
       default: { target_n: 3 },
@@ -163,9 +160,7 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
     );
     expect(
       screen.getByLabelText("Requested group selection"),
-    ).toHaveTextContent(
-      "Up to 0 conversations in total: fr 0 · en 0 · all other 0",
-    );
+    ).toHaveTextContent(/^Up to 0 conversations in total$/);
     expect(policy).toEqual(before);
   });
 
@@ -184,7 +179,7 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
       "Up to 2 conversations in total: fr 1 · en 1 · all other 0",
     );
     expect(summary).toHaveTextContent(
-      "evaluate every matching span in each picked group",
+      "every matching span in a picked conversation is evaluated",
     );
     expect(summary).not.toHaveTextContent("2 per-group counts");
     expect(summary).not.toHaveTextContent("All other conversations: up to 0");
@@ -203,7 +198,7 @@ describe.each(["light", "dark"])("sampling v3 polish in %s", (mode) => {
     ).toHaveLength(1);
     const summary = screen.getByLabelText("Requested group selection");
     expect(summary).toHaveTextContent(
-      "Shares of new conversations: fr 10% · en 20% · all other 0%",
+      "Each group keeps its own share of new conversations; shares are not added together.",
     );
     expect(summary).not.toHaveTextContent(/in total|30%/);
     expect(

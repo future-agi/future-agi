@@ -48,7 +48,7 @@ describe.each(["light", "dark"])("sampling comprehension in %s", (mode) => {
     expect(figure).toHaveTextContent("Conversation · picked");
     expect(figure).toHaveTextContent("Spans · evaluated");
     expect(figure).toHaveAccessibleName(
-      "Pick conversations. Every matching span in each picked group is evaluated.",
+      "Pick conversations. Every matching span in each picked conversation is evaluated.",
     );
     expect(figure).not.toHaveTextContent(/100|10%|Preview/);
   });

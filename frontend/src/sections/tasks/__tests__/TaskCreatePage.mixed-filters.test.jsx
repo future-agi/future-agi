@@ -177,9 +177,7 @@ describe("Task Create mixed catalog filter submission", () => {
     await user.click(
       screen.getByRole("radio", { name: "A percentage of matching traces" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Use a percentage" }));
     await closed();
     await user.click(screen.getByRole("radio", { name: "Historical data" }));
     await user.click(

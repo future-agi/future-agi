@@ -1,16 +1,20 @@
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { useId, useState } from "react";
+import { Box, Button, Collapse, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import {
   advancedSamplingSummary,
   isSimpleSamplingPolicy,
   pickNames,
   rowNames,
+  samplingLocalDate,
   simpleSelectionText,
 } from "./simpleSamplingPolicy";
 
-export const samplingFieldLabel = ({ source = "span", key = "" } = {}) =>
+// Module-local: a component file exports only components (fast refresh).
+const samplingFieldLabel = ({ source = "span", key = "" } = {}) =>
   `${{ span: "Span attribute", metadata: "Metadata", resource: "Resource attribute" }[source] || source}: ${key}`;
-export const unitIdentityText = (policy) =>
+const unitIdentityText = (policy) =>
   [
     policy.sampling_unit === "attribute"
       ? `Custom identity: ${policy.unit_attribute?.key ? samplingFieldLabel(policy.unit_attribute) : "the project’s contact attribute"}.`
@@ -19,43 +23,67 @@ export const unitIdentityText = (policy) =>
       ? "Rows without an ID are sampled individually."
       : "Rows without an ID are excluded.",
   ].join(" ");
-const localDate = (value) => {
-  const date = new Date(value);
-  return value && Number.isFinite(+date)
-    ? new Intl.DateTimeFormat(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-      }).format(date)
-    : "Not set";
-};
-export function SamplingWindow({ start, end, ongoing = false }) {
+
+// A quiet text toggle for secondary detail, in place of a native <details>.
+export function SamplingDisclosure({ label, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
   return (
-    <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
-      <Typography variant="caption" color="text.secondary">
-        {ongoing ? "New incoming data from " : "Fixed window: "}
-        {localDate(start)}
-        {!ongoing && ` – ${localDate(end)}`} (local time)
-      </Typography>
-      <Box
-        component="details"
+    <Box sx={{ minWidth: 0 }}>
+      <Button
+        size="small"
+        color="inherit"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        endIcon={
+          <Iconify
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
+            width={14}
+          />
+        }
         sx={{
-          "& > summary": {
-            cursor: "pointer",
-            fontSize: 12,
-            color: "text.secondary",
-          },
+          minWidth: 0,
+          px: 0.5,
+          ml: -0.5,
+          typography: "s1",
+          color: "text.secondary",
+          "& .MuiButton-endIcon": { ml: 0.5 },
         }}
       >
-        <summary>Exact UTC window</summary>
-        <Typography variant="caption" color="text.secondary">
-          Start: {start || "Not set"}; end:{" "}
-          {ongoing ? "Open-ended" : end || "Not set"}
-        </Typography>
-      </Box>
+        {label}
+      </Button>
+      <Collapse in={open} id={id}>
+        <Box sx={{ pt: 0.5 }}>{children}</Box>
+      </Collapse>
+    </Box>
+  );
+}
+SamplingDisclosure.propTypes = {
+  label: PropTypes.string.isRequired,
+  children: PropTypes.node,
+  defaultOpen: PropTypes.bool,
+};
+
+export function SamplingWindow({ start, end, ongoing = false, children }) {
+  return (
+    <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
+      <Typography variant="s1" component="div" color="text.secondary">
+        {ongoing ? "New incoming data from " : "Fixed window: "}
+        {samplingLocalDate(start)}
+        {/* The format names the time zone itself. */}
+        {!ongoing && ` – ${samplingLocalDate(end)}`}
+      </Typography>
+      {children || (
+        <SamplingDisclosure label="Exact UTC window">
+          <Typography variant="s3" component="div" color="text.secondary">
+            Start: {start || "Not set"}; end:{" "}
+            {ongoing ? "Open-ended" : end || "Not set"}
+          </Typography>
+        </SamplingDisclosure>
+      )}
     </Box>
   );
 }
@@ -63,6 +91,9 @@ SamplingWindow.propTypes = {
   start: PropTypes.string,
   end: PropTypes.string,
   ongoing: PropTypes.bool,
+  // Replaces the read-only exact-window disclosure, e.g. with the editor's
+  // own UTC inputs, so the same window is never shown twice.
+  children: PropTypes.node,
 };
 
 export default function SavedTaskSelection({ task }) {
@@ -75,7 +106,11 @@ export default function SavedTaskSelection({ task }) {
     task.filters_applied?.end_date || task.filters_applied?.date_range?.[1];
   return (
     <Box aria-label="Saved data selection" sx={{ minWidth: 0 }}>
-      <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+      <Typography
+        variant="s1"
+        component="div"
+        sx={{ overflowWrap: "anywhere" }}
+      >
         Saved selection ·{" "}
         {policy
           ? isSimpleSamplingPolicy(policy)
@@ -90,14 +125,13 @@ export default function SavedTaskSelection({ task }) {
           : "Historical data."}
       </Typography>
       {policy?.sampling_unit === "attribute" && (
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="s1" component="div" color="text.secondary">
           {unitIdentityText(policy)}
         </Typography>
       )}
       {policy?.mode === "closed" && task.run_type === "continuous" && (
-        <Typography variant="caption" color="text.secondary" component="div">
-          Continue evaluating late rows from picked groups; new groups are not
-          admitted after membership freezes.
+        <Typography variant="s1" color="text.secondary" component="div">
+          {`Keeps evaluating late ${rows} from the picked ${pickNames(policy.sampling_unit)}; no new ${pickNames(policy.sampling_unit)} are added after the sample freezes.`}
         </Typography>
       )}
       {(policy || task.run_type === "historical") && (

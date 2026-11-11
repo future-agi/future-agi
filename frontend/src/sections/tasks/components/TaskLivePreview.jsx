@@ -984,7 +984,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         >
           {projectId
             ? samplingPolicy
-              ? "Filter-matching row — not sampled membership"
+              ? "A row that matches your filters. It may not be in the sample."
               : "Browse a row matching your current filters"
             : "Select a project to preview matching rows"}
         </Typography>

@@ -16,26 +16,31 @@ const RadioOption = ({
   description,
   selectedValue,
   onChange,
+  disabled = false,
 }) => (
   <Box
     sx={{
       marginBottom: 1.2,
-      cursor: "pointer",
+      cursor: disabled ? "default" : "pointer",
     }}
-    onClick={() => onChange(value)}
+    onClick={() => {
+      if (!disabled) onChange(value);
+    }}
   >
     <Box sx={{ display: "flex", alignItems: "center", marginLeft: "-8px" }}>
       <Radio
         value={value}
         checked={selectedValue === value}
+        disabled={disabled}
         onChange={() => onChange(value)}
+        inputProps={{ "aria-label": title }}
         sx={{
           "&:hover": { backgroundColor: "transparent" },
         }}
       />
       <Typography
         sx={{
-          color: "text.primary",
+          color: disabled ? "text.disabled" : "text.primary",
           fontWeight: 600,
           fontSize: "12px",
           ml: 0.5,
@@ -44,9 +49,11 @@ const RadioOption = ({
         {title}
       </Typography>
     </Box>
+    {/* One description colour for every option: a disabled option shows
+        through its radio and title, never by a stronger description. */}
     <Typography
       sx={{
-        color: "text.disabled",
+        color: "text.secondary",
         fontWeight: 400,
         fontSize: "12px",
         ml: 4,
@@ -64,7 +71,24 @@ RadioOption.propTypes = {
   description: PropTypes.string.isRequired,
   selectedValue: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
 };
+
+// Define radio options centrally
+const RADIO_OPTIONS = [
+  {
+    value: "fresh_run",
+    title: "Delete Past Data & Start Fresh",
+    description:
+      "Remove previous evaluations and begin a new analysis from scratch.",
+  },
+  {
+    value: "edit_rerun",
+    title: "Edit & Re-run Existing Evals",
+    description:
+      "Make changes to your current data and run the evaluation again.",
+  },
+];
 
 export default function TaskConfirmDialog({
   title,
@@ -74,8 +98,21 @@ export default function TaskConfirmDialog({
   onClose,
   onConfirm,
   isLoading,
+  options,
   ...other
 }) {
+  // A caller may restate an option's consequence or disable it (with the
+  // reason as its description); titles never change.
+  const radioOptions = RADIO_OPTIONS.map((option) => ({
+    ...option,
+    ...options?.[option.value],
+  }));
+  const firstEnabled =
+    radioOptions.find((option) => !option.disabled)?.value || "fresh_run";
+  const enabled = (value) =>
+    radioOptions.some((option) => option.value === value && !option.disabled)
+      ? value
+      : firstEnabled;
   const [editType, setEditType] = useState("fresh_run");
 
   // The dialog stays mounted between opens, so a previous "edit_rerun" pick
@@ -84,25 +121,10 @@ export default function TaskConfirmDialog({
     if (open) setEditType("fresh_run");
   }, [open]);
 
+  const selected = enabled(editType);
   const handleConfirm = () => {
-    onConfirm(editType);
+    onConfirm(selected);
   };
-
-  // Define radio options centrally
-  const radioOptions = [
-    {
-      value: "fresh_run",
-      title: "Delete Past Data & Start Fresh",
-      description:
-        "Remove previous evaluations and begin a new analysis from scratch.",
-    },
-    {
-      value: "edit_rerun",
-      title: "Edit & Re-run Existing Evals",
-      description:
-        "Make changes to your current data and run the evaluation again.",
-    },
-  ];
 
   return (
     <Dialog
@@ -115,7 +137,6 @@ export default function TaskConfirmDialog({
         sx: {
           borderRadius: "8px",
           width: "560px",
-          height: "282px",
         },
       }}
     >
@@ -140,8 +161,8 @@ export default function TaskConfirmDialog({
         )}
 
         <RadioGroup
-          value={editType}
-          onChange={(e) => setEditType(e.target.value)}
+          value={selected}
+          onChange={(e) => setEditType(enabled(e.target.value))}
         >
           {radioOptions.map((option) => (
             <RadioOption
@@ -149,7 +170,8 @@ export default function TaskConfirmDialog({
               value={option.value}
               title={option.title}
               description={option.description}
-              selectedValue={editType}
+              disabled={Boolean(option.disabled)}
+              selectedValue={selected}
               onChange={setEditType}
             />
           ))}
@@ -184,4 +206,12 @@ TaskConfirmDialog.propTypes = {
   open: PropTypes.bool,
   title: PropTypes.string,
   isLoading: PropTypes.bool,
+  // Per-option overrides keyed by value ("fresh_run" | "edit_rerun"):
+  // { description?: string, disabled?: boolean }.
+  options: PropTypes.objectOf(
+    PropTypes.shape({
+      description: PropTypes.string,
+      disabled: PropTypes.bool,
+    }),
+  ),
 };

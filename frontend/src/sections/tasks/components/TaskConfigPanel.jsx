@@ -100,7 +100,6 @@ const EVAL_TYPE_META = {
 
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
-  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
@@ -737,7 +736,10 @@ const TaskConfigPanel = ({
           </Box>
           <Divider />
           <Box>
-            <SectionHeader title="Data to evaluate" />
+            <SectionHeader
+              title="Data to evaluate"
+              subtitle="Filters define which data matches. Choose how much of it to evaluate."
+            />
             <TaskSamplingSection control={control} getValues={getValues} />
           </Box>
         </Box>

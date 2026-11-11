@@ -12,31 +12,30 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import _ from "lodash";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
+// The same roles and icons as the Tasks list Status column, so a task reads
+// the same in the list and on its own page.
 const STATUS_CONFIG = {
-  pending: { color: "warning", icon: "solar:clock-circle-linear" },
-  running: { color: "info", icon: "svg-spinners:ring-resize" },
-  completed: { color: "success", icon: "solar:check-circle-linear" },
-  failed: { color: "error", icon: "solar:close-circle-linear" },
-  paused: { color: "default", icon: "solar:pause-circle-linear" },
+  pending: { role: "neutral", icon: "solar:clock-circle-linear" },
+  running: { role: "info", icon: "svg-spinners:ring-resize" },
+  completed: { role: "success", icon: "solar:check-circle-linear" },
+  failed: { role: "danger", icon: "solar:close-circle-linear" },
+  paused: { role: "warning", icon: "solar:pause-circle-linear" },
 };
 
 const StatusChip = ({ status }) => {
   const normalized = (status || "").toLowerCase();
   const cfg = STATUS_CONFIG[normalized] || STATUS_CONFIG.pending;
   return (
-    <Chip
+    <StatusBadge
+      status={normalized}
       label={_.capitalize(normalized || "unknown")}
-      size="small"
-      color={cfg.color}
-      variant="outlined"
+      role={cfg.role}
       icon={<Iconify icon={cfg.icon} width={14} />}
-      sx={{
-        "& .MuiChip-icon": { ml: 0.5 },
-      }}
     />
   );
 };
@@ -68,6 +67,7 @@ const TaskHeader = ({
   nameEditable = true,
   backTo,
   selectionSummary,
+  outcome,
 }) => {
   const navigate = useNavigate();
   const { role } = useAuthContext();
@@ -201,6 +201,7 @@ const TaskHeader = ({
         )}
 
         {mode === "edit" && status && <StatusChip status={status} />}
+        {mode === "edit" && outcome}
       </Box>
 
       {actions && (
@@ -232,6 +233,8 @@ TaskHeader.propTypes = {
   nameEditable: PropTypes.bool,
   backTo: PropTypes.string,
   selectionSummary: PropTypes.node,
+  // What the last run produced, beside its status (edit mode).
+  outcome: PropTypes.node,
 };
 
 export default TaskHeader;

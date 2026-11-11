@@ -17,7 +17,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
-import { isResumableTaskStatus } from "./task_status";
+import { completedTaskHint, isResumableTaskStatus } from "./task_status";
 import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
@@ -444,6 +444,11 @@ const TaskListView = ({
       .filter(Boolean);
   }, [rowSelection, items]);
 
+  // The Status column widens only when a row has an outcome hint to show.
+  const hasStatusHint = items.some((row) =>
+    completedTaskHint(row?.status, row?.progress),
+  );
+
   // Columns
   const columns = useMemo(() => {
     const cols = [
@@ -508,12 +513,23 @@ const TaskListView = ({
         id: "status",
         accessorKey: "status",
         header: "Status",
-        size: 140,
+        size: hasStatusHint ? 260 : 140,
         cell: ({ getValue, row }) => {
           const status = getValue()?.toLowerCase();
+          const hint = completedTaskHint(status, row.original.progress);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
               <StatusBadge status={status} />
+              {hint && (
+                <RunStatusBadge
+                  variant="dot"
+                  status="warning"
+                  role="warning"
+                  label={hint.label}
+                  title={hint.title}
+                  sx={{ ml: 0.5 }}
+                />
+              )}
               {status === "running" && (
                 <IconButton
                   size="small"
@@ -596,7 +612,7 @@ const TaskListView = ({
     );
 
     return cols;
-  }, [observeId, pauseTask, resumeTask]);
+  }, [hasStatusHint, observeId, pauseTask, resumeTask]);
 
   return (
     <Box

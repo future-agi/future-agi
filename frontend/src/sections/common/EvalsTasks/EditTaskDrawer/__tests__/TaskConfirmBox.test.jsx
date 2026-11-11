@@ -54,4 +54,59 @@ describe("TaskConfirmDialog", () => {
 
     expect(onConfirm).toHaveBeenCalledWith("fresh_run");
   });
+
+  it("states each option's consequence and blocks one the caller disables", () => {
+    const onConfirm = vi.fn();
+    renderDialog({
+      onConfirm,
+      options: {
+        fresh_run: { description: "Removes the current results." },
+        edit_rerun: {
+          disabled: true,
+          description: "Not available: you changed the filters.",
+        },
+      },
+    });
+
+    // Titles stay the same; only the descriptions change.
+    expect(screen.getByText("Delete Past Data & Start Fresh")).toBeVisible();
+    expect(screen.getByText("Removes the current results.")).toBeVisible();
+    expect(
+      screen.getByText("Not available: you changed the filters."),
+    ).toBeVisible();
+    const editRerun = screen.getByRole("radio", {
+      name: "Edit & Re-run Existing Evals",
+    });
+    expect(editRerun).toBeDisabled();
+    expect(
+      screen.getByRole("radio", { name: "Delete Past Data & Start Fresh" }),
+    ).toBeChecked();
+
+    fireEvent.click(screen.getByText("Edit & Re-run Existing Evals"));
+    fireEvent.click(editRerun);
+    expect(editRerun).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /run task/i }));
+
+    expect(onConfirm).toHaveBeenCalledWith("fresh_run");
+  });
+
+  it("falls back to an enabled option when the picked one becomes unavailable", () => {
+    const onConfirm = vi.fn();
+    const { rerender } = renderDialog({ onConfirm });
+    fireEvent.click(screen.getByText("Edit & Re-run Existing Evals"));
+
+    rerender(
+      <TaskConfirmDialog
+        title="Update Task"
+        content="Select one of the options"
+        open
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+        options={{ edit_rerun: { disabled: true, description: "No." } }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run task/i }));
+
+    expect(onConfirm).toHaveBeenCalledWith("fresh_run");
+  });
 });

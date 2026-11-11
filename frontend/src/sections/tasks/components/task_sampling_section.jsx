@@ -3,7 +3,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   Alert,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -15,10 +14,13 @@ import {
   Typography,
 } from "@mui/material";
 import { useController, useWatch } from "react-hook-form";
+import { ClosableDialog } from "src/components/custom-dialog";
 import SamplingPolicyEditor from "./SamplingPolicyEditor";
 import { RowLimitField, SamplingRateField } from "./task_sampling_fields";
 import {
+  SAMPLING_WINDOW_MAX_DAYS,
   advancedSamplingSummary,
+  fitSamplingWindow,
   isSimpleSamplingPolicy,
   isValidSamplingRate,
   pickLevels,
@@ -57,7 +59,8 @@ export function TaskSamplingSummary({ control }) {
         : " The processing limit must be a whole number from 1 to 1,000,000.";
   return (
     <Typography
-      variant="body2"
+      variant="s1"
+      component="div"
       aria-label="Data selection summary"
       sx={{ overflowWrap: "anywhere" }}
     >
@@ -138,18 +141,36 @@ export default function TaskSamplingSection({ control, getValues }) {
       return;
     }
     const next = simpleSamplingPolicy(getValues());
-    const originalWindow = {
-      ...next,
-      window: { start: getValues("startDate"), end: getValues("endDate") },
-    };
-    if (next.mode === "closed" && samplingWindowInvalid(originalWindow))
-      setPending({ kind: "window", policy: next });
+    // Use the task's own time window. Confirm only when it has to change:
+    // longer than 31 days (keep its latest part) or nothing of it is past.
+    const fit = fitSamplingWindow(getValues("startDate"), getValues("endDate"));
+    if (next.mode === "closed" && (!fit || fit.shortened))
+      setPending({ kind: "window", policy: next, shortened: Boolean(fit) });
     else {
       field.onChange(next);
       setNotice("");
     }
   };
   const cancelPending = () => setPending(null);
+  // Names the mode the radio names, with the numbers it will use.
+  const percentageChoice = () => {
+    const rate = getValues("samplingRate");
+    const limit = Number(getValues("spansLimit"));
+    const rows = rowNames(rowType);
+    const amount = !isValidSamplingRate(rate)
+      ? `a percentage of matching ${rows}`
+      : Number(rate) === 100
+        ? `all matching ${rows}`
+        : `${rate}% of matching ${rows}`;
+    const limitText =
+      runType === "historical" &&
+      Number.isInteger(limit) &&
+      limit >= 1 &&
+      limit <= 1000000
+        ? `, with your processing limit of ${limit.toLocaleString()} rows`
+        : "";
+    return `Switch to ${amount}${limitText}? Your group settings stay available if you switch back before leaving.`;
+  };
   const pendingTitle =
     pending?.kind === "replace"
       ? "Replace advanced sampling settings?"
@@ -157,12 +178,11 @@ export default function TaskSamplingSection({ control, getValues }) {
         ? "Restore group picking?"
         : pending?.kind === "historical"
           ? "Use counts for historical data?"
-          : "Choose a fixed sample window";
+          : pending?.shortened
+            ? `Use the last ${SAMPLING_WINDOW_MAX_DAYS} days of your time window?`
+            : "Choose a fixed sample window";
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-      <Typography variant="caption" color="text.secondary">
-        Filters define which data matches. Choose how much of it to evaluate.
-      </Typography>
       <RadioGroup
         aria-label="Data selection method"
         value={policy ? "units" : "rows"}
@@ -194,9 +214,22 @@ export default function TaskSamplingSection({ control, getValues }) {
           }
           label={`Pick whole groups of ${rowNames(rowType)}`}
         />
+        {switchBlocked && (
+          // Directly under the option it explains, aligned with its label;
+          // outside the label so the option's name stays the same.
+          <Typography
+            id={switchHelpId}
+            variant="s3"
+            component="div"
+            color="text.secondary"
+            sx={{ pl: 3, mt: -0.75 }}
+          >
+            Enter a valid percentage to switch to group picking.
+          </Typography>
+        )}
       </RadioGroup>
       {notice && (
-        <Typography role="status" variant="body2">
+        <Typography role="status" variant="s1" component="div">
           {notice}
         </Typography>
       )}
@@ -223,20 +256,11 @@ export default function TaskSamplingSection({ control, getValues }) {
       ) : (
         <>
           <SamplingRateField control={control} />
-          {switchBlocked && (
-            <Typography
-              id={switchHelpId}
-              variant="caption"
-              color="text.secondary"
-            >
-              Enter a valid percentage to switch to group picking.
-            </Typography>
-          )}
           {runType === "historical" && <RowLimitField control={control} />}
           <TaskSamplingSummary control={control} />
         </>
       )}
-      <Dialog
+      <ClosableDialog
         open={Boolean(pending)}
         onClose={cancelPending}
         maxWidth="sm"
@@ -247,12 +271,12 @@ export default function TaskSamplingSection({ control, getValues }) {
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 1 }}>
             {pending?.kind === "replace" ? (
-              <Typography variant="body2">
+              <Typography variant="s1" component="div">
                 This replaces all advanced settings with the simple choices
                 shown here. Cancel keeps the entire saved policy unchanged.
               </Typography>
             ) : pending?.kind === "restore" ? (
-              <Typography variant="body2">
+              <Typography variant="s1" component="div">
                 Your retained selection uses new incoming data. Restoring it
                 also switches the schedule to New incoming data; every retained
                 setting is preserved.
@@ -260,23 +284,36 @@ export default function TaskSamplingSection({ control, getValues }) {
                   " Or use historical counts and choose a past window instead."}
               </Typography>
             ) : pending?.kind === "historical" ? (
-              <Typography variant="body2">
+              <Typography variant="s1" component="div">
                 Reset each group and All other{" "}
                 {pickNames(pending.policy.sampling_unit)} to 100, bounded by
                 what exists. Adjust the counts after switching. Choose a past
                 window of at most 31 days. Cancel keeps your row percentage and
                 retained shares unchanged.
               </Typography>
+            ) : pending?.shortened ? (
+              <Typography variant="s1" component="div">
+                Group picking covers at most {SAMPLING_WINDOW_MAX_DAYS} days, so
+                it uses the most recent {SAMPLING_WINDOW_MAX_DAYS} days of your
+                time window. Change the dates below to pick from another part of
+                it. The time window for percentages is kept for when you switch
+                back.
+              </Typography>
             ) : (
-              <Typography variant="body2">
-                Pick a past window of at most 31 days. Your percentage
-                selection’s time range is retained, not truncated.
+              <Typography variant="s1" component="div">
+                Your time window has nothing in the past to pick from. Pick a
+                past window of at most {SAMPLING_WINDOW_MAX_DAYS} days. The time
+                window for percentages is kept for when you switch back.
               </Typography>
             )}
             {pending?.kind !== "restore" &&
               pending?.policy.mode === "closed" && (
                 <>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="s3"
+                    component="div"
+                    color="text.secondary"
+                  >
                     Start with 100 {pickNames(pending.policy.sampling_unit)},
                     bounded by what exists.
                   </Typography>
@@ -360,8 +397,8 @@ export default function TaskSamplingSection({ control, getValues }) {
                   : "Use group picking"}
           </Button>
         </DialogActions>
-      </Dialog>
-      <Dialog
+      </ClosableDialog>
+      <ClosableDialog
         open={remove}
         onClose={() => setRemove(false)}
         maxWidth="sm"
@@ -372,10 +409,8 @@ export default function TaskSamplingSection({ control, getValues }) {
           Use a percentage instead?
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2">
-            This replaces group picking with your retained{" "}
-            {getValues("samplingRate")}% and historical processing limit. Your
-            group settings stay available if you switch back before leaving.
+          <Typography variant="s1" component="div">
+            {remove && percentageChoice()}
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -389,10 +424,10 @@ export default function TaskSamplingSection({ control, getValues }) {
               setNotice("");
             }}
           >
-            Use row percentage
+            Use a percentage
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </Stack>
   );
 }

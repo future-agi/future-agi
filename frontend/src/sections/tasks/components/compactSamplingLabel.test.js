@@ -12,7 +12,8 @@ const closed = {
 
 describe("compactSamplingLabel", () => {
   it("shows a count-based cohort as its count, not the legacy 100%", () => {
-    expect(compactSamplingLabel(closed, 100)).toBe("10 conversations");
+    // A historical count is a ceiling, as in the task header.
+    expect(compactSamplingLabel(closed, 100)).toBe("Up to 10 conversations");
   });
 
   it("shows a live cohort rate with its unit", () => {

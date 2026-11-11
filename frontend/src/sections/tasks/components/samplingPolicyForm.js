@@ -176,12 +176,20 @@ export const withCoordination = (policy, mode) => {
   return next;
 };
 
-export const samplingStratumLabel = (identity) => {
+// `defaultLabel` names the catch-all rule in the screen's own words, e.g.
+// "All other conversations", or "All conversations" when there are no groups.
+// `ruleLabels` maps a rule name to what the user picked it by (a simple
+// policy's "Group 1" is the value "Europe"); unknown names stay as they are.
+export const samplingStratumLabel = (
+  identity,
+  defaultLabel = "All other units",
+  ruleLabels = null,
+) => {
   try {
     const [name, groups] = JSON.parse(identity);
     if (typeof name !== "string" || !Array.isArray(groups)) return identity;
     return [
-      name === "default" ? "All other units" : name,
+      name === "default" ? defaultLabel : ruleLabels?.get(name) ?? name,
       ...groups.map((encoded) => {
         const [present, value] = JSON.parse(encoded);
         return present ? String(value) : "(missing)";

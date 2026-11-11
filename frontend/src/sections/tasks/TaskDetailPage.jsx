@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Alert,
@@ -26,12 +32,17 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
 import TaskHeader from "./components/TaskHeader";
 import SavedTaskSelection from "./components/sampling_selection_summary";
+import TaskRunOutcome from "./components/task_run_outcome";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
 import TaskUsageTab from "./components/TaskUsageTab";
 import SamplingAuditPanel from "./components/SamplingAuditPanel";
 import { samplingPolicyForApi } from "./components/samplingPolicyForm";
-import { samplingContextError } from "./components/simpleSamplingPolicy";
+import {
+  samplingContextError,
+  samplingPopulationChange,
+  samplingRunChoice,
+} from "./components/simpleSamplingPolicy";
 import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
@@ -77,6 +88,26 @@ const getLinkedTraceSource = (taskDetails) => {
     path: `/dashboard/observe/${projectId}/trace/${traceId}`,
   };
 };
+
+// The filters object a save sends, built one way for the request and for the
+// sampling-population comparison so the two cannot drift.
+const taskWireFilters = (values) => {
+  const { filters, attributeFilters } = getNewTaskFilters(
+    values,
+    values?.project,
+  );
+  return {
+    ...filters,
+    ...(attributeFilters?.length > 0 ? { filters: attributeFilters } : {}),
+  };
+};
+// The parts of a task the API's population check compares.
+const populationOf = (values) => ({
+  policy: values?.samplingPolicy ?? null,
+  filters: taskWireFilters(values),
+  project: values?.project,
+  rowType: values?.rowType,
+});
 
 const TaskDetailPage = () => {
   const { taskId } = useParams();
@@ -131,6 +162,15 @@ const TaskDetailPage = () => {
 
   const project = useWatch({ control, name: "project" });
   const formValues = useWatch({ control });
+  // The saved task read through the same form defaults the page resets to,
+  // so an untouched form compares equal to it.
+  const savedPopulation = useMemo(
+    () =>
+      taskDetails
+        ? populationOf(getDefaultTaskValues(taskDetails, null))
+        : null,
+    [taskDetails],
+  );
 
   // Populate form once task is loaded
   useEffect(() => {
@@ -361,19 +401,9 @@ const TaskDetailPage = () => {
         setConfirmMode(null);
         return;
       }
-      const { filters, attributeFilters } = getNewTaskFilters(
-        data,
-        data.project,
-      );
-
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
-        filters: {
-          ...filters,
-          ...(attributeFilters?.length > 0
-            ? { filters: attributeFilters }
-            : {}),
-        },
+        filters: taskWireFilters(data),
         project_id: data.project,
         name: data.name,
         project: data.project,
@@ -461,6 +491,12 @@ const TaskDetailPage = () => {
   }
 
   const status = (taskDetails.status || "").toLowerCase();
+  // The API refuses Edit & Re-run once the sampled population changed, so
+  // the Re-run / Save dialog disables it and says why.
+  const runChoice = samplingRunChoice(
+    taskDetails.sampling_policy,
+    samplingPopulationChange(savedPopulation, populationOf(formValues)),
+  );
   const canPause = status === "running";
   const canResume = isResumableTaskStatus(status);
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
@@ -572,6 +608,18 @@ const TaskDetailPage = () => {
           actions={headerActions}
           onNameChange={(newName) => renameTask(newName)}
           selectionSummary={<SavedTaskSelection task={taskDetails} />}
+          outcome={
+            <TaskRunOutcome
+              taskId={taskId}
+              status={taskDetails.status}
+              onViewLogs={() => setTab("logs")}
+              onViewSamplingAudit={
+                taskDetails.sampling_policy
+                  ? () => setTab("sampling")
+                  : undefined
+              }
+            />
+          }
         />
 
         {isError && (
@@ -673,7 +721,13 @@ const TaskDetailPage = () => {
 
           {tab === "sampling" && taskDetails?.sampling_policy && (
             <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
-              <SamplingAuditPanel taskId={taskId} />
+              <SamplingAuditPanel
+                taskId={taskId}
+                policy={taskDetails.sampling_policy}
+                onEditSelection={
+                  canEditTask ? () => setTab("details") : undefined
+                }
+              />
             </Box>
           )}
         </Box>
@@ -719,7 +773,8 @@ const TaskDetailPage = () => {
 
         <TaskConfirmDialog
           title={confirmMode === "rerun" ? "Re-run Task" : "Update Task"}
-          content="Select one of the options"
+          content={runChoice?.content || "Select one of the options"}
+          options={runChoice?.options}
           confirmText={confirmMode === "rerun" ? "Re-run" : "Run task"}
           open={!!confirmMode}
           onClose={() => setConfirmMode(null)}

@@ -299,9 +299,7 @@ describe("real task drawer style integration", () => {
     await user.click(
       screen.getByRole("radio", { name: "A percentage of matching spans" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "Use row percentage" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Use a percentage" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );

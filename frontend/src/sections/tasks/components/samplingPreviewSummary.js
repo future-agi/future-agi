@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { rowCount, unitCount } from "./simpleSamplingPolicy";
 
 // The sibling editor/browser share a form control, but not a context provider.
 // Keep preview feedback local to that form's lifetime, outside saved/dirty form
@@ -41,19 +42,8 @@ export const SAMPLING_PREVIEW_SCOPE = [
   "samplingPolicy",
 ];
 
-export const samplingUnitNames = (unit) =>
-  ({ span: "spans", trace: "traces", session: "sessions", user: "users" })[
-    unit
-  ] || "custom units";
-
-export const samplingRowNames = (rowType) =>
-  ({
-    spans: "spans",
-    traces: "traces",
-    sessions: "sessions",
-    voiceCalls: "voice calls",
-  })[rowType] || "rows";
-
+// Uses the same words as the rest of the task screen (conversations, custom
+// IDs), not the API's unit names.
 export function samplingPreviewSummary(preview, policy, rowType) {
   if (!preview || !policy || !Array.isArray(preview.strata)) return null;
   const countKeys = ["eligible_units", "selected_units", "selected_rows"];
@@ -69,11 +59,12 @@ export function samplingPreviewSummary(preview, policy, rowType) {
     preview.strata.reduce((sum, cell) => sum + cell[key], 0),
   );
   const number = (value) => value.toLocaleString();
-  const population = `Preview: ${number(selected)} of ${number(eligible)} ${samplingUnitNames(policy.sampling_unit)}; ${number(rows)} ${samplingRowNames(rowType)}`;
+  const population = `Picked ${number(selected)} of ${unitCount(eligible, policy.sampling_unit)}; ${rowCount(rows, rowType)}`;
   const evaluators = preview.evaluator_count;
   if (!Number.isSafeInteger(evaluators) || evaluators <= 0)
-    return `${population}; select evaluators to estimate runs`;
+    return `${population}; add evaluators to estimate runs`;
   // Each selected row runs every configured evaluator. Do not substitute the
   // expected live admission count for membership in this particular preview.
-  return `${population} × ${number(evaluators)} evaluator${evaluators === 1 ? "" : "s"} = ${number(rows * evaluators)} runs`;
+  const runs = rows * evaluators;
+  return `${population} × ${number(evaluators)} evaluator${evaluators === 1 ? "" : "s"} = ${number(runs)} run${runs === 1 ? "" : "s"}`;
 }
