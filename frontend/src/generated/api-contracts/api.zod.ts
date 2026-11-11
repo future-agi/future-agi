@@ -36059,6 +36059,15 @@ export const simulateApiAgentFixEngineReportBodyFailureCodeMax = 64;
 
 export const simulateApiAgentFixEngineReportBodyFailureMessageMax = 500;
 
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedItemKeyMax = 200;
+
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedItemNameMax = 500;
+
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedItemSubGoalMax = 200;
+
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixEngineReportBodyFlakyProtectedDefault = [];
 export const simulateApiAgentFixEngineReportBodyLostModelsItemMax = 200;
 
 export const simulateApiAgentFixEngineReportBodyLostModelsDefault = [];
@@ -36184,6 +36193,29 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
     })
     .optional(),
   winner_candidate_id: zod.string().uuid().optional(),
+  flaky_protected: zod
+    .array(
+      zod.object({
+        key: zod
+          .string()
+          .min(1)
+          .max(simulateApiAgentFixEngineReportBodyFlakyProtectedItemKeyMax),
+        name: zod
+          .string()
+          .min(1)
+          .max(simulateApiAgentFixEngineReportBodyFlakyProtectedItemNameMax)
+          .optional(),
+        sub_goal: zod
+          .string()
+          .min(1)
+          .max(simulateApiAgentFixEngineReportBodyFlakyProtectedItemSubGoalMax),
+        passed: zod
+          .number()
+          .min(simulateApiAgentFixEngineReportBodyFlakyProtectedItemPassedMin),
+        runs: zod.number().min(1),
+      }),
+    )
+    .default(simulateApiAgentFixEngineReportBodyFlakyProtectedDefault),
   lost_models: zod
     .array(
       zod
@@ -36277,6 +36309,17 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestObservesModels
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault =
   false;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemKeyMax = 200;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemNameMax = 500;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemSubGoalMax = 200;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault =
+  [];
 
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
@@ -36443,6 +36486,39 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         ending: zod.string().min(1),
         summary: zod.string(),
         winner_candidate_id: zod.string().min(1),
+        flaky_protected: zod
+          .array(
+            zod.object({
+              key: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemKeyMax,
+                ),
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemNameMax,
+                )
+                .optional(),
+              sub_goal: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemSubGoalMax,
+                ),
+              passed: zod
+                .number()
+                .min(
+                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin,
+                ),
+              runs: zod.number().min(1),
+            }),
+          )
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault,
+          ),
       }),
       failure: zod.object({
         code: zod.string().min(1),
@@ -36775,6 +36851,17 @@ export const simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault =
 export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
   false;
 
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemKeyMax = 200;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemNameMax = 500;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemSubGoalMax = 200;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault =
+  [];
+
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
 
@@ -36917,6 +37004,37 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
     winner_candidate_id: zod.string().min(1),
+    flaky_protected: zod
+      .array(
+        zod.object({
+          key: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemKeyMax,
+            ),
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemNameMax,
+            )
+            .optional(),
+          sub_goal: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemSubGoalMax,
+            ),
+          passed: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin,
+            ),
+          runs: zod.number().min(1),
+        }),
+      )
+      .default(simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault),
   }),
   failure: zod.object({
     code: zod.string().min(1),
@@ -37162,6 +37280,17 @@ export const simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault =
 export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
   false;
 
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemKeyMax = 200;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemNameMax = 500;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemSubGoalMax = 200;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin = 0;
+
+export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault =
+  [];
+
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
 
@@ -37304,6 +37433,37 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
     winner_candidate_id: zod.string().min(1),
+    flaky_protected: zod
+      .array(
+        zod.object({
+          key: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemKeyMax,
+            ),
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemNameMax,
+            )
+            .optional(),
+          sub_goal: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemSubGoalMax,
+            ),
+          passed: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin,
+            ),
+          runs: zod.number().min(1),
+        }),
+      )
+      .default(simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault),
   }),
   failure: zod.object({
     code: zod.string().min(1),

@@ -2593,9 +2593,51 @@ class TestEngineMemory:
             "summary": "nothing held up",
             "failure": None,
             "winner_candidate_id": None,
+            "flaky_protected": [],
         }
         assert list(fix_run.engine_notes["lost_models"]) == ["deepseek/flash"]
         assert fix_run.engine_notes["last_error"] == "hung"
+
+    def test_the_protected_cases_a_fix_could_not_be_held_to_reach_the_read(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": KEYS[1],
+                "name": "Escalate a large order",
+                "sub_goal": "refunded",
+                "passed": 2,
+                "runs": 3,
+            }
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+
+    def test_a_report_from_before_flaky_protected_reads_as_none(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, ending="no_improvement", summary="nothing held up"
+        )
+        fix_run.refresh_from_db()
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            report={k: v for k, v in fix_run.report.items() if k != "flaky_protected"}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == []
+        assert read["summary"] == "nothing held up"
 
     def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
         self, api_client, source_run

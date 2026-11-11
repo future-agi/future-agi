@@ -18053,6 +18053,28 @@ export interface AgentFixEngineFailureApi {
   message: string;
 }
 
+export interface AgentFixFlakyProtectedApi {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  name?: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  sub_goal: string;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 1 */
+  runs: number;
+}
+
 export interface AgentFixEngineReportApi {
   /**
    * @minLength 1
@@ -18067,6 +18089,7 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
   /** @maxItems 50 */
   lost_models?: string[];
   last_error?: string;
@@ -18152,6 +18175,7 @@ export interface AgentFixReportApi {
   summary: string;
   /** @minLength 1 */
   winner_candidate_id: string;
+  flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
 export interface AgentFixFailureApi {

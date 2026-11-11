@@ -183,10 +183,27 @@ class AgentFixVerdictSerializer(serializers.Serializer):
     tiers = AgentFixVerdictTierSerializer(many=True, required=False, default=list)
 
 
+class AgentFixFlakyProtectedSerializer(serializers.Serializer):
+    """A protected case the current version does not pass on every baseline run, so the fix
+    could not be held to it."""
+
+    key = serializers.CharField(max_length=200)
+    name = serializers.CharField(
+        max_length=500, required=False, allow_null=True, default=None
+    )
+    sub_goal = serializers.CharField(max_length=200)
+    passed = serializers.IntegerField(min_value=0)
+    runs = serializers.IntegerField(min_value=1)
+
+
 class AgentFixReportSerializer(serializers.Serializer):
     ending = serializers.CharField(allow_null=True)
     summary = serializers.CharField(allow_blank=True)
     winner_candidate_id = serializers.CharField(allow_null=True)
+    # A report from before this field reads as none.
+    flaky_protected = AgentFixFlakyProtectedSerializer(
+        many=True, required=False, default=list
+    )
 
 
 class AgentFixFailureSerializer(serializers.Serializer):
@@ -478,6 +495,9 @@ class AgentFixEngineReportSerializer(serializers.Serializer):
     summary = serializers.CharField(required=False, allow_blank=True, default="")
     failure = AgentFixEngineFailureSerializer(required=False, allow_null=True)
     winner_candidate_id = serializers.UUIDField(required=False, allow_null=True)
+    flaky_protected = AgentFixFlakyProtectedSerializer(
+        many=True, required=False, default=list
+    )
     lost_models = serializers.ListField(
         child=serializers.CharField(max_length=200),
         max_length=50,

@@ -339,6 +339,46 @@ describe("FixFinishedView, no safe improvement", () => {
   });
 });
 
+describe("FixFinishedView, protected cases it could not be held to", () => {
+  it("names them in plain words, and says nothing for a report without them", () => {
+    const fix = fixOf("fix-no-improvement");
+    fix.report = {
+      ...fix.report,
+      flaky_protected: [
+        {
+          key: "s3",
+          name: "Escalate a large order",
+          sub_goal: "a",
+          passed: 2,
+          runs: 3,
+        },
+      ],
+    };
+    const { unmount } = renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
+      "1 protected case is flaky on the current version, so this fix wasn't held to it: “Escalate a large order”.",
+    );
+    unmount();
+
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-no-improvement")}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.queryByTestId("flaky-protected")).toBeNull();
+  });
+});
+
 describe("FixDecisionDrawer without a kept trial", () => {
   const checkNames = (trial) =>
     trial

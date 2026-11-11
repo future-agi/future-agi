@@ -136,7 +136,7 @@ export function verdictCards(fix) {
   ];
 }
 
-// A check that ran but could not measure reads skipped: not verified. After a
+// A check that ran but could not measure reads skipped: “Couldn't measure”. After a
 // failed check, the ones left read skipped too, as not run.
 export function checksLine(tiers = []) {
   const counted = tiers.filter((t) => t.status !== "skipped");
@@ -251,10 +251,25 @@ export function noSafeHeadline(fix) {
   }
   const each = trials
     .map(
-      (t) => `Trial ${t.attempt} at ${checkLabel(t.check.name, fix.request)}`,
+      (t, i) =>
+        `Trial ${t.attempt}${i === 0 ? " stopped" : ""} at “${checkLabel(t.check.name, fix.request)}”`,
     )
     .join(", ");
   return `No safe improvement: no trial passed every check (${each}).`;
+}
+
+// The protected cases the fix could not be held to, in words: each scenario once, by its
+// name, or by its key when the engine sent none. Null for a report without them.
+export function flakyProtectedText(fix) {
+  const rows = fix.report?.flaky_protected || [];
+  const names = [
+    ...new Map(rows.map((r) => [r.key, r.name || r.key])).values(),
+  ];
+  if (!names.length) return null;
+  const quoted = names.map((n) => `“${n}”`).join(", ");
+  return names.length === 1
+    ? `1 protected case is flaky on the current version, so this fix wasn't held to it: ${quoted}.`
+    : `${names.length} protected cases are flaky on the current version, so this fix wasn't held to them: ${quoted}.`;
 }
 
 // The numbers behind the no-safe headline: each trial's rejecting check as the engine

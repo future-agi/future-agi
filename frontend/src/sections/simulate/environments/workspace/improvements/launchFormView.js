@@ -113,7 +113,7 @@ export const isTraced = (options) =>
   seesModels(options) || options.defaults.agent_cost_metered;
 
 export const UNTRACED_NOTE =
-  "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will read as Couldn't measure.";
+  "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will show “Couldn't measure”.";
 
 // Shown when the platform could not read the run's traces: the launch is refused
 // until it can, so the form does not call the agent untraced.
@@ -121,7 +121,7 @@ export const tracesUnreadable = (options) =>
   options.blocked?.code === "fix_traces_unreadable";
 
 export const NO_MODELS_NOTE =
-  "This agent's traces name no model, so the model lock will read as Couldn't measure. Its cost is still checked.";
+  "This agent's traces name no model, so the model lock will show “Couldn't measure”. Its cost is still checked.";
 
 // The limit on the agent's spend per conversation, in US dollars: null when
 // left empty, NaN when it is not a number above 0.

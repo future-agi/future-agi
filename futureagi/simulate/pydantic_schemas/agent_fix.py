@@ -265,6 +265,17 @@ class FixDiagnosis(BaseModel):
     causes: list[str] = Field(default_factory=list)
 
 
+class FlakyProtectedCase(BaseModel):
+    """A protected case the current version does not pass on every baseline run, so the fix
+    could not be held to it: one sub-goal of it, with its baseline passes."""
+
+    key: str = Field(max_length=200)
+    name: str | None = Field(default=None, max_length=500)
+    sub_goal: str = Field(max_length=200)
+    passed: int = Field(ge=0)
+    runs: int = Field(ge=1)
+
+
 class EngineReport(BaseModel):
     """Progress, and at the end the run's ending. A report with an ending is the last."""
 
@@ -278,6 +289,9 @@ class EngineReport(BaseModel):
     # With the failed ending: what failed and who can fix it.
     failure: CheckFailure | None = None
     winner_candidate_id: UUID | None = None
+    # With the ending: the protected cases the fix could not be held to. An engine from
+    # before this field sends none.
+    flaky_protected: list[FlakyProtectedCase] = Field(default_factory=list)
     # The models this launch stopped using because their calls were lost, and the last
     # error it could not recover from. The fix keeps both across launches.
     lost_models: list[str] = Field(default_factory=list)

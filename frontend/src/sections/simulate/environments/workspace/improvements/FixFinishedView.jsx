@@ -11,7 +11,12 @@ import RetryButton from "./RetryButton";
 import ShipButton from "./ShipButton";
 import TrialChart from "./TrialChart";
 import TrialsTable from "./TrialsTable";
-import { headline, noSafeNumbers, winnerOf } from "./fixRunView";
+import {
+  flakyProtectedText,
+  headline,
+  noSafeNumbers,
+  winnerOf,
+} from "./fixRunView";
 
 // The header actions of a finished fix: how it was decided, the winner's
 // changes, and Ship.
@@ -112,6 +117,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
   const current = tabs.find((t) => t.id === tab) ? tab : "trials";
+  const flaky = flakyProtectedText(fix);
   return (
     <Box data-testid="fix-finished-view" sx={{ px: 3, py: 2.5 }}>
       {ready ? (
@@ -133,6 +139,14 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
             {noSafe && <NoSafeNumbers fix={fix} />}
           </Box>
         )
+      )}
+      {flaky && (
+        <Typography
+          data-testid="flaky-protected"
+          sx={{ typography: "s2", color: "text.secondary", mb: 2 }}
+        >
+          {flaky}
+        </Typography>
       )}
       <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (
