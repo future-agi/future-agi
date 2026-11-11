@@ -29,12 +29,20 @@ POLICY_PATH = Path(__file__).resolve().parents[1] / ".github/pr-autopilot.yml"
 WORKFLOW = "low-risk-pr-autopilot.yml"
 ROUND_MARKER = "<!-- pr-autopilot:round:"
 TIER_MARKER = "<!-- pr-autopilot:tier -->"
+ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
+APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+PATCH_ID = re.compile(r"[0-9a-f]{32}\Z")
+ZERO_SHA = "0" * 40
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?\Z")
 
 
 class PolicyError(Exception):
     """A missing or ambiguous fact must stop automation, not weaken the policy."""
+
+
+class NeedsPerson(PolicyError):
+    """Review history is truncated, unreadable or edited: a person decides."""
 
 
 def load_policy(path=POLICY_PATH):
@@ -384,58 +392,76 @@ def bot_comment(comment):
     return user.get("login") == "github-actions[bot]" and user.get("type") == "Bot"
 
 
-def trusted_run(api, run_id, number):
-    run = api.request("GET", f"actions/runs/{int(run_id)}")
-    # The workflow's run-name binds each run to one PR, so a run evaluating
-    # another PR cannot vouch for this one.
-    return (
-        run.get("display_title") == f"PR autopilot #{int(number)}"
-        and run.get("path") == f".github/workflows/{WORKFLOW}"
-        and run.get("event") in {"pull_request_target", "workflow_dispatch"}
-        and run.get("head_repository", {}).get("full_name") == api.repository
-        and (
-            run.get("event") == "pull_request_target" or run.get("head_branch") == "dev"
-        )
-    )
+def trusted_run(api, run_id, number, base):
+    """A dispatch run of dev's copy of this workflow for PR `number`, reviewing `base`.
 
-
-# The publish step in the workflow carries this name, rendered from the trusted
-# prepare job's output, and succeeds only when it published a passing verdict.
-VERDICT_STEP = "Publish review verdict: head {head} base {base}"
-
-
-def run_vouches(api, run_id, context):
-    """The cited run itself passed this exact head and base.
-
-    Anyone who can create a check run can cite a genuine run ID; nobody can add a
-    successful step to a finished run of the trusted workflow.
+    Only workflow_dispatch runs on dev review. A pull_request_target run takes
+    the workflow file from the PR's base branch, which any writer can create,
+    and its run object does not name that branch. A dispatch run's head_sha is
+    the dev commit whose workflow file it ran; prepare stops unless that commit
+    is also the base it reviews against, so the two must be equal.
     """
-    name = VERDICT_STEP.format(head=context["head"], base=context["base"])
-    jobs = api.pages(f"actions/runs/{int(run_id)}/jobs", "jobs")
-    return any(
-        step.get("name") == name and step.get("conclusion") == "success"
-        for job in jobs
-        for step in job.get("steps") or []
+    run = api.request("GET", f"actions/runs/{int(run_id)}")
+    return (
+        run.get("event") == "workflow_dispatch"
+        and run.get("head_branch") == "dev"
+        and run.get("path") == f".github/workflows/{WORKFLOW}"
+        # The run-name binds each run to one PR.
+        and run.get("display_title") == f"PR autopilot #{int(number)}"
+        and (run.get("head_repository") or {}).get("full_name") == api.repository
+        and run.get("head_sha") == base
     )
 
 
-def review_ledger(api, number, comments):
-    rounds = []
-    for comment in comments:
-        body = comment.get("body", "")
-        if not bot_comment(comment) or not body.startswith(ROUND_MARKER):
-            continue
-        try:
-            record = json.loads(body[len(ROUND_MARKER) :].split(" -->", 1)[0])
-            if record["pr"] != number or not trusted_run(api, record["run_id"], number):
-                raise PolicyError("untrusted review-round record")
-            if not SHA.fullmatch(record["head"]) or not SHA.fullmatch(record["base"]):
-                raise PolicyError("invalid review-round SHA")
-            rounds.append(record)
-        except (ValueError, KeyError, TypeError):
-            raise PolicyError("review-round ledger is malformed") from None
-    # Count reservations, including failed/cancelled attempts and force-pushed heads.
-    return rounds
+# The gate job has one marker step per outcome, named from the trusted prepare
+# context; only the step for the published outcome runs. A finished run's step
+# names and conclusions cannot be changed, unlike a check run's conclusion or
+# external_id, which any Actions token in the repository can edit.
+OUTCOME_STEPS = {
+    "passed": "Review passed: head {head} base {base} patch {patch}",
+    "blocked": "Review blocked: head {head} base {base} patch {patch}",
+    "retryable": "Review retryable: head {head} base {base} patch {patch}",
+}
+
+
+def run_outcome(api, record):
+    """The outcome the cited run itself recorded for this attempt, or None if it
+    never published one (cancelled or failed before the verdict).
+
+    Attempt 1 is read explicitly: the default listing shows only the latest
+    attempt, and the publish step can run only in attempt 1.
+    """
+    try:
+        jobs = api.pages(
+            f"actions/runs/{int(record['run_id'])}/attempts/1/jobs", "jobs"
+        )
+    except PolicyError:
+        raise NeedsPerson(
+            "The jobs of a review run cannot be read; the run may have been "
+            "deleted. A person must review this PR."
+        ) from None
+    names = {
+        template.format(head=record["head"], base=record["base"], patch=record["patch"]): outcome
+        for outcome, template in OUTCOME_STEPS.items()
+    }
+    prefixes = tuple(template.split("{", 1)[0] for template in OUTCOME_STEPS.values())
+    found = set()
+    for job in jobs:
+        for step in job.get("steps") or []:
+            name = step.get("name")
+            if step.get("conclusion") != "success" or not isinstance(name, str):
+                continue
+            if name in names:
+                found.add(names[name])
+            elif name.startswith(prefixes):
+                raise NeedsPerson(
+                    "A review run recorded a different revision or diff than its "
+                    "reservation record says, so the record was edited. A person "
+                    "must review this PR."
+                )
+    if len(found) > 1:
+        raise NeedsPerson("A review run recorded more than one outcome. A person must review this PR.")
+    return found.pop() if found else None
 
 
 RECORD_KEYS = ("pr", "head", "base", "run_id", "round", "patch")
@@ -443,6 +469,173 @@ RECORD_KEYS = ("pr", "head", "base", "run_id", "round", "patch")
 # this caps the AI calls they can make at this multiple of the round limit.
 ATTEMPTS_PER_ROUND = 3
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
+
+
+def parse_record(text):
+    """A reservation record from a ledger comment or a review check's external_id."""
+    record = json.loads(text)
+    if (
+        not isinstance(record, dict)
+        or set(record) != set(RECORD_KEYS)
+        or any(type(record[key]) is not int or record[key] < 1 for key in ("pr", "run_id", "round"))
+        or any(not isinstance(record[key], str) or not SHA.fullmatch(record[key]) for key in ("head", "base"))
+        or not isinstance(record["patch"], str)
+        or not PATCH_ID.fullmatch(record["patch"])
+    ):
+        raise ValueError("invalid review record")
+    return record
+
+
+def record_run_trusted(api, record, cache):
+    key = (record["run_id"], record["pr"], record["base"])
+    if key not in cache:
+        try:
+            cache[key] = trusted_run(api, record["run_id"], record["pr"], record["base"])
+        except PolicyError:
+            # Anyone with write access can delete a run; a record whose run is
+            # gone cannot be checked, and skipping it would drop an attempt.
+            raise NeedsPerson(
+                "The workflow run cited by a review record cannot be read; it may "
+                "have been deleted. A person must review this PR."
+            ) from None
+    return cache[key]
+
+
+def review_ledger(api, number, comments, runs=None):
+    """Validated reservation records from the bot's ledger comments.
+
+    Comments can be deleted or edited by anyone with write access, so
+    review_attempts also reads the review check runs on every head.
+    """
+    runs = {} if runs is None else runs
+    rounds = []
+    for comment in comments:
+        body = comment.get("body") or ""
+        if not bot_comment(comment) or not body.startswith(ROUND_MARKER):
+            continue
+        try:
+            record = parse_record(body[len(ROUND_MARKER) :].split(" -->", 1)[0])
+        except (ValueError, TypeError):
+            raise NeedsPerson(
+                "A review-round ledger comment is malformed. A person must review this PR."
+            ) from None
+        if record["pr"] != number or not record_run_trusted(api, record, runs):
+            raise NeedsPerson(
+                "A review-round ledger comment cites a run that is not this PR's "
+                "trusted dev run. A person must review this PR."
+            )
+        rounds.append(record)
+    return rounds
+
+
+HEADS_QUERY = """query($owner:String!, $repo:String!, $number:Int!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$number) {
+      commits(first:100) { totalCount nodes { commit { oid } } }
+      timelineItems(first:100, itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]) {
+        totalCount
+        nodes { ... on HeadRefForcePushedEvent { beforeCommit { oid } afterCommit { oid } } }
+      }
+    }
+  }
+}"""
+
+
+def pr_heads(api, pr, pushes):
+    """Every commit the PR's head has pointed at.
+
+    The PR's commits and both sides of each force push in its timeline, plus
+    both sides of each push in the branch's activity: an amended commit pushed
+    over a later commit is in neither of the first two lists.
+    """
+    owner, repo = api.repository.split("/")
+    variables = {"owner": owner, "repo": repo, "number": pr["number"]}
+    try:
+        data = api.request("POST", "", {"query": HEADS_QUERY, "variables": variables}, graphql=True)
+        pull = data["data"]["repository"]["pullRequest"]
+        commits, forced = pull["commits"], pull["timelineItems"]
+        if commits["totalCount"] != len(commits["nodes"]) or forced["totalCount"] != len(forced["nodes"]):
+            raise NeedsPerson(
+                "This PR's commit or force-push history is too long to check. "
+                "A person must review this PR."
+            )
+        heads = {node["commit"]["oid"] for node in commits["nodes"]}
+        for node in forced["nodes"]:
+            heads |= {node["beforeCommit"]["oid"], node["afterCommit"]["oid"]}
+    except NeedsPerson:
+        raise
+    except (PolicyError, KeyError, TypeError):
+        raise NeedsPerson(
+            "This PR's commit or force-push history is unavailable. A person must review this PR."
+        ) from None
+    for row in pushes:
+        heads |= {row.get("before"), row.get("after")} - {ZERO_SHA}
+    if pr["head"]["sha"] not in heads or not all(
+        isinstance(sha, str) and SHA.fullmatch(sha) for sha in heads
+    ):
+        raise NeedsPerson("This PR's head history is incomplete. A person must review this PR.")
+    return sorted(heads)
+
+
+def review_checks_on(api, head, policy):
+    name = urllib.parse.quote(policy["review_check"], safe="")
+    return [
+        check
+        for check in api.pages(f"commits/{head}/check-runs?check_name={name}&filter=all", "check_runs")
+        if check.get("name") == policy["review_check"]
+        and (check.get("app") or {}).get("slug") == "github-actions"
+    ]
+
+
+def attempt_outcome(api, record, context):
+    # In the run that reserved this attempt, the merge step runs only after its
+    # publish step reported "passed"; the jobs API can lag behind its own steps.
+    if (
+        context is not None
+        and "check_id" in context
+        and str(record["run_id"]) == os.environ.get("GITHUB_RUN_ID")
+        and record == {key: context.get(key) for key in RECORD_KEYS}
+        and os.environ.get("REVIEW_OUTCOME") == "passed"
+    ):
+        return "passed"
+    return run_outcome(api, record)
+
+
+def review_attempts(api, pr, comments, pushes, policy, context=None):
+    """Every review attempt on this PR's heads, with the outcome its own run recorded.
+
+    The ledger comments UNION the review check runs on every head the PR has
+    had: comments can be deleted or edited, check runs cannot be deleted. A
+    check's conclusion is never read, because any Actions token can change it.
+    """
+    runs = {}
+    records = review_ledger(api, pr["number"], comments, runs)
+    for head in pr_heads(api, pr, pushes):
+        for check in review_checks_on(api, head, policy):
+            try:
+                record = parse_record(check.get("external_id"))
+            except (ValueError, TypeError):
+                raise NeedsPerson(
+                    "A review check on this PR's history has an unreadable record, "
+                    "which means it was edited. A person must review this PR."
+                ) from None
+            if record["head"] != head or not record_run_trusted(api, record, runs):
+                raise NeedsPerson(
+                    "A review check on this PR's history cites a run that is not "
+                    "the trusted dev run for its revision. A person must review this PR."
+                )
+            records.append(record)
+    attempts = {}
+    for record in records:
+        if attempts.setdefault(record["run_id"], record) != record:
+            raise NeedsPerson(
+                "Two review records for one run disagree, so one was edited. "
+                "A person must review this PR."
+            )
+    return [
+        {**record, "outcome": attempt_outcome(api, record, context)}
+        for record in attempts.values()
+    ]
 
 
 def patch_digest(patches):
@@ -454,42 +647,34 @@ def patch_digest(patches):
     return hashlib.sha256(data).hexdigest()[:32]
 
 
-def failed_patches(api, rounds, context, policy):
-    """Diffs whose earlier attempt did not end in a passing review check."""
-    failed = set()
-    for record in rounds:
-        if record.get("patch") != context["patch"] or record["patch"] in failed:
-            continue
-        expected = {key: record.get(key) for key in RECORD_KEYS}
-        passed = False
-        for check in checks_for(api, record["head"]):
-            try:
-                same = json.loads(check.get("external_id") or "null") == expected
-            except (ValueError, TypeError):
-                same = False
-            if (same and check.get("name") == policy["review_check"]
-                    and check.get("head_sha") == record["head"]
-                    and check.get("status") == "completed"
-                    and check.get("conclusion") == "success"):
-                passed = True
-        if not passed:
-            failed.add(record["patch"])
-    return failed
+def charged_diffs(records):
+    return {record["patch"] for record in records}
 
 
-def charged_diffs(rounds):
-    return {r.get("patch") or f"{r['head']}:{r['base']}" for r in rounds}
-
-
-def review_plan(rounds, context, limit, failed=frozenset()):
-    head, base, patch = context["head"], context["base"], context.get("patch")
-    # Never re-roll: the same revision, or the same diff after a failed attempt.
-    if any(r["head"] == head and r["base"] == base for r in rounds) or patch in failed:
-        return "already-reviewed"
-    diffs = charged_diffs(rounds)
-    if len(rounds) >= limit * ATTEMPTS_PER_ROUND:
+def review_plan(attempts, context, limit):
+    """barred, reuse, retry-later, exhausted or new, from every attempt."""
+    revision = (context["head"], context["base"])
+    same_diff = [a for a in attempts if a["patch"] == context["patch"]]
+    # A blocking verdict, or a run that never recorded an outcome, bars the diff
+    # on every head and base, so neither can be re-rolled.
+    if any(a["outcome"] in (None, "blocked") for a in same_diff):
+        return "barred"
+    # Records naming another PR (same head pushed twice) only ever bar.
+    own = [a for a in attempts if a["pr"] == context["pr"]]
+    if any(
+        a["outcome"] == "passed" and (a["head"], a["base"]) == revision
+        for a in own
+        if a["patch"] == context["patch"]
+    ):
+        return "reuse"
+    # A stale or failed-to-run attempt is retried on the next head or base, not on
+    # the same pair, so an outage cannot spend the budget every 15 minutes.
+    if any((a["head"], a["base"]) == revision for a in attempts):
+        return "retry-later"
+    if len(own) >= limit * ATTEMPTS_PER_ROUND:
         return "exhausted"
-    if patch not in diffs and len(diffs) >= limit:
+    diffs = charged_diffs(own)
+    if context["patch"] not in diffs and len(diffs) >= limit:
         return "exhausted"
     return "new"
 
@@ -592,13 +777,12 @@ def protection(api, policy):
 def current_base(api, pr):
     """The live dev tip if this PR's branch contains it, else None (behind dev).
 
-    pulls.base.sha does not follow dev, so it is only a fast path.
+    Always compare: pulls.base.sha equal to the tip only means the PR was opened
+    after that dev commit, not that its head contains it.
     """
     tip = (api.request("GET", "git/ref/heads/dev").get("object") or {}).get("sha", "")
     if not SHA.fullmatch(tip):
         raise PolicyError("dev tip is unknown")
-    if pr["base"]["sha"] == tip:
-        return tip
     compare = api.request("GET", f"compare/{tip}...{pr['head']['sha']}")
     return tip if compare.get("behind_by") == 0 else None
 
@@ -615,58 +799,58 @@ def ci_evidence(api, pr, policy):
     return passed, requirements, checks
 
 
-def review_records(checks, context, policy):
-    """Review check runs on this head and dev base, whatever PR they name."""
-    found = []
-    for check in checks:
-        if check.get("name") != policy["review_check"] or check.get("head_sha") != context["head"]:
-            continue
-        try:
-            record = json.loads(check.get("external_id", ""))
-        except (ValueError, TypeError):
-            record = None
-        if isinstance(record, dict) and record.get("head") == context["head"] and record.get("base") == context["base"]:
-            found.append(check)
-    return found
+def branch_pushes(api, pr, trusted):
+    """Every push to the PR's head branch, newest first, all by trusted authors.
 
-
-def review_check_passes(api, checks, context, policy):
-    matches_ = [c for c in checks if c["name"] == policy["review_check"]]
-    if not matches_:
-        return False
-    # A second review check for the same revision (a forged one, or one from a
-    # duplicate PR) must not override a failure: every one must have passed.
-    if any(c.get("status") != "completed" or c.get("conclusion") != "success"
-           for c in review_records(checks, context, policy)):
-        return False
-    check = max(matches_, key=lambda c: c["id"])
-    if (
-        check.get("status") != "completed"
-        or check.get("conclusion") != "success"
-        or check.get("head_sha") != context["head"]
-        or check.get("app", {}).get("slug") != "github-actions"
-    ):
-        return False
-    try:
-        record = json.loads(check.get("external_id", ""))
-        if not (
-            all(record[k] == context[k] for k in ("pr", "head", "base"))
-            and trusted_run(api, record["run_id"], context["pr"])
-        ):
-            return False
-        # In the run that reserved this check, the merge step only runs after the
-        # verdict step succeeded. Any other run must show that step's success.
-        same_run = (
-            str(record["run_id"]) == os.environ.get("GITHUB_RUN_ID")
-            and check["id"] == context.get("check_id")
+    Who opened the PR is not enough: anyone with write access can push to its
+    branch. One request, because this endpoint is cursor-paginated and ignores
+    page=; a full page may hide older pushes, so it goes to a person.
+    """
+    ref = urllib.parse.quote("refs/heads/" + pr["head"]["ref"], safe="")
+    rows = api.request("GET", f"activity?ref={ref}&per_page=100")
+    if not isinstance(rows, list):
+        raise PolicyError("branch push history is unavailable")
+    if not rows or len(rows) >= 100:
+        raise NeedsPerson(
+            "This branch's push history is empty or too long to check. A person must review this PR."
         )
-        return same_run or run_vouches(api, record["run_id"], context)
-    except (ValueError, KeyError, TypeError):
-        return False
+    for row in rows:
+        login = ((row if isinstance(row, dict) else {}).get("actor") or {}).get("login")
+        if not isinstance(login, str) or login.lower() not in trusted:
+            raise NeedsPerson(
+                "A push to this branch came from an account that is not a trusted "
+                "author. A person must review this PR."
+            )
+    return rows
+
+
+def review_passes(api, policy, pr, context, pushes):
+    """A pass whose own run recorded "passed" for exactly this head, base and
+    diff, and no attempt of this diff that was blocked or never finished."""
+    comments = api.pages(f"issues/{context['pr']}/comments")
+    attempts = review_attempts(api, pr, comments, pushes, policy, context)
+    return review_plan(attempts, context, policy["max_review_rounds"]) == "reuse"
 
 
 def comment(api, number, body):
     return api.request("POST", f"issues/{number}/comments", {"body": body})
+
+
+def escalate(api, number, comments, head, reason):
+    body = f"{ESCALATION_MARKER}\n{reason}\n\nHead: `{head}`. No automatic approval or merge was performed."
+    previous = next(
+        (
+            c
+            for c in comments
+            if bot_comment(c) and (c.get("body") or "").startswith(ESCALATION_MARKER)
+        ),
+        None,
+    )
+    if previous and previous["body"] != body:
+        api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
+    elif not previous:
+        comment(api, number, body)
+    summary(reason)
 
 
 def ensure_labels(api, names):
@@ -767,22 +951,58 @@ def now_utc():
     return dt.datetime.now(dt.timezone.utc)
 
 
+def tier_label(pr, policy):
+    names = {label.get("name") for label in pr.get("labels") or []}
+    return next(
+        (tier for tier in ("high", "medium", "low") if policy["labels"][tier] in names),
+        None,
+    )
+
+
+def worth_dispatching(pr, tier, policy, settings, repository):
+    """Only a PR whose dispatch run can act: one with no tier label yet (a
+    one-time backfill), or a trusted author's LOW PR without a hold."""
+    head_repo = (pr.get("head") or {}).get("repo") or {}
+    if head_repo.get("full_name") != repository or pr.get("draft") is not False:
+        return False
+    if tier is None:
+        return True
+    labels = {label.get("name") for label in pr.get("labels") or []}
+    author = ((pr.get("user") or {}).get("login") or "").lower()
+    return (
+        tier == "low"
+        and policy["labels"]["hold"] not in labels
+        and author in trusted_authors(policy, settings.get("authors", ""))
+    )
+
+
+def dispatch(api, number):
+    api.request(
+        "POST",
+        f"actions/workflows/{WORKFLOW}/dispatches",
+        {"ref": "dev", "inputs": {"pr_number": str(number)}},
+    )
+
+
+def sweep(api, policy, settings):
+    """Scheduled runs come from the default branch. Dispatch a run on dev for
+    each PR that can act, so all later policy and workflow code comes from dev."""
+    failed, sent = [], 0
+    for pr in api.pages("pulls?state=open&base=dev"):
+        if not worth_dispatching(pr, tier_label(pr, policy), policy, settings, api.repository):
+            continue
+        try:
+            dispatch(api, pr["number"])
+            sent += 1
+        except PolicyError:
+            # One refused dispatch must not skip the older PRs later in the list.
+            failed.append(str(pr["number"]))
+    summary(f"Scheduled dev PR sweep dispatched {sent} run(s); no PR content was executed.")
+    if failed:
+        raise PolicyError("dispatch failed for PR(s) " + ", ".join(failed))
+
+
 def resolve_number(api, event, event_name):
-    if event_name == "schedule":
-        # Scheduled runs come from the default branch. Dispatch each PR separately
-        # on dev so all subsequent policy/workflow code comes from the target.
-        for pr in api.pages("pulls?state=open&base=dev"):
-            if (
-                pr["head"].get("repo", {}).get("full_name") == api.repository
-                and not pr["draft"]
-            ):
-                api.request(
-                    "POST",
-                    f"actions/workflows/{WORKFLOW}/dispatches",
-                    {"ref": "dev", "inputs": {"pr_number": str(pr["number"])}},
-                )
-        summary("Scheduled dev PR sweep dispatched; no PR content was executed.")
-        return None
     if event_name == "pull_request_target":
         raw = event.get("pull_request", {}).get("number")
     elif event_name == "workflow_dispatch":
@@ -810,15 +1030,27 @@ def prepare(api, policy, settings, event, event_name):
         summary("PR autopilot is off; no writes or review calls.")
         return
     require_initial_attempt()
-    number = resolve_number(api, event, event_name)
-    if number is None:
+    if event_name == "schedule":
+        sweep(api, policy, settings)
         return
+    number = resolve_number(api, event, event_name)
     pr, files, risk = snapshot(api, number, policy)
     if pr["base"]["ref"] != "dev" or pr["state"] != "open":
         return
     comments = api.pages(f"issues/{number}/comments")
     ensure_labels(api, policy["labels"].values())
     tier_audit(api, pr, risk, policy, comments)
+    if event_name == "pull_request_target":
+        # Review, approval and merge happen only in a dispatch run on dev; review
+        # evidence is bound to that run's dev commit (trusted_run).
+        if worth_dispatching(pr, risk["tier"], policy, settings, api.repository):
+            dispatch(api, number)
+            summary("Dispatched an evaluation of this PR on dev.")
+        return
+    # A dispatch run's head_sha is the dev commit at dispatch time. If dev moved
+    # before checkout, a reservation would cite a run that cannot vouch for it.
+    if os.environ.get("GITHUB_SHA") != os.environ["POLICY_SHA"]:
+        raise PolicyError("dev advanced; wait for a fresh run")
     base = current_base(api, pr)
     if base is None:
         # Behind dev: the author updates the branch. No review round is spent.
@@ -839,54 +1071,53 @@ def prepare(api, policy, settings, event, event_name):
     if not decision["allow"]:
         summary("Waiting: " + " ".join(decision["reasons"]))
         return
-    passed, requirements, checks = ci_evidence(api, pr, policy)
-    if not passed:
-        summary("Waiting for successful required checks on the current head SHA.")
+    if bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), context["head"]):
+        summary(
+            "Waiting: a maintainer dismissed the automated approval for this head, "
+            "which counts as autopilot-hold. Push a new revision or merge by hand."
+        )
         return
-    context["checks"] = sorted(requirements)
-    if review_check_passes(api, checks, context, policy):
+    try:
+        pushes = branch_pushes(api, pr, trusted_authors(policy, settings["authors"]))
+        if pushes[0].get("after") != context["head"]:
+            summary("Waiting: the branch push history has not recorded this head yet.")
+            return
+        passed, requirements, _ = ci_evidence(api, pr, policy)
+        if not passed:
+            summary("Waiting for successful required checks on the current head SHA.")
+            return
+        context["checks"] = sorted(requirements)
+        context["patch"] = patch_digest(review_patches(files, policy))
+        attempts = review_attempts(api, pr, comments, pushes, policy)
+        plan = review_plan(attempts, context, policy["max_review_rounds"])
+    except NeedsPerson as exc:
+        escalate(api, number, comments, context["head"], str(exc))
+        return
+    if plan == "reuse":
         emit("context", context)
         summary(
-            "Existing passing review matches the exact head and dev base; rechecking before merge."
+            "A passing review of this exact head, dev base and diff exists; rechecking before merge."
         )
         return
-    context["patch"] = patch_digest(review_patches(files, policy))
-    rounds = review_ledger(api, number, comments)
-    plan = review_plan(
-        rounds,
-        context,
-        policy["max_review_rounds"],
-        failed_patches(api, rounds, context, policy),
-    )
-    # Check runs cannot be deleted: a review of this exact revision, for any PR,
-    # counts even if its ledger comment was removed or a duplicate PR was opened.
-    if plan == "new" and review_records(checks, context, policy):
-        plan = "already-reviewed"
+    if plan == "retry-later":
+        summary(
+            "Waiting: the review of this exact revision did not finish (the head or "
+            "dev moved, or the AI job failed). Update the branch from dev or push a "
+            "commit to retry."
+        )
+        return
     if plan != "new":
         reason = (
-            "The AI review budget is exhausted (three different diffs, or the cap on re-reviews). A person must review this PR."
+            "The AI review budget is exhausted (three different diffs, or nine attempts). A person must review this PR."
             if plan == "exhausted"
-            else "This revision, or this same diff on an earlier base, already had a review attempt that did not pass. It is not retried automatically; a person must resolve the finding or failed run."
+            else "This diff already had an AI review attempt that found blocking issues or did not finish. It is not reviewed again automatically; a person must resolve the finding or review the PR."
         )
-        body = f"<!-- pr-autopilot:escalation -->\n{reason}\n\nHead: `{context['head']}`. No automatic approval or merge was performed."
-        previous = next(
-            (
-                c
-                for c in comments
-                if bot_comment(c)
-                and c.get("body", "").startswith("<!-- pr-autopilot:escalation -->")
-            ),
-            None,
-        )
-        if previous and previous["body"] != body:
-            api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
-        elif not previous:
-            comment(api, number, body)
-        summary(reason)
+        escalate(api, number, comments, context["head"], reason)
         return
+    own = [a for a in attempts if a["pr"] == number]
     prompt = review_prompt(files, context, policy)
     context.update(
-        {"run_id": int(os.environ["GITHUB_RUN_ID"]), "round": len(rounds) + 1}
+        {"run_id": int(os.environ["GITHUB_RUN_ID"]), "round": len(own) + 1}
     )
     record = json.dumps(
         {key: context[key] for key in RECORD_KEYS},
@@ -897,7 +1128,7 @@ def prepare(api, policy, settings, event, event_name):
     comment(
         api,
         number,
-        f"{ROUND_MARKER}{record} -->\nAI review attempt {context['round']} reserved for head `{context['head']}`, base `{context['base']}`; different diffs reviewed: {len(charged_diffs(rounds) | {context['patch']})}/{policy['max_review_rounds']}. Failed or cancelled attempts count and are not retried for the same diff; re-reviewing an unchanged diff after merging dev costs no round. A person takes over after three different diffs.",
+        f"{ROUND_MARKER}{record} -->\nAI review attempt {context['round']} reserved for head `{context['head']}`, base `{context['base']}`; different diffs reviewed: {len(charged_diffs(own) | {context['patch']})}/{policy['max_review_rounds']}. Every attempt counts toward a cap of nine. A diff whose review found blocking issues or did not finish is not reviewed again; a review that went stale or whose AI job failed is retried after the branch changes, and re-reviewing an unchanged diff after merging dev costs no round. A person takes over after three different diffs.",
     )
     check = api.request(
         "POST",
@@ -940,55 +1171,85 @@ def publish_verdict(api, policy, context, raw, action_result):
         # A partial rerun must never replace a finished blocking verdict with a
         # later pass (or mutate any other reservation). Fresh revisions get new IDs.
         raise PolicyError("review reservation is not pending or does not match")
-    passed = False
-    reasons = []
-    try:
-        if action_result != "success":
-            raise PolicyError("AI review job was skipped, cancelled or failed")
-        verdict = review_verdict(raw, context["head"], context["base"])
-        passed = not verdict["blocking_findings"]
-        reasons = verdict["reasons"]
-        current = get_pr(api, context["pr"])
-        if (
-            current["head"]["sha"] != context["head"]
-            or current_base(api, current) != context["base"]
-        ):
-            passed = False
-            reasons = [
-                "PR head or dev base changed during review; this verdict is stale."
-            ]
-    except PolicyError as exc:
-        reasons = [str(exc)]
-    conclusion = "success" if passed else "failure"
+    if action_result != "success":
+        outcome = "retryable"
+        reasons = ["The AI review job was skipped, cancelled, failed or timed out."]
+    else:
+        try:
+            verdict = review_verdict(raw, context["head"], context["base"])
+        except PolicyError as exc:
+            # A job that reported success but returned malformed or incomplete
+            # output did not clear an untrusted diff; the prompt says to block.
+            verdict, outcome, reasons = None, "blocked", [str(exc)]
+        if verdict is not None:
+            reasons = verdict["reasons"]
+            # A blocking verdict stands even if the head or dev moved meanwhile.
+            if verdict["blocking_findings"]:
+                outcome = "blocked"
+            elif still_current(api, context):
+                outcome = "passed"
+            else:
+                outcome = "retryable"
+                reasons = [
+                    "PR head or dev base changed during review (or could not be "
+                    "confirmed); this verdict is stale."
+                ]
+    conclusion = {"passed": "success", "blocked": "failure", "retryable": "cancelled"}[outcome]
+    title = {
+        "passed": "No blocking findings",
+        "blocked": "Human review or fixes required",
+        "retryable": "Review did not finish; retried after the branch changes",
+    }[outcome]
     text = "\n".join(safe_text(reason) for reason in reasons)
-    api.request(
-        "PATCH",
-        f"check-runs/{context['check_id']}",
-        {
-            "status": "completed",
-            "conclusion": conclusion,
-            "output": {
-                "title": "No blocking findings"
-                if passed
-                else "Human review or fixes required",
-                "summary": text,
-            },
-        },
-    )
-    comment(
-        api,
-        context["pr"],
-        f"AI review attempt {context['round']}: **{conclusion}** for head `{context['head']}`, base `{context['base']}`.\n\n<pre>{text}</pre>\n\nBlocking findings need a fix with a reason; a new revision may consume the next round. The bot never fixes code or dismisses human reviews.",
-    )
+    try:
+        api.request(
+            "PATCH",
+            f"check-runs/{context['check_id']}",
+            {"status": "completed", "conclusion": conclusion,
+             "output": {"title": title, "summary": text}},
+        )
+    except PolicyError:
+        # GitHub can apply an update and still lose the response.
+        check = api.request("GET", f"check-runs/{context['check_id']}")
+        if check.get("status") != "completed" or check.get("conclusion") != conclusion:
+            raise
+    # The workflow's marker step for this outcome is the evidence later runs read.
+    emit("outcome", outcome)
+    advice = {
+        "passed": "The bot rechecks every merge gate before it approves.",
+        "blocked": "This diff is not reviewed again automatically. A fix is a new diff and uses one of the three diff reviews; otherwise a person reviews the PR.",
+        "retryable": "Update the branch from dev or push a new commit to retry. This attempt counts toward the cap of nine.",
+    }[outcome]
+    try:
+        comment(
+            api,
+            context["pr"],
+            f"AI review attempt {context['round']}: **{outcome}** for head `{context['head']}`, base `{context['base']}`.\n\n<pre>{text}</pre>\n\n{advice} The bot never fixes code or dismisses human reviews.",
+        )
+    except (PolicyError, OSError, ValueError, KeyError, TypeError):
+        # The check and the run's outcome step carry the verdict; a lost comment
+        # must not change the outcome or fail the step.
+        summary("The review result comment could not be posted.")
     summary(
-        f"Automated review check: {conclusion}; round {context['round']}. No diff content is logged."
+        f"Automated review outcome: {outcome}; round {context['round']}. No diff content is logged."
     )
-    return passed
+    return outcome
 
 
-def no_requested_changes(api, number):
+def still_current(api, context):
+    try:
+        current = get_pr(api, context["pr"])
+        return (
+            current["head"]["sha"] == context["head"]
+            and current_base(api, current) == context["base"]
+        )
+    except PolicyError:
+        return False
+
+
+def no_requested_changes(reviews):
     latest = {}
-    for review in api.pages(f"pulls/{number}/reviews"):
+    for review in reviews:
         if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
             login = review["user"]["login"]
             if login not in latest or review["id"] > latest[login]["id"]:
@@ -996,14 +1257,36 @@ def no_requested_changes(api, number):
     return all(review["state"] != "CHANGES_REQUESTED" for review in latest.values())
 
 
+def bot_approval_dismissed(reviews, head):
+    """A maintainer withdrew the bot's approval of this head: treat it as a hold."""
+    return any(
+        (review.get("user") or {}).get("login") == "github-actions[bot]"
+        and review.get("state") == "DISMISSED"
+        and review.get("commit_id") == head
+        and (review.get("body") or "").startswith(APPROVAL_MARKER)
+        for review in reviews
+    )
+
+
 def validate_live(api, policy, settings, context):
-    pr, _, risk = snapshot(api, context["pr"], policy)
+    pr, files, risk = snapshot(api, context["pr"], policy)
     if pr["head"]["sha"] != context["head"] or current_base(api, pr) != context["base"]:
         raise PolicyError("head or dev base changed; fresh evaluation is required")
-    passed, requirements, checks = ci_evidence(api, pr, policy)
-    review_passed = review_check_passes(api, checks, context, policy)
-    if not no_requested_changes(api, context["pr"]):
+    if patch_digest(review_patches(files, policy)) != context["patch"]:
+        raise PolicyError("the diff no longer matches the reviewed diff")
+    passed, requirements, _ = ci_evidence(api, pr, policy)
+    pushes = branch_pushes(api, pr, trusted_authors(policy, settings.get("authors", "")))
+    if pushes[0].get("after") != context["head"]:
+        raise PolicyError("the branch push history has not recorded this head; wait for a fresh run")
+    review_passed = review_passes(api, policy, pr, context, pushes)
+    reviews = api.pages(f"pulls/{context['pr']}/reviews")
+    if not no_requested_changes(reviews):
         raise PolicyError("an outstanding human change request blocks automation")
+    if bot_approval_dismissed(reviews, context["head"]):
+        raise PolicyError(
+            "a maintainer dismissed the automated approval for this head, which "
+            "counts as autopilot-hold; push a new revision or merge by hand"
+        )
     # Labels/draft/trust can change while checks are fetched. Read mutable PR
     # metadata last, immediately before the approval or SHA-locked merge call.
     latest = get_pr(api, context["pr"])
@@ -1041,11 +1324,11 @@ def merge(api, policy, settings, context):
         r.get("user", {}).get("login") == "github-actions[bot]"
         and r.get("state") == "APPROVED"
         and r.get("commit_id") == context["head"]
-        and r.get("body", "").startswith("<!-- pr-autopilot:approval -->")
+        and r.get("body", "").startswith(APPROVAL_MARKER)
         for r in reviews
     )
     if not already:
-        comment(api, number, "<!-- pr-autopilot:approval -->\n" + audit)
+        comment(api, number, APPROVAL_MARKER + "\n" + audit)
         # The audit writes and duplicate-approval lookup can race a new hold or
         # change request. Refresh every gate after them, immediately before APPROVE.
         validate_live(api, policy, settings, context)
@@ -1055,7 +1338,7 @@ def merge(api, policy, settings, context):
             {
                 "event": "APPROVE",
                 "commit_id": context["head"],
-                "body": "<!-- pr-autopilot:approval -->\n" + audit,
+                "body": APPROVAL_MARKER + "\n" + audit,
             },
         )
     summary(audit)
@@ -1163,18 +1446,18 @@ def main():
             require_initial_attempt()
             context = json.loads(os.environ["PR_CONTEXT"])
             if args.command == "publish":
-                # Exit 0 only for a passing verdict: the step's success is the
-                # durable record later runs check (VERDICT_STEP).
+                # Exit 0 whenever the verdict was published, whatever it was: the
+                # marker step for the emitted outcome records it (OUTCOME_STEPS).
                 if "check_id" not in context:
                     raise PolicyError("no review reservation to publish")
-                passed = publish_verdict(
+                publish_verdict(
                     api,
                     policy,
                     context,
                     os.environ.get("AI_VERDICT", ""),
                     os.environ.get("AI_JOB_RESULT", ""),
                 )
-                return 0 if passed else 1
+                return 0
             merge(api, policy, settings, context)
         return 0
     except (PolicyError, ValueError, KeyError, TypeError, OSError) as exc:
