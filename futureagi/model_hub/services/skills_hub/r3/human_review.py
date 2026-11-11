@@ -172,13 +172,32 @@ def _validate_citation(
             )
         return
     if isinstance(record, HubSkillNativeEvidence):
-        # Native attempts are owned by Simulation. Do not infer IDs or quotations
-        # from task messages or the ordinary Simulation relative-score response.
-        raise SkillsHubError(
-            "runtime_incompatible",
-            "Native attempt annotations require the qualified native result reader.",
-            status=422,
+        # Native cells are Simulation receipts. The qualified reader returns the
+        # stored observation; check identities there are family names, not UUIDs.
+        from model_hub.services.skills_hub.r3.native_runs import (
+            native_attempt_observation,
         )
+
+        if check_id is not None:
+            raise SkillsHubError(
+                "invalid_annotation",
+                "Annotate a native cell as a whole; its checks are not separate rows.",
+                status=400,
+            )
+        observed = native_attempt_observation(
+            principal=None, evidence=record, attempt_id=attempt_id
+        )
+        if observed is None:
+            raise SkillsHubError("resource_not_found", "Attempt not found.", status=404)
+        summary = observed.get("summary") or {}
+        texts = [str(summary.get("answer") or "")]
+        if cited_text and not any(cited_text in text for text in texts):
+            raise SkillsHubError(
+                "invalid_annotation",
+                "Cite an exact excerpt from this attempt.",
+                status=400,
+            )
+        return
     attempt = record.hub_skill_attempts.filter(pk=attempt_id).first()
     if attempt is None:
         raise SkillsHubError("resource_not_found", "Attempt not found.", status=404)

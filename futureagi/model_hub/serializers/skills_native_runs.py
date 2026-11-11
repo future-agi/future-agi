@@ -37,12 +37,17 @@ class NativePlanInput(ContextSerializer):
     binding_id = s.UUIDField()
     binding_revision = Integer(min_value=1)
     candidate_version = Integer(min_value=1)
-    baselines = s.DictField(child=Integer(min_value=1), min_length=1, max_length=2)
+    baselines = s.DictField(child=Integer(min_value=1))
     case_ids = s.ListField(child=s.UUIDField(), min_length=1, max_length=20)
     repetitions = s.ChoiceField(choices=[1, 3])
     historical_case_ids = s.ListField(
         child=s.UUIDField(), max_length=20, required=False, default=list
     )
+
+    def validate_baselines(self, value):
+        if not 1 <= len(value) <= 2 or set(value) - {"reference", "production"}:
+            raise s.ValidationError("Choose one or two baseline arms.")
+        return value
 
 
 class NativeRunInput(NativePlanInput):

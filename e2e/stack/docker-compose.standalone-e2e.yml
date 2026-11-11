@@ -28,6 +28,16 @@ services:
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # J2: hosted native verification runs on the internal-only container runtime
+      # below. Evidence from it is a synthetic fixture, never E2B qualification.
+      SKILLS_NATIVE_RUNTIME_URL: http://native-runtime:8090
+      SKILLS_NATIVE_CALLBACK_URL: http://app:8000
+      SKILLS_NATIVE_RUNTIME_TOKEN: e2e-native-runtime-launch-token-0001
+      SKILLS_NATIVE_RUNTIME_NAME: ctxhub-container-runtime
+      SKILLS_NATIVE_EVIDENCE_CLASS: synthetic fixture
+    networks:
+      - default
+      - native-net
     volumes:
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
       - ./e2e/stack/backend/e2e_skills_transport.py:/app/backend/tfc/e2e_skills_transport.py:ro
@@ -48,6 +58,9 @@ services:
       - "127.0.0.1:${CH_PORT:-29000}:9000"
     restart: "no"
   skills-fakes:
+    networks:
+      - default
+      - native-net
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
     volumes:
@@ -62,3 +75,37 @@ services:
       # Paths resolve against the project directory (repo root).
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
     restart: "no"
+  # J2 native container runtime. No route outside native-net (internal), read-only
+  # root/source/context mounts, separate writable state, context-only credentials.
+  native-runtime:
+    build:
+      context: ./e2e/stack/native-runtime
+      args:
+        CTXHUB_APP_COMMIT: ${CTXHUB_APP_COMMIT:-}
+    image: futureagi/native-runtime:e2esa
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      CTXHUB_RUNTIME_TOKEN: e2e-native-runtime-launch-token-0001
+      CTXHUB_PROVIDER_KEY: e2e-skills-native-runtime-fixture
+      CTXHUB_PROVIDER_URL: http://skills-fakes:8080/v1
+      CTXHUB_MODEL: gpt-4o-mini
+      CTXHUB_BUSINESS_DB: /fi_business/business.sqlite
+    volumes:
+      - ./e2e/fixtures/skills-r3/support-application:/fi_app:ro
+      - native-context:/fi_context:ro
+    tmpfs:
+      - /fi_state:uid=10001,gid=10001,mode=0700
+      - /fi_output:uid=10001,gid=10001,mode=0700
+      - /fi_business:uid=10001,gid=10001,mode=0700
+      - /tmp:uid=10001,gid=10001,mode=1777
+    networks:
+      - native-net
+    restart: "no"
+networks:
+  native-net:
+    internal: true
+volumes:
+  native-context: {}

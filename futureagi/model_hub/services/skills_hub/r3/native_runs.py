@@ -774,6 +774,10 @@ def _dispatch(job_id: UUID, attempt_id: UUID, launch: dict) -> None:
         response = requests.post(
             f"{runtime_url()}/launch",
             json=launch,
+            headers={
+                "Authorization": "Bearer "
+                + str(getattr(settings, "SKILLS_NATIVE_RUNTIME_TOKEN", "") or "")
+            },
             timeout=(5, 15),
             allow_redirects=False,
         )
@@ -1306,7 +1310,7 @@ def get_native_run(
 
 
 def native_attempt_observation(
-    *, principal: SkillPrincipal, evidence: HubSkillNativeEvidence, attempt_id: UUID
+    *, principal: SkillPrincipal | None, evidence: HubSkillNativeEvidence, attempt_id: UUID
 ) -> dict | None:
     """Qualified reader for annotation validation: one stored cell result."""
     row = HostedHarnessReceipt.no_workspace_objects.filter(

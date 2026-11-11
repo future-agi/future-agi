@@ -32,7 +32,7 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm skills-fakes)
+  SERVICES=(app postgres clickhouse mock-llm skills-fakes native-runtime)
 fi
 
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"

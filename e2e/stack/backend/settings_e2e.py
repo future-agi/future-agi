@@ -24,6 +24,17 @@ if os.environ.get("E2E_SKILLS_FIXTURES") == "1":
     # This is not qualification of a production SDK, runtime or application.
     SKILLS_CONTEXT_CONSUMPTION_ENABLED = True
 
+    # J2: the hosted native container runtime (synthetic fixture evidence class).
+    for _name in (
+        "SKILLS_NATIVE_RUNTIME_URL",
+        "SKILLS_NATIVE_CALLBACK_URL",
+        "SKILLS_NATIVE_RUNTIME_TOKEN",
+        "SKILLS_NATIVE_RUNTIME_NAME",
+        "SKILLS_NATIVE_EVIDENCE_CLASS",
+    ):
+        if os.environ.get(_name):
+            globals()[_name] = os.environ[_name]
+
 # The managed mock stack has no EE license. This test-image-only registry
 # replacement keeps the product capability decision and image untouched.
 FEATURE_REGISTRY["error_feed"] = replace(
