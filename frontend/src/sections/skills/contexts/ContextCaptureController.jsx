@@ -16,7 +16,7 @@ import { contextSkillChoices } from './context-skill-choices';
 // never transcribing identities. The source stays immutable across redaction.
 // Hierarchy/palette/depth: shared neutral review dialog, identity before text.
 // Surfaces/type/spacing: paper, m3/s1/s3 and the existing 12px control rhythm.
-function CaptureSource({ contextId, traceRef, onClose, canCapture }) {
+function CaptureSource({ contextId, traceRef, onClose, canCapture, onChangeContext }) {
   const access = useSkillV11Scope();
   const navigate = useNavigate();
   const source = useContextCaptureSource(contextId, traceRef);
@@ -37,20 +37,23 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture }) {
   // current head, and nothing is run until the reviewer accepts the paid ceiling there.
   const renderSaved = ({ caseId, preview: reviewed }) => {
     const recorded = versions.data?.results.find((version) => version.id === reviewed.recordedContext?.versionId)?.number;
+    // Only say the recorded context is unavailable when the capture itself recorded none; a version list that is
+    // still loading or paged away must not read as a missing recording.
+    const unrecorded = !reviewed.recordedContext;
     const params = new URLSearchParams({ tab: 'tests', reproduce: caseId, ...(latest ? { version: String(latest) } : {}), ...(recorded ? { reference: String(recorded) } : {}) });
     return <Stack spacing={1}>
-      {!recorded && <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert>}
+      {unrecorded && <Alert severity="warning">The exact recorded context is unavailable, so this example is a diagnostic text case, not a historical reproduction.</Alert>}
       <Button variant="contained" onClick={() => navigate(`${paths.dashboard.skills.contextDetail(contextId)}?${params}`)}>Reproduce on the application</Button>
     </Stack>;
   };
   return <ContextCaptureDialog open onClose={onClose} scopeKey={`${access.identity}:${contextId}`}
     state={source.isLoading || suite.isLoading ? 'loading' : source.data && suite.data ? 'ready' : 'unavailable'}
     source={source.data} suiteRevision={suite.data?.revision} canCapture={canCapture}
-    applicationBehavior={skills.length ? { skills } : undefined} renderSaved={renderSaved}
+    applicationBehavior={skills.length ? { skills } : undefined} renderSaved={renderSaved} onChangeContext={onChangeContext}
     onPreview={(input) => preview.mutateAsync(input)}
     onAccept={(input, options) => accept.mutateAsync({ ...input, ...options })} />;
 }
-CaptureSource.propTypes = { contextId: PropTypes.string.isRequired, traceRef: PropTypes.object.isRequired, onClose: PropTypes.func.isRequired, canCapture: PropTypes.bool.isRequired };
+CaptureSource.propTypes = { contextId: PropTypes.string.isRequired, traceRef: PropTypes.object.isRequired, onClose: PropTypes.func.isRequired, canCapture: PropTypes.bool.isRequired, onChangeContext: PropTypes.func };
 export default function ContextCaptureController(props) {
   const access = useSkillV11Scope();
   const { traceRef } = props;

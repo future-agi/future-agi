@@ -30,6 +30,7 @@ function Capture({
   canCapture,
   applicationBehavior,
   renderSaved,
+  onChangeContext,
 }) {
   const operation = useReviewedOperation();
   const segments = source.segments.filter((item) =>
@@ -76,8 +77,9 @@ function Capture({
           ) : (
             <>
               <Alert severity="info">
-                Select only relevant request and tool-result text. The next step
-                is private redaction and expectation review. This does not run a
+                Every supported request and tool-result segment is selected;
+                deselect anything irrelevant. The next step is private
+                redaction and expectation review. This does not run a
                 model or copy hidden reasoning.
               </Alert>
               <IdentityValue
@@ -126,6 +128,11 @@ function Capture({
         </Stack>
       </DialogContent>
       <DialogActions>
+        {onChangeContext && (
+          <Button disabled={operation.busy} onClick={onChangeContext}>
+            Change context
+          </Button>
+        )}
         <Button disabled={operation.busy} onClick={onClose}>
           Cancel
         </Button>
@@ -163,6 +170,7 @@ Capture.propTypes = {
   canCapture: PropTypes.bool,
   applicationBehavior: PropTypes.object,
   renderSaved: PropTypes.func,
+  onChangeContext: PropTypes.func,
 };
 export default function ContextCaptureDialog({
   open,

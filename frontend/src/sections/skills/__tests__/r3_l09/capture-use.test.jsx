@@ -116,6 +116,23 @@ describe("reviewed source capture", () => {
       }),
     ).toHaveValue("");
   });
+  it("offers leaving the delivered context for another one without losing the span", () => {
+    const change = vi.fn();
+    render(
+      <ContextCaptureDialog
+        open
+        onClose={() => {}}
+        scopeKey="scope"
+        state="ready"
+        source={source}
+        canCapture
+        onPreview={vi.fn()}
+        onChangeContext={change}
+      />,
+    );
+    click("Change context");
+    expect(change).toHaveBeenCalledOnce();
+  });
   it("does not offer capture for a shared read-only trace", () => {
     render(
       <ContextCaptureDialog

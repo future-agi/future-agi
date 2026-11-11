@@ -22,7 +22,7 @@ vi.mock('src/api/skills/context-native', () => ({
 }));
 vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
-vi.mock('./ContextCaptureController', () => ({ default: (props) => { state.capture(props); return <div>Source review</div>; } }));
+vi.mock('./ContextCaptureController', () => ({ default: (props) => { state.capture(props); return <button type="button" onClick={props.onChangeContext}>Change context</button>; } }));
 const projectId = '10000000-0000-4000-8000-000000000001';
 const span = { trace: 'trace', id: 'span', start_time: '2026-11-10T00:00:00.123456Z' };
 const ref = { projectId, traceId: span.trace, spanId: span.id, startTime: span.start_time };
@@ -50,6 +50,13 @@ it('opens the review directly in the context the span was delivered from, keepin
   fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
   expect(state.capture).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context', traceRef: ref, canCapture: true }));
   expect(screen.queryByLabelText('Regression context')).not.toBeInTheDocument();
+});
+it('lets the reviewer leave the delivered context for another one', () => {
+  render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Change context' }));
+  expect(screen.getByLabelText('Regression context')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
 });
 it('falls back to choosing a context when the delivered context cannot be captured into', () => {
   state.canPublish = false;

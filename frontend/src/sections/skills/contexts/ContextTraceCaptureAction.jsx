@@ -19,13 +19,16 @@ function ChooseContext({ traceRef, contextHint, onClose }) {
   // authorizes capture into it, and the reviewer can change it before reviewing the span.
   const [contextId, setContextId] = useState(contextHint || '');
   const [review, setReview] = useState(false);
+  // The reviewer can always leave the delivered context for another one; the hint is only a default.
+  const [declined, setDeclined] = useState(false);
   const contexts = useContexts({ page, pageSize: 25 });
   const detail = useContextDetail(contextId);
   const canCapture = !detail.isError && !detail.isFetching && detail.data?.releaseState.permissions.canPublish === true;
-  const hinted = Boolean(contextHint) && contextId === contextHint;
+  const hinted = Boolean(contextHint) && contextId === contextHint && !declined;
   const resolving = hinted && (detail.isLoading || detail.isFetching);
   useEffect(() => { if (hinted && canCapture) setReview(true); }, [hinted, canCapture]);
-  if (review) return <ContextCaptureController contextId={contextId} traceRef={traceRef} canCapture={canCapture} onClose={onClose} />;
+  if (review) return <ContextCaptureController contextId={contextId} traceRef={traceRef} canCapture={canCapture} onClose={onClose}
+    onChangeContext={() => { setDeclined(true); setReview(false); setContextId(''); }} />;
   return <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="context-capture-destination">
     <DialogTitle id="context-capture-destination">Choose a regression context</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>
