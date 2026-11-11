@@ -411,7 +411,10 @@ which is unchanged: those three fields were unknown to it and rejected.
 | `audio`, `resolution`, `aspect_ratio` | Gateway extensions (SDKs pass them via `extra_body`). A `size` that conflicts with `resolution` or `aspect_ratio` is refused. |
 
 Every field may appear once (a repeated multipart part or JSON key is 400
-`invalid_parameter`); unknown fields are rejected as in the native contract. `Idempotency-Key` is still required (SDKs pass it via
+`invalid_parameter`); unknown fields are rejected as in the native contract.
+In the JSON form an explicit `null` is never a value: any field set to `null`
+is 400 `invalid_parameter`. Omit a field to get the model default (for
+example, `audio` omitted keeps the model's default audio setting). `Idempotency-Key` is still required (SDKs pass it via
 `extra_headers`).
 
 Responses use one dialect per request, never a mix:

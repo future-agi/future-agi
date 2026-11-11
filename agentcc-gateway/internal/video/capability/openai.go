@@ -72,6 +72,12 @@ func DecodeOpenAIJSON(body []byte) (OpenAICreate, error) {
 		if !openAIFields[k] {
 			return c, invalid("unknown_field", k, "unknown field")
 		}
+		// Unmarshalling null into a bool or string is a silent no-op, so an
+		// explicit null would read as false or "" (audio off, default size).
+		// Omit a field to get its default; null is never a value here.
+		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return c, invalid("invalid_parameter", k, "null is not allowed; omit the field to use the default")
+		}
 		if k == "input_reference" {
 			// encoding/json matches struct field names case-insensitively. Check
 			// exact keys first so aliases cannot override a validated image URL.
