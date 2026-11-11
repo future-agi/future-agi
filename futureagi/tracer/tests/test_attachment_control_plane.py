@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from tfc.temporal.schedules.attachments import ATTACHMENT_SCHEDULES
 from tracer.models.attachment import (
+    Attachment,
     AttachmentAuditEvent,
     AttachmentOccurrence,
     AttachmentOutbox,
@@ -434,3 +435,19 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
             row.client_id,
             occurrences.Parent(row.trace_id, row.span_id),
         )
+
+
+def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    spans.put(scope.project_id, span_for(row))
+    for state in ("deleted", "expired"):
+        Attachment.objects.filter(pk=row.attachment_id).update(state=state)
+        assert control_plane.reconcile_tick(span_reader=spans) == dict.fromkeys(
+            ("bound", "pending", "rejected", "expired", "conflict"), 0
+        )
+    assert spans.calls == []
+    # Positive control: the same row binds once its bytes are live again.
+    Attachment.objects.filter(pk=row.attachment_id).update(state="ready")
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1

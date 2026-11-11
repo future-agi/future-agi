@@ -23,7 +23,11 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from tracer.models.attachment import AttachmentOccurrence, AttachmentScope
+from tracer.models.attachment import (
+    AttachmentOccurrence,
+    AttachmentScope,
+    AttachmentState,
+)
 from tracer.models.project import Project
 from tracer.services.attachments import manifests, occurrences, principal, retention
 from tracer.services.attachments.authority import (
@@ -123,6 +127,11 @@ class OccurrenceBindingStore:
                 bound_at__isnull=True,
                 deleted_at__isnull=True,
                 scope__enabled=True,
+            )
+            # Aborted or erased bytes have nothing left to bind. Failed and
+            # rejected uploads still bind, so readers can show that state.
+            .exclude(
+                attachment__state__in=(AttachmentState.DELETED, AttachmentState.EXPIRED)
             )
             .order_by("created_at", "id")
         )
