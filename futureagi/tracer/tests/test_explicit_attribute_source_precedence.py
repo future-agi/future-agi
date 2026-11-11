@@ -7,6 +7,7 @@ Native/omitted-family controls deliberately retain the legacy alias contract.
 import json
 import socket
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -24,6 +25,12 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     partition_trace_filter_plans,
     targets_span_filter_domain,
     targets_trace_filter_domain,
+)
+from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.clickhouse.v2.effective_tags import (
+    TAG_RELATION_TYPE,
+    EffectiveTagRelation,
+    prepare_effective_tag_params,
 )
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -335,16 +342,69 @@ def test_native_trace_tags_uses_latest_trace_dimension_not_raw_span_map(
         project_id=PROJECT, candidate_ids_param="candidate_trace_ids"
     )
     sql, params = builder.translate([item])
-    assert "FROM traces" in sql
-    assert "argMax(" in sql and "_version" in sql
-    assert "is_deleted" in sql
-    assert "%(candidate_trace_ids)s" in sql
-    assert "%(project_id)s" in sql
+    assert_effective_tag_source(sql, params)
+    assert "toString(root_span_id)" in sql
+    assert "_root_start_hour" in sql and "_root_service_name" in sql
+    assert ("NOT IN (" in sql) == (operation in {"not_contains", "is_null"})
+    if operation in {"is_null", "is_not_null"}:
+        assert "notEmpty(tag_row.8)" in sql
+    else:
+        assert "hasAny(tag_row.8," in sql
+        assert ["synthetic-tag"] in params.values()
     assert "span_attr" not in sql and "attrs_" not in sql
     assert " FINAL" not in sql
     assert "LIMIT" not in sql
     plans, residual = partition_trace_filter_plans([item])
     assert not plans and residual == [item]
+
+
+def assert_effective_tag_source(sql, params, *, count=1):
+    """The residual binds only the candidate scope, after coherent live replay.
+
+    Native tags intentionally no longer read just curated traces: UI-only and
+    SDK tags share a bounded relation. Pin the relation's source SQL as well as
+    its compiler placeholder, so this is not merely a new string expectation.
+    """
+    pending = {k: v for k, v in params.items() if isinstance(v, EffectiveTagRelation)}
+    assert len(pending) == count
+    assert all(value.project_ids == (PROJECT,) for value in pending.values())
+    assert all(f"%({key})s" in sql for key in pending)
+    assert sql.count(TAG_RELATION_TYPE) == count
+    calls = []
+
+    def execute(query, bound, **kwargs):
+        calls.append((query, bound, kwargs))
+        return SimpleNamespace(data=[])
+
+    prepared = prepare_effective_tag_params(
+        execute,
+        {**_CALLER_SCOPE, **params, "candidate_trace_ids": ("candidate",)},
+        deadline=ReadDeadline.start(10000),
+    )
+    assert all(prepared[key] == [] for key in pending)
+    # Duplicate leaves share one source read without sharing their predicate.
+    assert len(calls) == 1
+    source, bound, kwargs = calls[0]
+    assert bound["tag_projects"] == (PROJECT,)
+    assert bound["tag_trace_ids"] == ("candidate",)
+    assert "PREWHERE project_id IN %(tag_projects)s" in source
+    assert "AND trace_id IN %(tag_trace_ids)s" in source
+    assert "start_time >= %(tag_hour_start)s" in source
+    assert "start_time < %(tag_hour_end)s" in source
+    assert "argMax(tuple(start_time, parent_span_id, is_deleted, tags," in source
+    assert "HAVING winner.3 = 0" in source
+    assert "AND selected_start_time >= %(tag_start)s" in source
+    assert "AND selected_start_time < %(tag_end)s" in source
+    assert "GROUP BY project_id, observation_type, service_name," in source
+    assert "toStartOfHour(start_time), trace_id, id" in source
+    assert "argMax(tuple(tags, is_deleted), _version) AS legacy" in source
+    assert (
+        "AND (project_id, toString(id)) IN (SELECT project_id, trace_id FROM tag_live)"
+        in source
+    )
+    assert "LIMIT %(tag_row_limit)s" in source
+    assert kwargs["server_execution_cap_ms"] > 0
+    assert kwargs["settings"]["result_overflow_mode"] == "throw"
 
 
 def test_raw_tags_array_is_not_native_trace_tags():
@@ -384,19 +444,33 @@ def test_native_trace_tags_preserves_tenant_identity_and_tombstone_replay(
             ]
         )
     )
-    assert f"FROM {table}" in sql
-    assert f"argMax(tuple(tags, {deleted})," in sql
-    assert version in sql
-    assert "latest_native_trace_tags.2 = 0" in sql
-    assert "NOT IN (" in sql and "arrayExists" in sql
-    assert "NOT (toString(JSONType(latest_native_trace_tags.1)) = 'Array') OR" in sql
+    if builder_cls is ClickHouseFilterBuilderV2:
+        assert_effective_tag_source(sql, params)
+        assert "NOT IN (" in sql and "hasAny(tag_row.8," in sql
+        assert ["obsolete-tag"] in params.values()
+        assert "toString(root_span_id)" in sql
+        assert "_root_start_hour" in sql and "_root_service_name" in sql
+        assert ("tuple(toString(project_id)," in sql) == org_scope
+        assert ("SELECT tuple(tag_row.1," in sql) == org_scope
+        assert "JSONExtract" not in sql
+    else:
+        assert f"FROM {table}" in sql
+        assert f"argMax(tuple(tags, {deleted})," in sql
+        assert version in sql
+        assert "latest_native_trace_tags.2 = 0" in sql
+        assert "NOT IN (" in sql and "arrayExists" in sql
+        assert (
+            "NOT (toString(JSONType(latest_native_trace_tags.1)) = 'Array') OR" in sql
+        )
+        assert "start_date" not in sql and "end_date" not in sql
+        assert "FINAL" not in sql and "LIMIT" not in sql
+        before_group = sql.split("GROUP BY project_id, id")[0]
+        assert "tags =" not in before_group and "JSONExtract" not in before_group
+        assert ("(project_id, toString(trace_id)) NOT IN" in sql) == org_scope
+        assert ("%(project_ids)s" in sql) == org_scope
+        assert ("%(project_id)s" in sql) != org_scope
     assert "start_date" not in sql and "end_date" not in sql
     assert "FINAL" not in sql and "LIMIT" not in sql
-    before_group = sql.split("GROUP BY project_id, id")[0]
-    assert "tags =" not in before_group and "JSONExtract" not in before_group
-    assert ("(project_id, toString(trace_id)) NOT IN" in sql) == org_scope
-    assert ("%(project_ids)s" in sql) == org_scope
-    assert ("%(project_id)s" in sql) != org_scope
 
 
 def test_multiple_native_tags_and_raw_tag_bind_independently():
@@ -412,28 +486,38 @@ def test_multiple_native_tags_and_raw_tag_bind_independently():
         project_id=PROJECT,
         observe_type="span",
     )
-    assert ("first-tag",) in params.values()
-    assert ("second-tag",) in params.values()
+    assert ["first-tag"] in params.values()
+    assert ["second-tag"] in params.values()
     assert ("raw-array-tag",) in params.values()
     assert "raw-singular-tag" in params.values()
-    assert sql.count("FROM traces") == 2
+    assert_effective_tag_source(sql, params, count=2)
+    assert sql.count("hasAny(tag_row.8,") == 2
     assert "attrs_string" in sql and "attributes_extra" in sql
-    # The raw singular key is bound, not inlined.
-    assert params["attr_key_3"] == "tag"
+    # The raw singular key is bound, not inlined; native leaves consume their
+    # own relation/name parameters, so suffix numbering is no longer fixed.
+    keys = [key for key, value in params.items() if value == "tag"]
+    assert len(keys) == 1
+    assert f"%({keys[0]})s" in sql
     assert "'tag'" not in sql
-    assert "'tag'" in rendered(sql, params)
+    bound = {
+        key: [] if isinstance(value, EffectiveTagRelation) else value
+        for key, value in params.items()
+    }
+    assert "'tag'" in rendered(sql, bound)
 
 
 @pytest.mark.parametrize("operation", ["is_null", "is_not_null"])
 def test_native_tags_empty_array_is_null_but_raw_empty_array_is_present(operation):
-    sql, _ = ClickHouseFilterBuilderV2(project_id=PROJECT).translate(
+    sql, params = ClickHouseFilterBuilderV2(project_id=PROJECT).translate(
         public(
             [
                 leaf("tags", "array", operation, None, "SYSTEM_METRIC"),
             ]
         )
     )
-    assert "notEmpty(JSONExtractArrayRaw(latest_native_trace_tags.1))" in sql
+    assert_effective_tag_source(sql, params)
+    assert "notEmpty(tag_row.8)" in sql
+    assert "tag_row.7 = 1" in sql
     assert ("NOT IN (" in sql) == (operation == "is_null")
     plans = compile_span_filter_plans(public([leaf("tags", "array", operation, None)]))
     assert "notEmpty" not in " ".join(plans[0].aggregates)
@@ -461,8 +545,10 @@ def test_tags_identity_classifier_keeps_root_window_and_finite_residual_scope():
             {"trace_id": "00000000-0000-4000-8000-000000000003"},
         ]
     )
-    assert "FROM traces" in sql
-    assert "toString(id) IN %(candidate_trace_ids)s" in sql
+    assert_effective_tag_source(sql, params)
+    assert params["candidate_trace_ids"] == ("00000000-0000-4000-8000-000000000003",)
+    assert "toString(root_span_id)" in sql
+    assert "_root_start_hour" in sql and "_root_observation_type" in sql
     assert "(project_id, toString(trace_id)) IN" not in sql
     assert_coherent_classifier(sql)
     assert "_physical_winner.3 AS latest_is_deleted" in sql
