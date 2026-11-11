@@ -9,6 +9,7 @@ import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
 import ContextCaptureController from './ContextCaptureController';
+import ContextTargetRegistration from './ContextTargetRegistration';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -52,7 +53,7 @@ function Detail() {
       onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
       sections={{
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
-        consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
+        consumers: <Stack spacing={1.5}><ContextTargetRegistration contextId={contextId} canRegister={!query.isError && query.data?.releaseState.permissions.canPublish === true} /><ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} /></Stack>,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
       }} />
     <ContextCaptureController contextId={contextId} canCapture={!query.isError && query.data?.releaseState.permissions.canPublish === true} />

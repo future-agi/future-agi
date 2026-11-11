@@ -125,6 +125,8 @@ function PacketActions({
   onDecide,
   onExecute,
   onRefresh,
+  onRenew,
+  staleCode,
   receipt,
   currentEvidence,
   currentTarget,
@@ -211,11 +213,34 @@ function PacketActions({
           inspecting the changes.
         </Alert>
       )}
-      {onRefresh && (
-        <Button variant="outlined" disabled={locked} onClick={onRefresh}>
-          Inspect a new review
-        </Button>
+      {staleCode && !closed && (
+        <Alert severity="warning">
+          The server reports this packet stale ({staleCode}). Previous
+          approvals cannot release it.
+        </Alert>
       )}
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+        {onRefresh && (
+          <Button variant="outlined" disabled={locked} onClick={onRefresh}>
+            Inspect a new review
+          </Button>
+        )}
+        {/* J4: an assigned reviewer renews explicitly after a race; the next
+            revision starts pending and needs a new decision. */}
+        {onRenew &&
+          request &&
+          permissions.canDecide &&
+          !closed &&
+          (!current || operation.error) && (
+            <Button
+              variant="outlined"
+              disabled={operation.busy || operation.uncertain}
+              onClick={onRenew}
+            >
+              Renew review
+            </Button>
+          )}
+      </Stack>
       {!closed && (
         <Section title={request ? "Review decision" : "Request review"}>
           <Stack spacing={1.5}>
@@ -385,6 +410,8 @@ PacketActions.propTypes = {
   onDecide: PropTypes.func,
   onExecute: PropTypes.func,
   onRefresh: PropTypes.func,
+  onRenew: PropTypes.func,
+  staleCode: PropTypes.string,
   receipt: PropTypes.object,
   currentEvidence: PropTypes.array,
   currentTarget: PropTypes.object,

@@ -73,6 +73,31 @@ export async function loadReleaseInspection(packet, fingerprint, config) {
     targetConfiguration: value.target_configuration };
 }
 
+// --- J4: explicit reviewer renewal -----------------------------------------
+// These server codes mean the reviewed packet no longer matches current state.
+// They never refresh preconditions; they only expose explicit renewal.
+export const STALE_REVIEW_CODES = Object.freeze(['release_conflict', 'impact_changed', 'target_configuration_changed', 'target_retired', 'annotation_conflict', 'evidence_expired', 'evidence_share_required', 'review_stale']);
+export const isStaleReview = (error) => [403, 409, 410].includes(operationStatus(error)) && STALE_REVIEW_CODES.includes(error?.code);
+const renewalPath = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/renewal/', { request_id });
+export const mapRenewal = (value) => ({
+  requestId: value.request_id, revision: value.revision, status: value.status, subjectId: value.subject_id,
+  previousFingerprint: value.previous_fingerprint, fingerprint: value.fingerprint, packet: mapReleasePacket(value.packet),
+  changes: value.changes.map((row) => ({ item: row.item, before: row.before, after: row.after })),
+  removedEvidence: value.removed_evidence.map((row) => ({ source: row.source, sourceId: row.source_id, reason: row.reason })),
+});
+export async function loadRenewal(requestId, config) {
+  return mapRenewal(skillV11Result(await axios.get(renewalPath(requestId), config)));
+}
+export function useRenewalPreview(requestId, enabled) {
+  return useSkillV11Query({ parts: ['release-renewal', requestId], enabled: Boolean(requestId) && enabled && getContractedApiMethods('/model-hub/skills/release-requests/{request_id}/renewal/').includes('get'), load: (config) => loadRenewal(requestId, config) });
+}
+export function useRenewReleaseRequest() {
+  return useSkillV11Mutation({ send: async ({ requestId, revision, expectedFingerprint, idempotencyKey }, config) => {
+    const value = skillV11Result(await axios.post(renewalPath(requestId), { revision, expected_fingerprint: expectedFingerprint }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } }));
+    return { id: value.id, revision: value.revision, status: value.status, renewedBy: value.renewed_by, fromRevision: value.from_revision };
+  }, invalidate: () => [['release-request'], ['release-renewal'], ['review-inbox']] });
+}
+
 export async function loadReleaseRequest(requestId, contextId, config) {
     let raw;
     try {
@@ -83,6 +108,15 @@ export async function loadReleaseRequest(requestId, contextId, config) {
       // A context-scoped route must still validate its subject; never bypass it.
       const status = operationStatus(error);
       const unavailableEvidence = [404, 410].includes(status) || (status === 403 && error.code === 'evidence_share_required');
+      if (unavailableEvidence && status !== 404) {
+        // An assigned reviewer can still inspect what changed and renew
+        // explicitly. The renewal endpoint authorizes only that reviewer.
+        let renewal = null;
+        try { renewal = await loadRenewal(requestId, config); } catch { renewal = null; }
+        if (renewal && (!contextId || renewal.subjectId === contextId)) {
+          return { request: { id: requestId, revision: renewal.revision, status: renewal.status, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, renewalRequired: error.code || 'evidence_expired', canExecute: false };
+        }
+      }
       if (contextId || !unavailableEvidence) throw error;
       const retained = skillV11Result(await axios.get(apiPath('/model-hub/skills/release-requests/{request_id}/receipt/', { request_id: requestId }), config));
       if (retained.request_id !== requestId) throw new Error('The release receipt does not match this request.');
@@ -101,17 +135,31 @@ export async function loadReleaseRequest(requestId, contextId, config) {
     const inspected = packet.subject_kind === 'agent_context'
       ? await loadContextReview(raw.subject_id, null, config, { operation: 'move', target_version: packet.transition.version, label: packet.transition.label })
       : packet.subject_kind === 'skill' ? await loadSkillReview(raw.subject_id, packet, config) : null;
-    const inspection = await loadReleaseInspection(packet, raw.fingerprint, config);
+    // A race makes the reviewed packet stale. Keep the retained packet visible,
+    // mark it not current and expose explicit renewal; never re-derive it here.
+    let staleCode = null;
+    let inspection;
+    try { inspection = await loadReleaseInspection(packet, raw.fingerprint, config); } catch (error) {
+      if (!isStaleReview(error)) throw error;
+      staleCode = error.code;
+      inspection = { capabilities: null, summaries: [], targetConfiguration: null };
+    }
     // Revalidate after all comparison reads, not before potentially slow pages.
-    const current = skillV11Result(await axios.post(preview(), { resource_id: raw.subject_id, kind: packet.subject_kind, candidate_version_id: packet.candidate_version_id, label: packet.transition.label, target: packet.target, evidence: packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })), external_pipeline: packet.external_pipeline }, config));
+    let current = null;
+    try {
+      current = skillV11Result(await axios.post(preview(), { resource_id: raw.subject_id, kind: packet.subject_kind, candidate_version_id: packet.candidate_version_id, label: packet.transition.label, target: packet.target, evidence: packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })), external_pipeline: packet.external_pipeline }, config));
+    } catch (error) {
+      if (!isStaleReview(error)) throw error;
+      staleCode = staleCode || error.code;
+    }
     const release = inspected?.releaseState;
     const label = release?.labels.find((item) => item.name === packet.transition.label);
     const canExecute = label ? label.canMove === true : release?.protectedLabelNames?.includes(packet.transition.label) ? release.permissions.canManageProtection === true : release?.permissions.canPromote === true;
     return {
       request: mapRequest({ ...raw, subject_kind: packet.subject_kind }),
-      preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current.fingerprint === raw.fingerprint) },
-      review: inspected ? { ...inspection, complete: inspected.complete, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
-      canExecute,
+      preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(!staleCode && inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current?.fingerprint === raw.fingerprint) },
+      review: inspected ? { ...inspection, complete: inspected.complete && !staleCode, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
+      canExecute, staleCode,
     };
 }
 export function useReleaseRequest(requestId, contextId) {

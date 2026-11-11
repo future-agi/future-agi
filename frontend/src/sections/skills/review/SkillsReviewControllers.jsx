@@ -4,10 +4,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
+import { Alert, Button, Stack } from '@mui/material';
 import { reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ReleaseRequestPanel from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
+import ReleaseRenewalDialog from './ReleaseRenewalDialog';
 
 // Intent: an assigned reviewer inspects immutable bytes, then makes an explicit
 // decision. Hierarchy: candidate/diff before action; no inferred evidence.
@@ -18,10 +20,22 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const query = useReleaseRequest(requestId, contextId);
   const decide = useDecideReleaseRequest();
   const execute = useExecuteReleaseRequest();
+  const [renewing, setRenewing] = useState(false);
   const state = viewState || (query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
-  return <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch}
-    permissions={{ canDecide: Boolean(query.data && query.data.request.authorId !== access.scope.userId), canExecute: query.data?.canExecute === true }}
-    onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })} onExecute={(input, options) => execute.mutateAsync({ ...input, ...options })} />;
+  const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }} />;
+  // Detailed evidence became unavailable: only the assigned reviewer's
+  // explicit renewal remains. Expired evidence is removed, never substituted.
+  if (state === 'ready' && query.data?.renewalRequired) return <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
+    <Alert severity="warning">Detailed evidence for revision {query.data.request.revision} is no longer available ({query.data.renewalRequired}). No approval of that revision can release it.</Alert>
+    <Stack direction="row"><Button variant="contained" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+    {renewal}
+  </Stack>;
+  return <>
+    <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
+      permissions={{ canDecide: Boolean(query.data && query.data.request.authorId !== access.scope.userId), canExecute: query.data?.canExecute === true }}
+      onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })} onExecute={(input, options) => execute.mutateAsync({ ...input, ...options })} />
+    {renewal}
+  </>;
 }
 RequestReviewController.propTypes = { scopeKey: PropTypes.string.isRequired, requestId: PropTypes.string.isRequired, contextId: PropTypes.string, viewState: PropTypes.string, View: PropTypes.elementType };
 
