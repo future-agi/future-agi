@@ -110,6 +110,21 @@ def test_ready_is_cached_even_if_database_later_fails(migration_history, monkeyp
     table.assert_not_called()
 
 
+def test_pending_is_logged_once_per_recheck(migration_history, monkeypatch):
+    logger = Mock()
+    clock = Mock(return_value=0)
+    monkeypatch.setattr(schema, "logger", logger)
+    monkeypatch.setattr(schema, "monotonic", clock)
+    checker = SchemaReadinessChecker()
+
+    assert checker.check() is SchemaState.PENDING
+    assert checker.check() is SchemaState.PENDING
+    logger.info.assert_called_once_with("startup_schema_pending", retry_after_seconds=5)
+    clock.return_value = schema.RECHECK_SECONDS
+    assert checker.check() is SchemaState.PENDING
+    assert logger.info.call_count == 2
+
+
 @pytest.mark.parametrize("initial", [SchemaState.PENDING, SchemaState.UNAVAILABLE])
 def test_rechecks_are_throttled_and_recover(migration_history, monkeypatch, initial):
     disk, table, applied = migration_history

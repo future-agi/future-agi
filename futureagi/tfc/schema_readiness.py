@@ -44,6 +44,12 @@ class SchemaReadinessChecker:
             except (DatabaseError, InterfaceError):
                 logger.warning("startup_schema_database_unavailable", exc_info=True)
                 self._state = SchemaState.UNAVAILABLE
+            if self._state is SchemaState.PENDING:
+                # At most one line per worker per recheck, so a stalled
+                # bootstrap is visible in the API's own logs.
+                logger.info(
+                    "startup_schema_pending", retry_after_seconds=RECHECK_SECONDS
+                )
             self._next_check = monotonic() + RECHECK_SECONDS
             return self._state
 

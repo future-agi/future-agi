@@ -31,7 +31,7 @@ class SchemaReadinessMiddleware:
                 headers={"Retry-After": str(RECHECK_SECONDS)},
             )
             # An expected, retryable 503: Django would otherwise log each one
-            # at ERROR (and so report it to Sentry).
+            # at ERROR. The checker logs the pending state instead.
             log_response(
                 "Service Unavailable (initializing): %s",
                 request.path,
