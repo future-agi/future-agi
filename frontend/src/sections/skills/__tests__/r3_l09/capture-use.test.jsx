@@ -94,8 +94,15 @@ describe("reviewed source capture", () => {
     );
     expect(screen.queryByText("hidden-chain")).not.toBeInTheDocument();
     expect(screen.queryByText("incorrect answer")).not.toBeInTheDocument();
-    fireEvent.click(
+    // Every supported segment starts selected; the reviewer deselects exceptions.
+    expect(
       screen.getByRole("checkbox", { name: "Request · request-1" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
     );
     click("Preview selected text");
     await waitFor(() => expect(preview).toHaveBeenCalledTimes(1));

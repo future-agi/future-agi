@@ -9,6 +9,7 @@ import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
 import ContextTestsPanel from './ContextTestsPanel';
+import { contextSkillChoices } from './context-skill-choices';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -36,6 +37,10 @@ function Detail() {
   }, [requested, number, setParams]);
   const version = useContextInspection(contextId, number);
   const file = useContextInspectionFile(contextId, number, path, version.data?.version.id, version.data?.version.digest);
+  // A hand-off from the capture review: reproduce the example just saved against its recorded version.
+  const reproduce = params.get('reproduce');
+  const reference = Number(params.get('reference'));
+  const testSeed = reproduce ? { caseId: reproduce, ...(Number.isSafeInteger(reference) && reference > 0 ? { reference } : {}) } : undefined;
   const consumers = useContextConsumers(contextId, { page: consumerPage, windowDays });
   const scopeKey = `${access.identity}:agent_context:${contextId}`;
   const scoped = (result) => ({ ...result, scopeKey });
@@ -49,9 +54,9 @@ function Detail() {
     {!query.data?.context.latestVersion && query.data && !query.data.ownDraft && <Button variant="contained" onClick={() => navigate(paths.dashboard.skills.contextEdit(contextId))}>Start unpublished draft</Button>}
     <ContextDetailView scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
-      onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
+      initialTab={params.get('tab') === 'tests' ? 'tests' : undefined} onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
       sections={{
-        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={(version.data?.descriptor?.links || []).map((link) => ({ id: link.skillId, label: (link.mount || link.skillId).replace(/^skills\//, '').replace(/\/$/, '') }))} canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} />,
+        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={query.data?.context.labels?.find((label) => label.name === 'production')?.version} seed={testSeed} canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} />,
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,

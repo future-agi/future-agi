@@ -17,18 +17,17 @@ const preserve = () => {
 };
 afterEach(cleanup);
 
-it('requires an explicit checkpoint and then starts from v4, never from latest v6', async () => {
+it('requires an explicit checkpoint and then starts from v4 once, never from latest v6', async () => {
   const props = setup();
   expect(screen.getByRole('button', { name: 'Preserve and suspend draft' })).toBeDisabled();
   expect(props.onSuspend).not.toHaveBeenCalled();
-  preserve();
-  const button = await screen.findByRole('button', { name: 'Start preserved-origin draft' });
-  expect(props.onSuspend.mock.calls[0][0]).toEqual({ revision: 12, expectedDigest: recoveryDigest, reason: 'switch' });
   expect(props.onStart).not.toHaveBeenCalled();
-  expect(screen.getByText(/Checkpoint retained-draft/)).toBeVisible();
-  fireEvent.click(button);
+  preserve();
   await waitFor(() => expect(props.onStarted).toHaveBeenCalledWith(start()));
+  expect(props.onSuspend.mock.calls[0][0]).toEqual({ revision: 12, expectedDigest: recoveryDigest, reason: 'switch' });
+  expect(props.onStart).toHaveBeenCalledOnce();
   expect(props.onStart.mock.calls[0][0]).toEqual({ revision: 0, fromVersion: 4 });
+  expect(screen.getByText(/Checkpoint retained-draft/)).toBeVisible();
 });
 
 it('retries the same suspension after a lost response without starting another draft', async () => {
@@ -38,17 +37,18 @@ it('retries the same suspension after a lost response without starting another d
   await screen.findByText(/operation could not be confirmed/);
   expect(props.onStart).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Preserve and suspend draft' }));
-  await screen.findByRole('button', { name: 'Start preserved-origin draft' });
+  await waitFor(() => expect(props.onStarted).toHaveBeenCalledOnce());
   expect(onSuspend.mock.calls[1]).toEqual(onSuspend.mock.calls[0]);
-  expect(props.onStart).not.toHaveBeenCalled();
+  expect(props.onStart).toHaveBeenCalledOnce();
 });
 
-it('retains the checkpoint after a conflicting start instead of suspending again', async () => {
-  const props = setup({ onStart: vi.fn().mockRejectedValue({ statusCode: 409, code: 'draft_conflict' }) });
+it('retains the checkpoint after a conflicting start and offers a retry instead of suspending again', async () => {
+  const props = setup({ onStart: vi.fn().mockRejectedValueOnce({ statusCode: 409, code: 'draft_conflict' }).mockResolvedValue(start()) });
   preserve();
-  fireEvent.click(await screen.findByRole('button', { name: 'Start preserved-origin draft' }));
   await screen.findByText(/reviewed state changed/);
   expect(screen.getByText(/Checkpoint retained-draft/)).toBeVisible();
-  expect(props.onSuspend).toHaveBeenCalledOnce();
   expect(props.onStarted).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Start preserved-origin draft' }));
+  await waitFor(() => expect(props.onStarted).toHaveBeenCalledWith(start()));
+  expect(props.onSuspend).toHaveBeenCalledOnce();
 });

@@ -28,12 +28,17 @@ function Capture({
   onAccept,
   suiteRevision,
   canCapture,
+  applicationBehavior,
+  renderSaved,
 }) {
-  const [selected, setSelected] = useState([]);
   const operation = useReviewedOperation();
   const segments = source.segments.filter((item) =>
     ["request", "tool_result"].includes(item.kind),
   );
+  // Every supported request and tool-result segment starts selected so the reviewer
+  // deselects exceptions instead of ticking each one; nothing is shared before the
+  // separate redaction review and explicit workspace-sharing acknowledgement.
+  const [selected, setSelected] = useState(() => segments.map((item) => item.id));
   const allowed =
     source.authorized === true && source.readOnly !== true && canCapture;
   if (operation.result && allowed)
@@ -47,6 +52,8 @@ function Capture({
         suiteRevision={suiteRevision}
         canSave={canCapture}
         onSave={onAccept}
+        applicationBehavior={applicationBehavior}
+        renderSaved={renderSaved}
       />
     );
   return (
@@ -154,6 +161,8 @@ Capture.propTypes = {
   onAccept: PropTypes.func,
   suiteRevision: PropTypes.number.isRequired,
   canCapture: PropTypes.bool,
+  applicationBehavior: PropTypes.object,
+  renderSaved: PropTypes.func,
 };
 export default function ContextCaptureDialog({
   open,

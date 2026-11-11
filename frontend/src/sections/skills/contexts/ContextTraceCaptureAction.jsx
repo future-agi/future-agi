@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Button, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField } from '@mui/material';
 import { ClosableDialog } from 'src/components/custom-dialog';
@@ -13,19 +13,25 @@ import ContextCaptureController from './ContextCaptureController';
 // Hierarchy: source notice then context choice, with one explicit review action.
 // Palette/depth/surfaces: existing neutral paper and divider dialog.
 // Typography/spacing: shared m3/s1 forms and 12px groups, no new visual language.
-function ChooseContext({ traceRef, onClose }) {
+function ChooseContext({ traceRef, contextHint, onClose }) {
   const [page, setPage] = useState(1);
-  const [contextId, setContextId] = useState('');
+  // The span names the context it was delivered from. It is only a default: the server still
+  // authorizes capture into it, and the reviewer can change it before reviewing the span.
+  const [contextId, setContextId] = useState(contextHint || '');
   const [review, setReview] = useState(false);
   const contexts = useContexts({ page, pageSize: 25 });
   const detail = useContextDetail(contextId);
   const canCapture = !detail.isError && !detail.isFetching && detail.data?.releaseState.permissions.canPublish === true;
+  const hinted = Boolean(contextHint) && contextId === contextHint;
+  const resolving = hinted && (detail.isLoading || detail.isFetching);
+  useEffect(() => { if (hinted && canCapture) setReview(true); }, [hinted, canCapture]);
   if (review) return <ContextCaptureController contextId={contextId} traceRef={traceRef} canCapture={canCapture} onClose={onClose} />;
   return <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="context-capture-destination">
     <DialogTitle id="context-capture-destination">Choose a regression context</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>
       <Alert severity="info">The selected span identity is carried automatically. Review and redact its request and tool results before sharing a case.</Alert>
-      {contexts.isLoading ? <ContentSkeleton label="Loading contexts" /> : contexts.isError ? <ErrorState title="Could not load contexts" onRetry={contexts.refetch} /> : !contexts.data?.results.length ? <EmptyState title="No contexts on this page" description="Create a context in Skills before capturing a regression case." /> : <TextField select size="small" label="Regression context" value={contextId} onChange={(event) => setContextId(event.target.value)}>
+      {hinted && detail.isError && <Alert severity="warning">The context this span was delivered from is not available to you. Choose another context.</Alert>}
+      {resolving ? <ContentSkeleton label="Opening the context this span was delivered from" /> : contexts.isLoading ? <ContentSkeleton label="Loading contexts" /> : contexts.isError ? <ErrorState title="Could not load contexts" onRetry={contexts.refetch} /> : !contexts.data?.results.length ? <EmptyState title="No contexts on this page" description="Create a context in Skills before capturing a regression case." /> : <TextField select size="small" label="Regression context" value={contextId} onChange={(event) => setContextId(event.target.value)}>
         {contexts.data.results.map((context) => <MenuItem key={context.id} value={context.id}>{context.name}</MenuItem>)}
       </TextField>}
       <Stack direction="row" spacing={1}>
@@ -38,16 +44,16 @@ function ChooseContext({ traceRef, onClose }) {
     <DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" disabled={!contextId || !canCapture || contexts.isError} onClick={() => setReview(true)}>Review selected span</Button></DialogActions>
   </ClosableDialog>;
 }
-ChooseContext.propTypes = { traceRef: PropTypes.object.isRequired, onClose: PropTypes.func.isRequired };
-function ScopedAction({ traceRef }) {
+ChooseContext.propTypes = { traceRef: PropTypes.object.isRequired, contextHint: PropTypes.string, onClose: PropTypes.func.isRequired };
+function ScopedAction({ traceRef, contextHint }) {
   const [open, setOpen] = useState(false);
   return <><Button size="small" variant="outlined" onClick={() => setOpen(true)}>Create context regression case</Button>
-    {open && <ChooseContext traceRef={traceRef} onClose={() => setOpen(false)} />}</>;
+    {open && <ChooseContext traceRef={traceRef} contextHint={contextHint} onClose={() => setOpen(false)} />}</>;
 }
-ScopedAction.propTypes = { traceRef: PropTypes.object.isRequired };
-export default function ContextTraceCaptureAction({ traceRef }) {
+ScopedAction.propTypes = { traceRef: PropTypes.object.isRequired, contextHint: PropTypes.string };
+export default function ContextTraceCaptureAction({ traceRef, contextHint }) {
   const access = useSkillV11Scope();
   if (!access.enabled) return null;
-  return <ScopedAction key={`${access.identity}:${JSON.stringify(traceRef)}`} traceRef={traceRef} />;
+  return <ScopedAction key={`${access.identity}:${JSON.stringify(traceRef)}`} traceRef={traceRef} contextHint={contextHint} />;
 }
 ContextTraceCaptureAction.propTypes = ScopedAction.propTypes;

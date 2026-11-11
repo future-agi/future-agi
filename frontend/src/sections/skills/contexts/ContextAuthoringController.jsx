@@ -58,6 +58,9 @@ function Editor({ scopeKey, contextId }) {
     onSuspend={(input, options) => checkpoint.mutateAsync({ ...input, ...options })}
     onStart={(input, options) => start.mutateAsync({ ...input, ...options })}
     onStarted={(result) => { setInitial(result); setSwitchDraft(null); }} />;
+  // "Repair from recorded vN" already names the origin and carries the intent to preserve the
+  // current draft; the explicit checkpoint consent is still given in the preservation review.
+  if (!initial && !switchDraft && differentOrigin && params.get('preserve') === '1' && Number.isSafeInteger(origin) && !draft.isFetching && checkpointsReady('agent_context')) { setSwitchDraft({ draft: draft.data, origin }); return null; }
   if (!initial && draft.data && !differentOrigin && !draft.isFetching && !draft.isError) setInitial(draft.data);
   if (!detail.data || (!initial && (draft.isPending || draft.isFetching))) return detail.isError ? <ErrorState title="Context unavailable" onRetry={detail.refetch} /> : <ContentSkeleton label="Loading your context draft" />;
   if (!initial && differentOrigin) return <Stack spacing={1.5}>

@@ -15,6 +15,13 @@ import {
 
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import Section from "src/components/section";
+import {
+  ApplicationBehaviorFields,
+  BEHAVIOR_FIXTURE,
+  behaviorPartial as isBehaviorPartial,
+  readBehavior,
+  withBehavior,
+} from "./applicationBehavior";
 
 const CHECKS = {
   contains: [
@@ -45,24 +52,6 @@ const CHECKS = {
     "Plain-language requirement · AI judged",
     "Requires an explicitly selected AI judge and a separately disclosed model call.",
   ],
-};
-// Reserved fixture read by the hosted application run. The picker below writes it so a
-// reviewer never types a skill identity or the JSON envelope by hand.
-const BEHAVIOR_FIXTURE = "fi.application.expectations";
-const BEHAVIOR_ACTIONS = [
-  ["issue_refund", "Issue a refund"],
-  ["open_chargeback", "Open a chargeback dispute"],
-  ["track_shipment", "Track the shipment"],
-  ["none", "No business action"],
-];
-const readBehavior = (fixtures) => {
-  const item = fixtures.find((fixture) => fixture.name === BEHAVIOR_FIXTURE);
-  try {
-    const parsed = JSON.parse(item?.text ?? "");
-    return { skillId: parsed.skill_id || "", action: parsed.action || "" };
-  } catch {
-    return { skillId: "", action: "" };
-  }
 };
 const uid = () => crypto.randomUUID();
 const bytes = (value) => new TextEncoder().encode(value).length;
@@ -299,35 +288,13 @@ export default function TestCaseEditor({
   const [behavior, setBehavior] = useState(() =>
     readBehavior(initialCase?.fixtures || []),
   );
-  const behaviorPartial = Boolean(applicationBehavior) && Boolean(behavior.skillId) !== Boolean(behavior.action);
+  const behaviorPartial = Boolean(applicationBehavior) && isBehaviorPartial(behavior);
   const edit = (patch) =>
     setValue((previous) => ({ ...previous, ...patch, reviewed: false }));
   const chooseBehavior = (patch) => {
     const next = { ...behavior, ...patch };
     setBehavior(next);
-    const others = value.fixtures.filter(
-      (fixture) => fixture.name !== BEHAVIOR_FIXTURE,
-    );
-    const existing = value.fixtures.find(
-      (fixture) => fixture.name === BEHAVIOR_FIXTURE,
-    );
-    edit({
-      fixtures:
-        next.skillId && next.action
-          ? [
-              ...others,
-              {
-                id: existing?.id || uid(),
-                name: BEHAVIOR_FIXTURE,
-                text: JSON.stringify({
-                  schema: 1,
-                  skill_id: next.skillId,
-                  action: next.action,
-                }),
-              },
-            ]
-          : others,
-    });
+    edit({ fixtures: withBehavior(value.fixtures, next, uid) });
   };
   const validChecks = value.checks.every((check) => {
     if (!CHECKS[check.kind]) return false;
@@ -428,51 +395,11 @@ export default function TestCaseEditor({
             <MenuItem value="either">Either</MenuItem>
           </TextField>
           {applicationBehavior && (
-            <Section
-              title="Required application behavior"
-              description="Which skill the application must load and which business action it must take. Chosen from this context, not typed."
-            >
-              <Stack spacing={1.5}>
-                <TextField
-                  select
-                  size="small"
-                  label="Required skill"
-                  value={behavior.skillId}
-                  onChange={(event) =>
-                    chooseBehavior({ skillId: event.target.value })
-                  }
-                >
-                  <MenuItem value="">Not specified</MenuItem>
-                  {applicationBehavior.skills.map((skill) => (
-                    <MenuItem key={skill.id} value={skill.id}>
-                      {skill.label}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  size="small"
-                  label="Required business action"
-                  value={behavior.action}
-                  error={behaviorPartial}
-                  helperText={
-                    behaviorPartial
-                      ? "Choose both the skill and the action, or neither."
-                      : undefined
-                  }
-                  onChange={(event) =>
-                    chooseBehavior({ action: event.target.value })
-                  }
-                >
-                  <MenuItem value="">Not specified</MenuItem>
-                  {BEHAVIOR_ACTIONS.map(([action, label]) => (
-                    <MenuItem key={action} value={action}>
-                      {label}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              </Stack>
-            </Section>
+            <ApplicationBehaviorFields
+              skills={applicationBehavior.skills}
+              behavior={behavior}
+              onChange={chooseBehavior}
+            />
           )}
           <Section
             title="Text fixtures"

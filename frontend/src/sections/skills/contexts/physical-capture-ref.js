@@ -7,3 +7,9 @@ export function physicalCaptureRef(projectId, span) {
   // Preserve fractional precision; converting through Date loses microseconds.
   return ref;
 }
+// The context a span was delivered from, as exported by the Hub SDK. Only a default for the
+// destination choice: capture is still authorized by the server for the chosen context.
+export function contextHintFrom(span) {
+  const value = span?.span_attributes?.['fi.context.id'];
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : undefined;
+}

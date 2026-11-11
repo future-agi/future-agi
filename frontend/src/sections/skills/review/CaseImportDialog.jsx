@@ -19,6 +19,11 @@ import {
   useReviewClock,
 } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
+import {
+  ApplicationBehaviorFields,
+  behaviorPartial,
+  withBehavior,
+} from "../tests/applicationBehavior";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
 function ReviewedExample({
@@ -28,8 +33,11 @@ function ReviewedExample({
   onClose,
   canSave,
   subjectKind,
+  applicationBehavior,
+  renderSaved,
 }) {
   const [title, setTitle] = useState("");
+  const [behavior, setBehavior] = useState({ skillId: "", action: "" });
   const [expectedSuiteRevision] = useState(suiteRevision);
   const suiteChanged = expectedSuiteRevision !== suiteRevision;
   const [prompt, setPrompt] = useState(() =>
@@ -72,6 +80,7 @@ function ReviewedExample({
     expectation.trim() &&
     reviewed &&
     shared &&
+    !(applicationBehavior && behaviorPartial(behavior)) &&
     bytes(prompt) <= 16384 &&
     fixtures.reduce((sum, item) => sum + bytes(item.text), 0) <= 49152;
   const edit = (setter) => (event) => {
@@ -113,7 +122,7 @@ function ReviewedExample({
               not been saved.
             </Alert>
           )}
-          {suiteChanged && (
+          {suiteChanged && !operation.result && (
             <Alert severity="warning">
               Saved examples changed while this capture was open. Your edits are
               preserved, but the suite precondition will not be refreshed
@@ -189,6 +198,17 @@ function ReviewedExample({
             disabled={locked}
             helperText="An explicit, case-sensitive literal text check, not an AI judge. Add more checks in saved examples after import."
           />
+          {applicationBehavior && (
+            <ApplicationBehaviorFields
+              skills={applicationBehavior.skills}
+              behavior={behavior}
+              onChange={(patch) => {
+                setBehavior((previous) => ({ ...previous, ...patch }));
+                setReviewed(false);
+                setShared(false);
+              }}
+            />
+          )}
           <Typography variant="s3">
             {subjectKind === "agent_context"
               ? "Standing AGENTS instructions have no activation score."
@@ -221,6 +241,7 @@ function ReviewedExample({
               published.
             </Alert>
           )}
+          {operation.result && renderSaved?.({ caseId: ids.id, preview })}
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -241,7 +262,9 @@ function ReviewedExample({
                 sourceGroupId: ids.sourceGroupId,
                 title,
                 prompt,
-                fixtures,
+                fixtures: applicationBehavior
+                  ? withBehavior(fixtures, behavior, () => crypto.randomUUID())
+                  : fixtures,
                 expectedTrigger: null,
                 checks: [
                   {
@@ -270,6 +293,8 @@ ReviewedExample.propTypes = {
   onClose: PropTypes.func.isRequired,
   canSave: PropTypes.bool,
   subjectKind: PropTypes.string.isRequired,
+  applicationBehavior: PropTypes.object,
+  renderSaved: PropTypes.func,
 };
 
 export default function CaseImportDialog({
@@ -283,6 +308,8 @@ export default function CaseImportDialog({
   canSave = false,
   onSave,
   onRetry,
+  applicationBehavior,
+  renderSaved,
 }) {
   return (
     <ClosableDialog
@@ -298,7 +325,7 @@ export default function CaseImportDialog({
       {open && scopeKey && state === "ready" && preview ? (
         <ReviewedExample
           key={`${scopeKey}:${preview.captureId ?? preview.planId}`}
-          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind }}
+          {...{ preview, suiteRevision, onSave, onClose, canSave, subjectKind, applicationBehavior, renderSaved }}
         />
       ) : (
         <DialogContent>
@@ -322,4 +349,6 @@ CaseImportDialog.propTypes = {
   canSave: PropTypes.bool,
   onSave: PropTypes.func,
   onRetry: PropTypes.func,
+  applicationBehavior: PropTypes.shape({ skills: PropTypes.array.isRequired }),
+  renderSaved: PropTypes.func,
 };

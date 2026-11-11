@@ -16,7 +16,7 @@ import ContextNativePanel from './ContextNativePanel';
 // Hierarchy: viewed release, native limitation, then reviewed requests.
 // Palette/depth/surfaces: neutral, flat table with the shared warning role.
 // Typography/spacing: m3/s1/s3, 12px groups and standard dense table rows.
-function Tests({ contextId, version, versions = [], canWrite, skills = [] }) {
+function Tests({ contextId, version, versions = [], canWrite, skills = [], productionVersion, seed }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
@@ -27,7 +27,7 @@ function Tests({ contextId, version, versions = [], canWrite, skills = [] }) {
   const changed = editor && editor.revision !== suite.data.revision;
   return <Stack spacing={1.5}>
     <Typography variant="m3">Context regression cases{version ? ` · viewed v${version.number}` : ''}</Typography>
-    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} />
+    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} productionVersion={productionVersion} seed={seed} />
     <Typography variant="s1">To capture an existing failure, open its exact span in Observe and choose Create context regression case. Its physical identity and selected request/tool text are carried into review; do not retype them here.</Typography>
     <Section title="Reviewed examples">
       {!suite.data.cases.length ? <EmptyState title="No regression cases yet" description="Capture a retained trace, then review its redaction and expected behavior. Working neighboring cases belong in the same suite." /> : <TableContainer>
@@ -51,7 +51,7 @@ function Tests({ contextId, version, versions = [], canWrite, skills = [] }) {
       }} />}
   </Stack>;
 }
-Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, skills: PropTypes.array, canWrite: PropTypes.bool.isRequired };
+Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, skills: PropTypes.array, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object };
 export default function ContextTestsPanel(props) {
   const access = useSkillV11Scope();
   return <Tests key={`${access.identity}:${props.contextId}`} {...props} />;

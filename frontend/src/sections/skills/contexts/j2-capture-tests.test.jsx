@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTraceCaptureAction from './ContextTraceCaptureAction';
-import { physicalCaptureRef } from './physical-capture-ref';
+import { contextHintFrom, physicalCaptureRef } from './physical-capture-ref';
 import ContextTestsPanel from './ContextTestsPanel';
 
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
@@ -44,6 +44,26 @@ it('selects a destination and passes all captured identities without manual fiel
   expect(state.capture).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context', traceRef: ref, canCapture: true }));
   expect(screen.queryByRole('textbox', { name: 'Source project ID' })).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'Span start time' })).not.toBeInTheDocument();
+});
+it('opens the review directly in the context the span was delivered from, keeping every identity', () => {
+  render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  expect(state.capture).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context', traceRef: ref, canCapture: true }));
+  expect(screen.queryByLabelText('Regression context')).not.toBeInTheDocument();
+});
+it('falls back to choosing a context when the delivered context cannot be captured into', () => {
+  state.canPublish = false;
+  render(<ContextTraceCaptureAction traceRef={ref} contextHint="context" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  expect(state.capture).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Regression context')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
+});
+it('reads only a well-formed context id from the span attributes as a default', () => {
+  const id = '20000000-0000-4000-8000-000000000002';
+  expect(contextHintFrom({ span_attributes: { 'fi.context.id': id } })).toBe(id);
+  expect(contextHintFrom({ span_attributes: { 'fi.context.id': 'not-a-uuid' } })).toBeUndefined();
+  expect(contextHintFrom({})).toBeUndefined();
 });
 it('drops an open source selection when the authenticated workspace changes', () => {
   const view = render(<ContextTraceCaptureAction traceRef={ref} />);

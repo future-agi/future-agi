@@ -1,15 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
+import { useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
-  Alert, Box, Button, Checkbox, Drawer, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, TextField, Typography,
+  Alert, Box, Button, Checkbox, Drawer, FormControl, FormControlLabel, FormLabel, MenuItem, Radio, RadioGroup, Stack, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import {
   useCreateNativeRun, useCreateNativeTarget, useNativeRun, useNativeRuns, useNativeTargets, usePreviewNativeRun,
   usePrepareReleasePacket, useQualifyNativeTarget, useRuntimeConfiguration,
 } from 'src/api/skills/context-native';
 import { useAuthContext } from 'src/auth/hooks';
+import { paths } from 'src/routes/paths';
 import { useAppendEvidenceAnnotation, useEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
@@ -110,9 +112,12 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
       <Section title="Human review" description="Appended beside the automatic grade; it never replaces it.">
         {mine.map((row) => <Typography key={row.id} variant="s1">{row.verdict.replace('_', ' ')}: {row.comment || 'no comment'}</Typography>)}
         <Stack spacing={1} sx={{ mt: 1 }}>
-          <TextField select size="small" label="Your assessment" value={verdict} onChange={(event) => setVerdict(event.target.value)} disabled={!canWrite}>
-            {VERDICTS.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
-          </TextField>
+          <FormControl disabled={!canWrite}>
+            <FormLabel id="assessment-label">Your assessment</FormLabel>
+            <RadioGroup aria-labelledby="assessment-label" value={verdict} onChange={(event) => setVerdict(event.target.value)}>
+              {VERDICTS.map(([value, label]) => <FormControlLabel key={value} value={value} control={<Radio size="small" />} label={<Typography variant="s1">{label}</Typography>} />)}
+            </RadioGroup>
+          </FormControl>
           <TextField size="small" label="Why" value={comment} onChange={(event) => setComment(event.target.value)} multiline minRows={2} disabled={!canWrite} />
           {error && <Alert severity="error">{error}</Alert>}
           <Button variant="outlined" disabled={!canWrite || !verdict || !reference.data || append.isPending} onClick={submit}>Record review</Button>
@@ -145,12 +150,14 @@ ReleasePacket.propTypes = { contextId: PropTypes.string.isRequired, run: PropTyp
 
 function RunDetail({ contextId, evidenceId, canWrite, target }) {
   const query = useNativeRun(contextId, evidenceId);
+  const navigate = useNavigate();
   const [open, setOpen] = useState(null);
   if (query.isLoading) return <ContentSkeleton label="Loading verification result" />;
   if (query.isError) return <ErrorState title="Could not load this verification" onRetry={query.refetch} />;
   const run = query.data;
   const titles = Object.fromEntries((run.cases || []).map((item) => [item.id, item.title]));
   const active = run.status === 'running';
+  const referenceArm = run.arms.find((arm) => arm.variant === 'reference');
   return <Stack spacing={1.5}>
     <Stack direction="row" spacing={1.5} alignItems="center">
       <Typography variant="m3">Verification {short(run.executionFingerprint)}</Typography>
@@ -163,6 +170,9 @@ function RunDetail({ contextId, evidenceId, canWrite, target }) {
       {run.decision.reasons.map((reason) => <Typography key={reason} variant="s1" component="div">{reason}</Typography>)}
     </Alert>}
     {run.result && !active && <Typography variant="s1">Historical failure: {run.result.reproduction.replaceAll('_', ' ')} · Repair {run.result.repair_verified ? 'verified' : 'not verified'}{run.result.regressed_cases?.length ? ` · ${run.result.regressed_cases.length} neighboring case(s) regressed` : ''}</Typography>}
+    {!active && canWrite && run.result?.reproduction === 'reproduced' && referenceArm && <Box>
+      <Button variant="contained" size="small" onClick={() => navigate(`${paths.dashboard.skills.contextEdit(contextId)}?from=${referenceArm.version}&preserve=1`)}>{`Repair from recorded v${referenceArm.version}`}</Button>
+    </Box>}
     {run.runtime && <Typography variant="s3" color="text.secondary">Runtime proved read-only source {String(run.runtime.read_only_source)}, read-only context {String(run.runtime.read_only_context)}, closed paid egress {String(run.runtime.controlled_paid_egress)}.</Typography>}
     {run.cells && <TableContainer>
       <Table size="small" aria-label="Verification cells"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
@@ -178,67 +188,84 @@ function RunDetail({ contextId, evidenceId, canWrite, target }) {
 }
 RunDetail.propTypes = { contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object };
 
-function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onStarted }) {
+function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onStarted, runs, productionVersion, seed }) {
   const preview = usePreviewNativeRun(contextId);
   const create = useCreateNativeRun(contextId);
   const reviewed = cases.filter((item) => item.reviewed);
   const numbers = versions.map((item) => item.number);
-  const [candidate, setCandidate] = useState(viewed?.number ?? numbers[0] ?? '');
-  const [reference, setReference] = useState('');
-  const [production, setProduction] = useState('');
+  // Defaults come from stored data, never from the screen: the version being viewed, the
+  // production label, the last verification's recorded reference and historical examples
+  // (or the example the reviewer just captured). Every default is visible and editable.
+  const previous = (runs || []).find((run) => run.arms.some((arm) => arm.variant === 'reference'));
+  const previousDetail = useNativeRun(contextId, previous?.id);
+  const previousReference = previous?.arms.find((arm) => arm.variant === 'reference')?.version;
+  const previousHistorical = (previousDetail.data?.cases || []).filter((item) => item.historical).map((item) => item.id);
+  const [over, setOver] = useState({});
+  const pick = (name, fallback) => (name in over ? over[name] : fallback);
+  const candidate = pick('candidate', viewed?.number ?? numbers[0] ?? '');
+  const reference = pick('reference', seed?.reference ?? previousReference ?? '');
+  const production = pick('production', productionVersion && Number(productionVersion) !== Number(candidate) && numbers.includes(productionVersion) ? productionVersion : '');
   const [repetitions, setRepetitions] = useState(1);
-  const [chosen, setChosen] = useState({});
-  const [historical, setHistorical] = useState({});
-  const [ack, setAck] = useState(false);
+  const [chosenOver, setChosenOver] = useState({});
+  const [historicalOver, setHistoricalOver] = useState({});
+  const isChosen = (id) => (id in chosenOver ? chosenOver[id] : seed?.caseId ? id === seed.caseId : true);
+  const isHistorical = (id) => (id in historicalOver ? historicalOver[id] : seed?.caseId ? id === seed.caseId : previousHistorical.includes(id));
+  const [fresh, setFresh] = useState('');
   const [key, setKey] = useState(uuid);
   const [error, setError] = useState('');
-  const caseIds = reviewed.filter((item) => chosen[item.id]).map((item) => item.id);
-  const baselines = { ...(reference ? { reference: Number(reference) } : {}), ...(production ? { production: Number(production) } : {}) };
+  const caseIds = reviewed.filter((item) => isChosen(item.id)).map((item) => item.id);
+  const baselines = { ...(reference !== '' ? { reference: Number(reference) } : {}), ...(production !== '' ? { production: Number(production) } : {}) };
   const plan = useMemo(() => ({
     bindingId: target?.bindingId, bindingRevision: target?.revision, candidateVersion: Number(candidate), baselines, caseIds,
-    repetitions, historicalCaseIds: caseIds.filter((id) => historical[id]),
-  }), [target, candidate, reference, production, caseIds.join(), repetitions, historical]); // eslint-disable-line react-hooks/exhaustive-deps
-  const ready = target?.qualified && candidate && Object.keys(baselines).length > 0 && caseIds.length > 0;
-  const result = preview.data;
+    repetitions, historicalCaseIds: caseIds.filter((id) => isHistorical(id)),
+  }), [target, candidate, reference, production, caseIds.join(), repetitions, historicalOver, seed, previousHistorical.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const planKey = JSON.stringify(plan);
+  const ready = Boolean(target?.qualified && candidate !== '' && Object.keys(baselines).length > 0 && caseIds.length > 0);
+  // Planning is read-only (no launch, no spend): it runs as soon as the defaults or the reviewer's
+  // changes make a plan, so the ceiling is already on the button when the reviewer decides.
+  useEffect(() => {
+    setFresh('');
+    if (!ready) { preview.reset(); return; }
+    preview.mutate(plan, { onSuccess: () => setFresh(planKey) });
+  }, [planKey, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  const result = ready ? preview.data : undefined;
+  const current = Boolean(result) && fresh === planKey;
   const run = async () => {
     setError('');
-    try { onStarted(await create.mutateAsync({ idempotencyKey: key, plan, executionFingerprint: result.executionFingerprint, acknowledgeSpend: ack })); setKey(uuid()); setAck(false); preview.reset(); }
-    catch (reason) { setError(reason?.response?.data?.error?.message || 'The verification did not start. Preview it again before retrying.'); }
+    try { onStarted(await create.mutateAsync({ idempotencyKey: key, plan, executionFingerprint: result.executionFingerprint, acknowledgeSpend: true })); setKey(uuid()); setFresh(''); preview.reset(); }
+    catch (reason) { setError(reason?.response?.data?.error?.message || 'The verification did not start. Review the plan again before retrying.'); }
   };
   const versionOptions = numbers.map((number) => <MenuItem key={number} value={number}>v{number}</MenuItem>);
   return <Section title="Matched application run" description="Every selected example runs on the same pinned application with each context version.">
     <Stack spacing={1.5}>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
-        <TextField select size="small" label="Candidate version" value={candidate} onChange={(event) => setCandidate(event.target.value)} sx={{ minWidth: 170 }}>{versionOptions}</TextField>
-        <TextField select size="small" label="Recorded reference version" value={reference} onChange={(event) => setReference(event.target.value)} sx={{ minWidth: 210 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
-        <TextField select size="small" label="Production version" value={production} onChange={(event) => setProduction(event.target.value)} sx={{ minWidth: 170 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
+        <TextField select size="small" label="Candidate version" value={candidate} onChange={(event) => setOver({ ...over, candidate: event.target.value })} sx={{ minWidth: 170 }}>{versionOptions}</TextField>
+        <TextField select size="small" label="Recorded reference version" value={reference} onChange={(event) => setOver({ ...over, reference: event.target.value })} sx={{ minWidth: 210 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
+        <TextField select size="small" label="Production version" value={production} onChange={(event) => setOver({ ...over, production: event.target.value })} sx={{ minWidth: 170 }}><MenuItem value="">None</MenuItem>{versionOptions}</TextField>
         <TextField select size="small" label="Repetitions" value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))} sx={{ minWidth: 130 }}><MenuItem value={1}>1 each</MenuItem><MenuItem value={3}>3 each</MenuItem></TextField>
       </Stack>
       <Box role="group" aria-label="Examples to run">
         {reviewed.length ? reviewed.map((item) => <Stack key={item.id} direction="row" spacing={2} alignItems="center">
-          <FormControlLabel control={<Checkbox size="small" checked={Boolean(chosen[item.id])} onChange={(event) => setChosen({ ...chosen, [item.id]: event.target.checked })} />} label={<Typography variant="s1">{item.title}</Typography>} />
-          <FormControlLabel control={<Checkbox size="small" disabled={!chosen[item.id]} checked={Boolean(historical[item.id])} onChange={(event) => setHistorical({ ...historical, [item.id]: event.target.checked })} />} label={<Typography variant="s3" color="text.secondary">Recorded failure to reproduce</Typography>} />
+          <FormControlLabel control={<Checkbox size="small" checked={isChosen(item.id)} onChange={(event) => setChosenOver({ ...chosenOver, [item.id]: event.target.checked })} />} label={<Typography variant="s1">{item.title}</Typography>} />
+          <FormControlLabel control={<Checkbox size="small" disabled={!isChosen(item.id)} checked={isChosen(item.id) && isHistorical(item.id)} onChange={(event) => setHistoricalOver({ ...historicalOver, [item.id]: event.target.checked })} />} label={<Typography variant="s3" color="text.secondary">Recorded failure to reproduce</Typography>} />
         </Stack>) : <Typography variant="s1">Review at least one example above before running it on the application.</Typography>}
       </Box>
-      <Stack direction="row" spacing={1}>
-        <Button variant="outlined" size="small" disabled={!ready || preview.isPending} onClick={() => { setAck(false); preview.mutate(plan); }}>Preview application run</Button>
-      </Stack>
+      {ready && preview.isPending && <ContentSkeleton label="Planning the application run" />}
       {preview.isError && <Alert severity="error">{preview.error?.response?.data?.error?.message || 'Could not plan this run. Check the target, versions and reviewed examples.'}</Alert>}
       {result && <Stack spacing={1}>
         {!result.reproducible ? <Alert severity="warning">
           <Typography variant="s1" component="div">Not reproduced: required historical inputs are missing, so nothing can launch.</Typography>
           {result.missingInputs.map((item) => <Typography key={`${item.caseId}/${item.input}`} variant="s1" component="div">{(cases.find((c) => c.id === item.caseId) || {}).title || item.caseId}: {item.input}. {item.detail}</Typography>)}
         </Alert> : <Alert severity="info">{result.cells} cells · paid ceiling ${result.ceilingUsd} · {result.arms.map((arm) => `${ARM[arm.variant]} v${arm.version}`).join(' · ')}</Alert>}
-        <FormControlLabel control={<Checkbox size="small" checked={ack} disabled={!result.reproducible} onChange={(event) => setAck(event.target.checked)} />} label={<Typography variant="s1">I accept up to ${result.ceilingUsd} in provider charges for this run.</Typography>} />
         {error && <Alert severity="error">{error}</Alert>}
-        <Box><Button variant="contained" size="small" disabled={!canWrite || !result.reproducible || !ack || create.isPending} onClick={run}>Run on the application</Button></Box>
+        <Box><Button variant="contained" size="small" disabled={!canWrite || !result.reproducible || !current || create.isPending} onClick={run}>{`Run on the application · accept up to $${result.ceilingUsd}`}</Button></Box>
       </Stack>}
     </Stack>
   </Section>;
 }
-PlanSection.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, target: PropTypes.object, canWrite: PropTypes.bool.isRequired, onStarted: PropTypes.func.isRequired };
+PlanSection.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, target: PropTypes.object, canWrite: PropTypes.bool.isRequired, onStarted: PropTypes.func.isRequired, runs: PropTypes.array, productionVersion: PropTypes.number, seed: PropTypes.object };
 
-export default function ContextNativePanel({ contextId, versions, viewed, cases, canWrite }) {
+export default function ContextNativePanel({ contextId, versions, viewed, cases, canWrite, productionVersion, seed }) {
   const targets = useNativeTargets(contextId);
   const runs = useNativeRuns(contextId);
   const [selected, setSelected] = useState(null);
@@ -251,7 +278,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const focus = selected || runs.data?.[0]?.id;
   return <Stack spacing={2}>
     <TargetSection contextId={contextId} version={viewed} canWrite={canWrite} targets={targets} />
-    <PlanSection contextId={contextId} versions={versions} viewed={viewed} cases={cases} target={target} canWrite={canWrite} onStarted={setSelected} />
+    <PlanSection contextId={contextId} versions={versions} viewed={viewed} cases={cases} target={target} canWrite={canWrite} onStarted={setSelected} runs={runs.data} productionVersion={productionVersion} seed={seed} />
     <Section title="Application verifications">
       {runs.data?.length ? <Stack spacing={1.5}>
         <TextField select size="small" label="Verification" value={focus || ''} onChange={(event) => setSelected(event.target.value)} sx={{ maxWidth: 360 }}>
@@ -262,4 +289,4 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
     </Section>
   </Stack>;
 }
-ContextNativePanel.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired };
+ContextNativePanel.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object };

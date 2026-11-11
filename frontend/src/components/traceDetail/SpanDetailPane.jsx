@@ -41,7 +41,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import ContextTraceCaptureAction from 'src/sections/skills/contexts/ContextTraceCaptureAction';
-import { physicalCaptureRef } from 'src/sections/skills/contexts/physical-capture-ref';
+import {
+  contextHintFrom,
+  physicalCaptureRef,
+} from 'src/sections/skills/contexts/physical-capture-ref';
 import SmartPreview from "./SmartPreview";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
@@ -1879,7 +1882,10 @@ const SpanDetailPane = ({
 
           {/* J2: carry the exact observed identity; shared/read-only traces cannot capture. */}
           {!readOnly && physicalCaptureRef(projectId, span) && (
-            <ContextTraceCaptureAction traceRef={physicalCaptureRef(projectId, span)} />
+            <ContextTraceCaptureAction
+              traceRef={physicalCaptureRef(projectId, span)}
+              contextHint={contextHintFrom(span)}
+            />
           )}
           {/* Actions button */}
           {onAction && (
