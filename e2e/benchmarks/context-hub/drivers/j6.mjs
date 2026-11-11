@@ -353,7 +353,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(rejected.status === 409 && afterReject.length === afterAba.length, 'The stale ABA packet must be rejected without a label event');
         requireValue(/review_stale|release_conflict/.test(JSON.stringify(rejected.body)), 'The approved stale packet must be refused by the current-state check, not by its status');
         state.stalePacket = { id: stale.id, revision: stale.revision, fingerprint: stale.fingerprint };
-        state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]), approved_before_hop: true };
+        state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]), approved_before_hop: true, request_id: stale.id };
         // Operator starts a fresh review against the moved release revision.
         // The recovery view follows the moved release on its own; the review restarts against the new revision.
         const reack = authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ });

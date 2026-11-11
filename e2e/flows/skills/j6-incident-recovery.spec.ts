@@ -21,14 +21,14 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     steps: [
       'prepare a retained refund incident, three release identities, a retired child and a quarantined alternative through public APIs and the packaged application',
       'open the declared context from the retained incident and review the complete closure of an eligible lower-numbered release',
-      'request, reject a stale ABA packet for, approve and execute the lower-number rollback through the reviewer inbox',
+      'request a lower-number rollback, let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback through the reviewer inbox',
       'issue a replacement credential and restore the exact checked-in lock without losing local work',
       'run the application through a registry outage after a persisted refund and resume the same session and checkpoint',
       'inspect expired-credential and lost-mapping threads, close what can be closed and start reviewed clean threads without replaying the refund',
       'recheck the original case once and inspect the declared cohort',
     ],
     backendChecks: [
-      'Postgres has exactly one lower-number label event and none for the stale ABA packet',
+      'Postgres has exactly one lower-number label event, none for the stale ABA packet, and the approved stale request is superseded',
       'the independent business ledger holds one applied refund and one request per order with no duplicate',
       'the resumed thread keeps its original session identity and the receipt precedes the checkpoint advance',
       'the retired child delivers its exact retained bytes and the quarantined alternative is refused',
@@ -86,6 +86,10 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     expect((await observed('final-cohort')).verdicts.U.states, 'unobserved consumer').toEqual(fault === 'unknown' ? ['matches_target'] : ['unknown']);
     expect((await observed('denial-oracle')).value.expired_credential_denied, 'expired credential denial').toBe(fault === 'denied' ? false : true);
     expect((await observed('aba-rejection')).status, 'stale ABA execute').toBe(fault === 'aba' ? 200 : 409);
+    // The fresh packet closed the approved-but-stale request: Postgres shows an approval and the superseded status, and no label event.
+    const aba = await observed('aba-rejection');
+    const staleRows = await probe.pg<any>('SELECT r.status, (SELECT count(*)::int FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=r.id AND d.decision=\'approve\') AS approvals FROM model_hub_hubskillreleaserequest r WHERE r.id=$1', [aba.request_id]);
+    expect(staleRows, 'stale approved request closed by the fresh packet').toEqual([{ status: fault === 'superseded' ? 'approved' : 'superseded', approvals: 1 }]);
     const events = await probe.pg<any>('SELECT from_version, to_version FROM model_hub_hubskilllabelevent WHERE skill_id=$1 ORDER BY id', [seed.contextId]);
     const rollbacks = events.filter((row: any) => row.from_version === 3 && row.to_version === 1);
     expect(rollbacks, 'one lower-number rollback event').toHaveLength(process.env.J6_ORACLE_FAULT === 'rollback' ? 2 : 1);
