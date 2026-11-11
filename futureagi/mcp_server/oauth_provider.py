@@ -288,6 +288,7 @@ class FutureAGIOAuthProvider:
             client_id=authorization_code.client_id,
             user_id=authorization_code.user_id,
         )
+        await _link_grant_tokens(access_token_str, refresh_token_str)
 
         return OAuthToken(
             access_token=access_token_str,
@@ -425,6 +426,7 @@ class FutureAGIOAuthProvider:
             client_id=refresh_token.client_id,
             user_id=refresh_token.user_id,
         )
+        await _link_grant_tokens(access_token_str, new_refresh_str)
 
         return OAuthToken(
             access_token=access_token_str,
@@ -445,3 +447,38 @@ class FutureAGIOAuthProvider:
         elif isinstance(token, FutureAGIRefreshToken):
             await sync_to_async(cache.delete)(f"{REFRESH_PREFIX}{token.token}")
         logger.info("oauth_token_revoked", client_id=token.client_id)
+        await _revoke_grant_partner(token.token)
+
+
+# Links the access and refresh token one exchange issued, in both directions.
+GRANT_PARTNER_PREFIX = "mcp_oauth_grant_partner:"
+
+
+async def _link_grant_tokens(access_token: str, refresh_token: str) -> None:
+    """Remember that one exchange issued these two tokens together.
+
+    Revoking either then revokes the other (RFC 7009 section 2.1). The link
+    lasts as long as the access token, after which only the refresh token is
+    left to revoke.
+    """
+    await sync_to_async(cache.set_many)(
+        {
+            f"{GRANT_PARTNER_PREFIX}{access_token}": refresh_token,
+            f"{GRANT_PARTNER_PREFIX}{refresh_token}": access_token,
+        },
+        ACCESS_TTL,
+    )
+
+
+async def _revoke_grant_partner(token: str) -> None:
+    partner = await sync_to_async(cache.get)(f"{GRANT_PARTNER_PREFIX}{token}")
+    if not partner:
+        return
+    await sync_to_async(cache.delete_many)(
+        [
+            f"{ACCESS_PREFIX}{partner}",
+            f"{REFRESH_PREFIX}{partner}",
+            f"{GRANT_PARTNER_PREFIX}{partner}",
+            f"{GRANT_PARTNER_PREFIX}{token}",
+        ]
+    )

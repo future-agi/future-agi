@@ -397,3 +397,55 @@ async def test_sdk_token_of_a_deactivated_user_is_rejected(user, workspace):
     await sync_to_async(user.save)(update_fields=["is_active"])
 
     _assert_invalid_token(await _post_initialize(tokens["access_token"]))
+
+
+async def _sdk_revoke(http, client, token, hint):
+    response = await http.post(
+        "/revoke",
+        data={
+            "token": token,
+            "token_type_hint": hint,
+            "client_id": client["client_id"],
+            "client_secret": client["client_secret"],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_revoking_the_sdk_refresh_token_also_revokes_its_access_token(
+    user, workspace
+):
+    """RFC 7009 2.1: revoking a refresh token ends its grant's access token."""
+    async with _oauth_http() as http:
+        client = await _sdk_register(http)
+        revoked = await _sdk_issue_tokens(http, client, user, workspace)
+        other = await _sdk_issue_tokens(http, client, user, workspace)
+        assert (await _post_initialize(revoked["access_token"])).status_code == 200
+
+        await _sdk_revoke(http, client, revoked["refresh_token"], "refresh_token")
+
+    _assert_invalid_token(await _post_initialize(revoked["access_token"]))
+    # Another grant of the same client is untouched.
+    assert (await _post_initialize(other["access_token"])).status_code == 200
+
+
+async def test_revoking_the_sdk_access_token_also_revokes_its_refresh_token(
+    user, workspace
+):
+    async with _oauth_http() as http:
+        client = await _sdk_register(http)
+        tokens = await _sdk_issue_tokens(http, client, user, workspace)
+
+        await _sdk_revoke(http, client, tokens["access_token"], "access_token")
+        refreshed = await http.post(
+            "/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": tokens["refresh_token"],
+                "client_id": client["client_id"],
+                "client_secret": client["client_secret"],
+            },
+        )
+
+    assert refreshed.status_code == 400, refreshed.text
+    assert refreshed.json()["error"] == "invalid_grant"
