@@ -34,6 +34,7 @@ function InboxRows({
   onPageChange,
   onOpen,
   onSeen,
+  authored,
 }) {
   const [menu, setMenu] = useState(null);
   const operation = useReviewedOperation();
@@ -41,7 +42,7 @@ function InboxRows({
   return (
     <Stack spacing={1}>
       <Typography variant="s1" role="status">
-        {data.unreadCount} unread assigned request(s)
+        {authored ? 'Requests you authored. Open an unreleased request to renew its review.' : `${data.unreadCount} unread assigned request(s)`}
       </Typography>
       <ListToolbar>
         <TextField
@@ -68,8 +69,8 @@ function InboxRows({
       {!data.results.length ? (
         <EmptyState
           variant="no-results"
-          title="No assigned reviews"
-          description="Requests appear here when an author explicitly assigns an immutable release packet to you. Unavailable private evidence is excluded by the server."
+          title={authored ? 'No authored requests' : 'No assigned reviews'}
+          description={authored ? 'Create a review request for a published candidate. Your requests remain here for explicit renewal.' : 'Requests appear here when an author explicitly assigns an immutable release packet to you. Unavailable private evidence is excluded by the server.'}
         />
       ) : (
         <>
@@ -119,7 +120,7 @@ function InboxRows({
                     </TableCell>
                     <TableCell>
                       <Typography variant="s3">
-                        {item.unread ? "Unread" : "Seen — not approval"}
+                        {authored ? 'Authored by you' : item.unread ? "Unread" : "Seen — not approval"}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
@@ -192,6 +193,7 @@ InboxRows.propTypes = {
   onPageChange: PropTypes.func.isRequired,
   onOpen: PropTypes.func.isRequired,
   onSeen: PropTypes.func,
+  authored: PropTypes.bool,
 };
 
 export default function ReleaseInbox({
@@ -204,6 +206,9 @@ export default function ReleaseInbox({
   onOpen,
   onSeen,
   onRetry,
+  onCompose,
+  onToggleAuthored,
+  authored = false,
 }) {
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
@@ -211,11 +216,15 @@ export default function ReleaseInbox({
         title="Skills reviews"
         description="Assigned release decisions for this workspace. Reading a request never approves it."
         sx={{ mb: 0 }}
+        actions={scopeKey && <>
+          {onToggleAuthored && <Button variant="outlined" onClick={onToggleAuthored}>{authored ? 'Assigned to me' : 'My requests'}</Button>}
+          {onCompose && <Button variant="contained" onClick={onCompose}>Request review</Button>}
+        </>}
       />
       {scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
-          {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen }}
+          {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored }}
         />
       ) : (
         <ReviewState
@@ -236,4 +245,7 @@ ReleaseInbox.propTypes = {
   onOpen: PropTypes.func,
   onSeen: PropTypes.func,
   onRetry: PropTypes.func,
+  onCompose: PropTypes.func,
+  onToggleAuthored: PropTypes.func,
+  authored: PropTypes.bool,
 };

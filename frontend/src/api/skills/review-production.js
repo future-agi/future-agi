@@ -49,13 +49,29 @@ const decisions = (request_id) => apiPath('/model-hub/skills/release-requests/{r
 const execute = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/execute/', { request_id });
 export const reviewsReady = () => getContractedApiMethods('/model-hub/skills/review-inbox/').includes('get') && getContractedApiMethods('/model-hub/skills/release-requests/{request_id}/').includes('get');
 const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id });
-export function useReviewInbox({ page = 1, status = '' } = {}) {
-  return useSkillV11Query({ parts: ['review-inbox', page, status], url: inbox, params: { page, ...(status ? { status } : {}) }, enabled: reviewsReady(), mapper: (value) => ({ ...mapV11Page(value, mapRequest), unreadCount: value.unread_count }) });
+export function useReviewInbox({ page = 1, status = '', authored = false } = {}) {
+  return useSkillV11Query({ parts: ['review-inbox', page, status, authored], url: authored ? () => apiPath('/model-hub/skills/release-requests/') : inbox, params: { page, ...(status ? { status } : {}) }, enabled: reviewsReady(), mapper: (value) => ({ ...mapV11Page(value, mapRequest), unreadCount: value.unread_count }) });
 }
 export function useMarkReviewSeen() {
   return useSkillV11Mutation({ send: async ({ requestId, revision }, config) => { await axios.post(seen(requestId), { revision }, config); return { acknowledged: true }; }, invalidate: () => [['review-inbox']] });
 }
 export const mapReleaseReceipt = (result) => ({ requestId: result.request_id, decisionId: result.decision_id, revision: result.revision, executedBy: result.executed_by, currentnessAtAction: result.currentness_at_action, postMoveState: { label: result.post_move_state.label, version: result.post_move_state.version, releaseRevision: result.post_move_state.release_revision, eventId: result.post_move_state.event_id } });
+
+// Inspection reads only the reviewed immutable packet. The server revalidates
+// after reading capabilities, target configuration and annotation summaries.
+export async function loadReleaseInspection(packet, fingerprint, config) {
+  const value = skillV11Result(await axios.post(apiPath('/model-hub/skills/release-requests/inspection/'), {
+    resource_id: packet.subject_id, kind: packet.subject_kind,
+    candidate_version_id: packet.candidate_version_id, label: packet.transition.label,
+    target: packet.target, evidence: packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })),
+    external_pipeline: packet.external_pipeline, expected_fingerprint: fingerprint,
+  }, config));
+  if (value.fingerprint !== fingerprint || value.capabilities.after_digest !== packet.candidate_digest) throw new Error('The inspection does not match the reviewed packet.');
+  if (value.summaries.length !== packet.evidence.length || packet.evidence.some((ref) => !value.summaries.some((row) => row.source === ref.source && row.source_id === ref.source_id && row.annotation_revision === ref.annotation_revision))) throw new Error('The evidence inspection is incomplete.');
+  return { capabilities: { ...value.capabilities, beforeDigest: value.capabilities.before_digest, afterDigest: value.capabilities.after_digest },
+    summaries: value.summaries.map((row) => ({ ...row, sourceId: row.source_id, annotationRevision: row.annotation_revision, cannotAssess: row.cannot_assess })),
+    targetConfiguration: value.target_configuration };
+}
 
 export async function loadReleaseRequest(requestId, contextId, config) {
     let raw;
@@ -85,6 +101,7 @@ export async function loadReleaseRequest(requestId, contextId, config) {
     const inspected = packet.subject_kind === 'agent_context'
       ? await loadContextReview(raw.subject_id, null, config, { operation: 'move', target_version: packet.transition.version, label: packet.transition.label })
       : packet.subject_kind === 'skill' ? await loadSkillReview(raw.subject_id, packet, config) : null;
+    const inspection = await loadReleaseInspection(packet, raw.fingerprint, config);
     // Revalidate after all comparison reads, not before potentially slow pages.
     const current = skillV11Result(await axios.post(preview(), { resource_id: raw.subject_id, kind: packet.subject_kind, candidate_version_id: packet.candidate_version_id, label: packet.transition.label, target: packet.target, evidence: packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })), external_pipeline: packet.external_pipeline }, config));
     const release = inspected?.releaseState;
@@ -93,7 +110,7 @@ export async function loadReleaseRequest(requestId, contextId, config) {
     return {
       request: mapRequest({ ...raw, subject_kind: packet.subject_kind }),
       preview: { packet: mapReleasePacket(packet), fingerprint: raw.fingerprint, current: Boolean(inspected?.complete && inspected.candidateDigest === packet.candidate_digest && current.fingerprint === raw.fingerprint) },
-      review: inspected ? { complete: inspected.complete, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
+      review: inspected ? { ...inspection, complete: inspected.complete, changes: inspected.originChanges, checks: inspected.checks, impact: inspected.impact } : undefined,
       canExecute,
     };
 }

@@ -7,6 +7,7 @@ import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePu
 import { reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ReleaseRequestPanel from './ReleaseRequestPanel';
+import ReleaseRequestComposer from './ReleaseRequestComposer';
 
 // Intent: an assigned reviewer inspects immutable bytes, then makes an explicit
 // decision. Hierarchy: candidate/diff before action; no inferred evidence.
@@ -28,14 +29,21 @@ export function ReviewInboxController({ scopeKey, viewState, View }) {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
   const [params] = useSearchParams();
-  const query = useReviewInbox({ page, status });
+  const authored = params.get('mine') === '1';
+  const query = useReviewInbox({ page, status, authored });
   const seen = useMarkReviewSeen();
   const navigate = useNavigate();
   const requestId = params.get('request');
+  if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || 'new'}`} scopeKey={scopeKey}
+    renewal={params.get('renew') ? { id: params.get('renew'), revision: Number(params.get('revision')), subjectId: params.get('subject'), kind: params.get('kind') } : undefined} />;
   if (requestId) return <RequestReviewController key={`${scopeKey}:${requestId}`} scopeKey={scopeKey} requestId={requestId} viewState={viewState} />;
   const state = viewState || (!reviewsReady() ? 'unavailable' : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
-  return <View scopeKey={scopeKey} state={state} data={query.data} status={status} onStatusChange={(value) => { setStatus(value); setPage(1); }} onPageChange={setPage} onRetry={query.refetch} onSeen={seen.mutateAsync}
-    onOpen={(request) => navigate(request.subjectKind === 'agent_context' ? `${paths.dashboard.skills.contextReview(request.subjectId)}?request=${request.id}` : `${paths.dashboard.skills.reviews}?request=${request.id}`)} />;
+  return <View scopeKey={scopeKey} state={state} data={query.data} status={status} authored={authored}
+    onCompose={() => navigate(`${paths.dashboard.skills.reviews}?compose=1`)}
+    onToggleAuthored={() => { setPage(1); navigate(`${paths.dashboard.skills.reviews}${authored ? '' : '?mine=1'}`); }} onStatusChange={(value) => { setStatus(value); setPage(1); }} onPageChange={setPage} onRetry={query.refetch} onSeen={seen.mutateAsync}
+    onOpen={(request) => navigate(authored && request.status !== 'released'
+      ? `${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`
+      : request.subjectKind === 'agent_context' ? `${paths.dashboard.skills.contextReview(request.subjectId)}?request=${request.id}` : `${paths.dashboard.skills.reviews}?request=${request.id}`)} />;
 }
 ReviewInboxController.propTypes = { scopeKey: PropTypes.string.isRequired, viewState: PropTypes.string, View: PropTypes.elementType.isRequired };
 

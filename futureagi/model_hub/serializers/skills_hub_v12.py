@@ -268,12 +268,43 @@ class BindingInput(ContextSerializer):
     repository = RepositoryIdentity(allow_null=True)
     expected_report_interval_seconds = Integer(min_value=1, max_value=31536000)
 
+    def get_fields(self):
+        # The shared native schema imports ContextSerializer, so resolve it only
+        # after module initialization. Omission preserves a legacy binding;
+        # explicit null removes its reviewed configuration.
+        from model_hub.serializers.skills_hub_r3 import NativeConfiguration
+
+        return {
+            **super().get_fields(),
+            "configuration": NativeConfiguration(required=False, allow_null=True),
+        }
+
+    def to_internal_value(self, data):
+        values = super().to_internal_value(data)
+        if values.get("configuration") is not None:
+            # A model FloatField changes 0 to 0.0. Preserve the exact canonical
+            # manifest used by native evidence instead of changing its digest.
+            from simulate.services.skills_context_adapter import (
+                validate_native_configuration,
+            )
+
+            values["configuration"] = validate_native_configuration(
+                data["configuration"]
+            )
+        return values
+
 
 class BindingOut(BindingInput):
+    configuration_digest = s.CharField(allow_blank=True)
     id = s.UUIDField()
     context_id = s.UUIDField()
     revision = Integer(min_value=1)
     retired_at = s.DateTimeField(allow_null=True)
+
+    def to_representation(self, instance):
+        value = super().to_representation(instance)
+        value["configuration"] = instance.get("configuration")
+        return value
 
 
 class TraceRef(ContextSerializer):

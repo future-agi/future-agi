@@ -4,8 +4,8 @@ from rest_framework.response import Response
 
 from model_hub.serializers import skills_release_requests as s
 from model_hub.serializers.skills_context_authoring import Revision
+from model_hub.services.skills_hub.r3 import release_options, review_inbox
 from model_hub.services.skills_hub.r3 import release_requests as service
-from model_hub.services.skills_hub.r3 import review_inbox
 from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, header_uuid
 from model_hub.views.skills_hub import SkillsView
 
@@ -26,7 +26,67 @@ class PacketPreviewView(ReviewView):
         )
 
 
+class ReleaseInspectionView(ReviewView):
+    @contract(s.ReleaseInspection, body=s.InspectionInput)
+    def post(self, request):
+        from model_hub.services.skills_hub.r3.release_inspection import inspect_release
+
+        return self.output(request, s.ReleaseInspection, inspect_release(
+            principal=request.skill_principal, **request.validated_data
+        ))
+
+
+class NativeEvidenceShareView(ReviewView):
+    @contract(s.r3.EvidenceRef, body=s.ShareEvidence)
+    def post(self, request, evidence_id):
+        from model_hub.services.skills_hub.r3.human_review import evidence_reference
+        from model_hub.services.skills_hub.r3.native_evidence import (
+            share_native_evidence,
+        )
+
+        principal = request.skill_principal
+        ref = evidence_reference(
+            principal=principal, source="simulation_native", source_id=evidence_id
+        )
+        share_native_evidence(
+            principal=principal,
+            resource_id=ref["subject_id"],
+            kind=ref["subject_kind"],
+            evidence_id=evidence_id,
+            **request.validated_data,
+        )
+        return self.output(
+            request,
+            s.r3.EvidenceRef,
+            evidence_reference(
+                principal=principal, source="simulation_native", source_id=evidence_id
+            ),
+        )
+
+
+class ReleaseOptionsView(ReviewView):
+    @contract(s.ReviewOptions, query=s.OptionsQuery)
+    def get(self, request):
+        return self.output(
+            request,
+            s.ReviewOptions,
+            release_options.release_options(
+                principal=request.skill_principal, **request.validated_query_data
+            ),
+        )
+
+
 class RequestListView(ReviewView):
+    @contract(s.AuthoredPage, query=s.InboxQuery)
+    def get(self, request):
+        return self.output(
+            request,
+            s.AuthoredPage,
+            release_options.authored_requests(
+                principal=request.skill_principal, **request.validated_query_data
+            ),
+        )
+
     @contract(
         s.RequestReceipt, body=s.Submit, status=201, manual_parameters=[IDEMPOTENCY]
     )

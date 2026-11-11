@@ -5,6 +5,12 @@ from django.urls import path
 from model_hub.views import skills_release_requests as v
 
 urlpatterns = [
+    path("release-requests/options/", v.ReleaseOptionsView.as_view()),
+    path("release-requests/inspection/", v.ReleaseInspectionView.as_view()),
+    path(
+        "release-requests/native-evidence/<uuid:evidence_id>/share/",
+        v.NativeEvidenceShareView.as_view(),
+    ),
     path("release-requests/preview/", v.PacketPreviewView.as_view()),
     path("release-requests/", v.RequestListView.as_view()),
     path("release-requests/<uuid:request_id>/", v.RequestDetailView.as_view()),

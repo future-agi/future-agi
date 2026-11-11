@@ -23,6 +23,60 @@ class Preview(ctx.ContextSerializer):
         }
 
 
+class InspectionInput(Preview):
+    expected_fingerprint = ctx.Digest()
+
+
+class CapabilityDelta(ctx.ContextSerializer):
+    path = s.CharField()
+    category = s.CharField()
+    name = s.CharField(allow_null=True)
+    change = s.ChoiceField(choices=["added", "removed", "modified"])
+    before = s.CharField(allow_null=True)
+    after = s.CharField(allow_null=True)
+
+
+class CapabilityInspection(ctx.ContextSerializer):
+    before_digest = s.CharField()
+    after_digest = s.CharField()
+    changes = CapabilityDelta(many=True)
+    scope = s.CharField()
+    notice = s.CharField()
+    fingerprint = ctx.Digest()
+
+
+class EvidenceSummary(ctx.ContextSerializer):
+    source_id = s.UUIDField()
+    annotation_revision = Integer(min_value=0)
+    disagreements = Integer(min_value=0)
+    cannot_assess = Integer(min_value=0)
+    planned = Integer(min_value=0, allow_null=True)
+    graded = Integer(min_value=0, allow_null=True)
+    incomplete = Integer(min_value=0, allow_null=True)
+    regressions = Integer(min_value=0, allow_null=True)
+    answer = s.CharField()
+    selection = s.CharField()
+    delivery = s.CharField()
+    tools = s.CharField()
+    availability = s.ChoiceField(choices=["available", "unavailable"])
+
+    def get_fields(self):
+        return {**super().get_fields(), "source": s.ChoiceField(choices=["skills_text", "simulation_native"])}
+
+
+class ReleaseInspection(ctx.ContextSerializer):
+    fingerprint = ctx.Digest()
+    capabilities = CapabilityInspection()
+    summaries = EvidenceSummary(many=True)
+    target_configuration = r3.NativeConfiguration(allow_null=True)
+
+    def to_representation(self, instance):
+        value = super().to_representation(instance)
+        # Keep canonical integer/float spelling, like BindingOut.
+        value["target_configuration"] = instance["target_configuration"]
+        return value
+
+
 class Packet(ctx.ContextSerializer):
     packet = r3.ReleasePacket()
     fingerprint = ctx.Digest()
@@ -115,4 +169,43 @@ class InboxItem(RequestReceipt):
 
 class Inbox(Page):
     results = InboxItem(many=True)
+    unread_count = Integer(min_value=0)
+
+
+class ShareEvidence(ctx.ContextSerializer):
+    acknowledge_snapshot_sharing = s.BooleanField()
+
+
+class OptionsQuery(ctx.ContextSerializer):
+    resource_id = s.UUIDField()
+    kind = s.ChoiceField(choices=["skill", "agent_context"])
+    candidate_version_id = s.UUIDField()
+
+
+class Reviewer(ctx.ContextSerializer):
+    id = s.UUIDField()
+    name = s.CharField()
+
+
+class ReviewTarget(ctx.ContextSerializer):
+    name = s.CharField()
+    target = r3.TargetConfiguration()
+
+
+class ReviewOptions(ctx.ContextSerializer):
+    recipients = Reviewer(many=True)
+    targets = ReviewTarget(many=True)
+    evidence = r3.EvidenceRef(many=True)
+
+
+class AuthoredItem(RequestReceipt):
+    subject_id = s.UUIDField()
+    subject_kind = s.ChoiceField(choices=["skill", "agent_context"])
+    name = s.CharField()
+    author_id = s.UUIDField()
+    unread = s.BooleanField()
+
+
+class AuthoredPage(Page):
+    results = AuthoredItem(many=True)
     unread_count = Integer(min_value=0)

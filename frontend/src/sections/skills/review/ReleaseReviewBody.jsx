@@ -256,6 +256,8 @@ export function TypedEvidenceList({
                       value={summary[key] ?? "Not observed"}
                     />
                   ))}
+                  {summary.availability === 'unavailable' && <Alert severity="warning">Verified outcome details are unavailable. A completed run is not a passing result.</Alert>}
+                  {summary.cannotAssess > 0 && <Alert severity="warning">{summary.cannotAssess} human assessment(s) remain inconclusive.</Alert>}
                   {summary.disagreements > 0 && (
                     <Alert severity="warning">
                       {summary.disagreements} human disagreement(s) require
@@ -419,6 +421,7 @@ export default function ReleaseReviewBody({
   dependencyChanges = [],
   checks,
   capabilities,
+  targetConfiguration,
   impact,
   evidence = packet.evidence,
   selected = packet.evidence.map(evidenceSelection),
@@ -471,6 +474,10 @@ export default function ReleaseReviewBody({
                 label={`Target configuration r${packet.target.revision}`}
                 value={packet.target.configurationDigest}
               />
+              {targetConfiguration ? <Box component="details">
+                <Typography component="summary" variant="s1">Reviewed application configuration</Typography>
+                <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(targetConfiguration, null, 2)}</Typography>
+              </Box> : <Alert severity="warning">The application configuration has not loaded. A digest alone does not establish applicability.</Alert>}
             </>
           ) : (
             <Typography variant="s3">
@@ -608,6 +615,7 @@ ReleaseReviewBody.propTypes = {
   dependencyChanges: PropTypes.array,
   checks: PropTypes.object,
   capabilities: PropTypes.object,
+  targetConfiguration: PropTypes.object,
   impact: PropTypes.object,
   evidence: PropTypes.array,
   selected: PropTypes.array,
