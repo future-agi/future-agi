@@ -250,8 +250,8 @@ export async function createDriver({ jobId, runId, registration }) {
           // Carried forward from publication: kind, resource and candidate.
           // The only registered target is preselected and visible.
           await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
-          await expect(author.getByLabel('Release resource', { exact: true })).toHaveText(input.contextName);
-          await expect(author.getByLabel('Published candidate', { exact: true })).toHaveText(new RegExp(`^v${published.number}(?: —|$)`));
+          await expect(author.getByLabel('Release resource', { exact: true })).toHaveValue(input.contextName);
+          await expect(author.getByLabel('Published candidate', { exact: true })).toHaveValue(`v${published.number}`);
           await expect(author.getByLabel('Application target', { exact: true })).toHaveText(/ · configuration r\d+$/);
           // One explicit decision shares and attaches every listed
           // exact-candidate result; the confirmation names each record.
