@@ -9,13 +9,14 @@ import EmptyState from 'src/components/empty-state';
 import Section from 'src/components/section';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import TestCaseEditor from '../tests/TestCaseEditor';
+import ContextNativePanel from './ContextNativePanel';
 
 // Intent: incident responders inspect retained cases without mistaking a text
 // answer for a repaired application. Historical identity remains visible.
 // Hierarchy: viewed release, native limitation, then reviewed requests.
 // Palette/depth/surfaces: neutral, flat table with the shared warning role.
 // Typography/spacing: m3/s1/s3, 12px groups and standard dense table rows.
-function Tests({ contextId, version, canWrite }) {
+function Tests({ contextId, version, versions = [], canWrite }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
@@ -26,7 +27,7 @@ function Tests({ contextId, version, canWrite }) {
   const changed = editor && editor.revision !== suite.data.revision;
   return <Stack spacing={1.5}>
     <Typography variant="m3">Context regression cases{version ? ` · viewed v${version.number}` : ''}</Typography>
-    <Alert severity="warning">Application verification unavailable. Captured text is not a reproduced historical failure or release-ready native evidence. The hosted application launch and authenticated native result ingestion are not connected in this deployment.</Alert>
+    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} />
     <Typography variant="s1">To capture an existing failure, open its exact span in Observe and choose Create context regression case. Its physical identity and selected request/tool text are carried into review; do not retype them here.</Typography>
     <Section title="Reviewed examples">
       {!suite.data.cases.length ? <EmptyState title="No regression cases yet" description="Capture a retained trace, then review its redaction and expected behavior. Working neighboring cases belong in the same suite." /> : <TableContainer>
@@ -50,7 +51,7 @@ function Tests({ contextId, version, canWrite }) {
       }} />}
   </Stack>;
 }
-Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, canWrite: PropTypes.bool.isRequired };
+Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, canWrite: PropTypes.bool.isRequired };
 export default function ContextTestsPanel(props) {
   const access = useSkillV11Scope();
   return <Tests key={`${access.identity}:${props.contextId}`} {...props} />;

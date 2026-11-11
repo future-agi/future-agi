@@ -126,12 +126,9 @@ def evidence_reference(
         status = {"canceled": "cancelled"}.get(
             record.simulation_job.state, record.simulation_job.state
         )
-        config = record.configuration
-        configuration = {
-            "schema": 1,
-            "digest": canonical_digest(config),
-            "native": config,
-        }
+        # Native evidence already stores its immutable identity as
+        # {schema, digest, native}; wrapping it again would nest the identity.
+        configuration = record.configuration
     assert skill is not None
     if status not in TERMINAL_JOB_STATUSES:
         raise SkillsHubError(

@@ -49,6 +49,30 @@ class NativeTargetsView(NativeContextView):
         )
 
 
+    @contract(s.ApplicationTarget, body=s.CreateTargetInput, status=201)
+    def post(self, request: Request, context_id: UUID) -> Response:
+        return self.output(
+            request,
+            s.ApplicationTarget,
+            native_runs.create_application_target(
+                principal=request.skill_principal,
+                context_id=context_id,
+                version=request.validated_data["version"],
+            ),
+            status=201,
+        )
+
+
+class NativeRuntimeConfigurationView(NativeContextView):
+    @contract(s.RuntimeConfiguration)
+    def get(self, request: Request, context_id: UUID) -> Response:
+        return self.output(
+            request,
+            s.RuntimeConfiguration,
+            native_runs.runtime_configuration(principal=request.skill_principal),
+        )
+
+
 class NativeTargetView(NativeContextView):
     @contract(s.ApplicationTarget, body=s.QualifyTargetInput)
     def put(self, request: Request, context_id: UUID, binding_id: UUID) -> Response:

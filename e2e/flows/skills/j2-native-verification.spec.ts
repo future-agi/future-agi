@@ -1,0 +1,215 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { test, expect } from '../../lib/fixtures';
+import { E2E } from '../../lib/env';
+import { flowAnnotation } from '../../lib/flow-meta';
+import { sendTrace } from '../../lib/otlp';
+import { POLL } from '../../lib/state-probe';
+import { SkillsFixtures } from '../../lib/skills-fixtures';
+import { runOperations, firstTurns } from '../../lib/skills-r3/j2-oracle.mjs';
+import { ACTION, REQUESTS, ROOT, STATE, modelRules, neighborCase, publishRoot, seedApplication, expectationFixture } from '../../lib/skills-r3/j2-fixture';
+
+const API = '/model-hub/skills/';
+const RUNTIME_CONTAINER = process.env.J2_RUNTIME_CONTAINER ?? 'futureagi-e2e-standalone-native-runtime-1';
+// The credential the runtime container is started with (compose overlay). Scenario-scoped, synthetic.
+const PROVIDER_NAMESPACE = 'e2e-skills-native-runtime-fixture';
+
+// A pure oracle with a one-sided mutation below: it must reject a changed observation.
+export function assertMatchedOutcome(cells: any[], expected: { caseId: string; variant: string; selection: string; delivery: string; tools: string }[]) {
+  for (const want of expected) {
+    const got = cells.filter(cell => cell.case_id === want.caseId && cell.variant === want.variant);
+    expect(got.length).toBeGreaterThan(0);
+    for (const cell of got) expect({ selection: cell.selection, delivery: cell.delivery, tools: cell.tools }).toEqual({ selection: want.selection, delivery: want.delivery, tools: want.tools });
+  }
+}
+
+test('SKILLS-E2E-022: verify a context repair on the real application and hold false repairs', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({ id: 'SKILLS-E2E-022', area: 'skills',
+    userGoal: 'An incident responder proves a context repair on the actual application with matched native runs, and the product holds a text-only success and a routing near-miss',
+    steps: [
+      'pin the runtime-measured application configuration as the context target',
+      'add the expected skill and business action to the captured failure and preview a matched run with the recorded v4 reference',
+      'run the application with candidate, reference and production contexts and read selection, delivery, tool and answer outcomes per cell',
+      'append a human disagreement beside the automatic grade',
+    ],
+    backendChecks: [
+      'the native runtime proved read-only source and context mounts and closed paid egress in its authenticated health',
+      'the model fixture ledger shows each arm received different root bytes while every arm saw the same fifteen-member catalog',
+      'the independent business ledger shows one applied action per cell and the original failure declined',
+      'an application whose answer text passes while its business tool fails is held',
+      'an overbroad routing repair that sends a dispute to the refund skill is held',
+      'a case without its business state fixture is Not reproduced and nothing launches',
+    ],
+  }),
+}, async ({ page, actor, probe, request }, testInfo) => {
+  test.setTimeout(900_000);
+  const evidence = process.env.J2_EVIDENCE_DIR;
+  const shot = async (name: string) => {
+    const image = await page.screenshot({ animations: 'disabled' });
+    await testInfo.attach(name, { body: image, contentType: 'image/png' });
+    if (evidence) { await mkdir(`${evidence}/shots`, { recursive: true }); await writeFile(`${evidence}/shots/${name}.png`, image); }
+  };
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), actor.organizationId);
+  page.setDefaultTimeout(60_000);
+  const headers = { Authorization: `Bearer ${actor.tokens.access}`, 'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId };
+  const req = async (method: string, path: string, data?: unknown, extra: Record<string, string> = {}) => {
+    const response = await request.fetch(`${E2E.apiUrl}${API}${path}`, { method, headers: { ...headers, 'Idempotency-Key': randomUUID(), ...extra }, data });
+    const body = await response.json().catch(() => ({}));
+    expect(response.ok(), JSON.stringify({ method, path, status: response.status(), body })).toBeTruthy();
+    return body.result;
+  };
+  const prefix = `e2e-j2n-${Date.now().toString(36)}`;
+  const fixtures = new SkillsFixtures(PROVIDER_NAMESPACE);
+  try {
+    // Prerequisite: a funded workspace policy, a fifteen-member application context with recorded v4 failing and v6 head.
+    const spend = await req('GET', 'spend-policy/');
+    await req('PUT', 'spend-policy/', { revision: spend.revision, enabled: true, period_limit_usd: '20.00' });
+    const seeded = await seedApplication(req, prefix);
+    const { contextId, skills } = seeded;
+    const suite = await req('PUT', `contexts/${contextId}/tests/`, { revision: 0, cases: [neighborCase('chargeback', skills), neighborCase('shipping', skills)] });
+    const v7 = await publishRoot(req, contextId, 4, ROOT.repaired, 'Repair refund limit from recorded v4');
+    const v8 = await publishRoot(req, contextId, 4, ROOT.wordingOnly, 'Control: wording-only repair');
+    const v9 = await publishRoot(req, contextId, 4, ROOT.overbroad, 'Control: overbroad routing repair');
+    expect([v7.version.number, v8.version.number, v9.version.number]).toEqual([7, 8, 9]);
+    await fixtures.register(modelRules(skills));
+
+    // The retained failure: a physical span whose request and business state tool result the responder captures.
+    const projectName = `${prefix}-incident`;
+    const start = BigInt(Math.floor(Date.now() / 1000)) * 1_000_000_000n + 123456000n;
+    const stateText = JSON.stringify({ 'support-order': STATE.refund });
+    const v4 = { version: seeded.releases[3] };
+    const trace = await sendTrace(request, { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey, projectName, rootName: 'Synthetic refund failure', startTimeUnixNano: start,
+      rootAttributes: { 'input.value': JSON.stringify({ messages: [{ role: 'system', content: 'Hidden system' }, { role: 'user', content: REQUESTS.refund }, { role: 'tool', content: stateText }, { role: 'assistant', content: 'False refund success' }] }),
+        'output.value': 'False refund success', 'fi.context.id': contextId, 'fi.context.version_id': v4.version.id, 'fi.context.digest': v4.version.digest } });
+    await expect.poll(async () => (await probe.ch<{ n: string }>('SELECT count() AS n FROM spans FINAL WHERE trace_id={t:String}', { t: trace.traceId }))[0].n, POLL.SPAN_VISIBLE).toBe('2');
+
+    // Capture through the UI (physical identity carried, nothing retyped).
+    await page.goto('/dashboard/observe');
+    await page.getByText(projectName, { exact: true }).click();
+    await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
+    await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
+    await page.getByLabel('Regression context', { exact: true }).click();
+    await page.getByRole('option', { name: `${prefix}-support`, exact: true }).click();
+    await page.getByRole('button', { name: 'Review selected span', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('checkbox')).toHaveCount(2);
+    for (const index of [1, 0]) await dialog.getByRole('checkbox').nth(index).check();
+    await dialog.getByRole('button', { name: 'Preview selected text', exact: true }).click();
+    await dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill('Original refund failure');
+    await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt');
+    await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
+    await dialog.getByRole('checkbox', { name: /workspace/ }).check();
+    const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
+    await dialog.getByRole('button', { name: 'Save reviewed example', exact: true }).click();
+    expect((await accepted).ok()).toBe(true);
+
+    // Tests: add the expected skill and action to the captured failure (a human decision), then pin the target.
+    await page.goto(`/dashboard/skills/contexts/${contextId}?version=4`);
+    await page.getByRole('tab', { name: 'Tests', exact: true }).click();
+    await page.getByRole('row', { name: /Original refund failure/ }).getByRole('button', { name: 'Review example' }).click();
+    const editor = page.getByRole('dialog');
+    await editor.getByRole('button', { name: 'Add text fixture' }).click();
+    const fixtureIndex = (await editor.getByRole('textbox', { name: /Fixture \d+ name/ }).count());
+    const expectation = expectationFixture(skills.refund, ACTION.refund);
+    await editor.getByRole('textbox', { name: `Fixture ${fixtureIndex} name` }).fill(expectation.name);
+    await editor.getByRole('textbox', { name: `Fixture ${fixtureIndex} text` }).fill(expectation.text);
+    await editor.getByRole('checkbox', { name: /I reviewed the request/ }).check();
+    await editor.getByRole('button', { name: 'Save example' }).click();
+    await expect(editor).toBeHidden();
+
+    await page.getByRole('button', { name: 'Add application target' }).click();
+    await page.getByRole('button', { name: 'Review runtime configuration' }).click();
+    await expect(page.getByText('Pin the application configuration')).toBeVisible();
+    await shot('J2-pin-configuration');
+    await page.getByRole('button', { name: 'Pin this configuration' }).click();
+    await expect(page.getByText('Configuration pinned')).toBeVisible();
+
+    // Plan: candidate v7 against recorded v4 and production v6; the captured failure is the historical case.
+    await page.getByLabel('Candidate version').click(); await page.getByRole('option', { name: 'v7' }).click();
+    await page.getByLabel('Recorded reference version').click(); await page.getByRole('option', { name: 'v4' }).click();
+    await page.getByLabel('Production version').click(); await page.getByRole('option', { name: 'v6' }).click();
+    const group = page.getByRole('group', { name: 'Examples to run' });
+    for (const title of ['Original refund failure', 'Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
+    await group.getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last().check();
+    await page.getByRole('button', { name: 'Preview application run' }).click();
+    await expect(page.getByText(/9 cells/)).toBeVisible();
+    await shot('J2-native-preview');
+    await page.getByRole('checkbox', { name: /I accept up to/ }).check();
+    await page.getByRole('button', { name: 'Run on the application' }).click();
+    await expect(page.getByText(/Release-ready on the application|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
+    await expect(page.getByText('Release-ready on the application')).toBeVisible();
+    await shot('J2-native-result');
+
+    // Independent evidence.
+    const runs = await req('GET', `contexts/${contextId}/native/runs/`);
+    expect(runs.results).toHaveLength(1);
+    const run = await req('GET', `contexts/${contextId}/native/runs/${runs.results[0].id}/`);
+    expect(run.decision.state).toBe('release_ready');
+    expect(run.runtime).toMatchObject({ read_only_source: true, read_only_context: true, separate_writable_state: true, controlled_paid_egress: true });
+    const historical = run.cases.find((item: any) => item.historical).id;
+    const ids = Object.fromEntries(run.cases.map((item: any) => [item.title, item.id]));
+    assertMatchedOutcome(run.cells, [
+      { caseId: historical, variant: 'candidate', selection: 'pass', delivery: 'pass', tools: 'pass' },
+      { caseId: historical, variant: 'reference', selection: 'pass', delivery: 'pass', tools: 'fail' },
+      { caseId: ids['Working chargeback case'], variant: 'candidate', selection: 'pass', delivery: 'pass', tools: 'pass' },
+      { caseId: ids['Working shipping case'], variant: 'candidate', selection: 'pass', delivery: 'pass', tools: 'pass' },
+    ]);
+    expect(() => assertMatchedOutcome(run.cells, [{ caseId: historical, variant: 'reference', selection: 'pass', delivery: 'pass', tools: 'pass' }])).toThrow();
+    const ledger = await fixtures.ledger();
+    const turns = firstTurns(ledger);
+    expect(turns).toHaveLength(9);
+    expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: capped-25'))).toHaveLength(3); // candidate cells
+    expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: full-amount'))).toHaveLength(6); // reference and production
+    expect(turns.every(turn => turn.catalogMembers === 15)).toBe(true);
+    const attempts = await probe.pg<{ id: string }>('SELECT id FROM simulate_hosted_harness_attempt WHERE job_id=$1', [run.job_id]);
+    expect(attempts).toHaveLength(1);
+    const business = runOperations(RUNTIME_CONTAINER, attempts[0].id, run.cells);
+    expect(business.filter(row => row.status === 'applied')).toHaveLength(7);
+    expect(business.filter(row => row.status === 'declined').map(row => `${row.cell.case_id}/${row.cell.variant}`).sort())
+      .toEqual([`${historical}/production`, `${historical}/reference`].sort());
+    const credentials = await probe.pg<{ n: string }>('SELECT count(*) AS n FROM model_hub_hubskillcontextcredential WHERE workspace_id=$1 AND revoked_at IS NULL AND purpose=$2', [actor.workspaceId, 'consume']);
+    expect(credentials[0].n).toBe('0');
+
+    // Human disagreement is appended beside the automatic grade.
+    await page.getByRole('row', { name: /Original refund failure.*Recorded reference/ }).first().click();
+    await page.getByRole('combobox', { name: 'Your assessment' }).click();
+    await page.getByRole('option', { name: /Disagree/ }).click();
+    await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
+    await page.getByRole('button', { name: 'Record review' }).click();
+    await expect(page.getByText(/disagree: The answer claims success/)).toBeVisible();
+    await shot('J2-native-annotation');
+
+    // Controls (public API, as the acceptance matrix): text-pass/tool-fail and routing near-miss are held;
+    // a case with no business state is Not reproduced and launches nothing.
+    const targets = await req('GET', `contexts/${contextId}/native/targets/`);
+    const target = targets.targets[0];
+    const allCases = (await req('GET', `contexts/${contextId}/tests/`)).cases;
+    const runControl = async (candidate: number, caseIds: string[]) => {
+      const plan = { binding_id: target.binding_id, binding_revision: target.revision, candidate_version: candidate, baselines: { reference: 4 }, case_ids: caseIds, repetitions: 1, historical_case_ids: [] as string[] };
+      const preview = await req('POST', `contexts/${contextId}/native/preview/`, plan);
+      const created = await req('POST', `contexts/${contextId}/native/runs/`, { ...plan, execution_fingerprint: preview.execution_fingerprint, acknowledge_spend: true });
+      let detail: any;
+      await expect.poll(async () => { detail = await req('GET', `contexts/${contextId}/native/runs/${created.evidence_id}/`); return detail.status; }, { timeout: 300_000 }).toBe('completed');
+      return detail;
+    };
+    const refundCase = allCases.find((item: any) => item.title === 'Original refund failure').id;
+    const chargebackCase = allCases.find((item: any) => item.title === 'Working chargeback case').id;
+    const textOnly = await runControl(8, [refundCase]);
+    expect(textOnly.decision.state).toBe('hold');
+    expect(textOnly.decision.reasons.join(' ')).toMatch(/text pass is not a repair/);
+    const nearMiss = await runControl(9, [chargebackCase]);
+    expect(nearMiss.decision.state).toBe('hold');
+    expect(nearMiss.decision.reasons.join(' ')).toMatch(/skill selection failed/);
+    const bare = { ...allCases.find((item: any) => item.title === 'Working shipping case'), id: randomUUID(), title: 'Shipping without state', fixtures: [expectationFixture(skills.shipping, ACTION.shipping)] };
+    const latest = await req('GET', `contexts/${contextId}/tests/`);
+    const input = (item: any) => ({ id: item.id, title: item.title, source_group_id: item.source_group_id, prompt: item.prompt, fixtures: item.fixtures, expected_trigger: item.expected_trigger, checks: item.checks, reviewed: item.reviewed });
+    await req('PUT', `contexts/${contextId}/tests/`, { revision: latest.revision, cases: [...latest.cases, bare].map(input) });
+    const noState = await req('POST', `contexts/${contextId}/native/preview/`, { binding_id: target.binding_id, binding_revision: target.revision, candidate_version: 7, baselines: { reference: 4 }, case_ids: [bare.id], repetitions: 1, historical_case_ids: [] });
+    expect(noState.reproduction).toBe('not_reproduced');
+    expect(noState.missing_inputs[0].input).toContain('business state fixture');
+    await testInfo.attach('J2-native-independent', { body: JSON.stringify({ evidenceClass: 'synthetic fixture', run, textOnly: textOnly.decision, nearMiss: nearMiss.decision, noState, business, suite: suite.revision }), contentType: 'application/json' });
+    if (process.env.J2_DRIVER_FIXTURE_OUTPUT) await writeFile(process.env.J2_DRIVER_FIXTURE_OUTPUT, JSON.stringify({ contextId }), { mode: 0o600 });
+  } finally { await fixtures.dispose().catch(() => undefined); }
+});

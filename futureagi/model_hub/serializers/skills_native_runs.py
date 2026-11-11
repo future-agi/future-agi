@@ -28,6 +28,14 @@ class ApplicationTargets(ContextSerializer):
     targets = ApplicationTarget(many=True)
 
 
+class RuntimeConfiguration(ContextSerializer):
+    configuration = NativeConfiguration()
+
+
+class CreateTargetInput(ContextSerializer):
+    version = Integer(min_value=1)
+
+
 class QualifyTargetInput(ContextSerializer):
     revision = Integer(min_value=1)
     configuration = NativeConfiguration()

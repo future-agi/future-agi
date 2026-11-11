@@ -80,6 +80,16 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "skills-native-v1"
 EXPECTATION_FIXTURE = "fi.application.expectations"
+CASE_FIELDS = (
+    "id",
+    "title",
+    "source_group_id",
+    "prompt",
+    "fixtures",
+    "expected_trigger",
+    "checks",
+    "reviewed",
+)
 ACTIONS = {"issue_refund", "open_chargeback", "track_shipment", "none"}
 CEILING_PER_CELL_USD = Decimal("0.05")
 RETENTION = timedelta(days=30)
@@ -147,6 +157,78 @@ def _target_output(binding: HubSkillContextBinding) -> dict:
         "configuration_digest": binding.configuration_digest or None,
         "configuration": config,
     }
+
+
+def runtime_configuration(*, principal: SkillPrincipal) -> dict:
+    """The pinned configuration the runtime measures from its live image and mounts.
+
+    The reviewer pins it explicitly; launch re-measures and refuses a mismatch.
+    """
+    require_private_principal(principal=principal)
+    if not runtime_status()["available"]:
+        raise _error(
+            "skills_unavailable",
+            "No qualified native application runtime is configured in this deployment.",
+            503,
+        )
+    try:
+        response = requests.get(
+            f"{runtime_url()}/config",
+            headers={
+                "Authorization": "Bearer "
+                + str(getattr(settings, "SKILLS_NATIVE_RUNTIME_TOKEN", "") or "")
+            },
+            timeout=(5, 30),
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        configuration = validate_native_configuration(response.json())
+    except (requests.RequestException, ValueError) as exc:
+        raise _error(
+            "skills_unavailable", "The native runtime did not describe itself.", 503
+        ) from exc
+    return {"configuration": configuration}
+
+
+def create_application_target(
+    *, principal: SkillPrincipal, context_id: UUID, version: int
+) -> dict:
+    """Register the application that consumes this context as a runtime target."""
+    require_private_principal(principal=principal)
+    require_scope_access(principal=principal, write=True)
+    status = runtime_status()
+    if not status["available"]:
+        raise _error(
+            "skills_unavailable",
+            "No qualified native application runtime is configured in this deployment.",
+            503,
+        )
+    with transaction.atomic():
+        context = get_resource(
+            principal=principal,
+            resource_id=context_id,
+            kind="agent_context",
+            lock=True,
+        )
+        _version(context, version)
+        name = f"{status['runtime'] or 'native'} application"[:120]
+        existing = _binding_rows(principal, context_id).filter(name=name).first()
+        if existing is not None:
+            return _target_output(existing)
+        binding = HubSkillContextBinding.objects.create(
+            organization_id=principal.scope.organization_id,
+            workspace_id=principal.scope.workspace_id,
+            context=context,
+            name=name,
+            kind="runtime",
+            selector={"version": version},
+            update_mode="manual",
+            profile="native-application",
+            profile_version="1",
+            repository=None,
+            expected_report_interval_seconds=3600,
+        )
+        return _target_output(binding)
 
 
 def list_application_targets(*, principal: SkillPrincipal, context_id: UUID) -> dict:
@@ -382,7 +464,8 @@ def _plan(*, principal: SkillPrincipal, context_id: UUID, request: dict) -> dict
         case = by_id.get(str(case_id))
         if case is None:
             raise _error("resource_not_found", "Case not found.", 404)
-        cases.append(case)
+        # Stored cases carry review audit fields; validation takes the documented shape.
+        cases.append({key: case[key] for key in CASE_FIELDS})
     cases = validate_cases(cases, require_reviewed=True)
     historical = [str(value) for value in request.get("historical_case_ids") or []]
     if not set(historical) <= {case["id"] for case in cases}:
@@ -831,7 +914,7 @@ def record_guest_health(*, attempt: HostedHarnessAttempt, health: dict) -> dict:
         verify_guest_health(spec=_spec(attempt.job), health=health)
         attempt.state = HostedHarnessAttempt.State.RUNNING
         attempt.heartbeat_at = timezone.now()
-        attempt.sandbox_runtime = {"health": health, "verified_at": timezone.now()}
+        attempt.sandbox_runtime = {"health": health, "verified_at": timezone.now().isoformat()}
         attempt.save(update_fields=["state", "heartbeat_at", "sandbox_runtime"])
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             pk=attempt.job_id

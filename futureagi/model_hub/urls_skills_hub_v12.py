@@ -51,6 +51,10 @@ urlpatterns = [
     # guest channel of the hosted native runtime (attempt bearer + fence).
     path("contexts/<uuid:context_id>/native/targets/", native.NativeTargetsView.as_view()),
     path(
+        "contexts/<uuid:context_id>/native/runtime-configuration/",
+        native.NativeRuntimeConfigurationView.as_view(),
+    ),
+    path(
         "contexts/<uuid:context_id>/native/targets/<uuid:binding_id>/",
         native.NativeTargetView.as_view(),
     ),

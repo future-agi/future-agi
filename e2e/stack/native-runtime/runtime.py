@@ -146,7 +146,7 @@ class Job:
             execute(self.payload, launch_cell=self.launch_cell, ingest=self.ingest)
         except Exception as exc:  # noqa: BLE001 - reported with a bounded typed code
             code = str(exc) if str(exc).replace("_", "").isalnum() else "guest_failed"
-            log("job_failed", attempt=self.launch["attempt_id"], error=type(exc).__name__)
+            log("job_failed", attempt=self.launch["attempt_id"], error=type(exc).__name__, detail=str(exc)[:200])
             try:
                 self.client.post(f"{self.prefix}/failure/", json={"reason": code[:64].lower()})
             except httpx.HTTPError:
@@ -168,14 +168,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def authorized(self) -> bool:
+        supplied = self.headers.get("Authorization", "").removeprefix("Bearer ")
+        return hmac.compare_digest(supplied, TOKEN)
+
     def do_GET(self):
-        self.reply(200, {"ready": True, "protocol": measure.PROTOCOL}) if self.path == "/health" else self.reply(404, {})
+        if self.path == "/health":
+            return self.reply(200, {"ready": True, "protocol": measure.PROTOCOL})
+        if self.path == "/config":
+            if not self.authorized():
+                return self.reply(401, {"error": "unauthorized"})
+            return self.reply(200, measure.configuration())
+        self.reply(404, {})
 
     def do_POST(self):
         if self.path != "/launch":
             return self.reply(404, {})
-        supplied = self.headers.get("Authorization", "").removeprefix("Bearer ")
-        if not hmac.compare_digest(supplied, TOKEN):
+        if not self.authorized():
             return self.reply(401, {"error": "unauthorized"})
         size = int(self.headers.get("Content-Length", "0"))
         if not 0 < size <= MAX_BODY:
