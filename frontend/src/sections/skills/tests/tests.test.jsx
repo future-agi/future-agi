@@ -943,6 +943,52 @@ describe("reviewed run setup", () => {
       screen.getByText(/Case or expected-answer overlap makes this diagnostic/),
     ).toBeInTheDocument();
   });
+  it("classifies every flagged file with one reviewed reason while keeping per-file records", async () => {
+    const base = preview.inventory[0].files[0];
+    api.preview.mockResolvedValue({
+      ...preview,
+      inventory: [
+        {
+          ...preview.inventory[0],
+          files: [
+            { ...base, path: "benchmark/a.md", sha256: "a".repeat(64), flags: ["evaluation_artifact"] },
+            { ...base, path: "benchmark/b.md", sha256: "b".repeat(64), flags: ["evaluation_artifact"] },
+            { ...base, path: "benchmark/c.md", sha256: "c".repeat(64), flags: ["evaluation_artifact"] },
+          ],
+        },
+      ],
+    });
+    mount(setup());
+    await configure();
+    await reviewPlan();
+    const apply = screen.getByRole("button", {
+      name: "Apply to all 3 flagged files",
+    });
+    expect(apply).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run quick check" }),
+    ).toBeDisabled();
+    await choose("Classify all 3 flagged files", "Reference material");
+    fireEvent.change(screen.getByLabelText("Reason for all 3 flagged files"), {
+      target: { value: "  Genuine policy references  " },
+    });
+    fireEvent.click(apply);
+    // Each file keeps its own editable record.
+    expect(
+      screen.getByLabelText("Classification reason for benchmark/b.md (bbbbbbbb)"),
+    ).toHaveValue("Genuine policy references");
+    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    await waitFor(() => expect(api.create).toHaveBeenCalled());
+    expect(
+      api.create.mock.calls[0][0].inventoryReview.classifications.map(
+        ({ path, classification, reason }) => [path, classification, reason],
+      ),
+    ).toEqual([
+      ["benchmark/a.md", "reference_material", "Genuine policy references"],
+      ["benchmark/b.md", "reference_material", "Genuine policy references"],
+      ["benchmark/c.md", "reference_material", "Genuine policy references"],
+    ]);
+  });
   it("preserves model and spend inputs but discards a changed preview", async () => {
     api.create.mockRejectedValue({
       code: "test_plan_changed",

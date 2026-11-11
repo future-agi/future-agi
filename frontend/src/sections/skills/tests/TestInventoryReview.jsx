@@ -1,7 +1,9 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import {
   Alert,
   Box,
+  Button,
   Checkbox,
   FormControlLabel,
   MenuItem,
@@ -80,6 +82,24 @@ export default function TestInventoryReview({
       ],
     });
   };
+  const [bulk, setBulk] = useState({ classification: "", reason: "" });
+  const classifyAll = () => {
+    const keys = new Set(uniqueFlagged.map((file) => fileKey(file.skillId, file)));
+    update({
+      classifications: [
+        ...value.classifications.filter(
+          (item) => !keys.has(fileKey(item.skillId, item)),
+        ),
+        ...uniqueFlagged.map((file) => ({
+          skillId: file.skillId,
+          path: file.path,
+          sha256: file.sha256,
+          classification: bulk.classification,
+          reason: bulk.reason.trim(),
+        })),
+      ],
+    });
+  };
   return (
     <Stack spacing={2}>
       <Section
@@ -131,6 +151,52 @@ export default function TestInventoryReview({
               ))}
             </Box>
           ))}
+          {uniqueFlagged.length > 1 && (
+            <Stack spacing={1} data-testid="bulk-classification">
+              <Typography variant="s2">
+                {uniqueFlagged.length} files are flagged. Classify them together
+                after reading the list above; each file keeps its own record and
+                can still be changed below.
+              </Typography>
+              <TextField
+                select
+                size="small"
+                disabled={disabled}
+                label={`Classify all ${uniqueFlagged.length} flagged files`}
+                value={bulk.classification}
+                onChange={(event) =>
+                  setBulk({ ...bulk, classification: event.target.value })
+                }
+              >
+                <MenuItem value="reference_material">
+                  Reference material
+                </MenuItem>
+                <MenuItem value="evaluation_material">
+                  Evaluation material · diagnostic only
+                </MenuItem>
+              </TextField>
+              <TextField
+                size="small"
+                disabled={disabled}
+                label={`Reason for all ${uniqueFlagged.length} flagged files`}
+                value={bulk.reason}
+                inputProps={{ maxLength: 2000 }}
+                onChange={(event) =>
+                  setBulk({ ...bulk, reason: event.target.value })
+                }
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={
+                  disabled || !bulk.classification || !bulk.reason.trim()
+                }
+                onClick={classifyAll}
+              >
+                {`Apply to all ${uniqueFlagged.length} flagged files`}
+              </Button>
+            </Stack>
+          )}
           {uniqueFlagged.map((file) => {
             const classification = value.classifications.find(
               (item) =>

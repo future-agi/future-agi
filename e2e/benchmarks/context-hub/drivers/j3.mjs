@@ -282,14 +282,20 @@ export async function createDriver({ jobId, runId, registration }) {
               { match: { request: prompt, turn: 0 }, response: { message: { role: 'assistant', content: null, tool_calls: [{ id: 'synthetic-turn-0', type: 'function', function: { name: 'load_skill', arguments: { skill_id: handle } } }] }, finish_reason: 'tool_calls' } },
               { match: { request: prompt, turn: 1 }, response: { message: { role: 'assistant', content: 'approved-response' }, finish_reason: 'stop' } },
             ], github: [] });
-            // Fixture names contain 'benchmark': keep detector findings and count
-            // every per-file classification rather than renaming to avoid work.
-            const classifications = page.getByRole('combobox', { name: /^Classify / });
-            for (let file = 0; file < await classifications.count(); file++) {
-              await operator.review(`parent-${index}-flagged-file-${file}`, [`outbound-file-${file}`], [`outbound-file-${file}`], () => expect(classifications.nth(file)).toBeVisible());
-              await operator.click(classifications.nth(file), `parent-${index}-classify-${file}`);
-              await click('Reference material', `parent-${index}-reference-material-${file}`, 'option');
-              await operator.fill(page.getByRole('textbox', { name: /^Classification reason for / }).nth(file), 'Synthetic purchase-policy reference. The benchmark name is not an answer key; no expected-answer text is bundled.', `parent-${index}-classification-reason-${file}`);
+            // Fixture names contain 'benchmark': keep detector findings and
+            // classify every flagged file. One reviewed reason is applied to the
+            // listed files in a single action; each file keeps its own record.
+            const flaggedCount = await page.getByRole('combobox', { name: /^Classify (?!all )/ }).count();
+            requireValue(flaggedCount > 0, 'Fixture produced no flagged files to classify');
+            const flaggedItems = Array.from({ length: flaggedCount }, (_, file) => `outbound-file-${file}`);
+            const reason = 'Synthetic purchase-policy reference. The benchmark name is not an answer key; no expected-answer text is bundled.';
+            await operator.review(`parent-${index}-flagged-files`, flaggedItems, flaggedItems, () => expect(page.getByRole('combobox', { name: new RegExp(`^Classify all ${flaggedCount} flagged files`) })).toBeVisible());
+            await click(`Classify all ${flaggedCount} flagged files`, `parent-${index}-classify-all`, 'combobox');
+            await click('Reference material', `parent-${index}-classify-all-reference`, 'option');
+            await fill(`Reason for all ${flaggedCount} flagged files`, reason, `parent-${index}-classify-all-reason`);
+            await click(`Apply to all ${flaggedCount} flagged files`, `parent-${index}-classify-all-apply`);
+            for (let file = 0; file < flaggedCount; file++) {
+              await expect(page.getByRole('textbox', { name: /^Classification reason for / }).nth(file)).toHaveValue(reason);
             }
             await click('I know of no bundled answer keys or evaluation material', `parent-${index}-no-answer-keys`, 'checkbox');
             await operator.review(`parent-${index}-outbound-inventory`, ['standing-root', ...input.leaves.map((_, n) => `linked-skill-${n}`), 'case', 'reference'], [], () => page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check());
