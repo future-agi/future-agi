@@ -32,9 +32,23 @@ func TestAttachmentSharedFixtures(t *testing.T) {
 	}
 	for _, c := range fixtures.References {
 		t.Run(c.Name, func(t *testing.T) {
-			_, err := ParseAttachmentRefs(c.Version, c.Raw)
+			refs, err := ParseAttachmentRefs(c.Version, c.Raw)
 			if (err == nil) != c.Valid {
 				t.Fatalf("valid=%v, err=%v", c.Valid, err)
+			}
+			attrs := pcommon.NewMap()
+			attrs.PutInt(AttachmentSchema, c.Version)
+			attrs.PutStr(AttachmentRefs, c.Raw)
+			NormalizeAttachmentRefs(attrs)
+			value, retained := attrs.Get(AttachmentRefs)
+			if retained != c.Valid {
+				t.Fatalf("projection retained=%v, want=%v", retained, c.Valid)
+			}
+			if c.Valid {
+				normalized, err := ParseAttachmentRefs(1, value.Str())
+				if err != nil || !reflect.DeepEqual(refs, normalized) {
+					t.Fatal("normalization changed reference fields")
+				}
 			}
 		})
 	}

@@ -150,6 +150,1062 @@
       "version": 1,
       "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"turn_recording\"}]",
       "valid": false
+    },
+    {
+      "name": "optional-purpose-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"turn_recording\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"model_input\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"model_output\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"tool_result\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"computer_screenshot\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"diagnostic\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-valid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"document\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-purpose-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"invalid\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-purpose-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-purpose-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-purpose-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":0}]",
+      "valid": false
+    },
+    {
+      "name": "optional-purpose-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-purpose-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":0}]",
+      "valid": true
+    },
+    {
+      "name": "optional-message_index-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":1}]",
+      "valid": true
+    },
+    {
+      "name": "optional-message_index-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":65535}]",
+      "valid": true
+    },
+    {
+      "name": "optional-message_index-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":-1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":65536}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":1.5}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":\"1\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-message_index-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"message_index\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":0}]",
+      "valid": true
+    },
+    {
+      "name": "optional-part_index-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":1}]",
+      "valid": true
+    },
+    {
+      "name": "optional-part_index-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":65535}]",
+      "valid": true
+    },
+    {
+      "name": "optional-part_index-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":-1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":65536}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":1.5}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":\"1\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-part_index-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"part_index\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"user\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-role-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"assistant\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-role-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"tool\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-role-valid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"system\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-role-valid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"unknown\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-role-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":\"invalid\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":0}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-role-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"role\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":0}]",
+      "valid": true
+    },
+    {
+      "name": "optional-channel-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":1}]",
+      "valid": true
+    },
+    {
+      "name": "optional-channel-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":31}]",
+      "valid": true
+    },
+    {
+      "name": "optional-channel-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":-1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":32}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":1.5}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":\"1\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-channel-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"channel\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"a\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-conversation_id-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"synthetic_1\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-conversation_id-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-conversation_id-valid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-conversation_id-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"has space\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"has.dot\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"has/slash\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"a\\nb\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":\"\\u00e9\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-8",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-9",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-10",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-conversation_id-invalid-11",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"conversation_id\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"a\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-turn_id-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"synthetic_1\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-turn_id-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-turn_id-valid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-turn_id-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"has space\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"has.dot\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"has/slash\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"a\\nb\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":\"\\u00e9\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-8",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-9",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-10",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-turn_id-invalid-11",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"turn_id\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-valid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"a\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-tool_call_id-valid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"synthetic_1\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-tool_call_id-valid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-tool_call_id-valid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-\"}]",
+      "valid": true
+    },
+    {
+      "name": "optional-tool_call_id-invalid-0",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-1",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-2",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"has space\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-3",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"has.dot\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"has/slash\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-5",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"a\\nb\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-6",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":\"\\u00e9\"}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-7",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":null}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-8",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":true}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-9",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":1}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-10",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":{}}]",
+      "valid": false
+    },
+    {
+      "name": "optional-tool_call_id-invalid-11",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"tool_call_id\":[]}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-audio/wav",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/ogg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/ogg\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/mpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/mpeg\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/mp4\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/webm\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/flac",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/flac\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-audio/L16",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/L16\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-audio-image/png",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"image/png\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-image/jpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"image/jpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-image/webp",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"image/webp\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-video/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"video/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-video/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"video/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-application/pdf",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"application/pdf\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-audio-application/octet-stream",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"application/octet-stream\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/wav",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/wav\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/ogg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/ogg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/mpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/mpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/flac",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/flac\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-audio/L16",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"audio/L16\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-image/png",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"image/png\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-image-image/jpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"image/jpeg\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-image-image/webp",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"image/webp\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-image-video/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"video/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-video/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"video/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-application/pdf",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"application/pdf\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-image-application/octet-stream",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"image\",\"mime_type\":\"application/octet-stream\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/wav",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/wav\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/ogg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/ogg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/mpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/mpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/flac",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/flac\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-audio/L16",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"audio/L16\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-image/png",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"image/png\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-image/jpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"image/jpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-image/webp",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"image/webp\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-video/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"video/mp4\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-video-video/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"video/webm\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-video-application/pdf",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"application/pdf\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-video-application/octet-stream",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"video\",\"mime_type\":\"application/octet-stream\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/wav",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/wav\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/ogg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/ogg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/mpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/mpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/flac",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/flac\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-audio/L16",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"audio/L16\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-image/png",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"image/png\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-image/jpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"image/jpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-image/webp",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"image/webp\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-video/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"video/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-video/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"video/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-document-application/pdf",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"application/pdf\"}]",
+      "valid": true
+    },
+    {
+      "name": "mime-document-application/octet-stream",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"document\",\"mime_type\":\"application/octet-stream\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/wav",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/wav\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/ogg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/ogg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/mpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/mpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/flac",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/flac\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-audio/L16",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"audio/L16\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-image/png",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"image/png\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-image/jpeg",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"image/jpeg\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-image/webp",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"image/webp\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-video/mp4",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"video/mp4\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-video/webm",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"video/webm\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-application/pdf",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"application/pdf\"}]",
+      "valid": false
+    },
+    {
+      "name": "mime-file-application/octet-stream",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"file\",\"mime_type\":\"application/octet-stream\"}]",
+      "valid": true
     }
   ],
   "identities": [
@@ -219,5 +1275,6 @@
     }
   ],
   "source": "traceAI/spec/attachments/v1",
-  "source_schema_sha256": "470035bd5e0b66592c8be98fbf5cc67ffe0e32d9803102b621e25807548f4961"
+  "source_schema_sha256": "470035bd5e0b66592c8be98fbf5cc67ffe0e32d9803102b621e25807548f4961",
+  "source_commit": "aeed09f27d9d1f3649282dd94c885850af3ca27e"
 }

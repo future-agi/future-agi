@@ -10,6 +10,7 @@ from tracer.services.attachments.reads import AuthorizedStatus, ReadTarget
 from tracer.services.attachments.references import NONCE, REFS, SCHEMA, SESSION
 from tracer.services.attachments.view_enrichment import (
     enrich_observations,
+    enrich_trace_detail,
     enrich_voice_page,
     trace_observations,
 )
@@ -83,38 +84,95 @@ def test_invalid_reference_secrets_are_not_retained():
         upload.assert_not_called()
 
 
-def test_trace_and_voice_use_identical_authorized_projection():
+def test_real_trace_detail_and_voice_use_identical_authorized_projection():
+    from tracer.models.project import Project
+    from tracer.services.clickhouse.v2.query_builders.trace_detail import (
+        retrieve_trace_detail_ch,
+    )
+
     request = SimpleNamespace(
         organization=SimpleNamespace(id=A), workspace=SimpleNamespace(id=B)
     )
     target = ReadTarget(Scope(A, B, C), Parent(A, "1234567890abcdef"))
-    row = {"id": target.parent.span_id, "trace_id": A}
-    trace = {"observation_spans": [{"observation_span": dict(row), "children": []}]}
-    voice = [dict(row)]
+    # Storage doubles feed the REAL CH response assembler. Its wire shape must
+    # not be recreated by a fixture that silently invents a trace_id field.
+    storage_row = {
+        "id": target.parent.span_id,
+        "trace_id": A,
+        "project_id": C,
+        "name": "conversation",
+        "observation_type": "conversation",
+        "parent_span_id": None,
+        "start_time": datetime.now(UTC),
+        "end_time": datetime.now(UTC),
+        "status": "OK",
+        "provider": "pipecat",
+    }
+    detail = SimpleNamespace(
+        project_id=C,
+        spans=[storage_row],
+        eval_config_ids=(),
+        evals=(),
+        annotations=(),
+        eval_unavailable=False,
+    )
+    manager = getattr(Project, "no_workspace_objects", Project.objects)
+    with (
+        patch.object(manager, "filter") as projects,
+        patch("tracer.models.trace.Trace.objects.filter") as traces,
+        patch(
+            "tracer.services.clickhouse.v2.trace_detail_reads.read_trace_detail",
+            return_value=detail,
+        ),
+    ):
+        projects.return_value.filter.return_value.values_list.return_value = [C]
+        traces.return_value.first.return_value = None
+        result = retrieve_trace_detail_ch(Mock(), request, A, Mock(), project_id=C)
+    observation = result["observation_spans"][0]["observation_span"]
+    assert observation["trace"] == A and "trace_id" not in observation
     reader = Mock()
     reader.list_authorized.return_value = [
         AuthorizedStatus(
             target, REF, "ready", True, True, datetime.now(UTC) + timedelta(hours=1)
         )
     ]
-    enrich_observations(
-        request=request,
-        project_id=C,
-        observations=trace_observations(trace),
-        reader=reader,
+    enrich_trace_detail(request=request, result=result, reader=reader)
+    reader.list_authorized.assert_called_once_with(
+        request, (target,), per_parent_limit=64
     )
+    assert "trace_id" not in observation  # Do not change the public row schema.
+    voice = [{"id": target.parent.span_id, "trace_id": A}]
     enrich_observations(
         request=request, project_id=C, observations=voice, reader=reader
     )
-    assert trace["observation_spans"][0]["observation_span"] == voice[0]
+    assert observation["attachments"] == voice[0]["attachments"]
     assert voice[0]["attachments"][0]["status"] == "ready"
-    assert reader.list_authorized.call_count == 2  # exactly one per response
-    reader.list_authorized.return_value = []  # revoked membership: no metadata
-    denied = [dict(row)]
-    enrich_observations(
-        request=request, project_id=C, observations=denied, reader=reader
+    assert reader.list_authorized.call_count == 2
+    reader.list_authorized.return_value = []
+    observation.pop("attachments")
+    enrich_trace_detail(request=request, result=result, reader=reader)
+    assert "attachments" not in observation
+
+
+def test_trace_parent_is_not_guessed_from_voice_shape():
+    request = SimpleNamespace(
+        organization=SimpleNamespace(id=A), workspace=SimpleNamespace(id=B)
     )
-    assert denied == [row]
+    reader = Mock()
+    # Standard rows require their own canonical trace parent; a missing or
+    # invalid trace must not fall back to a different trace_id or the envelope.
+    for row in (
+        {"id": "1234567890abcdef", "trace_id": A},
+        {"id": "1234567890abcdef", "trace": "invalid", "trace_id": A},
+        {"id": "invalid", "trace": A},
+    ):
+        result = {
+            "trace": {"project": C, "id": A},
+            "observation_spans": [{"observation_span": row}],
+        }
+        enrich_trace_detail(request=request, result=result, reader=reader)
+        assert "attachments" not in row
+    reader.list_authorized.assert_not_called()
 
 
 def test_missing_workspace_and_default_off_do_not_query():

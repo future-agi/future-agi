@@ -19,24 +19,24 @@ MAX_REFS = 64
 _UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 _HEX_TRACE = re.compile(r"[0-9a-f]{32}\Z")
 _SPAN = re.compile(r"[0-9a-f]{16}\Z")
-MIMES = frozenset(
-    (
-        "audio/wav",
-        "audio/ogg",
-        "audio/mpeg",
-        "audio/mp4",
-        "audio/webm",
-        "audio/flac",
-        "audio/L16",
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "video/mp4",
-        "video/webm",
-        "application/pdf",
-        "application/octet-stream",
-    )
-)
+_TOKEN = re.compile(r"[a-zA-Z0-9_-]{1,128}\Z")
+MIMES_BY_MODALITY = {
+    "audio": frozenset(
+        (
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+        )
+    ),
+    "image": frozenset(("image/png", "image/jpeg", "image/webp")),
+    "video": frozenset(("video/mp4", "video/webm")),
+    "document": frozenset(("application/pdf",)),
+    "file": frozenset(("application/octet-stream",)),
+}
 PURPOSES = frozenset(
     (
         "conversation_recording",
@@ -52,7 +52,11 @@ PURPOSES = frozenset(
 _REQUIRED = frozenset(
     ("attachment_id", "occurrence_id", "direction", "modality", "mime_type")
 )
-_OPTIONAL = frozenset(("purpose", "message_index", "part_index", "role", "channel"))
+_CORRELATIONS = frozenset(("conversation_id", "turn_id", "tool_call_id"))
+_OPTIONAL = (
+    frozenset(("purpose", "message_index", "part_index", "role", "channel"))
+    | _CORRELATIONS
+)
 
 
 class InvalidReference(ValueError):
@@ -101,12 +105,19 @@ def validate_reference(ref):
     canonical_uuid(ref["occurrence_id"])
     for key, choices in (
         ("direction", ("input", "output", "mixed")),
-        ("modality", ("audio", "image", "video", "document", "file")),
-        ("mime_type", MIMES),
+        ("modality", MIMES_BY_MODALITY),
         ("purpose", PURPOSES),
         ("role", ("user", "assistant", "tool", "system", "unknown")),
     ):
         if key in ref and (not isinstance(ref[key], str) or ref[key] not in choices):
+            raise InvalidReference()
+    mime = ref["mime_type"]
+    if not isinstance(mime, str) or mime not in MIMES_BY_MODALITY[ref["modality"]]:
+        raise InvalidReference()
+    for key in _CORRELATIONS:
+        if key in ref and (
+            not isinstance(ref[key], str) or not _TOKEN.fullmatch(ref[key])
+        ):
             raise InvalidReference()
     for key, maximum in (
         ("message_index", 65535),

@@ -5,18 +5,19 @@ URL, inferred provider, new route or playback grant is manufactured here.
 """
 
 from datetime import UTC, datetime
+from itertools import islice
 
 from .binding import Parent, Scope
 from .reads import MAX_PARENTS, ReadTarget, attachment_statuses
 from .references import InvalidReference
 
 
-def enrich_observations(*, request, project_id, observations, reader=None):
-    """One bounded authorized batch for both trace and Voice response builders.
+def _enrich_parents(*, request, project_id, observations, reader):
+    """One bounded authorized batch of (response row, explicit parent) pairs.
 
-    The default has zero queries/response changes. Missing explicit workspace
-    fails closed, rather than adopting an older null-workspace project. B10 must
-    additionally reauthorize each parent; a trace read is not media permission.
+    Missing explicit workspace fails closed, rather than adopting an older
+    null-workspace project. B10 must additionally reauthorize each parent;
+    a trace read is not media permission.
     """
     if reader is None:
         return
@@ -32,22 +33,10 @@ def enrich_observations(*, request, project_id, observations, reader=None):
         )
     except InvalidReference:
         return
-    selected = []
-    # Caller supplies only its already-selected response page. Never expand the
-    # CH query or hydrate a whole conversation just to discover attachment IDs.
-    for index, observation in enumerate(observations):
-        if index == MAX_PARENTS:
-            break
-        try:
-            target = ReadTarget(
-                scope,
-                Parent(
-                    str(observation.get("trace_id", "")), str(observation.get("id", ""))
-                ),
-            )
-        except InvalidReference:
-            continue
-        selected.append((observation, target))
+    selected = [
+        (observation, ReadTarget(scope, parent))
+        for observation, parent in islice(observations, MAX_PARENTS)
+    ]
     statuses = attachment_statuses(
         viewer=request,
         targets=[target for _, target in selected],
@@ -60,28 +49,71 @@ def enrich_observations(*, request, project_id, observations, reader=None):
             observation["attachments"] = statuses[target]
 
 
-def enrich_voice_page(*, request, project_id, entries, reader=None):
-    """Enrich the existing root stubs with one query, not one per voice call."""
-    if reader is None:
-        return
-    prepared = []
-    for entry in entries[:MAX_PARENTS]:
-        if str(entry.get("project_id")) != str(project_id):
-            continue
-        roots = entry.get("observation_span") or []
-        if not roots:
-            continue
-        original = roots[0]
-        prepared.append((original, {**original, "trace_id": entry.get("trace_id")}))
-    enrich_observations(
+def enrich_trace_detail(*, request, result, reader=None):
+    """Adapt the standard trace-detail `trace` field, never a Voice-shaped alias."""
+
+    def parents():
+        for observation in trace_observations(result):
+            try:
+                parent = Parent(
+                    str(observation.get("trace", "")), str(observation.get("id", ""))
+                )
+            except InvalidReference:
+                continue
+            yield observation, parent
+
+    _enrich_parents(
         request=request,
-        project_id=project_id,
-        observations=[row for _, row in prepared],
+        project_id=(result.get("trace") or {}).get("project"),
+        observations=parents(),
         reader=reader,
     )
-    for original, row in prepared:
-        if "attachments" in row:
-            original["attachments"] = row["attachments"]
+
+
+def enrich_observations(*, request, project_id, observations, reader=None):
+    """Adapt Voice detail rows, whose identity is explicitly named `trace_id`."""
+
+    def parents():
+        for observation in islice(observations, MAX_PARENTS):
+            try:
+                parent = Parent(
+                    str(observation.get("trace_id", "")), str(observation.get("id", ""))
+                )
+            except InvalidReference:
+                continue
+            yield observation, parent
+
+    _enrich_parents(
+        request=request,
+        project_id=project_id,
+        observations=parents(),
+        reader=reader,
+    )
+
+
+def enrich_voice_page(*, request, project_id, entries, reader=None):
+    """Adapt Voice list identity from its entry, not from its root span stub."""
+
+    def parents():
+        for entry in islice(entries, MAX_PARENTS):
+            if str(entry.get("project_id")) != str(project_id):
+                continue
+            roots = entry.get("observation_span") or []
+            if not roots:
+                continue
+            root = roots[0]
+            try:
+                parent = Parent(str(entry.get("trace_id", "")), str(root.get("id", "")))
+            except InvalidReference:
+                continue
+            yield root, parent
+
+    _enrich_parents(
+        request=request,
+        project_id=project_id,
+        observations=parents(),
+        reader=reader,
+    )
 
 
 def trace_observations(result):

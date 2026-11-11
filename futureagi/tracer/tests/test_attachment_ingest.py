@@ -61,12 +61,23 @@ class AttachmentReferencesTests(TestCase):
         for case in json.loads(FIXTURES.read_text())["references"]:
             with self.subTest(case=case["name"]):
                 if case["valid"]:
-                    parse_references(case["version"], case["raw"])
+                    refs = parse_references(case["version"], case["raw"])
+                    self.assertEqual(list(refs), json.loads(case["raw"]))
+                    normalized = normalize_attributes(
+                        {SCHEMA: case["version"], REFS: case["raw"]}
+                    )
+                    self.assertEqual(json.loads(normalized[REFS]), list(refs))
                 else:
                     with self.assertRaisesRegex(
                         InvalidReference, "^invalid_attachment_reference$"
                     ):
                         parse_references(case["version"], case["raw"])
+                    self.assertNotIn(
+                        REFS,
+                        normalize_attributes(
+                            {SCHEMA: case["version"], REFS: case["raw"]}
+                        ),
+                    )
 
     def test_shared_identity_fixtures(self):
         for case in json.loads(FIXTURES.read_text())["identities"]:
@@ -110,7 +121,6 @@ class AttachmentReferencesTests(TestCase):
             "hash",
             "object_key",
             "token",
-            "tool_call_id",
         ):
             with self.subTest(field=field):
                 self.assertEqual(

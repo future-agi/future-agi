@@ -23,6 +23,14 @@ var ErrAttachmentReference = errors.New("invalid_attachment_reference")
 var attachmentUUID = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 var attachmentTrace = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var attachmentSpan = regexp.MustCompile(`^[0-9a-f]{16}$`)
+var attachmentToken = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
+var attachmentMIMEs = map[string]string{
+	"audio":    "audio/wav|audio/ogg|audio/mpeg|audio/mp4|audio/webm|audio/flac|audio/L16",
+	"image":    "image/png|image/jpeg|image/webp",
+	"video":    "video/mp4|video/webm",
+	"document": "application/pdf",
+	"file":     "application/octet-stream",
+}
 
 func ValidAttachmentUUID(value string) bool {
 	return attachmentUUID.MatchString(value) && value != "00000000-0000-0000-0000-000000000000"
@@ -86,7 +94,10 @@ func validAttachmentRef(ref map[string]any) bool {
 				return false
 			}
 		case "mime_type":
-			if !referenceEnum(value, "audio/wav|audio/ogg|audio/mpeg|audio/mp4|audio/webm|audio/flac|audio/L16|image/png|image/jpeg|image/webp|video/mp4|video/webm|application/pdf|application/octet-stream") {
+			// Checked against the validated modality below, not as an independent enum.
+		case "conversation_id", "turn_id", "tool_call_id":
+			s, ok := value.(string)
+			if !ok || !attachmentToken.MatchString(s) {
 				return false
 			}
 		case "purpose":
@@ -114,7 +125,7 @@ func validAttachmentRef(ref map[string]any) bool {
 			return false
 		}
 	}
-	return true
+	return referenceEnum(ref["mime_type"], attachmentMIMEs[ref["modality"].(string)])
 }
 
 // Decode the shallow closed shape token-by-token to reject duplicate members,

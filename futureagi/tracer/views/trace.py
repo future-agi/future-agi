@@ -2161,15 +2161,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 call_execution_id=query.get("call_execution_id"),
             )
             result = handler.fetch()
-            from tracer.services.attachments.view_enrichment import (
-                enrich_observations,
-                trace_observations,
-            )
+            from tracer.services.attachments.view_enrichment import enrich_trace_detail
 
-            enrich_observations(
+            enrich_trace_detail(
                 request=request,
-                project_id=(result.get("trace") or {}).get("project"),
-                observations=trace_observations(result),
+                result=result,
                 reader=self.attachment_reader,
             )
             return self._gm.success_response(result)
