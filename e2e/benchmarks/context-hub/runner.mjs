@@ -187,6 +187,8 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
     report.claim = report.status === 'completed' && driver.mode !== 'selftest'
       ? 'Observed action counts only; competitive and human study gates remain separate' : 'Not qualified';
     if (measurementOnly) { // J5 pre-Checkpoint-P block above: counts are a measurement, never a supported claim.
+      // The external real-GitHub check is open, so the job's observations are not complete.
+      report.observations_complete = false;
       report.claim = report.status === 'completed' && driver.mode !== 'selftest'
         ? 'Pre-Checkpoint-P measurement: observed synthetic action counts only; no supported claim' : 'Not qualified';
       report.components = Object.fromEntries([['cold_adoption', 'cold'], ['recurring_rollout', 'recurring'], ['recovery', 'recovery']]

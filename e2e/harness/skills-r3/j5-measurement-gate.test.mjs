@@ -69,6 +69,7 @@ test('measurement-only J5 records real counts, leaves real-GitHub open and block
   assert.ok(!observed.includes('real-github-conformance'), 'the external check is never observed from the driver');
   const github = result.checks.find((check) => check.id === 'real-github-conformance');
   assert.equal(github.status, 'external_open');
+  assert.equal(result.observations_complete, false, 'an open external check never makes observations complete');
   assert.ok(!result.events.some((event) => event.type === 'outcome' && event.id === 'real-github-conformance'));
   assert.equal(result.checks.filter((check) => check.status === 'pass').length, job.checks.length - 1);
   assert.equal(result.measurement.counts.A, job.steps.length);
