@@ -353,11 +353,11 @@ def test_voice_detail_recording_states_are_coarse():
         assert result["recording_attachment"]["state"] == expected, state
 
 
-def test_voice_detail_without_authorized_root_recording_keeps_legacy_tier():
+def test_voice_detail_without_authorized_recording_keeps_legacy_tier():
     for statuses in (
         [],  # denied, foreign, missing and deleted rows are omitted identically
         [_status(ROOT, REF)],  # an attachment that is not a recording
-        [_status(CHILD, RECORDING)],  # a recording is never inferred from a child
+        [_status(CHILD, REF)],
         [_status(ROOT, RECORDING, "deleted")],
         [_status(ROOT, RECORDING, "expired")],
         [_status(ROOT, RECORDING, "rejected")],
@@ -370,6 +370,46 @@ def test_voice_detail_without_authorized_root_recording_keeps_legacy_tier():
     result = _real_voice_detail(None)
     assert "recording_attachment" not in result
     assert all("attachments" not in row for row in result["observation_span"])
+
+
+def test_voice_detail_projects_a_recording_bound_on_a_child_span():
+    """LiveKit binds the session recording on agent_session, a child span.
+
+    The projection names the occurrence's own parent; the manifest is read
+    for that same parent, never for the root.
+    """
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        replace(
+            _status(CHILD, RECORDING),
+            recording_id=RECORDING_ID,
+        )
+    ]
+    reader.recording_manifest.return_value = _manifest()
+    result = _real_voice_detail(reader)
+    assert result["recording_attachment"] == {
+        "occurrence_id": B,
+        "parent": {"trace_id": A, "span_id": CHILD},
+        "state": "ready",
+        "manifest": _manifest(),
+    }
+    _, target, recording_id = reader.recording_manifest.call_args.args
+    assert (target.parent, recording_id) == (Parent(A, CHILD), RECORDING_ID)
+    # Coarse states project the same child parent.
+    reader.list_authorized.return_value = [_status(CHILD, RECORDING, "validating")]
+    assert _real_voice_detail(reader)["recording_attachment"]["parent"] == {
+        "trace_id": A,
+        "span_id": CHILD,
+    }
+
+
+def test_voice_detail_recordings_on_root_and_child_are_not_guessed():
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        _status(ROOT, RECORDING),
+        _status(CHILD, {**RECORDING, "occurrence_id": C}),
+    ]
+    assert _real_voice_detail(reader)["recording_attachment"] == {"state": "rejected"}
 
 
 def test_voice_detail_ambiguous_root_recordings_are_not_guessed():
@@ -487,3 +527,35 @@ def test_voice_detail_segments_of_one_recording_are_one_recording():
         _segment_status(C, recording_id=A),
     ]
     assert _real_voice_detail(reader)["recording_attachment"] == {"state": "rejected"}
+
+
+def _livekit_root(name="job_entrypoint", parent=None, **attributes):
+    span = {
+        "span_id": ROOT,
+        "trace_id": A,
+        "parent_id": parent,
+        "name": name,
+        "project_name": "voice",
+        "project_type": "observe",
+        "attributes": {"gen_ai.span.kind": "UNKNOWN", **attributes},
+    }
+    with patch("tracer.utils.otel.calculate_cost", return_value=0):
+        return _convert_single_span(
+            span, {("voice", A, "observe"): SimpleNamespace(id=C)}, {}, A
+        )["observation_span"]["observation_type"]
+
+
+def test_livekit_job_root_is_a_voice_call_only_with_attachments():
+    """The SDK marks no conversation root for a LiveKit worker (I04)."""
+    from django.test import override_settings
+
+    job = {"lk.job_id": "AJ_synthetic"}
+    with override_settings(FI_ATTACHMENTS_ENABLED=True):
+        assert _livekit_root(**job) == "conversation"
+        assert _livekit_root(parent=ROOT, **job) == "unknown"  # not a true root
+        assert _livekit_root(name="agent_session", **job) == "unknown"
+        assert _livekit_root() == "unknown"  # no lk.job_id
+        typed = {**job, "fi.span.kind": "AGENT", "gen_ai.span.kind": "AGENT"}
+        assert _livekit_root(**typed) == "agent"  # only an untyped root maps
+    with override_settings(FI_ATTACHMENTS_ENABLED=False):
+        assert _livekit_root(**job) == "unknown"  # disabled: unchanged

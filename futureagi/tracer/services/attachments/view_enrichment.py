@@ -137,13 +137,17 @@ def _playable(manifest, occurrence_id):
 def enrich_voice_detail(*, request, result, reader=None):
     """Enrich Voice detail rows, then project I04 `recording_attachment`.
 
-    The projection is derived ONLY from authorized statuses on the explicit
-    conversation root (the first row). Absent, denied or non-recording roots
-    leave the key absent so the legacy URL tier keeps working; when present the
-    UI never falls back to legacy URLs. Segments of one server recording are
-    one recording; two recordings on one root are never resolved by guessing.
-    The shape is `{occurrence_id, parent, state}` plus `manifest` only when
-    ``state`` is `ready`. No origin, URL or grant is projected.
+    The projection is derived ONLY from authorized, bound statuses on this
+    call's own rows: the conversation root first, then its children. A
+    recording occurrence names its own parent, which need not be the root
+    (LiveKit binds the session recording on ``agent_session``, a child of
+    ``job_entrypoint``). Absent, denied or non-recording rows leave the key
+    absent so the legacy URL tier keeps working; when present the UI never
+    falls back to legacy URLs. Segments of one server recording are one
+    recording; two recordings anywhere in the call are never resolved by
+    guessing. The shape is `{occurrence_id, parent, state}` plus `manifest`
+    only when ``state`` is `ready`; ``parent`` is the occurrence's own span.
+    No origin, URL or grant is projected.
     """
     observations = result.get("observation_span") or []
     enrich_observations(
@@ -152,29 +156,30 @@ def enrich_voice_detail(*, request, result, reader=None):
         observations=observations,
         reader=reader,
     )
-    if not observations:
-        return
-    root = observations[0]
     recordings = {}
-    for item in root.get("attachments") or ():
-        reference = item["reference"]
-        if (
-            reference.get("purpose") == RECORDING_PURPOSE
-            and reference["modality"] == "audio"
-        ):
-            key = item.get("recording_id") or reference["occurrence_id"]
-            recordings.setdefault(key, []).append(item)
+    for observation in islice(observations, MAX_PARENTS):
+        for item in observation.get("attachments") or ():
+            reference = item["reference"]
+            if (
+                reference.get("purpose") == RECORDING_PURPOSE
+                and reference["modality"] == "audio"
+            ):
+                key = item.get("recording_id") or reference["occurrence_id"]
+                recordings.setdefault(key, []).append((observation, item))
     if not recordings:
         return
     if len(recordings) != 1:
         result["recording_attachment"] = {"state": "rejected"}
         return
+    ((recording_id, owned),) = recordings.items()
+    observation, item = owned[0]
     try:
-        parent = Parent(str(root.get("trace_id", "")), str(root.get("id", "")))
+        parent = Parent(
+            str(observation.get("trace_id", "")), str(observation.get("id", ""))
+        )
     except InvalidReference:
         return
-    ((recording_id, items),) = recordings.items()
-    item = items[0]
+    items = [entry for _, entry in owned]
     occurrence_id = item["reference"]["occurrence_id"]
     statuses = [entry["status"] for entry in items]
     status = next((value for value in statuses if value != "ready"), "ready")

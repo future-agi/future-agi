@@ -144,6 +144,8 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
     policy_version = models.PositiveBigIntegerField()
     deletion_generation = models.PositiveBigIntegerField()
     bound_at = models.DateTimeField(null=True)
+    # Last binding check that left the row unbound; orders fair claims only.
+    bind_checked_at = models.DateTimeField(null=True)
     source_started_at = models.DateTimeField(null=True)
     source_expires_at = models.DateTimeField(null=True)
     source_generation = models.PositiveBigIntegerField(null=True)
@@ -165,7 +167,13 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
         indexes = [
             models.Index(
                 fields=["scope", "trace_id", "span_id"], name="attachment_parent_idx"
-            )
+            ),
+            # The binding worker's claim set: unbound rows only.
+            models.Index(
+                fields=["created_at", "id"],
+                condition=models.Q(bound_at__isnull=True),
+                name="attachment_unbound_claim_idx",
+            ),
         ]
 
 

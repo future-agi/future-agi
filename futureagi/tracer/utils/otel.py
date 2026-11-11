@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import structlog
+from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -956,7 +957,9 @@ def convert_otel_span_to_observation_span(
         observation_span = {
             "id": span_id,
             "name": otel_span.get("name", ""),
-            "observation_type": get_observation_type(span_kind),
+            "observation_type": resolve_observation_type(
+                span_kind, otel_span, attributes
+            ),
             "operation_name": operation_name,
             "start_time": timezone.make_aware(
                 datetime.fromtimestamp(otel_span.get("start_time", 0) / 1e9)
@@ -1427,6 +1430,32 @@ def get_observation_type(span_kind: str) -> str:
     )
 
 
+LIVEKIT_JOB_ROOT = "job_entrypoint"
+LIVEKIT_JOB_ID = "lk.job_id"
+
+
+def resolve_observation_type(span_kind: str, otel_span, attributes) -> str:
+    """``get_observation_type`` plus the LiveKit job root, attachments only.
+
+    A LiveKit worker's true root is ``job_entrypoint``; the SDK marks no
+    conversation root there (``agent_session`` is its child). With
+    attachments enabled, an untyped root of that name carrying ``lk.job_id``
+    is the call's conversation root, so a LiveKit call with a recording is
+    listed in Voice. Disabled, this is ``get_observation_type`` unchanged.
+    Mirrors the collector's ``liveKitJobRoot``.
+    """
+    observation_type = get_observation_type(span_kind)
+    if (
+        observation_type == "unknown"
+        and getattr(settings, "FI_ATTACHMENTS_ENABLED", False)
+        and not otel_span.get("parent_id")
+        and otel_span.get("name") == LIVEKIT_JOB_ROOT
+        and attributes.get(LIVEKIT_JOB_ID) not in (None, "")
+    ):
+        return "conversation"
+    return observation_type
+
+
 def _extract_project_and_version_keys(
     otel_spans, organization_id, user_id, workspace_id
 ):
@@ -1653,7 +1682,7 @@ def _convert_single_span(
     observation_span_dict = {
         "id": otel_span.get("span_id"),
         "name": otel_span.get("name", ""),
-        "observation_type": get_observation_type(span_kind),
+        "observation_type": resolve_observation_type(span_kind, otel_span, attributes),
         "operation_name": operation_name,
         "start_time": timezone.make_aware(
             datetime.fromtimestamp(otel_span.get("start_time", 0) / 1e9)
