@@ -439,6 +439,35 @@ describe("Unit: Workbench save-before-run", () => {
     );
   });
 
+  it("does not Run all after a sibling column changed version during the save", async () => {
+    await mount();
+    act(() => context.applyCompare([savedVersion("v2", false)]));
+    const save = deferred();
+    const addDraft = deferred();
+    axios.post.mockImplementation((url) =>
+      url.endsWith("/add-new-draft/") ? addDraft.promise : save.promise,
+    );
+    editModel("selected", 0);
+    const { run } = await startRun();
+    // Editing the committed sibling starts a new draft; its version is null
+    // until the draft is created.
+    editModel("edited", 1);
+    expect(context.selectedVersions[1]).toMatchObject({
+      isDraft: true,
+      version: null,
+    });
+    await act(async () => {
+      save.resolve({});
+      await run;
+    });
+    expect(sockets).toHaveLength(0);
+    expect(context.promptGeneratingStatus).toEqual([false, false]);
+    expect(mocks.notify).toHaveBeenCalledWith(
+      "The prompt changed while saving. Run it again.",
+      { variant: "info" },
+    );
+  });
+
   it("toasts a rate-limited save that the app handler leaves silent", async () => {
     await mount();
     const error = Object.assign(new Error("Rate limit reached"), {
