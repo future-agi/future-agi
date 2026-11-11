@@ -78,20 +78,21 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	traceNotifier   TraceNotifier
-	cfg             Config
-	writer          *chwriter.Writer
-	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
-	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
-	auth            *auth.Authenticator
-	router          auth.SimulationRouter // nil: requests of sandbox keys are dropped
-	refusalLog      auth.LogLimiter
-	usage           UsageEmitter
-	metering        Metering
-	log             *slog.Logger
-	pricer          chexp.Pricer
-	grpc            *grpc.Server
-	httpd           *http.Server
+	attachmentStager AttachmentBindingStager
+	traceNotifier    TraceNotifier
+	cfg              Config
+	writer           *chwriter.Writer
+	curated          *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	propertyCatalog  PropertyCatalogWriter // observed keys + values spool; default nil
+	auth             *auth.Authenticator
+	router           auth.SimulationRouter // nil: requests of sandbox keys are dropped
+	refusalLog       auth.LogLimiter
+	usage            UsageEmitter
+	metering         Metering
+	log              *slog.Logger
+	pricer           chexp.Pricer
+	grpc             *grpc.Server
+	httpd            *http.Server
 
 	// The ingest budget (ingest_limits.go): its two pools, the live-heap
 	// backstop, the gRPC in-flight limits, and what was refused.
