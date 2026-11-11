@@ -33,7 +33,7 @@ it('requires the blocked-member acknowledgment and rights before one decision im
   expect(accept.mock.calls.map(([input]) => input.itemKey)).toEqual(['one', 'two']);
   expect(accept.mock.calls.every(([input]) => input.rightsConfirmed === true && input.mode === 'snapshot')).toBe(true);
   // Publication is bound to the exact imported revision and digest.
-  expect(publish.mock.calls[0][0]).toEqual({ resourceId: 'resource-one', revision: 1, digest: digest('b') });
+  expect(publish.mock.calls[0][0]).toEqual({ resourceId: 'resource-one', revision: 1, digest: digest('b'), acknowledgeWarnings: false });
   fireEvent.click(screen.getByRole('button', { name: 'Create agent context from these skills' }));
   expect(create).toHaveBeenCalledWith([{ skillId: 'resource-one', version: 1 }, { skillId: 'resource-two', version: 1 }]);
 });
@@ -91,4 +91,26 @@ it('reviews distinct sources together and replaces an older preview of the same 
   const again = plan([item('one', { sourceRevision: 'v2' })], 'exchange-v2');
   expect(retainPlan(retainPlan([], exchange), folder).map((p) => p.id)).toEqual(['exchange', 'folder']);
   expect(retainPlan([exchange, folder], again).map((p) => p.id)).toEqual(['folder', 'exchange-v2']);
+});
+
+it('holds items whose publication warnings are unacknowledged and publishes them only after explicit acknowledgment', async () => {
+  const warning = Object.assign(new Error('Review and acknowledge the warnings before publishing.'), { statusCode: 422, code: 'warnings_unacknowledged',
+    detail: { summary: { errors: 0, warnings: 1 }, items: [{ severity: 'warning', code: 'description_style', message: 'Start the description with when to use it.' }] } });
+  const accept = vi.fn(async (input) => receipt(input.itemKey));
+  const publish = vi.fn(async (input) => {
+    if (!input.acknowledgeWarnings) throw warning;
+    return { resourceId: input.resourceId, version: 1 };
+  });
+  render(<MigrationBatchReview plans={[plan([item('one'), item('two')])]} onAccept={accept} onPublish={publish} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /^I confirm my rights/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import and publish 2 items' }));
+  const publishReviewed = await screen.findByRole('button', { name: 'Publish 2 items with reviewed warnings' });
+  expect(publishReviewed).toBeDisabled();
+  expect(screen.getAllByText('Imported as a draft; its publication warnings need your acknowledgment')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed the publication warnings for 2 items and want to publish them.' }));
+  fireEvent.click(publishReviewed);
+  await screen.findByText('2 versions published without labels. Production was not changed.');
+  // Imports are never repeated; only publication is retried with acknowledgment.
+  expect(accept).toHaveBeenCalledTimes(2);
+  expect(publish.mock.calls.filter(([input]) => input.acknowledgeWarnings)).toHaveLength(2);
 });

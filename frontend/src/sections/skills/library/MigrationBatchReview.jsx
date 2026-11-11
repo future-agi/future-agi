@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from "@mui/material";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { isDefiniteRejection } from "src/api/skills/operation-errors";
+import ChecksList from "../components/ChecksList";
 import { FileChanges } from "../editor/HotfixHeadReview";
 import { classifyMigrationItem } from "./migration-batch";
 
@@ -14,9 +15,11 @@ import { classifyMigrationItem } from "./migration-batch";
 // Typography/spacing: m3/s1/s3, shared row heights, 12px groups.
 
 const rowKey = (plan, item) => `${plan.id}/${item.key}`;
+const errorCode = (error) => error?.response?.data?.code || error?.code;
 const outcomeText = (outcome) => {
   if (!outcome) return "Not started";
   if (outcome.error) return outcome.error;
+  if (outcome.warnings && !outcome.done) return "Imported as a draft; its publication warnings need your acknowledgment";
   if (outcome.kept) return "Kept Hub content";
   const replay = outcome.replayed ? " · lost response settled by exact replay" : "";
   return outcome.version ? `Published v${outcome.version}${replay}` : `Draft imported${replay}`;
@@ -28,6 +31,7 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const [publish, setPublish] = useState(true);
   const [excludeAcknowledged, setExcludeAcknowledged] = useState(false);
   const [rights, setRights] = useState(false);
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
   const [running, setRunning] = useState(false);
   const [outcomes, setOutcomes] = useState({});
   // One operation key per exact item decision, kept across replays and reruns.
@@ -41,7 +45,10 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const pending = rows.filter((row) => ["default", "choice"].includes(row.kind) && !outcomes[row.key]?.done);
   const undecided = choiceRows.filter((row) => !choices[row.key] && !outcomes[row.key]?.done);
   const keeps = choiceRows.some((row) => choices[row.key] === "keep");
-  const ready = pending.length > 0 && !undecided.length && rights && (!excluded.length || excludeAcknowledged) && Boolean(onAccept) && (!keeps || Boolean(onKeep)) && (!publish || Boolean(onPublish));
+  // Publication warnings are exceptions found after import; each listed item is
+  // published only after the owner explicitly acknowledges its warnings.
+  const warningRows = pending.filter((row) => outcomes[row.key]?.warnings);
+  const ready = pending.length > 0 && !undecided.length && rights && (!excluded.length || excludeAcknowledged) && Boolean(onAccept) && (!keeps || Boolean(onKeep)) && (!publish || Boolean(onPublish)) && (!warningRows.length || warningsAcknowledged);
   const operationKey = (row, decision) => {
     const id = `${row.plan.fingerprint}:${row.key}:${decision}`;
     if (!keys.current.has(id)) keys.current.set(id, crypto.randomUUID());
@@ -75,7 +82,15 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
           if (decision === "keep") { setOutcomes((current) => ({ ...current, [row.key]: { done: true, kept: true, receipt } })); continue; }
           setOutcomes((current) => ({ ...current, [row.key]: { done: !publish, receipt, replayed } }));
           if (publish) {
-            const version = await onPublish({ resourceId: receipt.resourceId, revision: receipt.draftRevision, digest: receipt.digest });
+            let version;
+            try {
+              version = await onPublish({ resourceId: receipt.resourceId, revision: receipt.draftRevision, digest: receipt.digest, acknowledgeWarnings: Boolean(previous.warnings) && warningsAcknowledged });
+            } catch (error) {
+              if (errorCode(error) !== "warnings_unacknowledged") throw error;
+              const warnings = error?.response?.data?.detail ?? error?.detail ?? null;
+              setOutcomes((current) => ({ ...current, [row.key]: { done: false, receipt, replayed, warnings: warnings || { summary: { warnings: 1, errors: 0 }, items: [] } } }));
+              continue;
+            }
             setOutcomes((current) => ({ ...current, [row.key]: { done: true, receipt, replayed, version: version.version, resourceId: receipt.resourceId } }));
           }
         } catch (error) {
@@ -90,6 +105,9 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
   const failed = rows.some((row) => outcomes[row.key]?.error);
   const decided = rows.filter((row) => ["default", "choice"].includes(row.kind) && (row.kind === "default" || choices[row.key]));
   const verb = publish ? "Import and publish" : "Import";
+  const warningsOnly = warningRows.length > 0 && warningRows.length === pending.length;
+  const label = warningsOnly ? `Publish ${pending.length} ${pending.length === 1 ? "item" : "items"} with reviewed warnings`
+    : failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`;
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <Typography variant="m3" component="h2">Review all items</Typography>
     <Typography variant="s1">One decision applies to every item listed with a decision. Exceptions stay visible and need your explicit choice. Source applications and production labels are never changed.</Typography>
@@ -119,7 +137,9 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
               </>}
             </Box>}
           </TableCell>
-          <TableCell><Typography variant="s3">{outcomeText(outcomes[row.key])}</Typography></TableCell>
+          <TableCell><Typography variant="s3">{outcomeText(outcomes[row.key])}</Typography>
+            {outcomes[row.key]?.warnings && !outcomes[row.key]?.done && <Box component="details"><Typography component="summary" variant="s3" sx={{ cursor: "pointer" }}>Inspect warnings</Typography><ChecksList checks={outcomes[row.key].warnings} dense /></Box>}
+          </TableCell>
         </TableRow>)}</TableBody>
       </Table>
     </TableContainer>
@@ -128,7 +148,8 @@ export default function MigrationBatchReview({ plans, onAccept, onKeep, onPublis
     {undecided.length > 0 && <Alert severity="info">Choose keep or replace for {undecided.length} diverged {undecided.length === 1 ? "item" : "items"} to continue.</Alert>}
     <FormControlLabel control={<Checkbox checked={publish} disabled={running} onChange={(event) => setPublish(event.target.checked)} />} label="Publish each imported draft as a new version without labels" />
     <FormControlLabel control={<Checkbox checked={rights} disabled={running} onChange={(event) => setRights(event.target.checked)} />} label={`I confirm my rights to copy all ${decided.length} items, including their licenses and retained notices.`} />
-    <Box><Button variant="contained" disabled={!ready || running} onClick={apply}>{failed ? `Retry ${pending.length} remaining with the same decisions` : `${verb} ${pending.length} ${pending.length === 1 ? "item" : "items"}`}</Button></Box>
+    {warningRows.length > 0 && <FormControlLabel control={<Checkbox checked={warningsAcknowledged} disabled={running} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />} label={`I reviewed the publication warnings for ${warningRows.length} ${warningRows.length === 1 ? "item" : "items"} and want to publish ${warningRows.length === 1 ? "it" : "them"}.`} />}
+    <Box><Button variant="contained" disabled={!ready || running} onClick={apply}>{label}</Button></Box>
     {published.length > 0 && !pending.length && <Alert severity="success" action={onCreateContext && <Button disabled={running} onClick={() => onCreateContext(published.map((outcome) => ({ skillId: outcome.resourceId, version: outcome.version })))}>Create agent context from these skills</Button>}>
       {published.length} {published.length === 1 ? "version" : "versions"} published without labels. Production was not changed.
     </Alert>}

@@ -86,8 +86,8 @@ const publishedWithDigest = async (resourceId, digest, config) => {
   return (page.results || []).find((version) => version.digest === digest) || null;
 };
 export function useMigrationPublish() {
-  return useSkillV11Mutation({ send: async ({ resourceId, revision, digest }, config) => {
-    const body = { labels: [], acknowledge_warnings: false, revision, expected_digest: digest };
+  return useSkillV11Mutation({ send: async ({ resourceId, revision, digest, acknowledgeWarnings = false }, config) => {
+    const body = { labels: [], acknowledge_warnings: acknowledgeWarnings === true, revision, expected_digest: digest };
     const post = async () => skillV11Result(await axios.post(apiPath('/model-hub/skills/{skill_id}/draft/publish/', { skill_id: resourceId }), body, config)).version;
     let version;
     try { version = await post(); } catch (error) {
