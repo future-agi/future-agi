@@ -1,4 +1,4 @@
-"""Complete 21/26-pending-migration A9 intersection regression, without Django.
+"""Complete 24/29-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -20,6 +20,9 @@ LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
     ('accounts','0030_queue_existing_demo_trace_publications'),
     ('accounts','0031_orgapikey_coding_agent'),
+    ('accounts','0026_orgapikey_expires_at'),
+    ('accounts','0031_merge_api_key_expiry'),
+    ('accounts','0032_merge_expiry_and_coding_agent'),
     ('usage','0030_add_jev_evaluator_call_type'),
     ('tracer','0116_insight_reports'),
     ('tracer','0117_instant_eval_scale'),
@@ -204,7 +207,7 @@ def pending_plan(identities,env):
 class CompleteUsagePendingIntersectionTests(unittest.TestCase):
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,21),(REVISIONS[0],LATEST+FLOOR_ONLY,26)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,24),(REVISIONS[0],LATEST+FLOOR_ONLY,29)):
             with self.subTest(revision=revision):
                 # Additions, not edited applied migrations. This deliberately
                 # breaks if the shipping plan changes without refreshing coverage.
@@ -224,7 +227,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if count==26: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if count==29: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
