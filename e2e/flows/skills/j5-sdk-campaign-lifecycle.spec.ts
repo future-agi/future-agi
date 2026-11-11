@@ -21,14 +21,15 @@ test('SKILLS-E2E-052: SDK plans preserve local policy through cold adoption, a s
   tag: ['@flow'],
   annotation: flowAnnotation({ id: 'SKILLS-E2E-052', area: 'skills',
     userGoal: 'Use real SDK materialization plans for all included repositories, merge exact patches, install separately, then update and reverse without deleting local instructions',
-    steps: ['inventory forty selected no-lock repositories and explicitly exclude four pins, two local modifications and one unavailable target',
+    steps: ['inventory forty selected no-lock repositories; adopt the four deliberate pins at their pinned release in the cold round, then hold them; exclude two local modifications and one unavailable target',
       'export and authorize real SDK plans, create deterministic PRs and reconcile the unknown response',
       'review and merge each PR, apply its preimage-bound plan and independently compare installed files against the merged Git tree',
-      'publish a second immutable version and repeat the configured rollout without advancing excluded repositories',
+      'publish a second immutable version and repeat the configured rollout without advancing held pins or excluded repositories',
       'reject dirty managed bytes and changed preimages, then review and apply reverse plans to the original release'],
     backendChecks: ['all three campaigns retain forty exact targets and explicit exclusion reasons in API and Postgres',
       'each included repository has exactly one PR per campaign and a distinct merge commit; Git trees equal SDK-installed files',
       'original local-only and nested instructions remain byte-identical and adopted local segments survive all three operations',
+      'each held pin keeps its one adoption PR, its pinned-release lock and its adopted managed bytes in every later round',
       'dirty-managed and stale-preimage controls fail before Git writes; reported delivery remains unobserved'],
   }),
 }, async ({ page, actor, request, probe }, testInfo) => {
@@ -60,6 +61,9 @@ test('SKILLS-E2E-052: SDK plans preserve local policy through cold adoption, a s
   const git = new J5GitFixture(repositories);
   const selected = repositories.map(repo => ({ repository_id: repo.id, project: join(scratch, repo.name) }));
   const included = (repo: Repository) => ['follower', 'unknown_response'].includes(repo.disposition);
+  // Deliberate pins are adopted once, in the cold round at their own pinned release, then held.
+  const planned = (repo: Repository, ordinal: number) => included(repo) || (repo.disposition === 'pin' && ordinal === 1);
+  const pinAdoptions = new Map<string, string>();
   const projects = new Map(selected.map(row => [row.repository_id, row.project]));
   const bases = new Map(repositories.map(repo => [repo.id, repo.base]));
   const campaigns: string[] = []; const credentialIds: string[] = [];
@@ -129,7 +133,8 @@ test('SKILLS-E2E-052: SDK plans preserve local policy through cold adoption, a s
       let revision = campaign.revision;
       for (let index = 0; index < repositories.length; index++) {
         const repo = repositories[index]; const binding = bindings[index];
-        if (!included(repo)) { decisions.push({ binding_id: binding.id, plan_digest: null, decision: 'exclude', reason: `Retain intentional ${repo.disposition}; no write authorized.` }); continue; }
+        if (!planned(repo, ordinal)) { decisions.push({ binding_id: binding.id, plan_digest: null, decision: 'exclude', reason: repo.disposition === 'pin'
+          ? 'Hold deliberate pin at its installed pinned release; no write authorized.' : `Retain intentional ${repo.disposition}; no write authorized.` }); continue; }
         const path = join(scratch, `${label}-${repo.id}.json`); const project = projects.get(repo.id)!;
         if (label === 'reverse') await command(['restore', '--project', project, '--lock', join(scratch, `${repo.id}-original-lock.json`), '--allow-preview', '--out', path]);
         else await command(['plan', '--name', name, '--version', String(version.number), '--client', 'claude-code', '--project', project, '--adopt-local', '--allow-preview', '--out', path]);
@@ -187,12 +192,27 @@ test('SKILLS-E2E-052: SDK plans preserve local policy through cold adoption, a s
         expect(lock.version_id).toBe(version.id);
         if (ordinal === 1) await writeFile(join(scratch, `${repo.id}-original-lock.json`), await readFile(join(project, '.futureagi-context.lock.json')));
         bases.set(repo.id, merge.sha);
+        if (repo.disposition === 'pin') pinAdoptions.set(repo.id, merge.sha);
         installs.push({ repository: repo.id, pr: receipt.pull_request_number, head: receipt.repository_commit, merge: merge.sha,
           lock_version_id: lock.version_id, hashes, installed: true, discovery: 'not_observed', delivery: 'not_observed' });
       }
-      for (const repo of repositories.filter(repo => !included(repo) && repo.disposition !== 'unavailable')) {
-        for (const [path, text] of Object.entries(repo.files)) expect(await readFile(join(projects.get(repo.id)!, path), 'utf8')).toBe(text);
-        await expect(access(join(projects.get(repo.id)!, '.futureagi-context.lock.json'))).rejects.toThrow();
+      for (const repo of repositories.filter(repo => !planned(repo, ordinal) && repo.disposition !== 'unavailable')) {
+        const project = projects.get(repo.id)!;
+        if (repo.disposition === 'pin') {
+          // Held pin: one adoption PR, lock still at the pinned release, managed bytes still the adoption merge's.
+          const adoption = pinAdoptions.get(repo.id)!;
+          expect(adoption).toBeTruthy(); expect(git.pulls(repo.id)).toHaveLength(1);
+          const lock = JSON.parse(await readFile(join(project, '.futureagi-context.lock.json'), 'utf8'));
+          expect(lock.version_id).toBe(first.id);
+          for (const [path, text] of Object.entries(git.files(adoption))) expect(await readFile(join(project, path), 'utf8')).toBe(text);
+          for (const [path, text] of Object.entries(repo.files)) {
+            const actual = await readFile(join(project, path), 'utf8');
+            if (path === 'AGENTS.md') expect(actual).toContain(text); else expect(actual).toBe(text);
+          }
+          continue;
+        }
+        for (const [path, text] of Object.entries(repo.files)) expect(await readFile(join(project, path), 'utf8')).toBe(text);
+        await expect(access(join(project, '.futureagi-context.lock.json'))).rejects.toThrow();
         expect(git.pulls(repo.id)).toHaveLength(0);
       }
       await page.setViewportSize({ width: 1440, height: 900 });
