@@ -482,9 +482,10 @@ def _set_task_status_sync(
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
             # Continuous start_time is its acceptance/activation floor, not
-            # worker startup time. Creation falls back to created_at; conversion
-            # persists a new start_time in the mode-change transaction. Preserve
-            # it (and any partial cursor) through outages, resumes and reruns.
+            # worker startup time. Creation falls back to created_at; a
+            # conversion, or an explicit rerun that resets the cursor, persists
+            # a new start_time in its edit transaction. Preserve it (and any
+            # partial cursor) through outages, restarts and resumes.
             fields["start_time"] = Case(
                 When(
                     run_type=RunType.CONTINUOUS,
