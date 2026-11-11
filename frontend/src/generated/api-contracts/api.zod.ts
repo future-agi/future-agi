@@ -34676,7 +34676,7 @@ export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
         label: zod.string().min(1).optional(),
       }),
       source: zod.object({
-        subfolder: zod.string().min(1),
+        subfolder: zod.string().optional(),
       }),
     }),
   }),

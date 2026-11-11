@@ -17427,6 +17427,36 @@
                             "$ref": "#/definitions/SourceRepositoriesResponse"
                         }
                     },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -17459,6 +17489,36 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SourceBranchesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "default": {
@@ -17927,6 +17987,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "default": {
@@ -52610,6 +52682,42 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessAgentPolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "default": {
@@ -108595,6 +108703,79 @@
                 }
             }
         },
+        "ApiErrorWithDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
         "SourceBranch": {
             "required": [
                 "name",
@@ -108875,79 +109056,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/GitHubInstallCompleteResult"
-                }
-            }
-        },
-        "ApiErrorWithDetailsResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "enum": [
-                        "validation_error",
-                        "authentication_error",
-                        "payment_required",
-                        "entitlement_error",
-                        "permission_error",
-                        "not_found",
-                        "conflict",
-                        "client_error",
-                        "rate_limit",
-                        "server_error",
-                        "service_unavailable",
-                        "timeout",
-                        "api_error"
-                    ],
-                    "x-nullable": true
-                },
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "attr": {
-                    "title": "Attr",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "details": {
-                    "title": "Details",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
                 }
             }
         },
@@ -136805,15 +136913,11 @@
             "x-nullable": true
         },
         "StoredSourceEcho": {
-            "required": [
-                "subfolder"
-            ],
             "type": "object",
             "properties": {
                 "subfolder": {
                     "title": "Subfolder",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 }
             },
             "x-nullable": true

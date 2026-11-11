@@ -9918,6 +9918,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/SourceRepositoriesResponse",
           },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -9935,6 +9950,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             200: {
               $ref: "#/definitions/SourceBranchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            403: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            502: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -10165,6 +10195,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/GitHubInstallResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29119,6 +29155,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessAgentPolicyResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -132592,13 +132646,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "x-nullable": true,
     },
     StoredSourceEcho: {
-      required: ["subfolder"],
       type: "object",
       properties: {
         subfolder: {
           title: "Subfolder",
           type: "string",
-          minLength: 1,
         },
       },
       "x-nullable": true,

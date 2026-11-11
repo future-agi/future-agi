@@ -6377,6 +6377,41 @@ export interface SourceRepositoriesResponseApi {
   result: SourceRepositoriesResultApi;
 }
 
+export type ApiErrorWithDetailsResponseApiType =
+  (typeof ApiErrorWithDetailsResponseApiType)[keyof typeof ApiErrorWithDetailsResponseApiType];
+
+export const ApiErrorWithDetailsResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ApiErrorWithDetailsResponseApiDetails = { [key: string]: string[] };
+
+export interface ApiErrorWithDetailsResponseApi {
+  status?: boolean;
+  type?: ApiErrorWithDetailsResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiErrorWithDetailsResponseApiDetails;
+}
+
 export interface SourceBranchApi {
   /** @minLength 1 */
   name: string;
@@ -6495,41 +6530,6 @@ export interface GitHubInstallCompleteResultApi {
 export interface GitHubInstallCompleteResponseApi {
   status: boolean;
   result: GitHubInstallCompleteResultApi;
-}
-
-export type ApiErrorWithDetailsResponseApiType =
-  (typeof ApiErrorWithDetailsResponseApiType)[keyof typeof ApiErrorWithDetailsResponseApiType];
-
-export const ApiErrorWithDetailsResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type ApiErrorWithDetailsResponseApiDetails = { [key: string]: string[] };
-
-export interface ApiErrorWithDetailsResponseApi {
-  status?: boolean;
-  type?: ApiErrorWithDetailsResponseApiType;
-  code?: string;
-  detail?: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: ApiErrorWithDetailsResponseApiDetails;
 }
 
 export interface SlackInstallApi {
@@ -17603,8 +17603,7 @@ export interface StoredFrameworkApi {
 }
 
 export interface StoredSourceEchoApi {
-  /** @minLength 1 */
-  subfolder: string;
+  subfolder?: string;
 }
 
 export interface StoredExtensionApi {

@@ -21547,19 +21547,50 @@ export type integrationsConnectionsRepositoriesListResponse200 = {
   status: 200;
 };
 
+export type integrationsConnectionsRepositoriesListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsConnectionsRepositoriesListResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsConnectionsRepositoriesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type integrationsConnectionsRepositoriesListResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type integrationsConnectionsRepositoriesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
 export type integrationsConnectionsRepositoriesListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 502 | 503>;
 };
 
 export type integrationsConnectionsRepositoriesListResponseSuccess =
   integrationsConnectionsRepositoriesListResponse200 & {
     headers: Headers;
   };
-export type integrationsConnectionsRepositoriesListResponseError =
-  integrationsConnectionsRepositoriesListResponseDefault & {
-    headers: Headers;
-  };
+export type integrationsConnectionsRepositoriesListResponseError = (
+  | integrationsConnectionsRepositoriesListResponse400
+  | integrationsConnectionsRepositoriesListResponse403
+  | integrationsConnectionsRepositoriesListResponse404
+  | integrationsConnectionsRepositoriesListResponse502
+  | integrationsConnectionsRepositoriesListResponse503
+  | integrationsConnectionsRepositoriesListResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type integrationsConnectionsRepositoriesListResponse =
   | integrationsConnectionsRepositoriesListResponseSuccess
@@ -21607,19 +21638,50 @@ export type integrationsConnectionsRepositoriesBranchesListResponse200 = {
   status: 200;
 };
 
+export type integrationsConnectionsRepositoriesBranchesListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
 export type integrationsConnectionsRepositoriesBranchesListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 502 | 503>;
 };
 
 export type integrationsConnectionsRepositoriesBranchesListResponseSuccess =
   integrationsConnectionsRepositoriesBranchesListResponse200 & {
     headers: Headers;
   };
-export type integrationsConnectionsRepositoriesBranchesListResponseError =
-  integrationsConnectionsRepositoriesBranchesListResponseDefault & {
-    headers: Headers;
-  };
+export type integrationsConnectionsRepositoriesBranchesListResponseError = (
+  | integrationsConnectionsRepositoriesBranchesListResponse400
+  | integrationsConnectionsRepositoriesBranchesListResponse403
+  | integrationsConnectionsRepositoriesBranchesListResponse404
+  | integrationsConnectionsRepositoriesBranchesListResponse502
+  | integrationsConnectionsRepositoriesBranchesListResponse503
+  | integrationsConnectionsRepositoriesBranchesListResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type integrationsConnectionsRepositoriesBranchesListResponse =
   | integrationsConnectionsRepositoriesBranchesListResponseSuccess
@@ -22169,19 +22231,32 @@ export type integrationsGithubInstallCreateResponse200 = {
   status: 200;
 };
 
+export type integrationsGithubInstallCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsGithubInstallCreateResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
 export type integrationsGithubInstallCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403>;
 };
 
 export type integrationsGithubInstallCreateResponseSuccess =
   integrationsGithubInstallCreateResponse200 & {
     headers: Headers;
   };
-export type integrationsGithubInstallCreateResponseError =
-  integrationsGithubInstallCreateResponseDefault & {
-    headers: Headers;
-  };
+export type integrationsGithubInstallCreateResponseError = (
+  | integrationsGithubInstallCreateResponse400
+  | integrationsGithubInstallCreateResponse403
+  | integrationsGithubInstallCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type integrationsGithubInstallCreateResponse =
   | integrationsGithubInstallCreateResponseSuccess
@@ -61061,19 +61136,56 @@ export type simulateApiHarnessEnvironmentsAgentPolicyResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
 export type simulateApiHarnessEnvironmentsAgentPolicyResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 502 | 503>;
 };
 
 export type simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess =
   simulateApiHarnessEnvironmentsAgentPolicyResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessEnvironmentsAgentPolicyResponseError =
-  simulateApiHarnessEnvironmentsAgentPolicyResponseDefault & {
-    headers: Headers;
-  };
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseError = (
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse400
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse403
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse404
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse409
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse502
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse503
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type simulateApiHarnessEnvironmentsAgentPolicyResponse =
   | simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess

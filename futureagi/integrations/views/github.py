@@ -91,7 +91,11 @@ class GitHubInstallView(APIView):
 
     @validated_request(
         IntegrationEmptyRequestSerializer,
-        responses={200: GitHubInstallResponseSerializer},
+        responses={
+            200: GitHubInstallResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def post(self, request):
         organization = get_request_organization(request)
@@ -108,7 +112,11 @@ class GitHubInstallView(APIView):
             )
         except ValueError as exc:
             return _error(str(exc), 400)
-        return Response({"status": True, "result": {"install_url": install_url}})
+        return Response(
+            GitHubInstallResponseSerializer(
+                {"status": True, "result": {"install_url": install_url}}
+            ).data
+        )
 
 
 def _callback_redirect(outcome: str) -> HttpResponseRedirect:
@@ -193,7 +201,11 @@ class GitHubInstallCompleteView(APIView):
         except ValueError as exc:
             logger.warning("github_install_complete_failed", exc_info=True)
             return _error(str(exc), 400)
-        return Response({"status": True, "result": {"outcome": result.outcome}})
+        return Response(
+            GitHubInstallCompleteResponseSerializer(
+                {"status": True, "result": {"outcome": result.outcome}}
+            ).data
+        )
 
 
 def _source_connection(
@@ -228,7 +240,14 @@ class SourceRepositoriesView(APIView):
 
     @validated_request(
         query_serializer=SourceRepositoriesQuerySerializer,
-        responses={200: SourceRepositoriesResponseSerializer},
+        responses={
+            200: SourceRepositoriesResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            502: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, connection_id):
         found = _source_connection(request, connection_id)
@@ -243,22 +262,31 @@ class SourceRepositoriesView(APIView):
         except SourceHostError as exc:
             return _host_failed(exc, connection_id)
         return Response(
-            {
-                "status": True,
-                "result": {
-                    "repositories": SourceRepositorySerializer(
-                        page.repositories, many=True
-                    ).data,
-                    "next_page": page.next_page,
-                },
-            }
+            SourceRepositoriesResponseSerializer(
+                {
+                    "status": True,
+                    "result": {
+                        "repositories": page.repositories,
+                        "next_page": page.next_page,
+                    },
+                }
+            ).data
         )
 
 
 class SourceBranchesView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @validated_request(responses={200: SourceBranchesResponseSerializer})
+    @validated_request(
+        responses={
+            200: SourceBranchesResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            502: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def get(self, request, connection_id, repository_id):
         found = _source_connection(request, connection_id)
         if isinstance(found, Response):
@@ -271,10 +299,7 @@ class SourceBranchesView(APIView):
         if branches is None:
             return _error("Repository not found in this connection.", 404)
         return Response(
-            {
-                "status": True,
-                "result": {
-                    "branches": SourceBranchSerializer(branches, many=True).data
-                },
-            }
+            SourceBranchesResponseSerializer(
+                {"status": True, "result": {"branches": branches}}
+            ).data
         )

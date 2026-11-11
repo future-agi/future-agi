@@ -75,7 +75,10 @@ from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -358,7 +361,15 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessAgentPolicySerializer,
-        responses={200: HarnessAgentPolicyResponseSerializer},
+        responses={
+            200: HarnessAgentPolicyResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
+            502: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="agent-policy")
