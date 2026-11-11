@@ -888,7 +888,10 @@ class _CounterExpiresMidReservation:
 
     When the first incr() on the in-flight key fails because the counter just
     expired, another request reserves before the caller rewrites the counter.
-    Implementations that never take that path are unaffected.
+    This guards against the add()/incr() counter coming back; implementations
+    that never take that path run the same scenario sequentially, and
+    test_fallback_concurrent_reservations_admit_exactly_the_limit covers
+    their atomicity.
     """
 
     def __init__(self, inner, clock, expire_at, concurrent_reserve) -> None:
@@ -957,8 +960,15 @@ def test_reservation_racing_a_slot_expiry_is_still_counted(monkeypatch):
 
 @pytest.fixture
 def redis_cache(monkeypatch):
-    if not os.environ.get("REDIS_URL"):
+    import redis
+
+    url = os.environ.get("REDIS_URL")
+    if not url:
         pytest.skip("needs Redis")
+    try:
+        redis.Redis.from_url(url, socket_connect_timeout=1).ping()
+    except redis.exceptions.RedisError:
+        pytest.skip("needs a reachable Redis")
     # Scripts registered here are bound to this Redis; drop them afterwards
     # so later tests keep using their own cache backend.
     monkeypatch.setattr(rate_limiter, "_scripts", {})
@@ -1017,3 +1027,25 @@ def test_redis_concurrent_reservations_admit_exactly_the_limit(redis_cache):
         get_redis_connection("default").zcard(throttles._in_flight_key(requests[0]))
         == 0
     )
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_fallback_concurrent_reservations_admit_exactly_the_limit(monkeypatch):
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    callers = 8
+    barrier = Barrier(callers)
+    requests = [
+        _reservation_request("fallback-burst", "203.0.113.75") for _ in range(callers)
+    ]
+
+    def reserve(request):
+        barrier.wait(timeout=5)
+        return throttles.reserve_token_attempt(request)
+
+    with ThreadPoolExecutor(max_workers=callers) as workers:
+        admitted = list(workers.map(reserve, requests))
+    assert sum(admitted) == 2
+
+    for request in requests:
+        throttles.release_token_attempt_reservation(request)
+    assert cache.get(throttles._in_flight_key(requests[0])) is None

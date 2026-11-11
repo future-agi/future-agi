@@ -211,12 +211,17 @@ def reserve_token_attempt(request: Request) -> bool:
     """
     key = _in_flight_key(request)
     member = uuid.uuid4().hex
+    # Attach the reservation first: if Redis applies the script but the reply
+    # is lost, the cleanup below still removes the member.
+    setattr(request, _RESERVATION_ATTR, (key, member))
     try:
         in_flight = _add_reservation(key, member, time.time())
-        setattr(request, _RESERVATION_ATTR, (key, member))
         # Read the recorded attempts after reserving. A request that finishes
-        # in between records its attempt before it releases its slot, so this
-        # order can only overcount, never undercount.
+        # in between records its attempt before it releases its slot, so its
+        # attempt is counted at least once. The exception is a request that
+        # reaches the limit: it sets the lockout and resets the counter, which
+        # MCPOAuthTokenLockoutThrottle catches by re-checking the lockout after
+        # reserving.
         recorded = int(cache.get(_invalid_attempt_key(request)) or 0)
     except (ConnectionInterrupted, RedisError) as exc:
         logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
