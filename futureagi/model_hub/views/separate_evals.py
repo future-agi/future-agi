@@ -1535,7 +1535,7 @@ class GetAPICallLogView(APIView):
 
     @validated_request(
         query_serializer=EvalApiLogRowQuerySerializer,
-        responses={200: EvalApiLogRowResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: EvalApiLogRowResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:
