@@ -28,6 +28,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       emptyMessage,
       onScrollEnd,
       isFetchingNextPage,
+      onSearchChange,
       selectAll,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
@@ -63,6 +64,7 @@ const FormSearchSelectFieldState = React.forwardRef(
     const onClose = () => {
       setOpenDropdown(false);
       setSearchedValue("");
+      onSearchChange?.("");
     };
 
     const handleOpen = useCallback(() => {
@@ -96,15 +98,20 @@ const FormSearchSelectFieldState = React.forwardRef(
       (e) => {
         e.stopPropagation();
         setSearchedValue("");
+        onSearchChange?.("");
         handleOpen();
         inputRef.current?.focus();
       },
-      [handleOpen],
+      [handleOpen, onSearchChange],
     );
 
-    const handleOnChange = useCallback((e) => {
-      setSearchedValue(e.target.value);
-    }, []);
+    const handleOnChange = useCallback(
+      (e) => {
+        setSearchedValue(e.target.value);
+        onSearchChange?.(e.target.value);
+      },
+      [onSearchChange],
+    );
 
     const handleDropdownIconClick = useCallback(
       (e) => {
@@ -209,11 +216,15 @@ const FormSearchSelectFieldState = React.forwardRef(
             },
             // ✅ Add these for hover and focus border color
             "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: rest?.error ? "red.500" : "action.hover", // Or any color you want
+              borderColor: rest?.error
+                ? "status.danger.border"
+                : "action.hover", // Or any color you want
             },
             "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
               {
-                borderColor: rest?.error ? "red.500" : "action.hover", // Or any color you want
+                borderColor: rest?.error
+                  ? "status.danger.border"
+                  : "action.hover", // Or any color you want
               },
             ...sx,
           }}
@@ -231,7 +242,7 @@ const FormSearchSelectFieldState = React.forwardRef(
               <InputAdornment position="end">
                 {openDropdown && searchedValue && showClear ? (
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     sx={{
                       cursor: "pointer",
                       color: "text.primary",
@@ -246,7 +257,7 @@ const FormSearchSelectFieldState = React.forwardRef(
                   !rest.disabled &&
                   showClear ? (
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     sx={{
                       cursor: "pointer",
                       color: "text.primary",
@@ -260,14 +271,14 @@ const FormSearchSelectFieldState = React.forwardRef(
                   />
                 ) : (
                   <Iconify
-                    icon="eva:arrow-ios-upward-fill"
+                    icon="solar:alt-arrow-up-linear"
                     sx={{
                       cursor: rest?.disabled ? "not-allowed" : "pointer",
                       color: "text.primary",
                       width: 20,
                       height: 20,
                       transform: `rotateX(${openDropdown ? 0 : -180}deg)`,
-                      transition: "transform 0.5s",
+                      transition: "transform 0.2s",
                     }}
                     onClick={handleDropdownIconClick}
                   />
@@ -328,6 +339,7 @@ FormSearchSelectFieldState.propTypes = {
   emptyMessage: PropTypes.string,
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
+  onSearchChange: PropTypes.func,
   selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
 };

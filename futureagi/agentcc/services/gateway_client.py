@@ -6,9 +6,13 @@ import structlog
 
 from agentcc.contracts.gateway_admin import (
     CreateKeyRequest,
-    OrgConfig as GatewayOrgConfig,
+    ImportKeysRequest,
     UpdateKeyRequest,
 )
+from agentcc.contracts.gateway_admin import (
+    OrgConfig as GatewayOrgConfig,
+)
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
@@ -23,22 +27,35 @@ def resolve_gateway_internal_url():
     # `AGENTCC_INTERNAL_URL` is the older docker-compose/.env key still used by
     # local stacks. Keep it as a compatibility fallback so container-to-container
     # gateway calls do not silently fall back to localhost inside the backend.
+    # An explicit `AGENTCC_GATEWAY_URL` still wins for host-side tools; the
+    # default is the in-network port (8090 is only the host-published port).
     return (
         os.environ.get("AGENTCC_GATEWAY_INTERNAL_URL")
         or os.environ.get("AGENTCC_INTERNAL_URL")
-        or resolve_gateway_public_url()
+        or os.environ.get("AGENTCC_GATEWAY_URL")
+        or "http://agentcc-gateway:8080"
     )
 
 
 # Default gateway address — set via env vars in docker-compose / .env
 AGENTCC_GATEWAY_URL = resolve_gateway_public_url()
-# Internal URL for container-to-container communication (e.g. http://agentcc-gateway:8090)
+# Internal URL for container-to-container communication (e.g. http://agentcc-gateway:8080)
 AGENTCC_GATEWAY_INTERNAL_URL = resolve_gateway_internal_url()
 AGENTCC_ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN", "")
-if not AGENTCC_ADMIN_TOKEN:
-    logger.warning(
-        "AGENTCC_ADMIN_TOKEN not set — gateway admin API calls will be unauthenticated"
-    )
+
+
+def _note_missing_admin_token(token):
+    """Runs on import, so it fires in every process that loads the module,
+    one-off commands included. The compose files and the Helm chart always
+    set the token; only on Future AGI Cloud (CLOUD_DEPLOYMENT) is its absence
+    worth a warning."""
+    if token:
+        return
+    log = logger.warning if is_cloud_env() else logger.debug
+    log("AGENTCC_ADMIN_TOKEN not set — gateway admin API calls will be unauthenticated")
+
+
+_note_missing_admin_token(AGENTCC_ADMIN_TOKEN)
 
 
 class GatewayClientError(Exception):
@@ -121,6 +138,11 @@ class GatewayClient:
 
     def revoke_key(self, key_id):
         return self._request("DELETE", f"/-/keys/{key_id}")
+
+    def import_keys(self, keys):
+        """Load keys the gateway lacks, by hash; see gateway_key_payload."""
+        body = ImportKeysRequest(keys=keys).model_dump(exclude_none=True)
+        return self._request("POST", "/-/keys/sync", json_body=body)
 
     def update_key(self, key_id, **kwargs):
         body = {}

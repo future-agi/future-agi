@@ -1,0 +1,5 @@
+# CI only: the deprecated secrets.eeLicenseKey still licenses the install
+# (stored in <fullname>-secrets), over examples/bundled.yaml.
+edition: ee
+secrets:
+  eeLicenseKey: legacy-license-key

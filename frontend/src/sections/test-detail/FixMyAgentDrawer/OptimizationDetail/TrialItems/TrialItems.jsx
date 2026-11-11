@@ -1,7 +1,7 @@
 import { Box, Typography } from "@mui/material";
 import { useMemo } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { useAgTheme } from "src/hooks/use-ag-theme";
+import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import SvgColor from "../../../../../components/svg-color";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "../../../../../utils/axios";
@@ -10,6 +10,10 @@ import EvalCellRenderer from "../../../CellRenderers/EvalCellRenderer";
 
 import logger from "../../../../../utils/logger";
 import PromptTooltip from "../../OptimizationResults/CellRenderers/PromptTooltip";
+
+const TRIAL_ITEMS_GRID_THEME_PARAMS = {
+  headerColumnBorder: { width: "0px" },
+};
 
 const getTrialItemsColumnConfig = (columnConfig) => {
   if (!columnConfig) return [];
@@ -58,7 +62,7 @@ const getTrialItemsColumnConfig = (columnConfig) => {
 };
 
 const TrialItems = ({ optimizationId, trialId }) => {
-  const agTheme = useAgTheme();
+  const agTheme = useAgThemeWith(TRIAL_ITEMS_GRID_THEME_PARAMS);
   const { data: trialItems } = useQuery({
     queryKey: ["fix-my-agent-trial-items", optimizationId, trialId],
     queryFn: () =>
@@ -99,7 +103,7 @@ const TrialItems = ({ optimizationId, trialId }) => {
           display: "flex",
           alignItems: "center",
           gap: 1,
-          backgroundColor: "blue.o5",
+          backgroundColor: "status.info.bg",
           paddingX: "12px",
           paddingY: "4px",
           borderRadius: "4px",
@@ -107,7 +111,7 @@ const TrialItems = ({ optimizationId, trialId }) => {
       >
         <SvgColor
           src="/assets/icons/ic_info.svg"
-          sx={{ width: 16, height: 16, color: "blue.500" }}
+          sx={{ width: 16, height: 16, color: "status.info.fg" }}
         />
         <Typography typography="s2">
           Iterations ran to optimize the prompt
@@ -118,11 +122,7 @@ const TrialItems = ({ optimizationId, trialId }) => {
       </Typography>
       <Box sx={{ width: "100%", flex: 1, minHeight: 0 }}>
         <AgGridReact
-          theme={agTheme.withParams({
-            headerColumnBorder: {
-              width: "0px",
-            },
-          })}
+          theme={agTheme}
           rowHeight={100}
           rowSelection={undefined}
           columnDefs={columnDefs}

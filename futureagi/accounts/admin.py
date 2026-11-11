@@ -5,9 +5,15 @@ from django.db.models import Q
 from django.http import HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
 from django.urls import path
+from django.utils import timezone
 from django.utils.html import format_html, format_html_join
 
 from accounts.models.auth_token import AuthToken
+from accounts.models.gcp_marketplace import (
+    GCPMarketplaceEntitlement,
+    GCPMarketplaceUsageCheckpoint,
+    GCPUsageReportStatus,
+)
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.services.sos_service import build_sos_handoff_url
@@ -651,3 +657,78 @@ def _sos_only_app_list(self, request, app_label=None):
 
 
 admin.AdminSite.get_app_list = _sos_only_app_list
+
+
+@admin.register(GCPMarketplaceEntitlement)
+class GCPMarketplaceEntitlementAdmin(admin.ModelAdmin):
+    list_display = [
+        "entitlement_id",
+        "organization",
+        "plan_id",
+        "status",
+        "usage_reporting_id",
+        "google_update_time",
+    ]
+    list_filter = ["status", "plan_id"]
+    search_fields = ["entitlement_id", "usage_reporting_id", "organization__name"]
+    readonly_fields = [field.name for field in GCPMarketplaceEntitlement._meta.fields]
+    ordering = ["-updated_at"]
+
+
+@admin.register(GCPMarketplaceUsageCheckpoint)
+class GCPMarketplaceUsageCheckpointAdmin(admin.ModelAdmin):
+    """Where a stuck PENDING window gets settled.
+
+    PENDING past the reconcile threshold means Google was called and the
+    outcome was never learned. Nothing resolves that automatically: a resend
+    could bill the window twice. A person confirms against the Service
+    Control logs and flips the status here, FAILED to resend it on the next
+    hourly run or REPORTED to accept it as billed.
+    """
+
+    list_display = [
+        "entitlement",
+        "metric",
+        "window_start",
+        "window_end",
+        "quantity_reported",
+        "report_status",
+        "updated_at",
+    ]
+    list_filter = ["report_status", "metric"]
+    search_fields = ["entitlement__entitlement_id", "operation_id"]
+    readonly_fields = [
+        field.name
+        for field in GCPMarketplaceUsageCheckpoint._meta.fields
+        if field.name not in ("report_status", "error_detail")
+    ]
+    ordering = ["-updated_at"]
+    actions = ["settle_as_billed", "settle_as_not_billed"]
+
+    @admin.action(description="Settle as billed (Google recorded it)")
+    def settle_as_billed(self, request, queryset):
+        self._settle(request, queryset, GCPUsageReportStatus.REPORTED)
+
+    @admin.action(description="Settle as not billed (resend next hourly run)")
+    def settle_as_not_billed(self, request, queryset):
+        self._settle(request, queryset, GCPUsageReportStatus.FAILED)
+
+    def _settle(self, request, queryset, status):
+        # PENDING only: releasing a REPORTED row resends a charge Google took.
+        pending = queryset.filter(report_status=GCPUsageReportStatus.PENDING)
+        skipped = queryset.count() - pending.count()
+        billed = status == GCPUsageReportStatus.REPORTED
+        reported_at = timezone.now() if billed else None
+        settled = pending.update(
+            report_status=status,
+            reported_at=reported_at,
+            error_detail=f"settled in admin by {request.user}",
+            updated_at=timezone.now(),
+        )
+        self.message_user(request, f"Settled {settled} as {status}.", messages.SUCCESS)
+        if skipped:
+            self.message_user(
+                request,
+                f"Skipped {skipped} not pending; only an unknown outcome settles here.",
+                messages.WARNING,
+            )

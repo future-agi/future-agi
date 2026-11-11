@@ -1,0 +1,8 @@
+# CI only: Enterprise edition over examples/external.yaml and
+# examples/enterprise.yaml, plus an inline GitHub client (examples/enterprise.yaml
+# reads Google's from a Secret). hack/rendered_checks.py asserts the license,
+# SSO, email, admin and Reloader wiring.
+auth:
+  github:
+    clientId: github-client-id
+    clientSecret: github-client-secret

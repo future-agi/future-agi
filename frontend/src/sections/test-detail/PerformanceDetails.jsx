@@ -95,10 +95,10 @@ const PerformanceDetails = () => {
             <PerformanceCard
               icon={
                 <Iconify
-                  icon="hugeicons:checkmark-circle-04"
+                  icon="solar:check-circle-linear"
                   width={20}
                   height={20}
-                  sx={{ color: "blue.500" }}
+                  sx={{ color: "status.info.fg" }}
                 />
               }
               caption="Pass Rate"
@@ -107,7 +107,7 @@ const PerformanceDetails = () => {
             <PerformanceCard
               icon={
                 <Iconify
-                  icon="hugeicons:user-multiple-02"
+                  icon="solar:users-group-rounded-linear"
                   width={20}
                   height={20}
                   sx={{ color: "primary.main" }}
@@ -119,10 +119,10 @@ const PerformanceDetails = () => {
             <PerformanceCard
               icon={
                 <Iconify
-                  icon="hugeicons:minus-sign-circle"
+                  icon="solar:minus-circle-linear"
                   width={20}
                   height={20}
-                  sx={{ color: "red.500" }}
+                  sx={{ color: "status.danger.fg" }}
                 />
               }
               caption="Latest Fail Rate"

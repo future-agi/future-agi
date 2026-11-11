@@ -113,7 +113,25 @@ export const AlertConfigValidationSchema = z
       critical_threshold_value,
       threshold_operator,
       threshold_type,
+      metric_type,
+      metric,
     } = data;
+
+    // `metric` is conditionally required, and the condition is inverted:
+    // the backend requires it for evaluation_metrics ("Metric is required
+    // for evaluation metrics.") and rejects it for every other metric type
+    // ("Metric and threshold_metric_value are not allowed..."). The payload
+    // builder already omits it for non-eval types, so only the required
+    // half needs enforcing here — without it an eval alert submits with
+    // metric:"" and fails server-side instead of inline.
+    // See tracer/serializers/monitor.py::_validate_metric_type.
+    if (metric_type === "evaluation_metrics" && !metric) {
+      ctx.addIssue({
+        path: ["metric"],
+        code: "custom",
+        message: "Metric is required for evaluation metrics",
+      });
+    }
 
     // Threshold values are NOT required for anomaly_detection
     const needsThresholds = threshold_type !== "anomaly_detection";
@@ -237,29 +255,129 @@ export function transformFilterResponse(rawFilter) {
   return filters;
 }
 
+export const ALERT_CONFIG_DEFAULTS = Object.freeze({
+  alert_frequency: 5,
+  threshold_type: "static",
+  auto_threshold_time_window: 5,
+  threshold_operator: "greater_than",
+  threshold_metric_value: "",
+  critical_threshold_value: 400,
+  warning_threshold_value: 300,
+});
+
+const readAlertField = (config, camelKey, snakeKey) =>
+  config?.[camelKey] ?? config?.[snakeKey];
+
+// A saved 0 is a value, not an absence, so validity beats truthiness here.
+const numberOr = (value, fallback) => {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+// Eval metrics compare on a 0-1 fraction, but only under a static threshold —
+// percentage_change divides the same field by 100, so it wants a percent
+// like a system metric does. Reusing one number across scales is exactly
+// the TH-7789 bug (a value typed for one scale silently means something
+// else once the field's scale changes), so callers should re-derive these
+// on every metric_type/threshold_type change rather than leaving a stale
+// value in place.
+export function getThresholdValueDefaults(metricType, thresholdType) {
+  if (metricType === "evaluation_metrics" && thresholdType === "static") {
+    return { critical: 0.4, warning: 0.3 };
+  }
+  // Every other combination keeps the pre-existing placeholder rather than
+  // going blank — the form validates on change and AlertSettingsForm
+  // re-triggers these two fields after a mode switch, so an empty value
+  // shows a red "required" error before the user has had a chance to type
+  // anything. A wrong-but-present placeholder is less jarring than that,
+  // even though it's still a guess for these modes.
+  return {
+    critical: ALERT_CONFIG_DEFAULTS.critical_threshold_value,
+    warning: ALERT_CONFIG_DEFAULTS.warning_threshold_value,
+  };
+}
+
 export function getDefaultAlertConfigValues(existingConfig = {}) {
+  const slackWebhookUrl = readAlertField(
+    existingConfig,
+    "slackWebhookUrl",
+    "slack_webhook_url",
+  );
+  const notificationEmails = readAlertField(
+    existingConfig,
+    "notificationEmails",
+    "notification_emails",
+  );
+  const metricType =
+    readAlertField(existingConfig, "metricType", "metric_type") || "";
+  const thresholdType =
+    readAlertField(existingConfig, "thresholdType", "threshold_type") ||
+    ALERT_CONFIG_DEFAULTS.threshold_type;
+  // metricType often arrives pre-selected here (e.g. from the "Select Alert
+  // Type" step, before AlertSettingsForm even mounts), so the threshold
+  // fields must start on the right scale from the first render — the
+  // onChange-time re-derivation in AlertSettingsForm never fires for a
+  // value that was never "changed" from the user's perspective.
+  const scaleDefaults = getThresholdValueDefaults(metricType, thresholdType);
+
   return {
     name: existingConfig?.name || "",
-    metric_type: existingConfig?.metricType || "",
+    metric_type: metricType,
     metric: existingConfig?.metric || "",
-    alert_frequency: existingConfig?.alertFrequency || 5,
+    alert_frequency: numberOr(
+      readAlertField(existingConfig, "alertFrequency", "alert_frequency"),
+      ALERT_CONFIG_DEFAULTS.alert_frequency,
+    ),
     filters: transformFilterResponse(existingConfig?.filters),
-    threshold_type: existingConfig?.thresholdType || "static",
-    auto_threshold_time_window: existingConfig?.autoThresholdTimeWindow || 5,
-    threshold_operator: existingConfig?.thresholdOperator || "greater_than",
-    threshold_metric_value: existingConfig?.thresholdMetricValue || "",
-    critical_threshold_value: existingConfig?.criticalThresholdValue || 400,
-    warning_threshold_value: existingConfig?.warningThresholdValue || 300,
+    threshold_type: thresholdType,
+    auto_threshold_time_window: numberOr(
+      readAlertField(
+        existingConfig,
+        "autoThresholdTimeWindow",
+        "auto_threshold_time_window",
+      ),
+      ALERT_CONFIG_DEFAULTS.auto_threshold_time_window,
+    ),
+    threshold_operator:
+      readAlertField(
+        existingConfig,
+        "thresholdOperator",
+        "threshold_operator",
+      ) || ALERT_CONFIG_DEFAULTS.threshold_operator,
+    threshold_metric_value:
+      readAlertField(
+        existingConfig,
+        "thresholdMetricValue",
+        "threshold_metric_value",
+      ) ?? ALERT_CONFIG_DEFAULTS.threshold_metric_value,
+    critical_threshold_value: numberOr(
+      readAlertField(
+        existingConfig,
+        "criticalThresholdValue",
+        "critical_threshold_value",
+      ),
+      scaleDefaults.critical,
+    ),
+    warning_threshold_value: numberOr(
+      readAlertField(
+        existingConfig,
+        "warningThresholdValue",
+        "warning_threshold_value",
+      ),
+      scaleDefaults.warning,
+    ),
     notification: {
-      method: existingConfig?.slackWebhookUrl
-        ? "slack"
-        : existingConfig?.notificationEmails?.length
-          ? "email"
-          : "email",
-      emails: existingConfig?.notificationEmails || [],
+      method: slackWebhookUrl ? "slack" : "email",
+      emails: notificationEmails || [],
       slack: {
-        webhookUrl: existingConfig?.slackWebhookUrl || "",
-        notes: existingConfig?.slackNotes || "",
+        webhookUrl: slackWebhookUrl || "",
+        notes:
+          readAlertField(existingConfig, "slackNotes", "slack_notes") || "",
       },
     },
   };

@@ -136,7 +136,7 @@ const CompareEvaluationListPage = ({
               backgroundColor: "background.paper",
             }}
           >
-            <Typography fontWeight={700} color="text.secondary">
+            <Typography fontWeight={600} color="text.secondary">
               Added Evaluations
             </Typography>
             <ShowComponent condition={Boolean(userEvalList?.length)}>
@@ -297,7 +297,7 @@ const CompareEvaluationListPage = ({
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <Box
         sx={{
@@ -318,7 +318,7 @@ const CompareEvaluationListPage = ({
               gap: 0.5,
             }}
           >
-            <Typography fontWeight={700} color="text.secondary">
+            <Typography fontWeight={600} color="text.secondary">
               Run Evaluations
             </Typography>
             <HelperText text="Setup custom or pre-defined metrics for your dataset" />
@@ -326,15 +326,7 @@ const CompareEvaluationListPage = ({
         </Box>
         {errorMessage && (
           <Box sx={{ px: "20px" }}>
-            <Alert
-              severity="error"
-              onClose={() => setErrorMessage(null)}
-              sx={{
-                "& .MuiAlert-message": {
-                  color: "error.main",
-                },
-              }}
-            >
+            <Alert severity="error" onClose={() => setErrorMessage(null)}>
               {errorMessage}
             </Alert>
           </Box>
