@@ -19,6 +19,7 @@ from rest_framework.throttling import BaseThrottle, SimpleRateThrottle
 
 from mcp_server import rate_limiter
 from mcp_server.constants import (
+    DEFAULT_OAUTH_REGISTER_IP_THROTTLE_RATE,
     DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE,
     DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT,
     DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS,
@@ -432,3 +433,14 @@ class MCPOAuthTokenClientThrottle(AtomicRateThrottle):
         # Every grant type verifies the same client_secret, so one window
         # covers all of them.
         return request_data_value(request, "client_id") or None
+
+
+class MCPOAuthRegisterIPThrottle(AtomicRateThrottle):
+    """Rate-limit dynamic client registrations from the same client address."""
+
+    scope = "mcp_oauth_register_ip"
+    rate_setting = "MCP_OAUTH_REGISTER_IP_THROTTLE_RATE"
+    default_rate = DEFAULT_OAUTH_REGISTER_IP_THROTTLE_RATE
+
+    def get_raw_ident(self, request: Request) -> str:
+        return client_ident(request)

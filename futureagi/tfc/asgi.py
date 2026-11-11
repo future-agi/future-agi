@@ -102,8 +102,11 @@ def _get_oauth_app():
     if _oauth_app is None:
         try:
             from mcp_server.mcp_app import get_mcp_oauth_app
+            from mcp_server.oauth_sdk_throttle import MCPSDKOAuthThrottleMiddleware
 
-            _oauth_app = get_mcp_oauth_app()
+            # The SDK handlers verify secrets, codes and refresh tokens and
+            # register clients without limits of their own.
+            _oauth_app = MCPSDKOAuthThrottleMiddleware(get_mcp_oauth_app())
         except ImportError:
             import logging
 
