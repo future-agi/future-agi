@@ -1,0 +1,65 @@
+# Operator-owned boundary for flux-helmrelease.yaml, not Helm values.
+# The Flux controllers are installed and secured separately by the platform
+# operator. Only helm-controller impersonates this ServiceAccount. Future AGI
+# application/bootstrap pods never use it or receive its token.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: futureagi
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: futureagi-reconciler
+  namespace: futureagi
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: futureagi-reconciler
+  namespace: futureagi
+rules:
+  - apiGroups: [""]
+    resources: [services, secrets, configmaps, serviceaccounts, persistentvolumeclaims, pods]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes, grpcroutes]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: futureagi-reconciler
+  namespace: futureagi
+subjects:
+  - kind: ServiceAccount
+    name: futureagi-reconciler
+    namespace: futureagi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: futureagi-reconciler

@@ -530,6 +530,12 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "ModelListEntryApiBestFor",
+      "ModelListEntryApiUseCase",
+      "ModelListEntryApiCutoff",
+      "ModelListEntryApiRateLimits",
+      "ModelListEntryApiLatency",
+      "ModelListEntryApiPricing",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -561,6 +567,21 @@ export type ${jsonAlias} = JsonValueApi;`,
         `export type ${rowType} = { [key: string]: JsonValueApi };`,
         `${rowType} → recursive JSON row`,
       );
+    }
+
+    for (const [type, fields] of [
+      ["ModelListEntryApi", ["unavailable_reason", "logo_url"]],
+      ["ModelListResponseApi", ["next", "previous"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${type} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${type}.${field} nullable`,
+        );
+      }
     }
 
     // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
@@ -1483,6 +1504,30 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       '"error": zod.boolean().optional()\n}).optional(),',
       '"error": zod.boolean().optional()\n}).nullish(),',
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
+
+    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    for (const [field, schema] of [
+      ["next", "zod.string()"],
+      ["previous", "zod.string()"],
+      ["logo_url", "zod.string()"],
+      ["unavailable_reason", "zod.string().min(1)"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        modelListResponse,
+        `"${field}": ${schema}.optional()`,
+        `"${field}": ${schema}.nullish()`,
+        `ModelHubApiModelsListListResponse.${field} nullable`,
+      );
+    }
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      modelListResponse,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "ModelHubApiModelsListListResponse provider metadata → JSON value",
     );
 
     const listResponseExports = [
