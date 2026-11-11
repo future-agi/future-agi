@@ -3,11 +3,11 @@
 import importlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -152,12 +152,14 @@ class LocalInventoryTests(unittest.TestCase):
     def test_root_limit_precedes_member_decoding(self):
         for index in range(51):
             self.package(f"policy-{index}")
-        with mock.patch(
-            "model_hub.services.skills_hub.r3.local_inventory._member",
-            side_effect=AssertionError("Over-limit input must not be decoded"),
+        with (
+            mock.patch(
+                "model_hub.services.skills_hub.r3.local_inventory._member",
+                side_effect=AssertionError("Over-limit input must not be decoded"),
+            ),
+            self.assertRaisesRegex(ValueError, "50 roots"),
         ):
-            with self.assertRaisesRegex(ValueError, "50 roots"):
-                self.run_inventory()
+            self.run_inventory()
 
     def test_nested_expansion_is_bounded_before_redecoding(self):
         folder = self.package("policy")
@@ -167,12 +169,14 @@ class LocalInventoryTests(unittest.TestCase):
             "---\nname: nested\ndescription: Use for nested policy\n---\nPolicy\n"
         )
         total = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
-        with mock.patch(
-            "model_hub.services.skills_hub.r3.local_inventory.MAX_INPUT_BYTES",
-            total + 1,
+        with (
+            mock.patch(
+                "model_hub.services.skills_hub.r3.local_inventory.MAX_INPUT_BYTES",
+                total + 1,
+            ),
+            self.assertRaisesRegex(ValueError, "Nested collection expansion"),
         ):
-            with self.assertRaisesRegex(ValueError, "Nested collection expansion"):
-                self.run_inventory()
+            self.run_inventory()
 
     def test_link_limit(self):
         for i in range(21):
@@ -269,6 +273,95 @@ class LocalInventoryTests(unittest.TestCase):
         second = self.package("second")
         (second / "SKILL.md").write_bytes((first / "SKILL.md").read_bytes())
         self.assertFalse(self.run_inventory()["compiled_closure"]["fits"])
+
+    def write_exchange(
+        self,
+        filename,
+        name,
+        *,
+        resource="retained-policy",
+        revision="v1",
+        origin="fixture.invalid",
+        project="synthetic",
+    ):
+        files = [
+            {
+                "path": "SKILL.md",
+                "content": f"---\nname: {name}\ndescription: Use for retained policy\n---\nPolicy\n",
+            }
+        ]
+        path = self.root / filename
+        path.write_text(
+            json.dumps(
+                {
+                    "format": "langfuse-skills-v1",
+                    "origin": origin,
+                    "project": project,
+                    "skills": [
+                        {
+                            "resource": resource,
+                            "revision": revision,
+                            "digest": manifest_digest(files),
+                            "files": files,
+                        }
+                    ],
+                }
+            )
+        )
+        return path
+
+    def test_repeated_identity_across_exchanges_refused_before_subset(self):
+        first = self.write_exchange("first.json", "first")
+        # Different revision/name does not create a different migration identity.
+        second = self.write_exchange("second.json", "second", revision="v2")
+        for selected in (None, ["exchange-0/0"]):
+            with (
+                self.subTest(selected=selected),
+                self.assertRaisesRegex(
+                    ValueError, "Duplicate retained source identity"
+                ),
+            ):
+                inventory(
+                    folders=[],
+                    exchanges=[first, second],
+                    agents=self.agents,
+                    name="trial",
+                    description="Trial",
+                    selected=selected,
+                )
+
+    def test_exchange_and_folder_cannot_claim_one_source_identity(self):
+        self.package("local")
+        exchange = self.write_exchange(
+            "source.json", "remote", resource="private/local"
+        )
+        with self.assertRaisesRegex(ValueError, "Duplicate retained source identity"):
+            inventory(
+                folders=[self.library],
+                exchanges=[exchange],
+                agents=self.agents,
+                name="trial",
+                description="Trial",
+                local_source={
+                    "origin": "fixture.invalid",
+                    "project": "synthetic",
+                    "revision": "v1",
+                },
+            )
+
+    def test_same_resource_in_distinct_projects_and_origins_is_not_duplicate(self):
+        first = self.write_exchange("first.json", "first")
+        second = self.write_exchange("second.json", "second", project="another-project")
+        third = self.write_exchange("third.json", "third", origin="another.invalid")
+        report = inventory(
+            folders=[],
+            exchanges=[first, second, third],
+            agents=self.agents,
+            name="trial",
+            description="Trial",
+        )
+        self.assertEqual(report["source_member_count"], 3)
+        self.assertTrue(report["compiled_closure"]["fits"])
 
     def test_cli_isolated_no_credentials_no_source_mutations(self):
         self.package("policy")

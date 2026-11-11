@@ -440,6 +440,21 @@ def inventory(
         check_budget()
     if not members:
         raise ValueError("No SKILL.md roots found")
+    # Migration mappings are unique across the entire source collection, not
+    # only within one exchange file. Revision, digest and frontmatter name are
+    # not identity components: two such inputs would target the same Hub leaf.
+    # Check before selection so excluding one cannot hide an ambiguous library.
+    source_identities = set()
+    for member in members:
+        source = member["source"]
+        if source is None:
+            continue
+        identity = tuple(source[key] for key in ("origin", "project", "resource"))
+        if identity in source_identities:
+            raise ValueError(
+                "Duplicate retained source identity in complete collection"
+            )
+        source_identities.add(identity)
     keys = {member["key"] for member in members}
     if selected is not None and (
         len(selected) != len(set(selected)) or not set(selected) <= keys
