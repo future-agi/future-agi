@@ -460,7 +460,8 @@ class CampaignJourney {
   /** Adopt a started (or replacement) campaign's frozen membership and plans; the product's output is checked, not trusted. */
   async adoptStarted(label, started) {
     this.campaigns.push(started.campaign_id); this.credentials.push(started.credential_id); this.env = { ...this.rollout.env };
-    this.campaign = { id: started.campaign_id, root: `${ROOT}campaigns/${started.campaign_id}/`, label, patches: new Map(), decisions: [], receipts: new Map(),
+    const root = `${ROOT}campaigns/${started.campaign_id}/`;
+    this.campaign = { ...(await this.api('GET', root)), id: started.campaign_id, root, label, patches: new Map(), decisions: [], receipts: new Map(),
       expected: this.expectedPlanned().map((repo) => repo.id), review: started.review, packet: started.packet };
     const targets = await this.targets();
     assert.deepEqual(targets.map((row) => row.binding_id).sort(), this.bindings.map((row) => row.id).sort());
