@@ -168,7 +168,7 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 								Index: idx,
 								ID:    block.ID,
 								Type:  "function",
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Name:      block.Name,
 									Arguments: "",
 								},
@@ -242,7 +242,7 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 						ToolCalls: []models.ToolCallDelta{
 							{
 								Index: tcIdx,
-								Function: &models.FunctionCall{
+								Function: &models.FunctionCallDelta{
 									Arguments: ijd.PartialJSON,
 								},
 							},

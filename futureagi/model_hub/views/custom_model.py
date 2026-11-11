@@ -50,6 +50,45 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 logger = structlog.get_logger(__name__)
 
 
+BEDROCK_MODEL_ID_MESSAGE = (
+    "Enter the exact Bedrock model ID or supported inference-profile ID, "
+    "not a display name such as Claude."
+)
+
+_BEDROCK_FAMILY_LABELS = {
+    "claude",
+    "my claude",
+    "gpt",
+    "llama",
+    "titan",
+    "nova",
+    "mistral",
+    "command",
+}
+
+
+def invalid_bedrock_model_id(model_name) -> bool:
+    """A Bedrock model_name is an invocation ID, not a display label.
+
+    Family names such as "Claude" reach LiteLLM Invoke with no vendor and
+    fail as Unknown provider=None. Reject those before any provider call.
+    Real IDs contain a vendor separator (dot, slash, or colon) and never
+    contain whitespace, so "Claude 3.5 Sonnet" is a label even with a dot.
+    A route prefix does not turn a label into an ID: "bedrock/Claude" is
+    still the family name.
+    """
+    if not isinstance(model_name, str):
+        return True
+    stripped = model_name.strip()
+    if not stripped or stripped != model_name or len(stripped) > 255:
+        return True
+    if not stripped.isprintable() or any(char.isspace() for char in stripped):
+        return True
+    if stripped.rsplit("/", 1)[-1].lower() in _BEDROCK_FAMILY_LABELS:
+        return True
+    return not any(separator in stripped for separator in (".", "/", ":"))
+
+
 def _vertex_sdk_missing(provider, model_name) -> bool:
     """A Vertex AI model litellm can only call through the ``vertexai`` SDK,
     on an image built without it (the optional ``gcp`` extra)."""
@@ -194,6 +233,12 @@ class CustomAIModelCreateView(APIView):
                 str(model_provider).strip().lower() == "bedrock"
                 or str(model_provider).strip().lower() == "sagemaker"
             ):
+                if str(model_provider).strip().lower() == "bedrock" and (
+                    invalid_bedrock_model_id(model_name)
+                ):
+                    return self._gm.bad_request(
+                        {"model_name": [BEDROCK_MODEL_ID_MESSAGE]}
+                    )
                 if (
                     not all(
                         key in config_json
@@ -358,6 +403,14 @@ class CustomAIModelDetailsView(APIView):
             if output_token_cost is not None:
                 ai_model.output_token_cost = output_token_cost
             if new_model_name:
+                if str(
+                    ai_model.provider or ""
+                ).strip().lower() == "bedrock" and invalid_bedrock_model_id(
+                    new_model_name
+                ):
+                    return self._gm.bad_request(
+                        {"model_name": [BEDROCK_MODEL_ID_MESSAGE]}
+                    )
                 ai_model.user_model_id = new_model_name
             _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
@@ -580,8 +633,18 @@ class EditCustomModel(APIView):
             key = data.get("key", None)
 
             model = _custom_ai_model_queryset(request).get(id=model_id)
+            # Check the ID only when it is about to be saved or sent to the
+            # provider. A cost-only edit of an older row leaves it untouched,
+            # as the details update does.
+            checks_model_id = bool(model_name or key or config_json)
             if not model_name:
                 model_name = model.user_model_id
+            if (
+                checks_model_id
+                and str(model.provider or "").strip().lower() == "bedrock"
+                and invalid_bedrock_model_id(model_name)
+            ):
+                return self._gm.bad_request({"model_name": [BEDROCK_MODEL_ID_MESSAGE]})
             if (key or config_json) and _vertex_sdk_missing(model.provider, model_name):
                 return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
             if key or config_json:
