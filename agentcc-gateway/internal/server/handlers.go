@@ -1393,7 +1393,17 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	if effectiveFallbacks != nil && effectiveFallbacks.HasFallbacks(model) {
+		orgID, orgCfg := h.resolveOrgConfig(rc)
 		for _, fbModel := range effectiveFallbacks.GetChain(model) {
+			// Routing-only aliases can become unavailable before the call-time fallback loop.
+			if p, providerID, upstreamModel, _ := h.orgProviderFor(orgID, orgCfg, fbModel); p != nil {
+				rc.Provider = providerID
+				rc.Flags.FallbackUsed = true
+				rc.Metadata["original_model"] = model
+				rc.Metadata["fallback_model"] = fbModel
+				rc.Metadata["org_provider_model_match"] = fbModel
+				return p, upstreamModel, nil
+			}
 			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
 			if fbErr == nil {
 				rc.Provider = fbResult.Provider.ID()
