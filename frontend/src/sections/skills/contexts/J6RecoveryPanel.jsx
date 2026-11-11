@@ -31,6 +31,7 @@ import {
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
 import { IdentityValue } from "../review/ReleaseReviewBody";
+import { restoreCommands } from "./restoreCommands";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
 // choice, then recovers local locks and applications without a false
@@ -55,18 +56,7 @@ const reasonNames = {
   resource_archived: "Context archived",
   distribution_blocked: "Distribution blocked",
 };
-const quote = (value) => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 const uuid = () => crypto.randomUUID();
-
-export function restoreCommands({ name, version, lockPath }) {
-  return [
-    `python -m fi.context restore --lock ${quote(lockPath)} --project . --plan ${quote("restore-plan.json")}`,
-    `python -m fi.context inspect --plan ${quote("restore-plan.json")} --diff`,
-    `python -m fi.context apply --plan ${quote("restore-plan.json")} --quiescent`,
-    "python -m fi.context verify --project .",
-    `# Expect ${name} v${version}. Local files outside the managed paths are preserved.`,
-  ].join("\n");
-}
 
 function Cohort({ cohort, numbers }) {
   return (
