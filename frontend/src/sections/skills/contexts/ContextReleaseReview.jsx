@@ -32,13 +32,9 @@ function DraftPublication({
   onRefresh,
 }) {
   const [note, setNote] = useState(draftReview.note ?? "");
-  // A recorded head acknowledgement exists only for an exact review fingerprint that this person
-  // attested (review and any static warnings) before it was accepted. Carry that same attestation
-  // into the publish step instead of asking for it again; it stays visible and can be withdrawn.
-  const recorded = draftReview.headAcknowledged ? draftReview.reviewFingerprint : null;
-  const [warningFingerprint, setWarningFingerprint] = useState(recorded);
+  const [warningFingerprint, setWarningFingerprint] = useState(null);
   const warnings = warningFingerprint === draftReview.reviewFingerprint;
-  const [ackFingerprint, setAckFingerprint] = useState(recorded);
+  const [ackFingerprint, setAckFingerprint] = useState(null);
   const operation = useReviewedOperation();
   const reviewed = ackFingerprint === draftReview.reviewFingerprint;
   const locked =

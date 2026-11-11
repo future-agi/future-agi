@@ -26,7 +26,7 @@ const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'parent-v2', number: 2, digest };
 const preview = { fingerprint: 'preview', attemptCount: 2, estimate: { upperBoundUsd: '0.01' }, providerDisclosure: { taskProvider: 'openai' }, inventory: [], outboundFindings: [] };
 const labelPreview = { fingerprint: 'packet', packet: { candidate_version_id: version.id, candidate_digest: digest, transition: { label: 'production', version: 2, expected_version: 1, expected_release_revision: 4, expected_security_revision: 0 } } };
-beforeEach(() => { vi.clearAllMocks(); state.identity = 'org:workspace:author'; state.prepare.mockResolvedValue(preview); state.create.mockResolvedValue({ id: 'run' }); state.previewLabel.mockResolvedValue(labelPreview); state.submitLabel.mockResolvedValue({ id: 'request' }); });
+beforeEach(() => { vi.clearAllMocks(); window.localStorage.clear(); state.identity = 'org:workspace:author'; state.prepare.mockResolvedValue(preview); state.create.mockResolvedValue({ id: 'run' }); state.previewLabel.mockResolvedValue(labelPreview); state.submitLabel.mockResolvedValue({ id: 'request' }); });
 afterEach(cleanup);
 const mount = (element) => render(<MemoryRouter>{element}</MemoryRouter>);
 async function prepare() {
@@ -87,15 +87,25 @@ it('requires an independent reviewer and only submits a label request, not a lab
   expect(state.submitLabel.mock.calls[0][0]).toMatchObject({ packet: labelPreview.packet, fingerprint: 'packet' });
   expect(await screen.findByText(/No label move has been confirmed/)).toBeVisible();
 });
+it('does not carry the last reviewer or test request across logins', () => {
+  window.localStorage.setItem('skills.releaseRequest.lastReviewer:org:workspace:someone-else', '00000000-0000-4000-8000-000000000002');
+  mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
+  expect(screen.getByRole('textbox', { name: 'Independent reviewer user ID' })).toHaveValue('');
+  cleanup();
+  window.localStorage.setItem('skills.contextTest.last:org:workspace:someone-else', JSON.stringify({ prompt: 'private request' }));
+  mount(<ContextTestsPanel contextId="parent" version={version} />);
+  expect(screen.getByRole('textbox', { name: 'Test request' })).toHaveValue('');
+  window.localStorage.clear();
+});
 it('keeps the last chosen reviewer visible for the next parent without submitting anything for the author', async () => {
-  window.localStorage.setItem('skills.releaseRequest.lastReviewer', '00000000-0000-4000-8000-000000000002');
+  window.localStorage.setItem(`skills.releaseRequest.lastReviewer:${state.identity}`, '00000000-0000-4000-8000-000000000002');
   mount(<ContextLabelRequestPanel contextId="parent" version={version} />);
   expect(screen.getByRole('textbox', { name: 'Independent reviewer user ID' })).toHaveValue('00000000-0000-4000-8000-000000000002');
   fireEvent.click(screen.getByRole('button', { name: 'Preview parent label move' }));
   await screen.findByRole('button', { name: 'Send parent release request' });
   expect(screen.getByRole('button', { name: 'Send parent release request' })).toBeDisabled();
   expect(state.submitLabel).not.toHaveBeenCalled();
-  window.localStorage.removeItem('skills.releaseRequest.lastReviewer');
+  window.localStorage.removeItem(`skills.releaseRequest.lastReviewer:${state.identity}`);
 });
 it('shows dependent failures rather than claiming an empty inventory', () => {
   state.dependents = { isError: true, refetch: vi.fn() };

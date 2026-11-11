@@ -72,21 +72,3 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
   await waitFor(() => expect(preview).toHaveBeenCalledOnce());
   expect(preview.mock.calls[0][0].links).toEqual([{ skillId: 'one', selector: { version: 7 } }, { skillId: 'two', selector: { label: 'production' } }, { skillId: 'three', selector: { label: 'production' } }]);
 });
-
-it('keeps the recorded review attestation visible at the publish step instead of asking for it again', async () => {
-  const { default: ContextReleaseReview } = await import('./ContextReleaseReview');
-  const draftReview = { subjectId: 'ctx', revision: 3, candidateDigest: 'sha256:c', baseVersion: 1, expectedHeadVersion: 1, headDigest: 'sha256:h', reviewFingerprint: 'fp', headAcknowledged: true, complete: true, current: true, changes: [], headChanges: [], acceptedLock: { links: [] }, capabilities: { beforeDigest: 'sha256:b', afterDigest: 'sha256:c', changes: [] }, checks: { items: [], summary: { errors: 0, warnings: 1 } } };
-  const onPublish = vi.fn(async () => ({}));
-  render(<MemoryRouter><ContextReleaseReview scopeKey="scope" state="ready" name="parent" draftReview={draftReview} canPublish onPublish={onPublish} /></MemoryRouter>);
-  expect(screen.getByRole('checkbox', { name: /I reviewed the saved candidate/ })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: /I acknowledge the static warnings/ })).toBeChecked();
-  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the saved candidate/ }));
-  expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the saved candidate/ }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /I acknowledge the static warnings/ }));
-  expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: /I acknowledge the static warnings/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
-  await waitFor(() => expect(onPublish).toHaveBeenCalledOnce());
-  expect(onPublish.mock.calls[0][0]).toMatchObject({ revision: 3, reviewFingerprint: 'fp', acknowledgeWarnings: true });
-});

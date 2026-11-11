@@ -14,12 +14,13 @@ import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadRevie
 // Typography: m3/s1/s3; 12px spacing. No bulk approval or success-green shortcut.
 // The last reviewer a person chose is a per-viewer convenience for requesting several parents in a row;
 // it is shown in the field, validated like typed input, and never submitted without the explicit confirmation below.
-const LAST_REVIEWER_KEY = 'skills.releaseRequest.lastReviewer';
-const readReviewer = () => { try { return window.localStorage.getItem(LAST_REVIEWER_KEY) || ''; } catch { return ''; } };
-const writeReviewer = (value) => { try { window.localStorage.setItem(LAST_REVIEWER_KEY, value); } catch { /* Storage is optional. */ } };
-function Request({ contextId, version, scopeKey, authorId }) {
+// Keyed by the organization/workspace/user identity so another login never inherits this choice.
+const reviewerKey = (identity) => `skills.releaseRequest.lastReviewer:${identity}`;
+const readReviewer = (identity) => { try { return window.localStorage.getItem(reviewerKey(identity)) || ''; } catch { return ''; } };
+const writeReviewer = (identity, value) => { try { window.localStorage.setItem(reviewerKey(identity), value); } catch { /* Storage is optional. */ } };
+function Request({ contextId, version, scopeKey, authorId, identity }) {
   const [label, setLabel] = useState('production');
-  const [reviewerId, setReviewerId] = useState(readReviewer);
+  const [reviewerId, setReviewerId] = useState(() => readReviewer(identity));
   const [preview, setPreview] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const [receipt, setReceipt] = useState(null);
@@ -31,7 +32,7 @@ function Request({ contextId, version, scopeKey, authorId }) {
   const current = preview?.packet.candidate_version_id === version?.id && preview?.packet.candidate_digest === version?.digest && preview?.packet.transition.label === label;
   const send = async () => {
     const result = await operation.run((input, extra) => submit.mutateAsync({ ...input, ...extra }), { packet: preview.packet, fingerprint: preview.fingerprint, reviewerId });
-    if (result) { setReceipt(result); writeReviewer(reviewerId); }
+    if (result) { setReceipt(result); writeReviewer(identity, reviewerId); }
   };
   return <Stack spacing={1.5}>
     <Section title="Request a label move" description="Publication and promotion are separate. A different authorized person must review this exact parent before a label can move." />
@@ -54,10 +55,10 @@ function Request({ contextId, version, scopeKey, authorId }) {
     {receipt && <Alert severity="info" action={<Button component={RouterLink} to={`${paths.dashboard.skills.contextReview(contextId)}?request=${receipt.id}`}>Inspect request</Button>}>Request sent to the independent reviewer. No label move has been confirmed.</Alert>}
   </Stack>;
 }
-Request.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, scopeKey: PropTypes.string.isRequired, authorId: PropTypes.string };
+Request.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, scopeKey: PropTypes.string.isRequired, authorId: PropTypes.string, identity: PropTypes.string.isRequired };
 export default function ContextLabelRequestPanel({ contextId, version }) {
   const { identity, scope } = useSkillV11Scope();
   const scopeKey = `${identity}:${contextId}`;
-  return <Request key={scopeKey} contextId={contextId} version={version} scopeKey={scopeKey} authorId={scope.userId} />;
+  return <Request key={scopeKey} contextId={contextId} version={version} scopeKey={scopeKey} authorId={scope.userId} identity={identity} />;
 }
 ContextLabelRequestPanel.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object };

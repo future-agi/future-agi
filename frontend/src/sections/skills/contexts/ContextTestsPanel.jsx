@@ -20,9 +20,10 @@ import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadRevie
 // and automatically accepted provider consent. Each preview owns a fresh review.
 // Last-used test settings are a per-viewer convenience: a person testing several contexts
 // in a row keeps the same request, model, ceiling and reference. Nothing is pre-attested.
-const LAST_TEST_KEY = 'skills.contextTest.last';
-const readLastTest = () => { try { const value = JSON.parse(window.localStorage.getItem(LAST_TEST_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
-const writeLastTest = (value) => { try { window.localStorage.setItem(LAST_TEST_KEY, JSON.stringify(value)); } catch { /* Storage is optional. */ } };
+// Keyed by the organization/workspace/user identity so one login never prefills another's request text.
+const lastTestKey = (identity) => `skills.contextTest.last:${identity}`;
+const readLastTest = (identity) => { try { const value = JSON.parse(window.localStorage.getItem(lastTestKey(identity)) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
+const writeLastTest = (identity, value) => { try { window.localStorage.setItem(lastTestKey(identity), JSON.stringify(value)); } catch { /* Storage is optional. */ } };
 const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] });
 
 function Results({ contextId, runId }) {
@@ -63,8 +64,8 @@ function Results({ contextId, runId }) {
 }
 Results.propTypes = { contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired };
 
-function Tests({ contextId, candidate, scopeKey, state }) {
-  const [last] = useState(readLastTest);
+function Tests({ contextId, candidate, scopeKey, identity, state }) {
+  const [last] = useState(() => readLastTest(identity));
   const [prompt, setPrompt] = useState(typeof last.prompt === 'string' ? last.prompt : '');
   const [expected, setExpected] = useState(typeof last.expected === 'string' ? last.expected : '');
   const [chosenModel, setModel] = useState(typeof last.model === 'string' ? last.model : '');
@@ -106,7 +107,7 @@ function Tests({ contextId, candidate, scopeKey, state }) {
       profile: 'quick', repetitions: 1, limits: { max_total_tokens: options.data.limits.profiles.quick.maxTotalTokens, max_estimated_cost_usd: limit }, purpose: 'regression', parent_run_id: null,
     };
     setConfiguration(config);
-    writeLastTest({ prompt, expected, model, limit, reference });
+    writeLastTest(identity, { prompt, expected, model, limit, reference });
     try { setPreview(await prepare.mutateAsync(config)); } catch { /* The mutation error is rendered below. */ }
   };
   if (options.isLoading || state === 'loading') return <ContentSkeleton />;
@@ -146,12 +147,12 @@ function Tests({ contextId, candidate, scopeKey, state }) {
     {history.data?.total_pages > 1 && <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} />}
   </Stack>;
 }
-Tests.propTypes = { contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, state: PropTypes.string };
+Tests.propTypes = { contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string };
 export default function ContextTestsPanel({ contextId, version, draft, state }) {
   const { identity } = useSkillV11Scope();
   const scopeKey = `${identity}:${contextId}`;
   let candidate = version ? { kind: 'version', version: version.number, digest: version.digest } : null;
   if (draft) { try { candidate = contextTestCandidate(draft); } catch { candidate = null; } }
-  return <Tests key={scopeKey} scopeKey={scopeKey} contextId={contextId} candidate={candidate} state={state} />;
+  return <Tests key={scopeKey} scopeKey={scopeKey} identity={identity} contextId={contextId} candidate={candidate} state={state} />;
 }
 ContextTestsPanel.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, draft: PropTypes.object, state: PropTypes.string };
