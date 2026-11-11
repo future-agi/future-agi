@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import cast
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from accounts.models.user import OrgApiKey, User
@@ -173,8 +173,10 @@ def locked_context_graph(
     require_scope_access(principal=principal, write=write)
     # A read observes committed state: when an apply lands between the preliminary
     # read and the row locks, renew the ID set instead of failing the reader. Writes
-    # still fail CAS so the client renews its own preview.
-    attempts = 1 if write else 3
+    # still fail CAS so the client renews its own preview. Inside a caller's
+    # transaction the first attempt's row locks would survive a retry and the new
+    # children would be locked after their parent, so only a top-level read renews.
+    attempts = 3 if not write and not connection.in_atomic_block else 1
     for attempt in range(attempts):
         context = get_resource(
             principal=principal, resource_id=context_id, kind="agent_context"
