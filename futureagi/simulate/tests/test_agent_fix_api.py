@@ -797,6 +797,62 @@ class TestUserApi:
         brief = _engine(api_client, "get", _armed(fix_run), "brief/").json()
         assert brief["request"]["protected_scenario_keys"] == [KEYS[1]]
 
+    def test_a_fix_reads_back_what_it_is_held_to(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(
+                source_run,
+                allowed_models=["model-a", "model-b"],
+                reply_latency_margin_pct=40,
+                cost_margin_pct=10,
+                cost_limit_usd=0.02,
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        read = auth_client.get(f"{BASE}/{response.json()['id']}/").json()["request"]
+        assert read["allowed_models"] == ["model-a", "model-b"]
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (40, 10, 0.02)
+        assert {"observes_models", "meters_agent_cost"} <= set(read)
+
+    def test_a_fix_from_before_its_limits_reads_as_untraced(
+        self, auth_client, source_run
+    ):
+        response = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+        fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
+        limits = {
+            "allowed_models",
+            "reply_latency_margin_pct",
+            "cost_margin_pct",
+            "cost_limit_usd",
+            "observes_models",
+            "meters_agent_cost",
+        }
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={k: v for k, v in fix_run.request.items() if k not in limits}
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["request"]
+        assert (
+            read["allowed_models"],
+            read["observes_models"],
+            read["meters_agent_cost"],
+        ) == (
+            [],
+            False,
+            False,
+        )
+        assert (
+            read["reply_latency_margin_pct"],
+            read["cost_margin_pct"],
+            read["cost_limit_usd"],
+        ) == (25, 25, None)
+
     @pytest.mark.parametrize(
         ("protected", "code"),
         [

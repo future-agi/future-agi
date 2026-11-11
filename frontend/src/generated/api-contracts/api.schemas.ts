@@ -18138,6 +18138,12 @@ export interface AgentFixRequestApi {
   max_minutes: number;
   variations_pending?: boolean;
   variation_parents?: AgentFixRequestApiVariationParents;
+  allowed_models?: string[];
+  reply_latency_margin_pct?: number;
+  cost_margin_pct?: number;
+  cost_limit_usd?: number;
+  observes_models?: boolean;
+  meters_agent_cost?: boolean;
 }
 
 export interface AgentFixReportApi {

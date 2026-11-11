@@ -93433,6 +93433,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           default: {},
         },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          default: 25,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        observes_models: {
+          title: "Observes models",
+          type: "boolean",
+          default: false,
+        },
+        meters_agent_cost: {
+          title: "Meters agent cost",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     AgentFixEvalWarning: {

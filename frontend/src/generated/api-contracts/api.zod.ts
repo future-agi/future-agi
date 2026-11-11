@@ -36269,6 +36269,14 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationsPend
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsListResponseResultsItemRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsListResponseResultsItemRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault =
+  false;
 
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
@@ -36401,6 +36409,32 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           .record(zod.string(), zod.string().min(1))
           .default(
             simulateApiAgentFixRunsListResponseResultsItemRequestVariationParentsDefault,
+          ),
+        allowed_models: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestAllowedModelsDefault,
+          ),
+        reply_latency_margin_pct: zod
+          .number()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestReplyLatencyMarginPctDefault,
+          ),
+        cost_margin_pct: zod
+          .number()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestCostMarginPctDefault,
+          ),
+        cost_limit_usd: zod.number().optional(),
+        observes_models: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestObservesModelsDefault,
+          ),
+        meters_agent_cost: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault,
           ),
       }),
       spent_credits: zod.number(),
@@ -36734,6 +36768,14 @@ export const simulateApiAgentFixRunsReadResponseRequestVariationsPendingDefault 
   false;
 export const simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsReadResponseRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsReadResponseRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsReadResponseRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
+  false;
 
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
@@ -36849,6 +36891,26 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       .record(zod.string(), zod.string().min(1))
       .default(
         simulateApiAgentFixRunsReadResponseRequestVariationParentsDefault,
+      ),
+    allowed_models: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsReadResponseRequestAllowedModelsDefault),
+    reply_latency_margin_pct: zod
+      .number()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestReplyLatencyMarginPctDefault,
+      ),
+    cost_margin_pct: zod
+      .number()
+      .default(simulateApiAgentFixRunsReadResponseRequestCostMarginPctDefault),
+    cost_limit_usd: zod.number().optional(),
+    observes_models: zod
+      .boolean()
+      .default(simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault),
+    meters_agent_cost: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault,
       ),
   }),
   spent_credits: zod.number(),
@@ -37093,6 +37155,14 @@ export const simulateApiAgentFixRunsStopResponseRequestVariationsPendingDefault 
   false;
 export const simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault =
   {};
+export const simulateApiAgentFixRunsStopResponseRequestAllowedModelsDefault =
+  [];
+export const simulateApiAgentFixRunsStopResponseRequestReplyLatencyMarginPctDefault = 25;
+export const simulateApiAgentFixRunsStopResponseRequestCostMarginPctDefault = 25;
+export const simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault =
+  false;
+export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
+  false;
 
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
@@ -37208,6 +37278,26 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       .record(zod.string(), zod.string().min(1))
       .default(
         simulateApiAgentFixRunsStopResponseRequestVariationParentsDefault,
+      ),
+    allowed_models: zod
+      .array(zod.string().min(1))
+      .default(simulateApiAgentFixRunsStopResponseRequestAllowedModelsDefault),
+    reply_latency_margin_pct: zod
+      .number()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestReplyLatencyMarginPctDefault,
+      ),
+    cost_margin_pct: zod
+      .number()
+      .default(simulateApiAgentFixRunsStopResponseRequestCostMarginPctDefault),
+    cost_limit_usd: zod.number().optional(),
+    observes_models: zod
+      .boolean()
+      .default(simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault),
+    meters_agent_cost: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault,
       ),
   }),
   spent_credits: zod.number(),

@@ -112,6 +112,14 @@ class AgentFixRequestSerializer(serializers.Serializer):
     variation_parents = serializers.DictField(
         child=serializers.CharField(), default=dict
     )
+    # What the fix is held to beyond the scenarios. A fix started before these existed
+    # reads as FixRequest reads it: untraced, so its lock and cost limit are not verified.
+    allowed_models = serializers.ListField(child=serializers.CharField(), default=list)
+    reply_latency_margin_pct = serializers.IntegerField(default=MARGIN_PCT_DEFAULT)
+    cost_margin_pct = serializers.IntegerField(default=MARGIN_PCT_DEFAULT)
+    cost_limit_usd = serializers.FloatField(allow_null=True, default=None)
+    observes_models = serializers.BooleanField(default=False)
+    meters_agent_cost = serializers.BooleanField(default=False)
 
 
 class AgentFixVerdictTierPartSerializer(serializers.Serializer):

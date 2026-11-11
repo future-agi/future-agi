@@ -278,4 +278,54 @@ describe("held to", () => {
       heldToRows(byId("fix-ready-archive")).some((r) => r.label === "Spent"),
     ).toBe(false);
   });
+
+  const valueOf = (request, label) =>
+    heldToRows({
+      ...byId("fix-search"),
+      request: { ...byId("fix-search").request, ...request },
+    }).find((r) => r.label === label)?.value;
+
+  it("shows every model the fix allows and the ceilings it was set to", () => {
+    const traced = {
+      allowed_models: ["vertex_ai/gemini-3.8-flash", "openai/gpt-6-luna"],
+      observes_models: true,
+      meters_agent_cost: true,
+      reply_latency_margin_pct: 40,
+      cost_margin_pct: 10,
+      cost_limit_usd: 0.02,
+    };
+    expect(valueOf(traced, "Models")).toBe(
+      "vertex_ai/gemini-3.8-flash, openai/gpt-6-luna",
+    );
+    expect(valueOf(traced, "Reply time")).toBe("+40%");
+    expect(valueOf(traced, "Agent's cost")).toBe(
+      "+10% · at most $0.02 a conversation",
+    );
+    expect(valueOf(traced, "Model")).toBeUndefined();
+  });
+
+  it("says the lock and the cost limit are not verified for an untraced agent", () => {
+    const untraced = {
+      allowed_models: [],
+      observes_models: false,
+      meters_agent_cost: false,
+      reply_latency_margin_pct: 25,
+      cost_margin_pct: 25,
+      cost_limit_usd: null,
+    };
+    expect(valueOf(untraced, "Models")).toBe("not verified: agent not traced");
+    expect(valueOf(untraced, "Reply time")).toBe("+25%");
+    expect(valueOf(untraced, "Agent's cost")).toBe(
+      "+25% · not verified: agent not traced",
+    );
+  });
+
+  it("still lists what a fix from before these limits is held to", () => {
+    const rows = heldToRows(byId("fix-search"));
+    expect(rows.find((r) => r.label === "Models")?.value).toBe(
+      "not verified: agent not traced",
+    );
+    expect(rows.some((r) => r.label === "Model")).toBe(false);
+    expect(rows.find((r) => r.label === "Must-pass")).toBeDefined();
+  });
 });

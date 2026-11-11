@@ -282,7 +282,37 @@ export function heldToRows(fix) {
     });
   }
   rows.push({ label: "Must-pass", value: MUST_PASS_RULE });
-  rows.push({ label: "Model", value: "unchanged" });
+  return [...rows, ...constraintRows(request)];
+}
+
+const NOT_TRACED = "not verified: agent not traced";
+
+// The model lock and the ceilings set at launch. Without the agent's traces the lock and
+// the cost limit cannot be checked, so they say so rather than read as held.
+function constraintRows(request) {
+  const rows = [
+    {
+      label: "Models",
+      value:
+        request.observes_models && request.allowed_models?.length
+          ? request.allowed_models.join(", ")
+          : NOT_TRACED,
+    },
+  ];
+  if (Number.isFinite(request.reply_latency_margin_pct)) {
+    rows.push({
+      label: "Reply time",
+      value: `+${request.reply_latency_margin_pct}%`,
+    });
+  }
+  if (Number.isFinite(request.cost_margin_pct)) {
+    const cost = [`+${request.cost_margin_pct}%`];
+    if (request.cost_limit_usd != null) {
+      cost.push(`at most $${request.cost_limit_usd} a conversation`);
+    }
+    if (!request.meters_agent_cost) cost.push(NOT_TRACED);
+    rows.push({ label: "Agent's cost", value: cost.join(" · ") });
+  }
   return rows;
 }
 
