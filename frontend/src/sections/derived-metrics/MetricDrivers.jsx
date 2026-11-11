@@ -315,7 +315,7 @@ export default function MetricDrivers({ metric, scope, window }) {
                     ? {
                         title: "No more drivers",
                         description:
-                          "No more drivers on this page. Use Previous to go back.",
+                          "You have reached the end of the list. Use Previous to go back.",
                       }
                     : {
                         title: "No drivers in this window",

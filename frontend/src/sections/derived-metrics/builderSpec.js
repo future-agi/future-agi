@@ -40,6 +40,9 @@ export const OPERATOR_LABELS = {
   gt: "is above",
   gte: "is at least",
 };
+// A custom formula the server compiles: one ratio, mean, sum or count_if
+// call at the top level, over the default first input's name.
+export const FORMULA_EXAMPLE = "e.g. ratio(value_1 > 0, value_1 >= 0)";
 export const isBooleanMetric = (recipe) =>
   ["share", "count"].includes(recipe.kind);
 export const sourceCapability = (capabilities, type) =>

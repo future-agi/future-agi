@@ -44,6 +44,25 @@ export const REDUCER_LABELS = {
   all: "All",
 };
 
+// The kinds of span attribute a custom-formula input can read by key.
+const ATTRIBUTE_FIELD_LABELS = {
+  attribute_number: "Number attribute",
+  attribute_bool: "Yes/no attribute",
+  attribute_text: "Text attribute",
+};
+
+/** A span field as a person reads it: the project catalog's display name
+ * when one was returned, else the product's name for it. The wire value
+ * stays the stored field. */
+export function spanFieldLabel(field, catalogLabels = {}) {
+  return (
+    catalogLabels[field] ||
+    ATTRIBUTE_FIELD_LABELS[field] ||
+    BUILTIN_FIELD_LABELS[field] ||
+    enumLabel({}, field)
+  );
+}
+
 /** A label from one of the tables above; null stays null for the caller. */
 export function enumLabel(labels, value) {
   if (value == null || value === "") return null;

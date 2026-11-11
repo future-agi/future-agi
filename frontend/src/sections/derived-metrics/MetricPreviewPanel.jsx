@@ -21,14 +21,58 @@ import { formatMetricValue } from "./formatMetricValue";
 import { inputLabel, previewNeeds, unitInputs } from "./metricPresentation";
 import RecipeSentence from "./MetricSentence";
 
+const grouped = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 6,
+});
+// Input values read like the rest of the page: numbers keep digit grouping.
 const scalar = (value) =>
   value == null
     ? "No value"
     : typeof value === "boolean"
       ? String(value)
-      : value === ""
-        ? "Empty text"
-        : String(value);
+      : typeof value === "number" && Number.isFinite(value)
+        ? grouped.format(value)
+        : value === ""
+          ? "Empty text"
+          : String(value);
+const count = (value) => new Intl.NumberFormat().format(value);
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+
+// Which units the preview read and which it left out, from the counts the
+// server returned for the total. Nothing is reconstructed from the rate.
+// unit_count is every settled unit read, including those without a value;
+// valid_count is the units with a value, which the result rests on. An
+// invalid sampling probability withholds the whole value (status
+// invalid_probability), so it is said as that, not as "left out".
+function basisLines(point, noun) {
+  const conversations = noun === "conversations";
+  const units = conversations ? "finished conversations" : noun;
+  const lines = [];
+  if (isCount(point?.unit_count)) {
+    if (point.status === "ok" && isCount(point.valid_count))
+      lines.push(
+        point.valid_count === point.unit_count
+          ? `Based on all ${count(point.unit_count)} ${units}.`
+          : `Based on ${count(point.valid_count)} of ${count(point.unit_count)} ${units}.`,
+      );
+    else lines.push(`Read ${count(point.unit_count)} ${units}.`);
+  }
+  if (
+    isCount(point?.invalid_probability_count) &&
+    point.invalid_probability_count > 0
+  )
+    lines.push(
+      `${count(point.invalid_probability_count)} had an invalid sampling probability, so no value is shown.`,
+    );
+  lines.push(
+    isCount(point?.missing_count) && point.missing_count > 0
+      ? `${count(point.missing_count)} had no value and are left out, not counted as 0.`
+      : conversations
+        ? "Conversations still in progress, or without a value, are left out, not counted as 0."
+        : `${noun.charAt(0).toUpperCase()}${noun.slice(1)} without a value are left out, not counted as 0.`,
+  );
+  return lines;
+}
 
 const ellipsis = {
   display: "block",
@@ -43,6 +87,7 @@ export default function MetricPreviewPanel({
   form,
   sourceLabels,
   idleMessage,
+  mode = "new",
 }) {
   const { state, data, retry } = preview;
   const boolean = isBooleanMetric(form);
@@ -62,10 +107,14 @@ export default function MetricPreviewPanel({
     value_format: data?.value_format || form.value_format,
     value_type: "number",
   };
-  const value =
-    state === "ready" && data?.point_status === "ok" && point?.status === "ok"
-      ? formatMetricValue(point.value, metadata)
-      : null;
+  const ok =
+    state === "ready" && data?.point_status === "ok" && point?.status === "ok";
+  const value = ok
+    ? formatMetricValue(point.value, metadata, undefined, { display: true })
+    : null;
+  const unrounded = ok ? formatMetricValue(point.value, metadata) : null;
+  const noun =
+    data?.unit_noun || (form.level === "span" ? "spans" : "conversations");
   // A unit's value shares the hero's unit and digit grouping. The percent
   // proof (rate_eligible) belongs to the total, so it is never rescaled.
   const sampleValue = (sample) =>
@@ -98,7 +147,8 @@ export default function MetricPreviewPanel({
           Live preview
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Last 7 days · settled units
+          Last 7 days ·{" "}
+          {form.level === "span" ? "spans" : "finished conversations"}
         </Typography>
       </Stack>
       <Box
@@ -172,6 +222,8 @@ export default function MetricPreviewPanel({
               component="p"
               variant={value != null ? "display" : "title_md"}
               color={value != null ? "text.primary" : "text.secondary"}
+              // Rounded for reading; the unrounded value is on hover.
+              title={unrounded && unrounded !== value ? unrounded : undefined}
               sx={{ fontVariantNumeric: "tabular-nums" }}
             >
               {value ??
@@ -183,7 +235,8 @@ export default function MetricPreviewPanel({
                 color="text.primary"
                 sx={{ fontVariantNumeric: "tabular-nums" }}
               >
-                {point.numerator} of {point.denominator} {data.unit_noun} match
+                {count(point.numerator)} of {count(point.denominator)}{" "}
+                {data.unit_noun} match
               </Typography>
             )}
             {value == null && (
@@ -193,14 +246,21 @@ export default function MetricPreviewPanel({
                   : `A current value is not available${data?.point_status ? ` (${data.point_status.replaceAll("_", " ")})` : ""}.`}
               </Typography>
             )}
-            {data?.summary && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ pt: 0.5 }}
-              >
-                {data.summary}
-              </Typography>
+            {/* In place of the server's one fixed summary sentence: what the
+                preview read and what it left out, in plain words. */}
+            {point && (
+              <Stack spacing={0.25} sx={{ pt: 0.5 }}>
+                {basisLines(point, noun).map((line) => (
+                  <Typography
+                    key={line}
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    {line}
+                  </Typography>
+                ))}
+              </Stack>
             )}
           </Stack>
         )}
@@ -307,8 +367,9 @@ export default function MetricPreviewPanel({
           sx={{ color: "text.disabled", mt: "1px", flexShrink: 0 }}
         />
         <Typography variant="caption" color="text.secondary">
-          This preview is not saved history. Saving queues recalculation; the
-          active version stays visible until its replacement is ready.
+          {mode === "edit"
+            ? "This preview is not saved. Saving queues a recalculation; the active version stays visible until its replacement is ready."
+            : "This preview is not saved. Saving starts the metric’s first calculation; its values appear on the metric page when it finishes."}
         </Typography>
       </Stack>
     </Stack>
@@ -321,4 +382,6 @@ MetricPreviewPanel.propTypes = {
   // Overrides the idle copy when the page knows more than the form, e.g. a
   // legacy metric that must be rebuilt first.
   idleMessage: PropTypes.string,
+  // "new" before the first save, "edit" when an active version may exist.
+  mode: PropTypes.oneOf(["new", "edit"]),
 };

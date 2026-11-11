@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatLocalMetricWindow,
   formatMetricTime,
+  formatMetricTimeRange,
   formatMetricWindow,
   formatRelativeMetricTime,
   localTime,
@@ -92,6 +93,20 @@ describe("metric time and closed windows", () => {
     const value = new Date(new Date(now).getTime() + seconds * 1000);
     expect(formatRelativeMetricTime(value, { now, locale: "en-US" })).toBe(
       expected,
+    );
+  });
+});
+
+describe("time ranges in a UTC column", () => {
+  it("shows the date once when both ends fall on the same UTC day", () => {
+    expect(
+      formatMetricTimeRange("2026-11-11T09:49:47Z", "2026-11-11T17:49:47Z"),
+    ).toBe("11 Nov 2026, 09:49:47 – 17:49:47");
+    expect(
+      formatMetricTimeRange("2026-11-10T23:30:00Z", "2026-11-11T00:10:00Z"),
+    ).toBe("10 Nov 2026, 23:30:00 – 11 Nov 2026, 00:10:00");
+    expect(formatMetricTimeRange(null, "2026-11-11T00:10:00Z")).toBe(
+      "Unavailable – 11 Nov 2026, 00:10:00",
     );
   });
 });

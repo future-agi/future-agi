@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
-import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 import { useMetricKpi, useMetricTrend } from "./api";
+import MetricFirstCalculation from "./MetricFirstCalculation";
 import { metricCopy, metricCountCopy } from "./copy";
 import { formatMetricInterval, formatMetricValue } from "./formatMetricValue";
 import { formatMetricWindow } from "./metricTime";
@@ -105,36 +105,13 @@ function Change({ data }) {
 }
 Change.propTypes = { data: PropTypes.object.isRequired };
 
-function NotCalculated({ definition }) {
-  return (
-    <Box
-      sx={{ border: 1, borderColor: "divider", borderRadius: 1, pb: 3 }}
-      data-testid="metric-not-calculated"
-    >
-      <EmptyState
-        variant="no-results"
-        icon="solar:clock-circle-linear"
-        title="Not calculated yet"
-        description="Values, the trend and drivers appear here after the first calculation of this definition completes. Nothing is shown as zero in the meantime."
-        sx={{ pb: 2 }}
-      />
-      <Box
-        sx={{
-          maxWidth: 360,
-          mx: "auto",
-          px: 3,
-          textAlign: "center",
-          "& .MuiStack-root": { mx: "auto" },
-        }}
-      >
-        <MetricStatusLine definition={definition} showFreshness={false} />
-      </Box>
-    </Box>
-  );
-}
-NotCalculated.propTypes = { definition: PropTypes.object };
-
-export default function MetricOverview({ metric, scope, window, windowLabel }) {
+export default function MetricOverview({
+  metric,
+  scope,
+  window,
+  windowLabel,
+  onViewHistory,
+}) {
   const args = {
     scope,
     metricId: metric?.id,
@@ -157,7 +134,13 @@ export default function MetricOverview({ metric, scope, window, windowLabel }) {
       </Alert>
     );
   if (metric && !metric.definition)
-    return <NotCalculated definition={metric.draft_definition} />;
+    return (
+      <MetricFirstCalculation
+        metric={metric}
+        scope={scope}
+        onViewHistory={onViewHistory}
+      />
+    );
   const data = kpi.data;
   const state = pointValueState(data?.current);
   const hasValue = state.state === "value";
@@ -190,13 +173,22 @@ export default function MetricOverview({ metric, scope, window, windowLabel }) {
                   data-testid="metric-hero"
                   variant={hasValue ? "display" : "title_md"}
                   color={hasValue ? "text.primary" : "text.secondary"}
+                  // Rounded for reading; the unrounded value is on hover.
+                  title={
+                    hasValue
+                      ? formatMetricValue(current.value, {
+                          ...current,
+                          value_type: "number",
+                        }) ?? undefined
+                      : undefined
+                  }
                   sx={{
                     fontVariantNumeric: "tabular-nums",
                     overflowWrap: "anywhere",
                   }}
                 >
                   {hasValue
-                    ? `${current.weighted ? "≈ " : ""}${formatMetricValue(current.value, { ...current, value_type: "number" })}`
+                    ? `${current.weighted ? "≈ " : ""}${formatMetricValue(current.value, { ...current, value_type: "number" }, undefined, { display: true })}`
                     : state.label}
                 </Typography>
                 <Change data={data} />
@@ -212,7 +204,7 @@ export default function MetricOverview({ metric, scope, window, windowLabel }) {
                   color="text.secondary"
                   sx={{ fontVariantNumeric: "tabular-nums" }}
                 >
-                  {formatMetricInterval(current)}
+                  {formatMetricInterval(current, undefined, { display: true })}
                 </Typography>
               )}
               {metricCountCopy(current, current?.unit_noun).map((line) => (
@@ -293,4 +285,5 @@ MetricOverview.propTypes = {
   scope: PropTypes.object.isRequired,
   window: PropTypes.object.isRequired,
   windowLabel: PropTypes.string,
+  onViewHistory: PropTypes.func,
 };

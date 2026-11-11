@@ -13,7 +13,8 @@ export const localTime = (value) => {
     .slice(0, 16);
 };
 
-export function formatMetricTime(value) {
+/** utcSuffix: false is only for a column whose header already says UTC. */
+export function formatMetricTime(value, { utcSuffix = true } = {}) {
   const date = metricDate(value);
   if (!date) return "Unavailable";
   return (
@@ -26,8 +27,38 @@ export function formatMetricTime(value) {
       minute: "2-digit",
       second: "2-digit",
       hourCycle: "h23",
-    }).format(date) + " UTC"
+    }).format(date) + (utcSuffix === false ? "" : " UTC")
   );
+}
+/** A range of two instants for a column whose header says UTC. When both
+ * fall on the same UTC day the date is shown once:
+ * "11 Nov 2026, 09:49:47 – 17:49:47". */
+export function formatMetricTimeRange(start, end) {
+  const from = metricDate(start);
+  const to = metricDate(end);
+  const full = (value) => formatMetricTime(value, { utcSuffix: false });
+  if (!from || !to) return `${full(start)} – ${full(end)}`;
+  if (from.toISOString().slice(0, 10) !== to.toISOString().slice(0, 10))
+    return `${full(from)} – ${full(to)}`;
+  const clock = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(to);
+  return `${full(from)} – ${clock}`;
+}
+/** A time of day in UTC, for an action the viewer has just taken. */
+export function formatMetricClock(value) {
+  const date = metricDate(value);
+  if (!date) return "an unknown time";
+  return `${new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date)} UTC`;
 }
 export const localTimeZone = () =>
   Intl.DateTimeFormat().resolvedOptions().timeZone;

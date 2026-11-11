@@ -19,6 +19,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMetricKpi } from "./api";
 import MetricValueCell from "./MetricValueCell";
+import { firstCalculationBadge } from "./metricCalculationState";
 import { isMetricFirstUse } from "./metricPresentation";
 import {
   metricProjectLabel,
@@ -70,8 +71,28 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     enabled: Boolean(metric.definition && window),
   });
   if (!metric.definition) {
-    // The Value column already says "Not calculated yet"; freshness stays a
-    // quiet dash with the reason for assistive tech and on hover.
+    // The Value column already says "Not calculated yet". Freshness says when
+    // the definition was saved, which is all that is known; without a saved
+    // time it stays a quiet dash with the reason for assistive tech.
+    const savedAt = metric.draft_definition?.created_at;
+    const saved = formatRelativeMetricTime(savedAt);
+    // Not a tab stop: the exact time is in the cell's own text for
+    // assistive tech, and on hover.
+    if (freshness && saved !== "Unavailable")
+      return (
+        <Tooltip
+          title={`Saved ${formatMetricTime(savedAt)}. No active definition yet.`}
+          placement="top-start"
+          describeChild
+        >
+          <Typography variant="body2" color="text.secondary" sx={line}>
+            Saved {saved}
+            <Box component="span" sx={visuallyHidden}>
+              {`, ${formatMetricTime(savedAt)}. No active definition yet.`}
+            </Box>
+          </Typography>
+        </Tooltip>
+      );
     return freshness ? (
       <Tooltip title="No active definition yet" placement="top-start">
         <Typography variant="body2" color="text.secondary" sx={line}>
@@ -335,24 +356,29 @@ export default function MetricList({
     {
       id: "version",
       header: "Version",
-      size: 96,
+      size: 132,
       enableSorting: false,
-      // A draft-only metric reads exactly as its page header does.
+      // A saved metric without an active version is waiting for its first
+      // calculation; the badge says so in the header's words, shortened.
       cell: ({ row: { original: item } }) =>
         item.definition?.version != null ? (
           <Typography component="span" variant="body2" color="text.secondary">
             {`v${item.definition.version}`}
           </Typography>
         ) : (
-          <StatusBadge
-            status="draft"
-            variant="dot"
-            label={
-              item.draft_definition?.version != null
-                ? `Draft v${item.draft_definition.version}`
-                : "Draft"
-            }
-          />
+          <Tooltip
+            title={firstCalculationBadge(item.draft_definition).label}
+            placement="top-start"
+          >
+            <Box component="span" sx={{ display: "inline-flex", minWidth: 0 }}>
+              <StatusBadge
+                {...firstCalculationBadge(item.draft_definition, {
+                  short: true,
+                })}
+                variant="dot"
+              />
+            </Box>
+          </Tooltip>
         ),
     },
   ];

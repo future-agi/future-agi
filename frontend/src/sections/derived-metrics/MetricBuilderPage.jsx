@@ -7,7 +7,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -18,6 +17,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useSnackbar } from "notistack";
+import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
 import { useAuthContext } from "src/auth/hooks";
@@ -59,6 +60,11 @@ import useMetricNavigationGuard from "./use_metric_navigation_guard";
 import usePreview from "./usePreview";
 
 const ROOT = "/dashboard/metrics";
+// With no search typed, the source list reads further catalog pages on its
+// own until it holds this many span fields (custom attributes often sit past
+// the first page), up to AUTO_CATALOG_PAGES pages.
+const AUTO_SOURCE_TARGET = 20;
+const AUTO_CATALOG_PAGES = 5;
 // Text fields, selects and searchable pickers share one 32px height here so
 // a row of mixed controls reads as one line.
 const FIELD_SX = {
@@ -187,6 +193,7 @@ BuilderLoader.propTypes = {
 
 function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
   const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
   const recoveryKey = `builder-v2:${workspaceScope.organizationId}:${workspaceScope.workspaceId}:${metric?.id || "new"}`;
   const [baseline] = useState(() =>
     metric ? builderFromMetric(metric) : newBuilder(projectId),
@@ -312,6 +319,32 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
     capabilities.data,
     projectName,
   );
+  const spanSourceCount = options.filter(
+    (option) => option.descriptor?.source === "span",
+  ).length;
+  const nextCatalogCursor = catalog.data?.result?.next_cursor;
+  // Only once the current page is merged, so the page count and the span
+  // fields it counts include that page.
+  const currentPageMerged =
+    Boolean(catalog.data) && catalogPages.at(-1) === catalog.data;
+  useEffect(() => {
+    if (
+      !sourceSearch &&
+      nextCatalogCursor &&
+      catalog.readState === "ready" &&
+      currentPageMerged &&
+      catalogPages.length < AUTO_CATALOG_PAGES &&
+      spanSourceCount < AUTO_SOURCE_TARGET
+    )
+      setCursor(nextCatalogCursor);
+  }, [
+    sourceSearch,
+    nextCatalogCursor,
+    catalog.readState,
+    currentPageMerged,
+    catalogPages.length,
+    spanSourceCount,
+  ]);
   const sourceLabels = Object.fromEntries(
     (form.inputs || []).flatMap((input) => {
       const option = options.find((item) => sourceMatches(input, item));
@@ -375,6 +408,14 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
       const saved = await (metric ? update : create).mutateAsync(body);
       if (!mounted.current) return;
       clearMetricDraft(recoveryKey);
+      // The metric page shows the calculation's progress; this says the save
+      // itself worked.
+      enqueueSnackbar(
+        metric
+          ? "Metric saved. Recalculation queued."
+          : "Metric saved. First calculation queued.",
+        { variant: "success" },
+      );
       allowNavigation(() => navigate(saved?.id ? `${ROOT}/${saved.id}` : ROOT));
     } catch (error) {
       if (mounted.current)
@@ -560,6 +601,7 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
               onSearch={searchSources}
               rebuilding={rebuilding}
               sourceLabels={sourceLabels}
+              projectName={projectName}
             />
             {form.project_id &&
               [catalog, evaluators].some(
@@ -611,6 +653,7 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
             preview={preview}
             form={form}
             sourceLabels={sourceLabels}
+            mode={metric ? "edit" : "new"}
             idleMessage={
               legacy && !rebuilding
                 ? "Rebuild this metric to see a preview."
@@ -668,22 +711,36 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
           {saving ? "Saving…" : "Save metric"}
         </Button>
       </Stack>
-      <Dialog
+      <ClosableDialog
         open={Boolean(pendingNavigation)}
         onClose={() => setPendingNavigation(null)}
+        maxWidth="xs"
+        fullWidth
         aria-labelledby="discard-metric-title"
       >
         <DialogTitle id="discard-metric-title">
           Discard unsaved changes?
         </DialogTitle>
-        <DialogContent>Your saved metric will not change.</DialogContent>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {metric
+              ? "Your changes are lost. The saved metric does not change."
+              : "This metric has not been saved. Your changes are lost."}
+          </Typography>
+        </DialogContent>
         <DialogActions>
-          <Button color="inherit" onClick={() => setPendingNavigation(null)}>
+          <Button
+            color="inherit"
+            variant="outlined"
+            size="small"
+            onClick={() => setPendingNavigation(null)}
+          >
             Keep editing
           </Button>
           <Button
             color="inherit"
             variant="contained"
+            size="small"
             onClick={() => {
               clearMetricDraft(recoveryKey);
               pendingNavigation();
@@ -693,7 +750,7 @@ function BuilderForm({ scope: workspaceScope, metric, projectId, canWrite }) {
             Discard changes
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </Stack>
   );
 }

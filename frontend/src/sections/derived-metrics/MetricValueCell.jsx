@@ -30,9 +30,17 @@ export default function MetricValueCell({
   const hasValue = state.state === "value" || state.state === "stale";
   const metadata =
     source === "point" ? { ...value, value_type: "number" } : field;
+  // A point is an aggregate in a headline position (a list cell, the
+  // previous period), so it is rounded for reading like the KPI.
+  const display = source === "point";
   const formatted = hasValue
-    ? formatMetricValue(state.value, metadata, locale)
+    ? formatMetricValue(state.value, metadata, locale, { display })
     : null;
+  // The unrounded value, on hover, when rounding changed what shows.
+  const unrounded =
+    display && hasValue
+      ? formatMetricValue(state.value, metadata, locale)
+      : null;
   const estimated = hasValue && source === "point" && value.weighted === true;
   const isStale = state.state === "stale";
   const explanation = [
@@ -97,6 +105,7 @@ export default function MetricValueCell({
           <Typography
             component="span"
             variant="body2"
+            title={unrounded && unrounded !== formatted ? unrounded : undefined}
             sx={{
               fontWeight: hasValue ? 600 : 400,
               color: hasValue ? "text.primary" : "text.secondary",
@@ -130,10 +139,12 @@ export default function MetricValueCell({
           component="span"
           variant="caption"
           color="text.secondary"
-          title={dense ? formatMetricInterval(value, locale) : undefined}
+          title={
+            dense ? formatMetricInterval(value, locale, { display }) : undefined
+          }
           sx={{ fontVariantNumeric: "tabular-nums", ...lineSx }}
         >
-          {formatMetricInterval(value, locale)}
+          {formatMetricInterval(value, locale, { display })}
         </Typography>
       )}
       {!loading &&

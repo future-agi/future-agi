@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useId, useState } from "react";
 import {
-  Alert,
   Box,
   Button,
   Checkbox,
@@ -20,6 +19,7 @@ import ConditionRow from "./ConditionRow";
 import {
   changeKind,
   DEFAULT_LABELS,
+  FORMULA_EXAMPLE,
   isBooleanMetric,
   KIND_LABELS,
   LEVEL_LABELS,
@@ -40,6 +40,7 @@ export default function SentenceBuilder({
   onSearch,
   rebuilding = false,
   sourceLabels = {},
+  projectName,
 }) {
   const idBase = useId();
   const [customLabels, setCustomLabels] = useState(
@@ -220,16 +221,34 @@ export default function SentenceBuilder({
       )}
       {custom ? (
         <>
-          <Alert severity="info">
-            Existing inputs, weighting, filters and custom formulas are
-            preserved. Saving creates a new version; it does not replace the
-            active history immediately.
-          </Alert>
+          <Stack direction="row" gap={0.75} alignItems="flex-start">
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={14}
+              sx={{ color: "text.disabled", mt: "1px", flexShrink: 0 }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Name each input, then use those names in the formula. Saved
+              inputs, weighting and filters are kept as they are; saving creates
+              a new version.
+            </Typography>
+          </Stack>
           <MetricInputs
             inputs={form.inputs}
             capabilities={capabilities}
             projectId={form.project_id}
-            selectionUnit={form.selection_unit}
+            // The unit in the words the Unit picker uses, not the wire
+            // value ("session").
+            selectionUnit={level}
+            // Built-in span fields as the source picker names them.
+            fieldLabels={Object.fromEntries(
+              (options || [])
+                .filter(
+                  ({ descriptor }) =>
+                    descriptor?.source === "span" && !descriptor.attribute_key,
+                )
+                .map(({ descriptor, label }) => [descriptor.field, label]),
+            )}
             disabled={disabled}
             onChange={(inputs) =>
               onChange({
@@ -250,7 +269,10 @@ export default function SentenceBuilder({
             onChange={(event) =>
               onChange({ ...form, formula: event.target.value })
             }
-            helperText="The server validates custom formulas before saving."
+            // The server accepts one ratio, mean, sum or count_if call at
+            // the top level (tracer/services/derived_metrics/formula.py).
+            placeholder={FORMULA_EXAMPLE}
+            helperText="Start with ratio(numerator, denominator), mean(value), sum(value) or count_if(condition), using the input names above. The formula is checked when you save."
             sx={{ "& textarea": { fontFamily: "monospace" } }}
           />
         </>
@@ -314,28 +336,32 @@ export default function SentenceBuilder({
                       </Box>
                     </Typography>
                     {removable && (
+                      // The span keeps the tooltip working (and quiet) while
+                      // the button is disabled.
                       <Tooltip title="Remove condition">
-                        <IconButton
-                          size="small"
-                          aria-label={`Remove condition ${index + 1}`}
-                          disabled={disabled}
-                          onClick={() =>
-                            onChange(
-                              setRecipeInputs(
-                                form,
-                                form.inputs.filter((_, i) => i !== index),
-                                conditions.filter(
-                                  (item) => item.alias !== input.alias,
+                        <span>
+                          <IconButton
+                            size="small"
+                            aria-label={`Remove condition ${index + 1}`}
+                            disabled={disabled}
+                            onClick={() =>
+                              onChange(
+                                setRecipeInputs(
+                                  form,
+                                  form.inputs.filter((_, i) => i !== index),
+                                  conditions.filter(
+                                    (item) => item.alias !== input.alias,
+                                  ),
                                 ),
-                              ),
-                            )
-                          }
-                        >
-                          <Iconify
-                            icon="solar:trash-bin-minimalistic-linear"
-                            width={16}
-                          />
-                        </IconButton>
+                              )
+                            }
+                          >
+                            <Iconify
+                              icon="solar:trash-bin-minimalistic-linear"
+                              width={16}
+                            />
+                          </IconButton>
+                        </span>
                       </Tooltip>
                     )}
                   </Stack>
@@ -348,6 +374,7 @@ export default function SentenceBuilder({
                       disabled={disabled}
                       loading={loading}
                       label={`Source ${index + 1}`}
+                      projectName={projectName}
                       onSearch={onSearch}
                       onChange={(option) =>
                         onChange(
@@ -474,8 +501,14 @@ export default function SentenceBuilder({
               <FieldPicker
                 options={options}
                 loading={loading}
-                disabled={disabled}
+                disabled={disabled || !form.project_id}
                 label="Choose a source"
+                helperText={
+                  form.project_id
+                    ? undefined
+                    : "Choose a project to see its fields"
+                }
+                projectName={projectName}
                 onSearch={onSearch}
                 onChange={(option) => {
                   onChange(
@@ -607,4 +640,6 @@ SentenceBuilder.propTypes = {
   onSearch: PropTypes.func,
   rebuilding: PropTypes.bool,
   sourceLabels: PropTypes.objectOf(PropTypes.string),
+  // Names the project in the source picker's empty message.
+  projectName: PropTypes.string,
 };

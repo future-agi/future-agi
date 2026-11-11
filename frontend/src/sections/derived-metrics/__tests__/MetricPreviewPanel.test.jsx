@@ -41,6 +41,150 @@ const data = {
   ],
 };
 describe("honest previews", () => {
+  // Round 3 UI: the basis comes from the returned counts, never the rate.
+  it("states what the preview read and left out, rounding only the headline", () => {
+    render(
+      <MetricPreviewPanel
+        form={{ kind: "share" }}
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            results: [
+              {
+                group_key: "",
+                status: "ok",
+                value: 0.801887,
+                numerator: 1255,
+                denominator: 1565,
+                unit_count: 1577,
+                valid_count: 1565,
+                missing_count: 12,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("80.2%").getAttribute("title")).toBe("80.1887%");
+    expect(screen.getByText("1,255 of 1,565 conversations match")).toBeTruthy();
+    // The basis is the units with a value (valid_count), out of every unit
+    // read; never the larger count alone.
+    expect(
+      screen.getByText("Based on 1,565 of 1,577 finished conversations."),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Based on 1,577 finished conversations."),
+    ).toBeNull();
+    expect(
+      screen.getByText("12 had no value and are left out, not counted as 0."),
+    ).toBeTruthy();
+    expect(screen.queryByText(data.summary)).toBeNull();
+    expect(
+      screen.getByText("Last 7 days · finished conversations"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Saving starts the metric’s first calculation/),
+    ).toBeTruthy();
+  });
+  it("says an invalid sampling probability withholds the value, and claims no basis", () => {
+    render(
+      <MetricPreviewPanel
+        form={{ kind: "share" }}
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            point_status: "invalid_probability",
+            sample_units: [],
+            results: [
+              {
+                group_key: "",
+                status: "invalid_probability",
+                value: null,
+                numerator: null,
+                denominator: null,
+                unit_count: 40,
+                valid_count: 40,
+                missing_count: 0,
+                invalid_probability_count: 3,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("No value")).toBeTruthy();
+    expect(screen.getByText("Read 40 finished conversations.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "3 had an invalid sampling probability, so no value is shown.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/^Based on/)).toBeNull();
+  });
+  it("says every unit read has a value when none is missing", () => {
+    render(
+      <MetricPreviewPanel
+        form={{ kind: "share" }}
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            sample_units: [],
+            results: [
+              {
+                group_key: "",
+                status: "ok",
+                value: 0.5,
+                numerator: 20,
+                denominator: 40,
+                unit_count: 40,
+                valid_count: 40,
+                missing_count: 0,
+                invalid_probability_count: 0,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Based on all 40 finished conversations."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/invalid sampling probability/)).toBeNull();
+  });
+  it("keeps the active-version note for an edit and groups input digits", () => {
+    render(
+      <MetricPreviewPanel
+        form={{ kind: "share" }}
+        mode="edit"
+        preview={{
+          state: "ready",
+          data: {
+            ...data,
+            sample_units: [
+              {
+                unit_id: "big",
+                status: "value",
+                value_bool: true,
+                inputs: { price: 12345.5 },
+                inputs_bool: {},
+                inputs_text: {},
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("price: 12,345.5")).toBeTruthy();
+    expect(screen.getByText(/the active version stays visible/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Conversations still in progress, or without a value, are left out, not counted as 0.",
+      ),
+    ).toBeTruthy();
+  });
   it("distinguishes zero, false, null and text with default labels", () => {
     render(
       <MetricPreviewPanel

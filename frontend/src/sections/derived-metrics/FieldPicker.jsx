@@ -1,7 +1,15 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { Autocomplete, TextField } from "@mui/material";
+import { Autocomplete, Box, TextField } from "@mui/material";
 import { sourceMatches } from "./builderSpec";
+
+// What each option holds, so a person can tell a number from a yes/no field
+// before picking it. Saved evaluations read their numeric channel by default.
+const TYPE_HINTS = { number: "Number", boolean: "Yes/no", text: "Text" };
+const typeHint = (option) =>
+  option.descriptor?.source === "eval"
+    ? "Evaluation"
+    : TYPE_HINTS[option.descriptor?.value_type] || "";
 
 // Use the app's accessible combobox: selected sources are identities, not labels.
 export default function FieldPicker({
@@ -12,6 +20,8 @@ export default function FieldPicker({
   disabled,
   loading,
   label = "Field",
+  helperText,
+  projectName,
 }) {
   const selected =
     options.find((option) => sourceMatches(input, option)) ||
@@ -28,6 +38,8 @@ export default function FieldPicker({
       : null);
   const [text, setText] = useState(selected?.label || "");
   const searching = useRef(false);
+  const where = projectName ? ` in ${projectName}` : "";
+  const search = searching.current ? text.trim() : "";
   return (
     <Autocomplete
       fullWidth
@@ -64,16 +76,54 @@ export default function FieldPicker({
         }
       }}
       disableClearable
-      noOptionsText="No supported sources found"
+      loadingText="Loading fields…"
+      noOptionsText={
+        // The search covers span fields and saved evaluations alike.
+        search
+          ? `No fields or saved evaluations match “${search}”${where}`
+          : `No fields or saved evaluations${where}`
+      }
       renderOption={(props, option) => (
         <li {...props} key={option.id}>
-          {option.label}
+          <Box
+            component="span"
+            sx={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 1,
+              width: "100%",
+              minWidth: 0,
+            }}
+          >
+            <Box
+              component="span"
+              sx={{
+                minWidth: 0,
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {option.label}
+            </Box>
+            {/* Not part of the option's name: assistive tech reads the
+                field's name, as a picked value shows it. */}
+            <Box
+              component="span"
+              aria-hidden="true"
+              sx={{ flexShrink: 0, typography: "s3", color: "text.secondary" }}
+            >
+              {typeHint(option)}
+            </Box>
+          </Box>
         </li>
       )}
       renderInput={(params) => (
         <TextField
           {...params}
           label={label}
+          helperText={helperText}
           placeholder="Search span attributes and saved evaluations"
         />
       )}
@@ -88,4 +138,6 @@ FieldPicker.propTypes = {
   disabled: PropTypes.bool,
   loading: PropTypes.bool,
   label: PropTypes.string,
+  helperText: PropTypes.string,
+  projectName: PropTypes.string,
 };
