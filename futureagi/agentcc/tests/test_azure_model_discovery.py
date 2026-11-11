@@ -40,7 +40,10 @@ def test_saved_azure_openai_compatible_connection_keeps_its_protocol():
         ),
     ):
         models = AgentccProviderCredentialViewSet()._fetch_models_from_provider(
-            "azure", "https://resource.example.test/openai/v1", "synthetic-key", "openai"
+            "azure",
+            "https://resource.example.test/openai/v1",
+            "synthetic-key",
+            "openai",
         )
 
     assert models == ["deployment"]
