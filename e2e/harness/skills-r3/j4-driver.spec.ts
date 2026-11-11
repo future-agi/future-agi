@@ -59,9 +59,12 @@ test('J4 registered driver retains honest cold and configured reports', async ({
   const runtimeManifest = { ...wire.NativeConfiguration, entrypoint: 'refund_agent.app:invoke', reset_entrypoint: 'refund_agent.app:reset',
     observable_boundaries: ['model_request', 'root_delivery', 'checkpoint', 'child_selection', 'tool_result'].sort() };
   const job = getJob('J4');
-  const fake = new SkillsFixtures();
+  const fakes: SkillsFixtures[] = [];
   try {
     for (const cohort of COHORTS) {
+      // One fake-model namespace per cohort; namespaces cannot be re-registered.
+      const fake = new SkillsFixtures();
+      fakes.push(fake);
       const runId = `j4-r6-${cohort}-${Date.now().toString(36)}`;
       const name = `e2e-${runId}`;
       const targetName = `Refund agent ${runId.slice(-6)}`;
@@ -144,5 +147,5 @@ test('J4 registered driver retains honest cold and configured reports', async ({
         expect(report.evidence_scope).toBe('synthetic');
       } finally { await unlink(inputPath); }
     }
-  } finally { await fake.dispose(); }
+  } finally { for (const fake of fakes) await fake.dispose(); }
 });
