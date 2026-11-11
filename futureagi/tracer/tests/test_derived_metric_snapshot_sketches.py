@@ -357,7 +357,12 @@ def test_incomplete_bucket_capture_fails_and_purges_typed_and_sketch_rows(
         execute(run, live_writer.store)
     assert run.status == "failed" and run.error == "expired"
     assert run.result_id is None
-    job = MetricErasureRequest.objects.get(deletion_key=f"failed-capture:{run.id}")
+    # The failure obligation is attempt-qualified: it owns exactly this attempt's
+    # fresh snapshot namespace, including its typed units and sketch states.
+    job = MetricErasureRequest.objects.get(
+        deletion_key=f"capture-attempt:{run.id}:{run.attempt_id}"
+    )
+    assert job.snapshot_key == run.snapshot_id and job.result_key == run.attempt_id
     assert erasure.process_erasure(job.id, store=live_writer.store)
     for table in ("derived_metric_inputs", BUCKET_TABLE, UNIT_TABLE):
         assert live_writer.store.execute(

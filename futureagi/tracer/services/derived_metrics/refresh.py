@@ -18,7 +18,7 @@ from time import monotonic
 from uuid import UUID
 
 from django.db import connection, transaction
-from django.db.models import BigIntegerField, Count, Max, Sum
+from django.db.models import BigIntegerField, Count, Max, Q, Sum
 from django.db.models.functions import Cast
 
 from tracer.models.derived_metric import (
@@ -151,6 +151,22 @@ class RefreshWriter:
 
     def begin(self, *, purpose="incremental", ceilings=None, versions=(), ledger=None):
         with serialized_project(self.lease.project_id):
+            self.lease.check()
+            from tracer.models.derived_metric import MetricErasureRequest
+
+            # No new attempt can race a whole-project physical purge. Erasure
+            # also fences leases at completion, invalidating discovery performed
+            # by workers that acquired a fresh lease while cleanup was pending.
+            if (
+                MetricErasureRequest.objects.filter(organization_key=self.org_id)
+                .filter(
+                    Q(scope_kind="organization")
+                    | Q(scope_kind="project", project_key=self.lease.project_id)
+                )
+                .exclude(status="done")
+                .exists()
+            ):
+                raise MetricStateConflict("project erasure is in progress")
             ceilings = dict(ceilings or {})
             head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
             inherited = (
@@ -545,8 +561,12 @@ class RefreshWriter:
                     "sha256": payload.digest,
                 }
             )
+        oldest = self.retention_evidence(attempt)
+        shard = self.store.identity()
+        if attempt.purpose != "compaction" and attempt.parent_manifest_id:
+            self.store.assert_visible(attempt.parent_manifest)
         with serialized_project(attempt.project_id):
-            self.check_current_retention(attempt)
+            self.check_current_retention(attempt, oldest)
             if attempt.state != "verified":
                 MetricRefreshAttempt.transition(
                     attempt.id,
@@ -572,7 +592,6 @@ class RefreshWriter:
                 else {}
             )
             if attempt.purpose != "compaction" and parent_receipts:
-                self.store.assert_visible(attempt.parent_manifest)
                 from tracer.services.derived_metrics.compaction_ranges import (
                     RECEIPT_BYTES,
                     canonical,
@@ -621,7 +640,7 @@ class RefreshWriter:
                 cursors=cursors,
                 source_cut=source_cut,
                 visibility_receipts={
-                    "shard": self.store.identity(),
+                    "shard": shard,
                     "batches": receipts,
                     **(
                         {"format": 2, "ranges": range_receipts}
@@ -670,51 +689,36 @@ class RefreshWriter:
                 )
             return manifest
 
-    def check_current_retention(self, attempt):
-        """Revalidate proposed fields under the publication/capture lock.
+    def retention_evidence(self, attempt):
+        """Read immutable proposal minima outside all lifecycle/policy locks.
 
-        Policy reads are not a cached pin-time value. A shrink or a clock crossing
-        requires a fresh expiry plan, never exact-byte publication of expired
-        evidence. Ordinary compaction is a copy of the old state, not discovery;
-        its successor refresh performs the integrated expiry transition.
+        The attempt roots its parent against GC. Revocation aborts the attempt;
+        the final publication CAS rejects observations made across erasure.
         """
         if attempt.source_ceilings.get("range_compaction"):
             from tracer.services.derived_metrics.compaction_ranges import (
-                check_range_policy,
+                range_retention_evidence,
             )
 
-            return check_range_policy(self, attempt)
+            return range_retention_evidence(self, attempt)
         if self.retention_days is None or (
             attempt.purpose == "compaction"
             and not attempt.source_ceilings.get("logical_expiry")
             and "as_of" not in attempt.source_ceilings
         ):
-            return
-        from django.apps import apps
-
+            return None
         from tracer.services.derived_metrics.retention import (
             _current_tables,
             _proposal_rows,
             retention_cutoff,
         )
 
-        # Serialize real org-policy UPDATEs through the final head switch, while
-        # retaining the project's established capture/publication lock order.
-        apps.get_model(
-            "accounts", "Organization"
-        )._base_manager.select_for_update().get(id=self.org_id)
-        cutoff = retention_cutoff(self.retention_days(), now=self.lease.clock())
-        floors = [
-            datetime.fromisoformat(str(value))
-            for value in (
-                attempt.source_ceilings.get("retention_floor"),
-                cutoff,
-            )
-            if value
-        ]
-        if not floors:
-            return
-        cutoff = max(floors)
+        if (
+            not attempt.source_ceilings.get("retention_floor")
+            and retention_cutoff(self.retention_days(), now=self.lease.clock()) is None
+        ):
+            # The final locked policy read must still reject a concurrent shrink.
+            return "unlimited"
         if attempt.purpose == "compaction":
             fields, params = payload_select(
                 FIELD_VALUES,
@@ -767,26 +771,60 @@ class RefreshWriter:
                     "policy_dependencies",
                 )
             private_relations.append((dependencies, bound))
-            # Span fields and their old memberships in the private recovery
-            # ledger must obey the same current horizon
-            # as the proposed dependency relation, even after a start correction.
-            if any(
-                entry.get("unit_start")
-                and datetime.fromisoformat(str(entry["unit_start"])) < cutoff
+        starts = (
+            [
+                datetime.fromisoformat(str(entry["unit_start"]))
                 for chunk in attempt.ledger_chunks.filter(part="membership_preimage")
                 for entry in chunk.payload
-            ):
-                raise MetricRetentionChanged(
-                    "retention policy changed; replan required"
-                )
+                if entry.get("unit_start")
+            ]
+            if any(v.get("level") == "span" for v in attempt.metric_versions)
+            else []
+        )
+        if attempt.parent_manifest_id is None and not any(self.plans(attempt)):
+            # An initial empty, sealed proposal has neither a committed source
+            # nor frozen physical rows. Its durable ledger proves emptiness;
+            # still validate any span recovery preimages against the final policy.
+            return min(starts) if starts else None
         for sql, bound in private_relations:
-            if self.store.execute(
-                f"SELECT count() FROM ({sql}) WHERE unit_start < toDateTime64(%(policy_cutoff)s, 6, 'UTC')",
-                {**bound, "policy_cutoff": cutoff},
-            )[0][0]:
-                raise MetricRetentionChanged(
-                    "retention policy changed; replan required"
-                )
+            oldest = self.store.execute(
+                f"SELECT minOrNull(unit_start) FROM ({sql})", bound
+            )[0][0]
+            if oldest is not None:
+                starts.append(oldest)
+        return min(starts) if starts else None
+
+    def check_current_retention(self, attempt, oldest):
+        """Revalidate current policy/clock in the final short publication transaction."""
+        if attempt.source_ceilings.get("range_compaction"):
+            from tracer.services.derived_metrics.compaction_ranges import (
+                check_range_policy,
+            )
+
+            return check_range_policy(self, attempt, oldest)
+        if self.retention_days is None or (
+            attempt.purpose == "compaction"
+            and not attempt.source_ceilings.get("logical_expiry")
+            and "as_of" not in attempt.source_ceilings
+        ):
+            return
+        from django.apps import apps
+
+        from tracer.services.derived_metrics.retention import retention_cutoff
+
+        apps.get_model(
+            "accounts", "Organization"
+        )._base_manager.select_for_update().get(id=self.org_id)
+        cutoff = retention_cutoff(self.retention_days(), now=self.lease.clock())
+        floors = [
+            datetime.fromisoformat(str(value))
+            for value in (attempt.source_ceilings.get("retention_floor"), cutoff)
+            if value
+        ]
+        if floors and (
+            oldest == "unlimited" or (oldest is not None and oldest < max(floors))
+        ):
+            raise MetricRetentionChanged("retention policy changed; replan required")
 
     def submit(self, attempt, batch, table, payload):
         """Register BEFORE sending; only a synchronous server response drains it.
@@ -933,7 +971,6 @@ class RefreshWriter:
                 return None
             if head.revoked_at is not None:
                 raise MetricStateConflict("expired base requires source rebuild")
-            self.store.assert_visible(head)
             pending = head.published_by.source_ceilings.get("recovery_pending", False)
             handoff = {}
             if pending:
@@ -949,6 +986,7 @@ class RefreshWriter:
             from tracer.services.derived_metrics.backfill import obsolete_versions
 
             obsolete = obsolete_versions(self.lease.project_id, now=self.lease.clock())
+        self.store.assert_visible(head)
         for table in TABLE_KINDS.values():
             prefix = "field" if table == FIELD_VALUES else "metric"
             versioned = table in {FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS}
@@ -1011,9 +1049,9 @@ class RefreshWriter:
         A one-shot DELETE is insufficient: an old INSERT can arrive afterward.
         Repeating this maintenance pass also under unlimited retention makes
         those forever-excluded physical payloads collectible without retaining
-        their informational ancestry. The project lock prevents a new valid
-        attempt from being allocated during the registered-attempt snapshot and
-        synchronous mutations. B10 must schedule maintenance even on idle data.
+        their informational ancestry. The project lock freezes both the registered
+        attempts and allocation high-water; native mutations cannot touch a later
+        allocation. B10 must schedule maintenance even on idle data.
         """
         from tracer.services.derived_metrics.storage import TABLES
 
@@ -1023,26 +1061,30 @@ class RefreshWriter:
                     project_id=self.lease.project_id
                 ).values_list("id", flat=True)
             ) or (UUID(int=0),)
-            params = {
-                "gc_org": str(self.org_id),
-                "gc_project": str(self.lease.project_id),
-                "gc_registered": registered,
-            }
-            predicate = (
-                "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
-                "AND attempt_id NOT IN %(gc_registered)s"
-            )
-            for table in TABLES.values():
-                # An empty namespace needs no synchronous mutation/part rewrite.
-                # This is only a no-op optimization, never a drained-write proof:
-                # late excluded inserts are still reaped on the next scheduled pass.
-                if self.store.execute(
-                    f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
-                ):
-                    self.store.execute(
-                        f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync=2",
-                        params,
-                    )
+            through = MetricProjectRefresh.objects.get(
+                project_id=self.lease.project_id
+            ).generation_high_water
+        params = {
+            "gc_org": str(self.org_id),
+            "gc_project": str(self.lease.project_id),
+            "gc_registered": registered,
+            "gc_through": through,
+        }
+        predicate = (
+            "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
+            "AND generation <= %(gc_through)s AND attempt_id NOT IN %(gc_registered)s"
+        )
+        for table in TABLES.values():
+            # An empty namespace needs no synchronous mutation/part rewrite.
+            # This is only a no-op optimization, never a drained-write proof:
+            # late excluded inserts are still reaped on the next scheduled pass.
+            if self.store.execute(
+                f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
+            ):
+                self.store.execute(
+                    f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync=2",
+                    params,
+                )
 
     def refresh(
         self,
@@ -1180,6 +1222,10 @@ class RefreshWriter:
         publication=None,
     ):
         """Compile B03/B04 proposals into one complete, durable refresh plan."""
+        # A discovery batch is valid only for the lease epoch that read it.
+        # Project/organization erasure invalidates that lease even without a head
+        # or an open attempt. Never inspect/transfer cached private recovery first.
+        self.lease.check()
         if (
             self.workspace_id is None
             or str(scope.project) != str(self.lease.project_id)
@@ -1271,6 +1317,7 @@ class RefreshWriter:
         if head and len(head.delta_attempt_ids) >= MAX_DELTAS_BEFORE_COMPACTION:
             self.compact()
         with serialized_project(self.lease.project_id):
+            self.lease.check()
             head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
             inherited_floor = (
                 head.published_by.source_ceilings.get("retention_floor")

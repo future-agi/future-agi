@@ -252,26 +252,22 @@ def running_capture(metric, user):
 def test_intent_interruption_is_recoverable_and_late_writer_is_fenced(
     snapshot_metric, user
 ):
-    from contextlib import contextmanager
     from unittest.mock import Mock, patch
 
     from tracer.models.derived_metric import MetricStateConflict
 
     run = running_capture(snapshot_metric, user)
     store = Mock()
-    fence = snapshots.project_dispatch_fence
 
-    @contextmanager
-    def recover_before_dispatch(project):
-        # The writer paused immediately after durable intent insertion, before
-        # obtaining the dispatch fence. A cleanup worker retires it first.
+    def recover_before_dispatch(_store):
+        # Cleanup can retire the durable prepared intent while the native probe
+        # is in flight. Its retirement must win the later dispatch transaction.
         snapshots.drain_submissions(
             store, organization_id=snapshot_metric.organization_id
         )
-        with fence(project):
-            yield
+        return {"server": "server", "time": 1000, "uptime": 500}
 
-    with patch.object(snapshots, "project_dispatch_fence", recover_before_dispatch):
+    with patch.object(snapshots, "_server_clock", recover_before_dispatch):
         with pytest.raises(MetricStateConflict, match="fenced"):
             snapshots._write(store, run, "INSERT INTO unused VALUES (1)", {})
     store.execute.assert_not_called()

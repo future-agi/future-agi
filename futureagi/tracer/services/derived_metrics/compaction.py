@@ -12,7 +12,7 @@ from hashlib import sha256
 from time import monotonic
 from uuid import uuid4
 
-from django.db import connection, transaction
+from django.db import connection, connections, transaction
 from django.utils import timezone
 
 from tracer.models.derived_metric import MetricErasureRequest
@@ -40,14 +40,24 @@ def checkpoint_gate(group, shard, *, exclusive=False, deadline=None):
         "big",
         signed=True,
     )
-    with transaction.atomic():
+    # Like the fleet/run execution gates, this transaction owns ONLY its
+    # advisory namespace. Never retain an ORM lifecycle/row transaction through
+    # native submission or maintenance, and never use a pooled session lock.
+    database = connections["default"].copy(alias="metric_checkpoint_gate")
+    try:
+        database.set_autocommit(False)
         function = "pg_try_advisory_xact_lock" + ("" if exclusive else "_shared")
-        with connection.cursor() as cursor:
+        with database.cursor() as cursor:
             cursor.execute(f"SELECT {function}(%s)", [key])
             acquired = cursor.fetchone()[0]
         if not acquired:
             raise MetricVisibilityError("checkpoint layout gate is busy")
         yield
+    finally:
+        try:
+            database.rollback()
+        finally:
+            database.close()
 
 
 def layout_obligations(group, shard):

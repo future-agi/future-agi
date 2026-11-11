@@ -478,14 +478,15 @@ class ClickHousePublicationStore:
 
 @contextmanager
 def pinned_read(store, project_id, *, metric_id=None, pin=None, now=None):
-    """Use ONE locked definition/head/remap and recheck revocation on completion.
+    """Freeze ONE definition/head/remap; native reads never own lifecycle locks.
 
-    The shared lifecycle lock spans the bounded CH reads. Thus erasure cannot
-    purge halfway through a multi-table request, even with a pre-existing queued
-    snapshot pin. Completed snapshots are a separate store and are not read here.
+    A live pin roots immutable history against GC. Erasure may revoke it and
+    purge during a multi-table read: the final serialized validation then rejects
+    the entire assembled response, never returns partial or pre-erasure evidence.
+    Completed snapshots are a separate store and are not read here.
     """
+    owned = pin is None
     with serialized_project(project_id):
-        owned = pin is None
         if owned:
             pin = capture_pin(
                 project_id,
@@ -497,11 +498,12 @@ def pinned_read(store, project_id, *, metric_id=None, pin=None, now=None):
         if str(pin.project_id) != str(project_id) or not pin.is_usable(now):
             raise MetricStateConflict("expired generation")
         manifest = pin.manifest
+    try:
         store.assert_visible(manifest)
-        try:
-            yield manifest, pin.definition_version
+        yield manifest, pin.definition_version
+        with serialized_project(project_id):
             if not pin.is_usable(now):
                 raise MetricStateConflict("expired generation")
-        finally:
-            if owned:
-                MetricGenerationPin.objects.filter(id=pin.id).delete()
+    finally:
+        if owned:
+            MetricGenerationPin.objects.filter(id=pin.id).delete()

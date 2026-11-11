@@ -7,10 +7,11 @@ physical deletion, including historical result versions, not just PG deletion.
 
 import hashlib
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import timedelta
 from uuid import uuid4
 
-from django.db import connection
+from django.db import connections
 from django.db.models import Q
 from django.utils import timezone
 
@@ -35,6 +36,7 @@ from tracer.services.derived_metrics.snapshots import (
     delete_rows,
     drain_submissions,
     purge_run,
+    snapshot_execution_gate,
     snapshot_store,
 )
 
@@ -173,6 +175,13 @@ def _subject_predicate(kind):
 
 def _redact(store, request, token):
     """One child owns a fixed baseline count so interruption never double counts."""
+    with snapshot_execution_gate(request.run_key) as held:
+        if not held:
+            raise MetricStateConflict("snapshot execution is still in progress")
+        return _redact_owned(store, request, token)
+
+
+def _redact_owned(store, request, token):
     run = _runs(request).first()
     if run is None or run.deleted_at:
         purge_run(
@@ -184,12 +193,6 @@ def _redact(store, request, token):
         )
         return
     with serialized_project(request.project_key):
-        drain_submissions(
-            store,
-            organization_id=request.organization_key,
-            project_id=request.project_key,
-            run_id=run.id,
-        )
         DerivedMetricRun.objects.filter(pk=run.id).update(
             status="running",
             result_id=None,
@@ -197,34 +200,48 @@ def _redact(store, request, token):
             lease_expires_at=timezone.now() + timedelta(minutes=15),
         )
         run.refresh_from_db()
-        params = {
-            "org": str(request.organization_key),
-            "project": str(request.project_key),
-            "snapshot": str(request.snapshot_key),
-            "run": str(run.id),
-            "subjects": tuple(request.store_payload["subjects"]),
-        }
-        base = "org_id = toUUID(%(org)s) AND project_id = toUUID(%(project)s)"
-        # Delete ALL result versions first. SQL workbench can bypass commit pointers.
-        for table in ("derived_metric_results", "derived_metric_commits"):
-            delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
-        # Opaque sketches cannot be subtracted. Remove every old state before
-        # deleting typed identities, including retries after partial rebuilds.
+    # Fence the old run attempt BEFORE observing drainage. Otherwise an old
+    # sender could register between the observation and our attempt replacement.
+    drain_submissions(
+        store,
+        organization_id=request.organization_key,
+        project_id=request.project_key,
+        run_id=run.id,
+    )
+    # The independent organization mutex serializes redactors/cleanup, while
+    # _write revalidates this run attempt before every durable native dispatch.
+    # Deletes, probes and sketch rebuilds must not monopolize the project
+    # lifecycle key.
+    params = {
+        "org": str(request.organization_key),
+        "project": str(request.project_key),
+        "snapshot": str(request.snapshot_key),
+        "run": str(run.id),
+        "subjects": tuple(request.store_payload["subjects"]),
+    }
+    base = "org_id = toUUID(%(org)s) AND project_id = toUUID(%(project)s)"
+    # Delete ALL result versions first. SQL workbench can bypass commit pointers.
+    for table in ("derived_metric_results", "derived_metric_commits"):
+        delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
+    # Opaque sketches cannot be subtracted. Remove every old state before
+    # deleting typed identities, including retries after partial rebuilds.
+    delete_rows(
+        store,
+        BUCKET_TABLE,
+        base + " AND snapshot_id = toUUID(%(snapshot)s)",
+        params,
+    )
+    predicate = _subject_predicate(request.store_payload["subject_kind"])
+    for table in (UNIT_TABLE, "derived_metric_inputs"):
         delete_rows(
             store,
-            BUCKET_TABLE,
-            base + " AND snapshot_id = toUUID(%(snapshot)s)",
+            table,
+            base + " AND snapshot_id = toUUID(%(snapshot)s) AND " + predicate,
             params,
         )
-        predicate = _subject_predicate(request.store_payload["subject_kind"])
-        for table in (UNIT_TABLE, "derived_metric_inputs"):
-            delete_rows(
-                store,
-                table,
-                base + " AND snapshot_id = toUUID(%(snapshot)s) AND " + predicate,
-                params,
-            )
     if is_sketch(run.definition):
+        # Every rebuilt INSERT goes through _write: its own short dispatch CAS
+        # revalidates this redaction attempt; no lifecycle lock spans native I/O.
         rebuild_buckets(store, run)
     commit_results(store, run)
     # No per-run receipt is inferred from result values. Parent hard deletion can
@@ -367,10 +384,15 @@ def _purge_snapshots(store, request):
             project_id=request.project_key,
             run_id=request.run_key,
             snapshot_id=request.snapshot_key,
+            result_id=request.result_key
+            if request.store_payload.get("protocol")
+            == "metric_snapshot_attempt_cleanup"
+            else None,
         )
-        DerivedMetricRun.objects.filter(
-            pk=request.run_key, deleted_at__isnull=False
-        ).update(cleanup_status="done")
+        if request.store_payload.get("protocol") != "metric_snapshot_attempt_cleanup":
+            DerivedMetricRun.objects.filter(
+                pk=request.run_key, deleted_at__isnull=False
+            ).update(cleanup_status="done")
         return
     # Each historical run's immutable snapshot key survives collector cascades.
     jobs = MetricErasureRequest.objects.filter(
@@ -418,24 +440,40 @@ def _purge_snapshots(store, request):
             delete_rows(store, table, predicate, params)
 
 
+_held_erasure_mutexes = ContextVar("metric_erasure_mutexes", default=frozenset())
+
+
 @contextmanager
 def _erasure_mutex(organization_id):
-    # Session lock, not a transaction: native write intent and phase receipts
-    # must commit independently. Reentrant for a parent's bounded child work.
+    # A separate transaction owns only this erasure namespace, never lifecycle
+    # locks. ORM intent/phase receipts still commit independently. Transaction
+    # pooling cannot strand a session lock on a returned backend.
+    held = _held_erasure_mutexes.get()
+    if organization_id in held:
+        yield True  # a parent's synchronous, bounded child cleanup
+        return
     key = int.from_bytes(
         hashlib.sha256(f"metric-erasure:{organization_id}".encode()).digest()[:8],
         "big",
         signed=True,
     )
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_try_advisory_lock(%s)", [key])
-        held = cursor.fetchone()[0]
+    database = connections["default"].copy(alias="metric_erasure_lock")
+    token = None
     try:
-        yield held
+        database.set_autocommit(False)
+        with database.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+            acquired = cursor.fetchone()[0]
+        if acquired:
+            token = _held_erasure_mutexes.set(held | {organization_id})
+        yield acquired
     finally:
-        if held:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
+        if token is not None:
+            _held_erasure_mutexes.reset(token)
+        try:
+            database.rollback()
+        finally:
+            database.close()
 
 
 def process_erasure(request_id, *, store=None, writer=None):
@@ -497,6 +535,24 @@ def _process_erasure(request_id, *, store=None, writer=None):
                         pending = pending.filter(project_key=request.project_key)
                     if pending.exists():
                         raise MetricStateConflict("live write drainage is pending")
+            if request.scope_kind in {"project", "organization"}:
+                from tracer.models.derived_metric import MetricProjectRefresh
+
+                states = MetricProjectRefresh.objects.filter(
+                    project__organization_id=request.organization_key
+                )
+                if request.project_key:
+                    states = states.filter(project_id=request.project_key)
+                for project_id in states.values_list("project_id", flat=True):
+                    with serialized_project(project_id):
+                        # Fence discovery begun on a replacement lease DURING
+                        # physical cleanup as well. begin() rejects pending whole
+                        # erasures; after finish only post-purge leases can write.
+                        MetricProjectRefresh.objects.filter(
+                            project_id=project_id
+                        ).update(
+                            lease_token=None, lease_expires_at=None, lease_holder=""
+                        )
             for name in MetricErasureRequest.Store.values:
                 MetricErasureRequest.record_receipt(
                     request.id, token=token, store=name, counts={"remaining": 0}
