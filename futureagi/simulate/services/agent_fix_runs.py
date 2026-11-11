@@ -113,13 +113,14 @@ def launch_fix_run(
     user: Any,
     protected_scenario_keys: Sequence[str] = (),
     allowed_models: Sequence[str] | None = None,
-    reply_latency_margin_pct: int = MARGIN_PCT_DEFAULT,
-    cost_margin_pct: int = MARGIN_PCT_DEFAULT,
+    reply_latency_margin_pct: int | None = None,
+    cost_margin_pct: int | None = None,
     cost_limit_usd: float | None = None,
 ) -> AgentFixRun:
     """Start fixing the agent of a finished run on the scenarios the user chose; without
-    ``max_minutes``, within the time the launch form suggests for the run's suite, and
-    without ``allowed_models``, locked to the models the run's spans show."""
+    ``max_minutes``, within the time the launch form suggests for the run's suite,
+    without ``allowed_models``, locked to the models the run's spans show, and without a
+    margin, at the default margin."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
@@ -218,8 +219,14 @@ def launch_fix_run(
         max_minutes=max_minutes,
         variations_pending=variations,
         allowed_models=allowed,
-        reply_latency_margin_pct=reply_latency_margin_pct,
-        cost_margin_pct=cost_margin_pct,
+        reply_latency_margin_pct=(
+            MARGIN_PCT_DEFAULT
+            if reply_latency_margin_pct is None
+            else reply_latency_margin_pct
+        ),
+        cost_margin_pct=MARGIN_PCT_DEFAULT
+        if cost_margin_pct is None
+        else cost_margin_pct,
         cost_limit_usd=cost_limit_usd,
         observes_models=bool(seen),
         meters_agent_cost=bool(usage),

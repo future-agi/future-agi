@@ -196,8 +196,8 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             max_minutes=data.get("max_minutes"),
             user=request.user,
             allowed_models=data.get("allowed_models"),
-            reply_latency_margin_pct=data["reply_latency_margin_pct"],
-            cost_margin_pct=data["cost_margin_pct"],
+            reply_latency_margin_pct=data.get("reply_latency_margin_pct"),
+            cost_margin_pct=data.get("cost_margin_pct"),
             cost_limit_usd=data.get("cost_limit_usd"),
         )
         return Response(

@@ -36589,11 +36589,9 @@ export const simulateApiAgentFixRunsCreateBodyAllowedModelsItemMax = 200;
 
 export const simulateApiAgentFixRunsCreateBodyAllowedModelsMax = 50;
 
-export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctDefault = 25;
 export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin = 0;
 export const simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax = 1000;
 
-export const simulateApiAgentFixRunsCreateBodyCostMarginPctDefault = 25;
 export const simulateApiAgentFixRunsCreateBodyCostMarginPctMin = 0;
 export const simulateApiAgentFixRunsCreateBodyCostMarginPctMax = 1000;
 
@@ -36648,12 +36646,12 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
     .number()
     .min(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMin)
     .max(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctMax)
-    .default(simulateApiAgentFixRunsCreateBodyReplyLatencyMarginPctDefault),
+    .optional(),
   cost_margin_pct: zod
     .number()
     .min(simulateApiAgentFixRunsCreateBodyCostMarginPctMin)
     .max(simulateApiAgentFixRunsCreateBodyCostMarginPctMax)
-    .default(simulateApiAgentFixRunsCreateBodyCostMarginPctDefault),
+    .optional(),
   cost_limit_usd: zod.number().optional(),
 });
 

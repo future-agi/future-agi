@@ -32,6 +32,7 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     engine_brief,
 )
+from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -819,6 +820,40 @@ class TestUserApi:
             read["cost_limit_usd"],
         ) == (40, 10, 0.02)
         assert {"observes_models", "meters_agent_cost"} <= set(read)
+
+    def test_an_omitted_margin_is_left_to_the_launch_default(
+        self, auth_client, source_run
+    ):
+        body = _launch_body(source_run)
+        # The launch serializer leaves an omitted margin out, so the service decides it.
+        launch = AgentFixLaunchSerializer(data=body)
+        assert launch.is_valid(), launch.errors
+        assert not {"reply_latency_margin_pct", "cost_margin_pct"} & set(
+            launch.validated_data
+        )
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            25,
+            25,
+        )
+
+    def test_a_zero_margin_stays_zero(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, reply_latency_margin_pct=0, cost_margin_pct=0),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        stored = AgentFixRun.no_workspace_objects.get(id=response.json()["id"]).request
+        assert (stored["reply_latency_margin_pct"], stored["cost_margin_pct"]) == (
+            0,
+            0,
+        )
 
     def test_a_fix_from_before_its_limits_reads_as_untraced(
         self, auth_client, source_run

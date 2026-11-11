@@ -68,12 +68,13 @@ class AgentFixLaunchSerializer(serializers.Serializer):
         required=False,
     )
     # How much slower a candidate's median reply, and how much more its agent's median
-    # spend per conversation, may be than the current version's, in percent.
+    # spend per conversation, may be than the current version's, in percent; left out,
+    # the launch's default (see launch_fix_run).
     reply_latency_margin_pct = serializers.IntegerField(
-        min_value=0, max_value=MARGIN_PCT_MAX, default=MARGIN_PCT_DEFAULT
+        min_value=0, max_value=MARGIN_PCT_MAX, required=False
     )
     cost_margin_pct = serializers.IntegerField(
-        min_value=0, max_value=MARGIN_PCT_MAX, default=MARGIN_PCT_DEFAULT
+        min_value=0, max_value=MARGIN_PCT_MAX, required=False
     )
     # The most the agent may spend per conversation, in US dollars; none by default.
     cost_limit_usd = serializers.FloatField(required=False, allow_null=True)

@@ -50869,14 +50869,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reply_latency_margin_pct: {
           title: "Reply latency margin pct",
           type: "integer",
-          default: 25,
           maximum: 1000,
           minimum: 0,
         },
         cost_margin_pct: {
           title: "Cost margin pct",
           type: "integer",
-          default: 25,
           maximum: 1000,
           minimum: 0,
         },
