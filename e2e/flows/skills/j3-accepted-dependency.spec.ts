@@ -114,7 +114,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await leaf(`${prefix}-leaf-0`, 8);
     await page.goto(`/dashboard/skills/${childId}?tab=dependents`);
     await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
-    await expect(page.getByText('Pinned as intended', { exact: true })).toBeVisible();
+    await expect(page.getByRole('table', { name: 'Published context dependents' }).getByText('Pinned as intended', { exact: true })).toBeVisible();
     const inventory = await req(author, 'GET', `${childId}/context-dependents/`);
     expect(inventory.count).toBe(wrong === 'dependents' ? 99 : 3);
     expect(inventory.results.map((row: any) => row.context_id).sort()).toEqual(parents.map(row => row.id).sort());
