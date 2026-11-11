@@ -363,7 +363,7 @@ def _authoring_stage_record(item: dict, *, at: datetime) -> dict | None:
         },
         at=at,
     )
-    if cost["pricing_source"] != "available_models":
+    if cost["pricing_source"] not in {"available_models", "gateway_table"}:
         raise HostedHarnessError(
             "authoring_model_unpriced",
             f"Authoring model {model!r} is absent from the platform pricing catalog.",

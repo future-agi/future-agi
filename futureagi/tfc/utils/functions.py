@@ -5,10 +5,11 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import structlog
-from django.db.models import Count, F, Sum
+from django.db.models import Count, Q, Sum
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.run_prompt.model_pricing import price_change_dates
 from model_hub.models.choices import CellStatus, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
@@ -939,6 +940,74 @@ def get_choices_stats(
     return {"result": result, "total_avg": total_avg}
 
 
+def cell_token_cost(cells, model_name):
+    """Sum a set of run-prompt cells and price their tokens, each cell at its date.
+
+    A cell is priced at the rate in force when it was last written (``updated_at``;
+    a run writes it with the tokens). A model whose price never changes is priced
+    once, as before. Otherwise the cells are split at each date the price changes,
+    summed in one query, and each part is priced at its own rate.
+
+    Returns ``cell_count``, ``prompt_tokens``, ``completion_tokens``,
+    ``response_time`` and ``cost``.
+    """
+    dates = price_change_dates(model_name)
+    if not dates:
+        stats = cells.aggregate(
+            cell_count=Count("id"),
+            response_time=Sum("response_time", default=0),
+            prompt_0=Sum("prompt_tokens", default=0),
+            completion_0=Sum("completion_tokens", default=0),
+        )
+        parts = [(None, stats["prompt_0"], stats["completion_0"])]
+    else:
+        aggregates = {
+            "cell_count": Count("id"),
+            "response_time": Sum("response_time", default=0),
+        }
+        instants = []
+        for index in range(len(dates) + 1):
+            window = Q()
+            if index > 0:
+                window &= Q(updated_at__gte=dates[index - 1])
+            if index < len(dates):
+                window &= Q(updated_at__lt=dates[index])
+            aggregates[f"prompt_{index}"] = Sum(
+                "prompt_tokens", filter=window, default=0
+            )
+            aggregates[f"completion_{index}"] = Sum(
+                "completion_tokens", filter=window, default=0
+            )
+            # Before the first date the old rate holds; price it just before.
+            instants.append(
+                dates[0] - timedelta(microseconds=1) if index == 0 else dates[index - 1]
+            )
+        stats = cells.aggregate(**aggregates)
+        parts = [
+            (at, stats[f"prompt_{index}"], stats[f"completion_{index}"])
+            for index, at in enumerate(instants)
+        ]
+
+    cost = 0.0
+    for at, prompt_tokens, completion_tokens in parts:
+        calculated = calculate_total_cost(
+            model_name,
+            {
+                "prompt_tokens": prompt_tokens or 0,
+                "completion_tokens": completion_tokens or 0,
+            },
+            at=at,
+        )
+        cost += (calculated.get("total_cost", 0) if calculated else 0) or 0
+    return {
+        "cell_count": stats["cell_count"] or 0,
+        "prompt_tokens": sum(p or 0 for _, p, _ in parts),
+        "completion_tokens": sum(c or 0 for _, _, c in parts),
+        "response_time": stats["response_time"] or 0,
+        "cost": round(cost, 6),
+    }
+
+
 def get_prompt_stats(run_prompters, dataset_id, row_ids=None):
     result = []
     total_tokens = 0
@@ -951,23 +1020,21 @@ def get_prompt_stats(run_prompters, dataset_id, row_ids=None):
         if row_ids:
             filter_kwargs["row_id__in"] = row_ids
 
-        cells_stats = Cell.objects.filter(
-            column__source=SourceChoices.RUN_PROMPT.value,
-            column__source_id=str(run_prompter.id),
-            dataset_id=dataset_id,
-            deleted=False,
-            **filter_kwargs,
-        ).aggregate(
-            total_prompt_tokens=Sum(F("prompt_tokens"), default=0),
-            total_completion_tokens=Sum(F("completion_tokens"), default=0),
-            total_response_time=Sum(F("response_time"), default=0),
-            cells_count=Count("id"),
+        cells_stats = cell_token_cost(
+            Cell.objects.filter(
+                column__source=SourceChoices.RUN_PROMPT.value,
+                column__source_id=str(run_prompter.id),
+                dataset_id=dataset_id,
+                deleted=False,
+                **filter_kwargs,
+            ),
+            run_prompter.model,
         )
 
-        cells_count = cells_stats.get("cells_count", 0)
-        total_response_time = cells_stats.get("total_response_time", 0)
-        total_prompt_tokens = cells_stats.get("total_prompt_tokens", 0)
-        total_completion_tokens = cells_stats.get("total_completion_tokens", 0)
+        cells_count = cells_stats["cell_count"]
+        total_response_time = cells_stats["response_time"]
+        total_prompt_tokens = cells_stats["prompt_tokens"]
+        total_completion_tokens = cells_stats["completion_tokens"]
 
         prompt_result = {
             "id": str(run_prompter.id),
@@ -987,19 +1054,9 @@ def get_prompt_stats(run_prompters, dataset_id, row_ids=None):
             ),
         }
 
-        calculated_cost = calculate_total_cost(
-            run_prompter.model,
-            {
-                "prompt_tokens": total_prompt_tokens,
-                "completion_tokens": total_completion_tokens,
-            },
-        )
-
         return {
             "prompt_result": prompt_result,
-            "calculated_cost": (
-                calculated_cost.get("total_cost", 0) if calculated_cost else 0
-            ),
+            "calculated_cost": cells_stats["cost"],
             "total_response_time": total_response_time,
             "cells_count": cells_count,
             "total_tokens": total_prompt_tokens + total_completion_tokens,

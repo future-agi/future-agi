@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -34,15 +35,15 @@ func newRecordingPricer(t *testing.T) *recordingPricer {
 	return &recordingPricer{table: tbl, inner: pricing.New(tbl, nil)}
 }
 
-func (r *recordingPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (r *recordingPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32, at time.Time) (float64, bool) {
 	r.models = append(r.models, model)
-	return r.inner.TokenCost(ctx, orgID, model, p, c)
+	return r.inner.TokenCost(ctx, orgID, model, p, c, at)
 }
 
-func (r *recordingPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (r *recordingPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32, at time.Time) (float64, bool) {
 	r.models = append(r.models, model)
 	r.openRouterModels = append(r.openRouterModels, model)
-	return r.inner.OpenRouterTokenCost(ctx, orgID, model, p, c)
+	return r.inner.OpenRouterTokenCost(ctx, orgID, model, p, c, at)
 }
 
 func (r *recordingPricer) askedAsOpenRouter(model string) bool {
@@ -168,7 +169,7 @@ func TestOpenRouterBroadcastNoSenderCostUsesPricer(t *testing.T) {
 	}
 
 	pr := newRecordingPricer(t)
-	want, ok := pr.table.Cost("gpt-4o", 12, 9)
+	want, ok := pr.table.Cost("gpt-4o", 12, 9, time.Time{})
 	if !ok || want == 0 {
 		t.Fatal("embedded price table must price gpt-4o")
 	}
@@ -239,7 +240,7 @@ func TestOpenRouterLegacyTokenNames(t *testing.T) {
 		}
 	}
 	// The legacy counts feed token pricing too.
-	want, ok := pr.table.Cost("gpt-4", 100, 50)
+	want, ok := pr.table.Cost("gpt-4", 100, 50, time.Time{})
 	if !ok || want == 0 {
 		t.Fatal("embedded price table must price gpt-4")
 	}
@@ -256,8 +257,8 @@ func TestTraceAISpanCostAndTokensUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gpt4o, _ := tbl.Cost("gpt-4o", 120, 38)
-	gpt4oMini, _ := tbl.Cost("gpt-4o-mini", 120, 38)
+	gpt4o, _ := tbl.Cost("gpt-4o", 120, 38, time.Time{})
+	gpt4oMini, _ := tbl.Cost("gpt-4o-mini", 120, 38, time.Time{})
 
 	traceAILLM := func(m pcommon.Map) {
 		m.PutStr("gen_ai.span.kind", "LLM")

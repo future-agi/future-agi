@@ -8,6 +8,9 @@ import structlog
 # not a later one inside a caller that turns errors into a zero cost.
 import agentic_eval.core_evals.run_prompt.price_schedule  # noqa: F401
 
+# The same for the gateway's price copy.
+import agentic_eval.core_evals.run_prompt.gateway_prices  # noqa: F401
+
 logger = structlog.get_logger(__name__)
 
 # Default pricing constants for fallback when pricing data is unavailable or invalid
@@ -193,7 +196,11 @@ def calculate_total_cost(
     at: Optional[datetime] = None,
 ) -> dict:
     """
-    Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
+    Calculate total cost for a model inference.
+
+    The price comes from the caller's ``fallback_pricing`` if it has an input
+    rate, else from the gateway's price table, else from AVAILABLE_MODELS, else
+    from a default.
 
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
@@ -215,9 +222,13 @@ def calculate_total_cost(
             - total_cost (float): Total cost in USD (rounded to 6 decimals)
             - prompt_cost (float): Input cost in USD (rounded to 6 decimals)
             - completion_cost (float): Output cost in USD (rounded to 6 decimals)
-            - pricing_source (str): "available_models", "fallback", or "default"
+            - pricing_source (str): "gateway_table", "available_models",
+              "fallback" or "default"
     """
-    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+    from agentic_eval.core_evals.run_prompt.model_pricing import (
+        _check_at,
+        lookup_pricing,
+    )
     from evaluations.decision_models import is_decision_model
 
     if is_decision_model(model_name):
@@ -225,17 +236,41 @@ def calculate_total_cost(
 
         return calculate_decision_cost(model_name, token_usage)
 
-    # Try to get pricing from available_models.py
-    pricing = get_model_pricing(model_name, at=at)
-    pricing_source = "available_models"
+    _check_at(at)
+    # A token call: no speech characters, no audio and no images. Characters are
+    # tested by value, because log ingestion always sends the key, often as 0.
+    # Any other call skips the gateway's per-token table.
+    is_token_call = (
+        (token_usage.get("input_characters") or 0) == 0
+        and (token_usage.get("audio_seconds") or 0) == 0
+        and "images_generated" not in token_usage
+    )
+
+    pricing = None
+    pricing_source = "default"
+
+    # The caller's own price comes before both tables. A per-token price with no
+    # input rate is no price (a custom model that sets none arrives as 0.0/0.0),
+    # so the tables are tried. A price by characters, time or image is used as given.
+    if fallback_pricing and (
+        fallback_pricing.get("input_per_1M_tokens")
+        or not any(key.endswith("_per_1M_tokens") for key in fallback_pricing)
+    ):
+        pricing, pricing_source = fallback_pricing, "fallback"
+    else:
+        found = lookup_pricing(
+            model_name, at=at, non_token_call=not is_token_call
+        )
+        if found is not None:
+            pricing, pricing_source = found.pricing, found.source
+            # A table price with no input rate is no price for a token call.
+            if is_token_call and not pricing.get("input_per_1M_tokens"):
+                pricing = None
 
     # Fallback chain
     if pricing is None:
         # Determine appropriate fallback based on token_usage fields
-        if fallback_pricing:
-            pricing = fallback_pricing
-            fallback_type = "custom"
-        elif "images_generated" in token_usage:
+        if "images_generated" in token_usage:
             # Image generation model
             pricing = DEFAULT_IMAGE_FALLBACK_PRICING
             fallback_type = "default_image"
@@ -253,20 +288,20 @@ def calculate_total_cost(
             fallback_type = "default"
 
         logger.warning(
-            f"Model '{model_name}' not found in AVAILABLE_MODELS, using fallback pricing",
+            f"Model '{model_name}' not priced by the gateway table or AVAILABLE_MODELS, using default pricing",
             model=model_name,
             fallback_type=fallback_type,
         )
-        pricing_source = "fallback" if fallback_pricing else "default"
+        pricing_source = "default"
 
     # Detect pricing type and calculate accordingly
     prompt_cost = 0.0
     completion_cost = 0.0
 
     # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
+    if "input_per_1M_tokens" in pricing:
         input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+        output_cost_per_1M = pricing.get("output_per_1M_tokens", 0)
 
         # Provider usage includes cache reads in prompt_tokens. Price that subset at
         # the model's cache-read rate when the catalog declares one.

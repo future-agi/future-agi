@@ -75,12 +75,12 @@ var knownObservationTypes = map[string]struct{}{
 // attributes. *pricing.Pricer satisfies this; nil disables token pricing
 // (cost falls back to the user-provided value or 0).
 type Pricer interface {
-	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32, at time.Time) (float64, bool)
 	// OpenRouterTokenCost prices a span that came through OpenRouter, whose
 	// model is an OpenRouter slug: like TokenCost, but OpenRouter's own rate
 	// for the slug (the price table's "openrouter/<slug>" entry) is tried
 	// before the bare provider entry.
-	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32, at time.Time) (float64, bool)
 }
 
 // OpenRouter Broadcast detection. OpenRouter's OTLP export names its resource
@@ -391,10 +391,19 @@ func spanToRow(
 	if !nonAdditive && !hot.CostUserSet && !unknownDetailedCost && pricer != nil {
 		var c float64
 		var ok bool
+		// The price in force when the span ended, else when it started, else now.
+		// These are raw pcommon.Timestamp checks: an unset one reads as 1970 once
+		// converted, so it is never tested with AsTime().IsZero().
+		pricedAt := time.Now()
+		if ts := span.EndTimestamp(); ts != 0 {
+			pricedAt = ts.AsTime()
+		} else if ts := span.StartTimestamp(); ts != 0 {
+			pricedAt = ts.AsTime()
+		}
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
-			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens, pricedAt)
 		} else {
-			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens, pricedAt)
 		}
 		if ok {
 			cost = c

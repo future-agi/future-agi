@@ -61,6 +61,8 @@ class LiteLLMModelManager:
                 "model_name": model_name,
                 "providers": providers,
                 "mode": "chat",
+                # Its price is the organisation's own, never a table's.
+                "custom": True,
             }
 
             # Update or add the model

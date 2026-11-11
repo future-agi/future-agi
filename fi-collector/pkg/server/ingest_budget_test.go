@@ -225,14 +225,14 @@ type leaseProbe struct {
 	wire, work atomic.Int64
 }
 
-func (p *leaseProbe) TokenCost(context.Context, string, string, int32, int32) (float64, bool) {
+func (p *leaseProbe) TokenCost(context.Context, string, string, int32, int32, time.Time) (float64, bool) {
 	p.wire.Store(p.s.wire.inUse.Load())
 	p.work.Store(p.s.work.inUse.Load())
 	return 0, false
 }
 
-func (p *leaseProbe) OpenRouterTokenCost(ctx context.Context, orgID, model string, prompt, completion int32) (float64, bool) {
-	return p.TokenCost(ctx, orgID, model, prompt, completion)
+func (p *leaseProbe) OpenRouterTokenCost(ctx context.Context, orgID, model string, prompt, completion int32, at time.Time) (float64, bool) {
+	return p.TokenCost(ctx, orgID, model, prompt, completion, at)
 }
 
 // While a request is converted it holds its body (wire) and its price (work).

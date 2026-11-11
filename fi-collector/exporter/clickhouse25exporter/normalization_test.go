@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 
@@ -15,12 +16,12 @@ import (
 
 type normalizationPricer struct{ calls int }
 
-func (p *normalizationPricer) TokenCost(context.Context, string, string, int32, int32) (float64, bool) {
+func (p *normalizationPricer) TokenCost(context.Context, string, string, int32, int32, time.Time) (float64, bool) {
 	p.calls++
 	return 0.5, true
 }
-func (p *normalizationPricer) OpenRouterTokenCost(ctx context.Context, org, model string, in, out int32) (float64, bool) {
-	return p.TokenCost(ctx, org, model, in, out)
+func (p *normalizationPricer) OpenRouterTokenCost(ctx context.Context, org, model string, in, out int32, at time.Time) (float64, bool) {
+	return p.TokenCost(ctx, org, model, in, out, at)
 }
 
 func copilotFixture(t *testing.T) ptrace.Traces {
