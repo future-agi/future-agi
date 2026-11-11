@@ -9,6 +9,7 @@ import {
   parsedArguments,
   readable,
   seenValue,
+  timeoutProblem,
   toRecord,
   triggerProblem,
 } from "../actorUtils";
@@ -400,6 +401,20 @@ describe("capProblem", () => {
     ["e", "A whole number above 0, or empty for no limit"],
   ])("a typed cap of %j: %s", (typed, expected) => {
     expect(capProblem(typed)).toBe(expected);
+  });
+});
+
+describe("timeoutProblem", () => {
+  it.each([
+    ["", null],
+    ["0", null],
+    ["2.5", null],
+    ["90", null],
+    ["-5", "A number of seconds, 0 or more"],
+    ["-0.5", "A number of seconds, 0 or more"],
+    ["e", "A number of seconds, 0 or more"],
+  ])("a typed wait of %j: %s", (typed, expected) => {
+    expect(timeoutProblem(typed)).toBe(expected);
   });
 });
 

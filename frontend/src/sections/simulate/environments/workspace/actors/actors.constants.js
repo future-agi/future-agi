@@ -84,6 +84,8 @@ export const ACTORS_COPY = {
     notInWorld: "not an action of this world",
     inUse: (name, count) =>
       `${name} is in ${count === 1 ? "1 scenario" : `${count} scenarios`}. Take them out of ${count === 1 ? "it" : "those scenarios"} first, by editing the scenario or asking the builder chat.`,
+    namedBy: (name, names) =>
+      `${names.join(", ")} still ${names.length === 1 ? "names" : "name"} ${name}, as who answers instead or who brings them in. Change ${names.length === 1 ? "that" : "those"} first.`,
     showView: "What they see",
     hideView: "Hide what they see",
     sees: "Sees",
@@ -241,6 +243,7 @@ export const ACTORS_COPY = {
       noLimitHelp: "Empty is no limit of their own",
       wholeNumber: "A whole number above 0, or empty for no limit",
       timeout: "Waits, in seconds (optional)",
+      badTimeout: "A number of seconds, 0 or more",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",
       fallback: "If they do not answer",
@@ -250,6 +253,8 @@ export const ACTORS_COPY = {
         ACTORS_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
       channel: "How they join the conversation",
       noChannel: "Doesn't speak in the conversation",
+      joinsFixed: (count) =>
+        `In ${count === 1 ? "1 scenario" : `${count} scenarios`}, so how they join stays as it is. Take them out of ${count === 1 ? "that scenario" : "those scenarios"} first to change it.`,
       play: "How they act in the world",
       plays: {
         mocked: "Only the actions each scenario gives them",

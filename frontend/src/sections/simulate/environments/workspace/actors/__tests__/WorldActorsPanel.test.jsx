@@ -779,6 +779,24 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("At most 12 characters")).toBeInTheDocument();
   });
 
+  it("will not save a negative wait and says what a wait may be", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    const wait = screen.getByLabelText("Waits, in seconds (optional)");
+    fireEvent.change(wait, { target: { value: "-5" } });
+    expect(
+      screen.getByText("A number of seconds, 0 or more"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+    fireEvent.change(wait, { target: { value: "2.5" } });
+    expect(screen.getByRole("button", { name: "Save to draft" })).toBeEnabled();
+  });
+
   it("says who already has a typed id and will not save it, and offers any actor, one who speaks too, to be brought in by", () => {
     actorsData = cast([
       { id: "colleague", name: "Jordan Taylor", channel: "audio_mix" },
@@ -1005,6 +1023,40 @@ describe("WorldActorsPanel", () => {
       expect(screen.getByText(words)).toBeInTheDocument();
     },
   );
+
+  it("will not remove an actor another actor still names, and says who to change first", () => {
+    actorsData = cast([
+      { ...MANAGER, id: "temp", name: "Temp Tina" },
+      {
+        id: "fred",
+        name: "Fallback Fred",
+        activation: { trigger: { kind: "always" }, fallback: "temp" },
+      },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Temp Tina" }));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByText(
+        "Fallback Fred still names Temp Tina, as who answers instead or who brings them in. Change that first.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps how an actor joins fixed while scenarios use it, and says why", () => {
+    actorsData = cast([{ ...MANAGER, channel: "audio_mix", scenarios: 2 }]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    expect(
+      screen.getByText(
+        "In 2 scenarios, so how they join stays as it is. Take them out of those scenarios first to change it.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("How they join the conversation"),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
 
   it("clears the in-use warning when a form opens", () => {
     actorsData = cast([{ ...MANAGER, scenarios: 2 }]);

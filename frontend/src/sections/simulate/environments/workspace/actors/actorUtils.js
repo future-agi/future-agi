@@ -180,6 +180,16 @@ export const whereProblem = (text) => {
 };
 
 // Why a typed per-actor cap cannot be saved, or nothing: empty is no limit, anything else is a whole number above 0.
+// A wait is any number of seconds from 0, which waits as long as the call lasts; empty is 0.
+export const timeoutProblem = (typed) => {
+  const text = String(typed ?? "").trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) && number >= 0
+    ? null
+    : ACTORS_COPY.worldActors.form.badTimeout;
+};
+
 export const capProblem = (typed) => {
   const text = String(typed ?? "").trim();
   if (!text) return null;

@@ -230,6 +230,31 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     assert fresh_draft(environment, "environment") is None
 
 
+def test_a_limits_only_edit_reads_as_a_change_to_the_actor_limits(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning import diffs
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    environment = _built(user, workspace, "actors-limits-diff")
+    limited = auth_client.put(
+        f"{BASE}/{environment.id}/actor-limits/",
+        {"limits": {"max_messages": 7}},
+        format="json",
+    )
+    assert limited.status_code == 200, limited.content
+    draft = fresh_draft(environment, "environment")
+    listed = auth_client.get(f"{BASE}/{environment.id}/drafts/").json()["environment"]
+
+    assert draft.diff["actors"] == {
+        "added": [{"id": "#limits", "name": "Actor limits"}],
+        "removed": [],
+        "changed": [],
+    }
+    assert diffs.summarize_environment(draft.diff) == "actor limits changed"
+    assert listed["changes"]["actors"] == 1
+
+
 def test_a_view_hides_another_actor_s_private_material(
     user, workspace, storage, auth_client
 ):
@@ -1076,7 +1101,19 @@ def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refu
     assert (cycle.status_code, cycle.json()["error"]) == (400, "actor_invalid")
     assert "boss is in a cycle of parent links; break it." in cycle.json()["message"]
     assert (dangling.status_code, dangling.json()["error"]) == (400, "actor_invalid")
-    assert "lead's parent is boss; change it first." in dangling.json()["message"]
+    assert (
+        dangling.json()["message"]
+        == "Bo is brought in by Ana; change that on Bo before removing Ana."
+    )
+    _add(
+        auth_client,
+        environment,
+        {"id": "fred", "name": "Fred", "activation": {"fallback": "lead"}},
+    )
+    named = auth_client.delete(f"{url}lead/")
+    assert named.json()["message"] == (
+        "Fred has Bo answer instead when Fred does not; change that on Fred before removing Bo."
+    )
 
 
 @pytest.mark.parametrize("failure", ["gone", "unreadable", "invalid_actors_json"])
@@ -1680,6 +1717,54 @@ def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor
         },
     )
     assert refused.status_code == 400, refused.content
+
+
+def test_an_environment_sealed_before_actor_rules_never_offers_the_harness_s_own_files_or_tables(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessStageOutput
+
+    environment = record_tests._environment(user, workspace, "actors-before-rules")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "docs/discount-policy.md": "Up to 15% needs the manager.",
+                "env/tools.py": "def get_deal(): ...",
+                "sub_actors.json": "[]",
+            },
+        ),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Stores",
+        summary="",
+        kind="stores",
+        data=[
+            {
+                "capability": "world_db",
+                "engine": "postgres",
+                "tables": [
+                    {"name": "deals"},
+                    {"name": "_alk_tool_trace"},
+                    {"name": "harness_seed_sentinel"},
+                ],
+            }
+        ],
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["knowledge_sources"] == {
+        "files": ["docs/discount-policy.md"],
+        "records": [{"store": "world_db", "collection": "deals"}],
+    }
+    assert [one["action"] for one in listed["actions"]] == sorted(
+        one["action"] for one in listed["actions"] if "." in one["action"]
+    ) and not any(
+        one["action"].endswith((".put", ".change")) for one in listed["actions"]
+    )
 
 
 def test_giving_an_actor_an_action_only_one_other_actor_holds_shows_the_conflict_before_saving(

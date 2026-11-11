@@ -23,6 +23,7 @@ import {
   KEPT_TRIGGER,
   actorId,
   capProblem,
+  timeoutProblem,
   hasEdits,
   idFrom,
   takenIds,
@@ -109,6 +110,8 @@ export default function ActorForm({
 }) {
   const F = C.form;
   const existing = Boolean(actor?.id);
+  // The platform refuses changing how an actor joins while scenarios include it.
+  const joinsFixed = existing && (actor?.scenarios ?? 0) > 0;
   const [fields, setFields] = useState({});
   const [more, setMore] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -229,6 +232,7 @@ export default function ActorForm({
   const timingKind = value("timing");
   const capName = channel ? "max_lines" : "max_turns";
   const capWrong = capProblem(value(capName));
+  const timeoutWrong = timeoutProblem(value("timeout"));
   const fallbackActs = permitted.includes(value("fallback"));
   const argumentsWrong =
     fallbackActs && parsedArguments(value("fallback_arguments")) === null
@@ -308,9 +312,12 @@ export default function ActorForm({
                   ]),
                 ],
                 {
-                  helperText: channel
-                    ? context.channels[channel]
-                    : F.noChannelHelp,
+                  disabled: joinsFixed,
+                  helperText: joinsFixed
+                    ? F.joinsFixed(actor.scenarios)
+                    : channel
+                      ? context.channels[channel]
+                      : F.noChannelHelp,
                   startLabel: initial.channel
                     ? CHANNEL_LABELS[initial.channel]
                     : F.noChannel,
@@ -583,7 +590,8 @@ export default function ActorForm({
               )}
               {text("timeout", F.timeout, {
                 type: "number",
-                helperText: F.timeoutHelp,
+                error: Boolean(timeoutWrong),
+                helperText: timeoutWrong || F.timeoutHelp,
                 inputProps: { min: 0 },
               })}
               {choice(
@@ -691,6 +699,7 @@ export default function ActorForm({
                 roleMissing ||
                 comesInIncomplete ||
                 Boolean(capWrong) ||
+                Boolean(timeoutWrong) ||
                 Boolean(argumentsWrong) ||
                 shareUnconfirmed
               }

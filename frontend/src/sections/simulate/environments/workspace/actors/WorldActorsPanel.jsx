@@ -135,6 +135,23 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       setInUse(C.inUse(actor.name || actor.id, actor.scenarios));
       return;
     }
+    // Another actor answering instead of it, or brought in by it, would point at nobody.
+    const naming = cast.filter(
+      (one) =>
+        one.id !== actor.id &&
+        [one.activation?.fallback, one.parent, one.on_behalf_of].includes(
+          actor.id,
+        ),
+    );
+    if (naming.length) {
+      setInUse(
+        C.namedBy(
+          actor.name || actor.id,
+          naming.map((one) => one.name || one.id),
+        ),
+      );
+      return;
+    }
     setInUse(null);
     setRemoving(actor);
     setConfirmRemove(true);
