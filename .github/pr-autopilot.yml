@@ -72,7 +72,36 @@
     {"workflow": "backend-ci.yml", "inputs": {}, "paths": ["**"]},
     {"workflow": "e2e-ci.yml", "inputs": {"stack": "distributed"}, "paths": ["**"]},
     {"workflow": "frontend-develop.yml", "inputs": {}, "paths": ["frontend/**"]},
-    {"workflow": "frontend-dev-cdn.yaml", "inputs": {"branch": "dev", "repair_spa_routes": "false"}, "paths": ["frontend/**"], "respect_dev_cdn_switch": true}
+    {"workflow": "frontend-dev-cdn.yaml", "inputs": {"branch": "dev", "repair_spa_routes": "false"}, "paths": ["frontend/**"], "respect_dev_cdn_switch": true},
+    {"workflow": "sdk-compatibility.yml", "inputs": {}, "paths": ["**"]},
+    {"workflow": "standalone-ci.yml", "inputs": {}, "paths": [
+      "docker-compose.yml", "deploy/standalone/**", "deploy/tests/**", "bin/install*",
+      "bin/lib/**", "bin/dev", ".env.example", "futureagi/**", "frontend/Dockerfile",
+      "frontend/.dockerignore", "frontend/security-headers.conf", "fi-collector/Dockerfile",
+      "agentcc-gateway/Dockerfile", "scripts/image_size_budget.*", "scripts/install-smoke.sh",
+      "scripts/test_install_smoke.py", "scripts/reclaim-runner-disk.sh",
+      ".github/workflows/standalone-ci.yml"
+    ]},
+    {"workflow": "update-ci.yml", "inputs": {}, "paths": [
+      "bin/update", "deploy/update/**", "deploy/tests/test_update_*.py",
+      "deploy/tests/update_e2e/**", "scripts/generate_update_manifest.py",
+      "scripts/check_update_safety.py", "**/*.py", "**/*.go", "**/*.sql", "**/*.sh", "bin/**",
+      "scripts/**", "deploy/**", "fi-collector/**", "agentcc-gateway/**", "docker-compose*.yml",
+      "futureagi/**", "bin/lib/**", ".github/workflows/backend-ci.yml", "docker-compose.yml",
+      "docker-compose.distributed.yml", "deploy/docker-compose.production.yml",
+      "deploy/docker-compose.host-status.standalone.yml",
+      "deploy/docker-compose.host-status.distributed.yml", "bin/install", "deploy/setup.sh",
+      ".env.example", "deploy/.env.production.example", "deploy/env-reference.toml", ".gitignore",
+      "**/.dockerignore", "**/*.dockerignore", "**/Dockerfile*",
+      ".github/actions/setup-helm-tools/**", ".github/workflows/release-update-manifest.yml",
+      ".github/workflows/release-images.yml", ".github/workflows/update-ci.yml",
+      ".github/workflows/build-image-multiarch.yml", ".github/workflows/helm-release.yml",
+      "agentcc-gateway/config.example.yaml", "deploy/clickhouse/users.d/**",
+      "deploy/standalone/clickhouse/**", "futureagi/.ci/clickhouse-storage-policy.xml",
+      "futureagi/config/peerdb/temporal-dynamicconfig.yaml",
+      "futureagi/scripts/property_catalog_oss/**",
+      "futureagi/tracer/services/clickhouse/v2/observed_catalog/**", ".gitattributes"
+    ]}
   ],
-  "_post_merge_reason": "GITHUB_TOKEN merges suppress push workflows. These existing workflows support workflow_dispatch: explicitly recheck dev with Backend CI and advisory distributed E2E, and run frontend checks/dev CDN only for frontend changes. Respect DEV_CDN_AUTO_DEPLOY=false before dispatching CDN, because that workflow's manual entry bypasses its push switch. Audit remaining push-only consumers before enablement. Never delete the source branch automatically."
+  "_post_merge_reason": "GITHUB_TOKEN merges suppress push workflows. Every dev push workflow that supports workflow_dispatch and whose push filter can match a LOW path is dispatched on dev after a merge, with that filter's paths: Backend CI, advisory distributed E2E, SDK Compatibility, Standalone install CI, Update CI, and the frontend checks and dev CDN for frontend changes. A dispatch of Standalone install CI or Update CI also runs upgrade jobs that a push skips. AgentCC Gateway CI, API Contracts, Collector and compose CI, Helm chart CI, Images CI and Update PostgreSQL probe are not dispatched: their push filters match no LOW path, so a person's merge of the same files would not start them either (a test checks both lists against the workflow files). Respect DEV_CDN_AUTO_DEPLOY=false before dispatching CDN, because that workflow's manual entry bypasses its push switch. The controller never deletes the head branch; this repository's delete_branch_on_merge setting does, after the merge."
 }

@@ -934,24 +934,95 @@ class EvidenceTests(unittest.TestCase):
             )
 
     def test_post_merge_dispatch_preserves_checks_without_overriding_cdn_hold(self):
-        docs = risk.post_merge_plan(POLICY, [file()], settings())
+        def plan(path, **extra):
+            return [x["workflow"] for x in risk.post_merge_plan(POLICY, [file(path)], settings(**extra))]
+
+        self.assertEqual(plan("docs/guide.md"), ["backend-ci.yml", "e2e-ci.yml", "sdk-compatibility.yml"])
+        e2e = next(x for x in POLICY["post_merge_workflows"] if x["workflow"] == "e2e-ci.yml")
+        self.assertEqual(e2e["inputs"], {"stack": "distributed"})
         self.assertEqual(
-            [x["workflow"] for x in docs], ["backend-ci.yml", "e2e-ci.yml"]
+            plan("frontend/src/locales/langs/en.json"),
+            ["backend-ci.yml", "e2e-ci.yml", "frontend-develop.yml", "frontend-dev-cdn.yaml", "sdk-compatibility.yml"],
         )
-        self.assertEqual(docs[1]["inputs"], {"stack": "distributed"})
-        frontend = [file("frontend/src/locales/langs/en.json")]
-        automatic = risk.post_merge_plan(POLICY, frontend, settings())
-        self.assertEqual(len(automatic), 4)
+        cdn = next(x for x in POLICY["post_merge_workflows"] if x["workflow"] == "frontend-dev-cdn.yaml")
+        self.assertEqual(cdn["inputs"], {"branch": "dev", "repair_spa_routes": "false"})
+        self.assertNotIn("frontend-dev-cdn.yaml", plan("frontend/src/locales/langs/en.json", dev_cdn_enabled="false"))
+        # A backend test file starts what a push of it would start.
         self.assertEqual(
-            automatic[-1]["inputs"], {"branch": "dev", "repair_spa_routes": "false"}
+            plan("futureagi/tests/test_guide.py"),
+            ["backend-ci.yml", "e2e-ci.yml", "sdk-compatibility.yml", "standalone-ci.yml", "update-ci.yml"],
         )
-        disabled = risk.post_merge_plan(
-            POLICY, frontend, settings(dev_cdn_enabled="false")
-        )
-        self.assertEqual(len(disabled), 3)
-        self.assertNotIn(
-            "frontend-dev-cdn.yaml", [entry["workflow"] for entry in disabled]
-        )
+
+    @staticmethod
+    def post_merge_gaps(policy):
+        """Dev push workflows a person's merge of a LOW file would start, but
+        whose post-merge dispatch is missing, filtered differently or invalid."""
+        import yaml
+
+        def samples(glob):
+            """LOW example paths for one allowlist glob: ** as one and as zero directories."""
+            parts = [part.replace("*", "x") for part in glob.split("/")]
+            one = "/".join("x" if part == "xx" else part for part in parts)
+            zero = "/".join(part for part in parts if part != "xx")
+            return {one, zero}
+
+        low = set().union(*(samples(glob) for glob in policy["low_globs"]))
+        gaps = [path for path in low if risk.classify([file(path)], policy)["tier"] != "low"]
+        configured = {entry["workflow"]: entry for entry in policy["post_merge_workflows"]}
+        seen = set()
+        for path in sorted((Path(__file__).resolve().parents[1] / ".github/workflows").glob("*.y*ml")):
+            workflow = yaml.safe_load(path.read_text())
+            on = workflow.get(True, workflow.get("on"))
+            if not isinstance(on, dict) or "push" not in on:
+                continue
+            push = on["push"] or {}
+            if "dev" not in (push.get("branches") or []):
+                continue
+            if "paths-ignore" in push:
+                gaps.append(f"{path.name}: paths-ignore is not modelled")
+            started = {sample for sample in low if risk.matches(sample, push.get("paths") or ["**"])}
+            if path.name not in configured:
+                if started:
+                    gaps.append(f"{path.name}: a LOW merge would start it, but it is not dispatched")
+                continue
+            seen.add(path.name)
+            entry = configured[path.name]
+            inputs = ((on.get("workflow_dispatch") or {}).get("inputs") or {}) if "workflow_dispatch" in on else None
+            if inputs is None:
+                gaps.append(f"{path.name}: has no workflow_dispatch")
+                continue
+            if {sample for sample in low if risk.matches(sample, entry["paths"])} != started:
+                gaps.append(f"{path.name}: dispatch paths differ from its push filter on LOW paths")
+            if not set(entry["inputs"]) <= set(inputs) or any(
+                value.get("required") and key not in entry["inputs"] for key, value in inputs.items()
+            ):
+                gaps.append(f"{path.name}: dispatch inputs do not fit the workflow")
+        gaps += [f"{name}: not a dev push workflow" for name in set(configured) - seen]
+        return gaps
+
+    def test_post_merge_dispatches_cover_every_dev_push_workflow_a_low_merge_starts(self):
+        # A merge by GITHUB_TOKEN starts no push workflow. Every dev push
+        # workflow that a person's merge of a LOW file would start must be
+        # dispatched under the same paths; the rest must match no LOW path.
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        self.assertEqual(self.post_merge_gaps(POLICY), [])
+        names = {entry["workflow"] for entry in POLICY["post_merge_workflows"]}
+        self.assertLessEqual({"sdk-compatibility.yml", "standalone-ci.yml", "update-ci.yml"}, names)
+        # Each way to fall out of step is caught.
+        for change in (
+            lambda policy: policy["post_merge_workflows"].pop(-1),  # Update CI missing
+            lambda policy: policy["post_merge_workflows"][-2].update(paths=["deploy/**"]),
+            lambda policy: policy["post_merge_workflows"][-3].update(inputs={"unknown": "x"}),
+            lambda policy: policy["post_merge_workflows"].append(
+                {"workflow": "frontend-main.yml", "inputs": {}, "paths": ["frontend/**"]}),
+        ):
+            policy = copy.deepcopy(POLICY)
+            change(policy)
+            with self.subTest(gaps=self.post_merge_gaps(policy)):
+                self.assertTrue(self.post_merge_gaps(policy))
 
     def test_no_secret_or_mention_echo_in_markdown_escaping(self):
         escaped = risk.safe_text("<script>@someone</script>")
