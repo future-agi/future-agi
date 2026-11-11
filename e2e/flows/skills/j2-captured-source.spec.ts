@@ -34,7 +34,7 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   tag: ['@flow'],
   annotation: flowAnnotation({ id: 'SKILLS-E2E-021', area: 'skills',
     userGoal: 'An incident responder carries an observed failure into a reviewed context case without retyping physical identities or captured request/tool text',
-    steps: ['open a synthetic failure in Observe', 'choose a regression context directly from the selected span', 'review selected request and tool result; confirm expected behavior and workspace sharing', 'inspect the saved case on the published context Tests section'],
+    steps: ['open a synthetic failure in Observe', 'open the review in the context the span was delivered from, with every supported segment preselected', 'review selected request and tool result; confirm expected behavior and workspace sharing', 'inspect the saved case on the published context Tests section'],
     backendChecks: ['PostgreSQL retains the exact physical span and recorded context identity while purging preview text after acceptance', 'the public context suite preserves request and tool chronology even when selected in reverse; excludes system and assistant text; the leaf suite route still refuses the context'],
   }),
 }, async ({ page, actor, probe, request }, testInfo) => {
@@ -69,14 +69,15 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await page.getByText(projectName, { exact: true }).click();
   await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
   await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
-  await page.getByLabel('Regression context', { exact: true }).click();
-  await page.getByRole('option', { name, exact: true }).click();
-  await page.getByRole('button', { name: 'Review selected span', exact: true }).click();
+  // The span names the context it was delivered from, so the review opens in it with no context choice,
+  // and every supported request and tool-result segment starts selected.
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('checkbox')).toHaveCount(4);
+  for (const box of await dialog.getByRole('checkbox').all()) await expect(box).toBeChecked();
   await expect(dialog.getByRole('textbox', { name: /Source project ID|Source trace ID|Source span ID|Span start time/ })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('J2-captured-identity.png'), animations: 'disabled' });
   // Selection order must not invert the later correction or tool chronology.
+  for (const index of [0, 1, 2, 3]) await dialog.getByRole('checkbox').nth(index).uncheck();
   for (const index of [3, 2, 1, 0]) await dialog.getByRole('checkbox').nth(index).check();
   await dialog.getByRole('button', { name: 'Preview selected text', exact: true }).click();
   await expect(dialog.getByRole('textbox', { name: 'Redacted request', exact: true })).toHaveValue(capturedPrompt);
