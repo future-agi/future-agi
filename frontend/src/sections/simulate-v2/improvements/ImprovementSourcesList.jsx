@@ -273,32 +273,38 @@ export default function ImprovementSourcesList({ agent, run }) {
       meta: { flex: 1 },
       minSize: 160,
       enableSorting: false,
-      cell: ({ row: { original: r } }) => (
-        /* One line: agent · source · what it was · where it ran, on hover. */
-        <Tooltip
-          arrow
-          enterDelay={500}
-          title={
-            r.kind === "dataset"
-              ? `${r.envName} · ${r.sub}`
-              : [
-                  r.agentName || r.modality?.label,
-                  r.duplicate && r.agentId,
-                  r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
-                  `in ${r.envName}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-          }
-        >
-          <Typography
-            noWrap
-            sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
-          >
-            {r.name}
-          </Typography>
-        </Tooltip>
-      ),
+      cell: ({ row: { original: r } }) => {
+        /* Under the name, as Chintan asked (canvas #24): agent · source ·
+           what it was · where it ran. */
+        const sub =
+          r.kind === "dataset"
+            ? `${r.envName} · ${r.sub}`
+            : [
+                r.agentName || r.modality?.label,
+                r.duplicate && r.agentId,
+                r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
+                `in ${r.envName}`,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+        return (
+          <Box sx={{ minWidth: 0, py: 0.5 }}>
+            <Typography
+              noWrap
+              sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+            >
+              {r.name}
+            </Typography>
+            <Typography
+              noWrap
+              title={sub}
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {sub}
+            </Typography>
+          </Box>
+        );
+      },
     },
     /* The PRD's columns: which agent, how it ended, what it proved, what it
        shipped and what it cost. The runs it tried live on its own page. */
