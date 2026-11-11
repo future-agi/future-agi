@@ -346,6 +346,41 @@ def test_changes_requested_is_not_approval(actors, hub_skill, candidate):
     execute(reviewer, revised, review)
 
 
+def test_stale_packet_can_be_declined_but_never_approved(
+    actors, hub_skill, candidate, hub_actor
+):
+    author, reviewer = actors
+    review = preview(author, hub_skill, candidate[0])
+    request = submit(author, reviewer, review)
+    set_label(
+        skill=hub_skill,
+        actor=hub_actor,
+        name="production",
+        version_number=candidate[1].number,
+    )
+    set_label(
+        skill=hub_skill,
+        actor=hub_actor,
+        name="production",
+        version_number=candidate[0].number,
+    )
+    with pytest.raises(SkillsHubError) as stale:
+        approve(reviewer, request, review)
+    assert stale.value.code in {"review_stale", "release_conflict"}
+    declined = decide_release_request(
+        principal=reviewer,
+        request_id=UUID(request["id"]),
+        revision=request["revision"],
+        expected_fingerprint=review["fingerprint"],
+        decision="request_changes",
+        comment="The release moved while this was pending; request a new packet.",
+        idempotency_key=uuid4(),
+    )
+    assert declined["status"] == "changes_requested"
+    with pytest.raises(SkillsHubError):
+        execute(reviewer, request, review)
+
+
 def test_supplied_authoritative_claims_cannot_be_forged(actors, hub_skill, candidate):
     author, reviewer = actors
     run = text_run(author, hub_skill, candidate[1])

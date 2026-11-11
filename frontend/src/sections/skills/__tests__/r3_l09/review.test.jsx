@@ -356,6 +356,29 @@ describe("exact decisions and retry safety", () => {
       expect(decide).not.toHaveBeenCalled();
     },
   );
+  it("lets an assigned reviewer decline a stale packet but never approve or release it", async () => {
+    const decide = vi.fn().mockResolvedValue({ id: ID });
+    render(
+      <ReleaseRequestPanel
+        {...panelProps}
+        preview={{ ...preview, current: false }}
+        onDecide={decide}
+      />,
+    );
+    expect(screen.getByText(/Review is stale or unavailable/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Approve exact packet" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Release approved packet" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
+      target: { value: "Production moved while this was pending." },
+    });
+    click("Request changes");
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+    expect(decide.mock.calls[0][0].decision).toBe("request_changes");
+  });
   it("separates attributed decision, release execution and before/after receipt", async () => {
     const execute = vi
       .fn()

@@ -632,7 +632,11 @@ def decide_release_request(
         or request.status == "released"
     ):
         raise _error("review_conflict", "The release request changed.")
-    _validate_packet(principal, packet.packet, lock=True)
+    if decision == "approve":
+        # Only an approval needs the packet to be current. Declining a packet that
+        # went stale (a moved release, changed evidence) grants nothing and is the
+        # only way a reviewer can close it instead of leaving it pending forever.
+        _validate_packet(principal, packet.packet, lock=True)
     if packet.hub_skill_decisions.filter(actor_id=principal.user_id).exists():
         raise _error(
             "review_conflict",
