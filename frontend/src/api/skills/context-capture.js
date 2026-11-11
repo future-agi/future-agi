@@ -2,6 +2,7 @@ import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { idempotencyHeaders, skillV11Result, useSkillV11Mutation, useSkillV11Query } from './testing';
 import { caseInput, mapOutboundFinding, mapSuite } from './v11-mappers';
+import { contextSuiteParts } from './context-testing';
 
 export const traceRefInput = (value) => ({
   project_id: value.projectId, trace_id: value.traceId, span_id: value.spanId, start_time: value.startTime,
@@ -36,7 +37,7 @@ export function useAcceptContextCapture(contextId) {
       { source_fingerprint: sourceFingerprint, suite_revision: suiteRevision, case: caseInput(example), acknowledge_workspace_sharing: acknowledgeWorkspaceSharing },
       { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } },
     ))),
-    invalidate: () => [[contextId, 'suite']],
-    refreshOnError: () => [[contextId, 'suite']],
+    invalidate: () => [contextSuiteParts(contextId)],
+    refreshOnError: () => [contextSuiteParts(contextId)],
   });
 }

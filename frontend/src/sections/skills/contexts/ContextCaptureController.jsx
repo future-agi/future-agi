@@ -1,19 +1,20 @@
-import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Button, DialogActions, DialogContent, DialogTitle, Stack, TextField, Typography } from '@mui/material';
+import { DialogContent, DialogTitle } from '@mui/material';
 import { ClosableDialog } from 'src/components/custom-dialog';
 import ErrorState from 'src/components/error-state';
-import { useSkillTestSuite, useSkillV11Scope } from 'src/api/skills/testing';
+import { useSkillV11Scope } from 'src/api/skills/testing';
+import { useContextTestSuite } from 'src/api/skills/context-testing';
 import { useAcceptContextCapture, useContextCaptureSource, usePreviewContextCapture } from 'src/api/skills/context-capture';
 import ContextCaptureDialog from './ContextCaptureDialog';
 
-// Intent: choose a physical source, inspect authorized segments, then redact and
-// explicitly share a regression example. No inferred lineage or model execution.
-// Reuse the shared dialog and neutral form rhythm; captured text stays scoped.
+// Intent: an incident responder carries the selected physical span into review,
+// never transcribing identities. The source stays immutable across redaction.
+// Hierarchy/palette/depth: shared neutral review dialog, identity before text.
+// Surfaces/type/spacing: paper, m3/s1/s3 and the existing 12px control rhythm.
 function CaptureSource({ contextId, traceRef, onClose, canCapture }) {
   const access = useSkillV11Scope();
   const source = useContextCaptureSource(contextId, traceRef);
-  const suite = useSkillTestSuite(contextId);
+  const suite = useContextTestSuite(contextId);
   const preview = usePreviewContextCapture(contextId);
   const accept = useAcceptContextCapture(contextId);
   if (source.isError || suite.isError) return <ClosableDialog open onClose={onClose} fullWidth maxWidth="sm">
@@ -27,33 +28,9 @@ function CaptureSource({ contextId, traceRef, onClose, canCapture }) {
     onAccept={(input, options) => accept.mutateAsync({ ...input, ...options })} />;
 }
 CaptureSource.propTypes = { contextId: PropTypes.string.isRequired, traceRef: PropTypes.object.isRequired, onClose: PropTypes.func.isRequired, canCapture: PropTypes.bool.isRequired };
-
-function Capture({ contextId, canCapture }) {
-  const [open, setOpen] = useState(false);
-  const [fields, setFields] = useState({ projectId: '', traceId: '', spanId: '', startTime: '' });
-  const [traceRef, setTraceRef] = useState(null);
-  const close = () => { setOpen(false); setTraceRef(null); setFields({ projectId: '', traceId: '', spanId: '', startTime: '' }); };
-  const valid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fields.projectId)
-    && fields.traceId.trim() && fields.spanId.trim() && Number.isFinite(Date.parse(fields.startTime));
-  return <>
-    <Button variant="outlined" disabled={!canCapture} onClick={() => setOpen(true)}>Create regression case from trace</Button>
-    {open && (traceRef ? <CaptureSource key={contextId} contextId={contextId} traceRef={traceRef} onClose={close} canCapture={canCapture} />
-      : <ClosableDialog open onClose={close} fullWidth maxWidth="sm" aria-labelledby="capture-source-title">
-        <DialogTitle id="capture-source-title">Choose an exact trace source</DialogTitle>
-        <DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>
-          <Typography variant="s1">Copy the physical span identity from an authorized trace. Only request and tool-result text can be selected.</Typography>
-          {Object.entries({ projectId: 'Source project ID', traceId: 'Source trace ID', spanId: 'Source span ID', startTime: 'Span start time' }).map(([key, label]) => <TextField
-            key={key} label={label} size="small" value={fields[key]} disabled={!canCapture} inputProps={{ maxLength: 200 }}
-            helperText={key === 'startTime' ? 'Exact timestamp with time zone, including fractional seconds.' : undefined}
-            onChange={(event) => setFields((value) => ({ ...value, [key]: event.target.value }))} />)}
-        </Stack></DialogContent>
-        <DialogActions><Button onClick={close}>Cancel</Button><Button variant="contained" disabled={!valid || !canCapture} onClick={() => setTraceRef({ ...fields })}>Load authorized source</Button></DialogActions>
-      </ClosableDialog>)}
-  </>;
-}
-Capture.propTypes = { contextId: PropTypes.string.isRequired, canCapture: PropTypes.bool.isRequired };
 export default function ContextCaptureController(props) {
   const access = useSkillV11Scope();
-  return <Capture key={`${access.identity}:${props.contextId}`} {...props} />;
+  const { traceRef } = props;
+  return <CaptureSource key={`${access.identity}:${props.contextId}:${JSON.stringify(traceRef)}`} {...props} />;
 }
-ContextCaptureController.propTypes = Capture.propTypes;
+ContextCaptureController.propTypes = CaptureSource.propTypes;

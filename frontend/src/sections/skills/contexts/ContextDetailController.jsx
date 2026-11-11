@@ -8,7 +8,7 @@ import { paths } from 'src/routes/paths';
 import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
-import ContextCaptureController from './ContextCaptureController';
+import ContextTestsPanel from './ContextTestsPanel';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -51,11 +51,11 @@ function Detail() {
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
       onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
       sections={{
+        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} />,
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
       }} />
-    <ContextCaptureController contextId={contextId} canCapture={!query.isError && query.data?.releaseState.permissions.canPublish === true} />
   </Stack>;
 }
 export default function ContextDetailController() {

@@ -9,6 +9,12 @@ from model_hub.views.skills_context_dependents import SkillContextDependentsView
 # J3: whole-context test APIs stay separate from the leaf-only routes.
 urlpatterns = [
     path("<uuid:skill_id>/context-dependents/", SkillContextDependentsView.as_view()),
+    # J2: reviewed context cases must not use the isolated leaf suite route.
+    path(
+        "contexts/<uuid:context_id>/tests/",
+        testing.ContextTestSuiteView.as_view(),
+        name="context-test-suite",
+    ),
     path(
         "contexts/<uuid:context_id>/test-runs/preview/",
         testing.ContextTestPreviewView.as_view(),

@@ -179,6 +179,8 @@ def read_trace_source(*, principal: SkillPrincipal, trace_ref: dict) -> dict:
         """SELECT toString(project_id) AS project_id, trace_id, id,
             observation_type, service_name, start_time, toString(_version) AS _version,
             is_deleted, input, output, attributes_extra AS span_attributes,
+            mapFilter((k, v) -> k IN ('fi.context.id', 'fi.context.version_id',
+                'fi.context.digest', 'gen_ai.trace.source'), attrs_string) AS scalar_attributes,
             toJSONString(metadata) AS metadata_json
         FROM spans FINAL
         PREWHERE project_id = %(project_id)s AND trace_id = %(trace_id)s
@@ -239,12 +241,34 @@ def read_trace_source(*, principal: SkillPrincipal, trace_ref: dict) -> dict:
     attributes = attributes if isinstance(attributes, dict) else {}
     metadata = _decode(row.get("metadata_json"))
     metadata = metadata if isinstance(metadata, dict) else {}
-    # Only exact scalar Hub identity can be used; human review still sees it as recorded.
+    # J2: the real collector stores scalar identities in attrs_string, not the
+    # JSON overflow. Retain legacy metadata support without silently resolving
+    # conflicting physical-source identities by precedence.
+    scalar_attributes = _decode(row.get("scalar_attributes"))
+    scalar_attributes = (
+        scalar_attributes if isinstance(scalar_attributes, dict) else {}
+    )
+    identity = {}
+    for key in (
+        "fi.context.id",
+        "fi.context.version_id",
+        "fi.context.digest",
+        "gen_ai.trace.source",
+    ):
+        values = [
+            source[key]
+            for source in (scalar_attributes, attributes, metadata)
+            if key in source and source[key] is not None
+        ]
+        if any(not isinstance(value, str) for value in values) or len(set(values)) > 1:
+            raise SkillsHubError(
+                "capture_unsafe", "The recorded source identity is ambiguous.", status=422
+            )
+        identity[key] = values[0] if values else None
     recorded = {
-        key: attributes.get(f"fi.context.{key}", metadata.get(f"fi.context.{key}"))
-        for key in ("id", "version_id", "digest")
+        key: identity[f"fi.context.{key}"] for key in ("id", "version_id", "digest")
     }
-    if attributes.get("gen_ai.trace.source") == "langsmith":
+    if identity["gen_ai.trace.source"] == "langsmith":
         raise SkillsHubError(
             "capture_unsafe",
             "LangSmith-origin capture is not supported in this pilot.",

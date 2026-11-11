@@ -10,7 +10,7 @@ from model_hub.selectors.skills_hub_v12 import get_resource
 from model_hub.serializers import skills_context_testing as s
 from model_hub.serializers import skills_hub_v11 as leaf
 from model_hub.serializers import skills_hub_v12 as context
-from model_hub.services.skills_hub.v11 import jobs, test_runs
+from model_hub.services.skills_hub.v11 import jobs, suites, test_runs
 from model_hub.services.skills_hub.v11.principals import require_private_principal
 from model_hub.services.skills_hub.v11.types import TERMINAL_JOB_STATUSES
 from model_hub.services.skills_hub.v12 import testing
@@ -29,6 +29,42 @@ class ContextTestingView(SkillsView):
             principal=request.skill_principal,
             resource_id=kwargs["context_id"],
             kind="agent_context",
+        )
+
+
+# J2: share the reviewed-case service, not the leaf resource authorization.
+class ContextTestSuiteView(ContextTestingView):
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @contract(s.ContextTestSuite)
+    def get(self, request: Request, context_id: UUID) -> Response:
+        return self.output(
+            request,
+            s.ContextTestSuite,
+            suites.get_suite(scope=request.skill_principal.scope, skill_id=context_id),
+        )
+
+    @contract(s.ContextTestSuite, body=leaf.SaveSuiteRequest)
+    def put(self, request: Request, context_id: UUID) -> Response:
+        suite = suites.save_suite(
+            principal=request.skill_principal,
+            skill_id=context_id,
+            **request.validated_data,
+        )
+        return self.output(
+            request,
+            s.ContextTestSuite,
+            {
+                "revision": suite.revision,
+                "digest": suite.digest,
+                "cases": suite.cases,
+                "updated_at": suite.updated_at,
+                "updated_by": suite.updated_by,
+                "visibility": "workspace",
+            },
         )
 
 

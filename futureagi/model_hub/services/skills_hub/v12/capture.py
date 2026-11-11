@@ -86,7 +86,11 @@ def preview_trace_capture(
             "A selected source segment changed or is not supported.",
             status=422,
         )
-    segments = [by_id[key] for key in selected_segment_ids]
+    # J2: selection is membership, not an instruction to reorder the source.
+    # Checkbox click order (including deselect/reselect) must not reverse a later
+    # correction or shuffle tool fixtures and force manual input reconstruction.
+    selected_ids = set(selected_segment_ids)
+    segments = [item for item in source["segments"] if item["id"] in selected_ids]
     recorded = source["recorded_context"]
     version = None
     try:

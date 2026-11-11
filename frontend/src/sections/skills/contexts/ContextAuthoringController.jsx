@@ -12,6 +12,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import ContextLibraryView from './ContextLibraryView';
 import ContextDraftSwitch from './ContextDraftSwitch';
+import ContextTestsPanel from './ContextTestsPanel';
 import SkillEditorSession from '../editor/SkillEditorSession';
 import { useAuthoringOperation, AuthoringError } from '../editor/HotfixHeadReview';
 
@@ -79,6 +80,7 @@ function Editor({ scopeKey, contextId }) {
     readOnlyFileQuery={{ ...readOnlyFile, scopeKey }} onSelectReadOnlyFile={selectReadOnlyFile}
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
+      renderTests: () => <ContextTestsPanel contextId={contextId} canWrite={!detail.isError && detail.data.releaseState.permissions.canPublish === true} />,
       availableSkills: skills.isError ? [] : skills.data || [],
       previewDependencies: previewDependencies.mutateAsync,
       applyDependencies: (input, options) => applyDependencies.mutateAsync({ ...input, ...options }),
