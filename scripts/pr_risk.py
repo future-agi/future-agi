@@ -36,6 +36,10 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATCH_ID = re.compile(r"[0-9a-f]{32}\Z")
 ZERO_SHA = "0" * 40
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?\Z")
+# Comments, labels, merges and dispatches use the workflow token, whose login
+# this is. Approvals never do: they come from a separate approver App.
+ACTIONS_BOT = "github-actions[bot]"
+APPROVER_LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*\[bot\]\Z")
 
 
 class PolicyError(Exception):
@@ -377,6 +381,8 @@ def settings_from_env():
         "key_present": os.environ.get("REVIEW_KEY_PRESENT") == "true",
         "dev_cdn_enabled": os.environ.get("DEV_CDN_AUTO_DEPLOY", ""),
         "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+        # Set only in the merge step, from the approver App's token step.
+        "approver_login": os.environ.get("APPROVER_LOGIN", ""),
     }
 
 
@@ -405,7 +411,37 @@ def safe_text(text):
 
 def bot_comment(comment):
     user = comment.get("user") or {}
-    return user.get("login") == "github-actions[bot]" and user.get("type") == "Bot"
+    return user.get("login") == ACTIONS_BOT and user.get("type") == "Bot"
+
+
+def approver_identity(settings):
+    """The approver App's login. Never the workflow token's: with "Allow GitHub
+    Actions to create and approve pull requests" on, any writer's branch
+    workflow could approve as that login too, and with it off GitHub refuses."""
+    login = settings.get("approver_login", "")
+    if not isinstance(login, str) or not APPROVER_LOGIN.fullmatch(login) or login == ACTIONS_BOT:
+        raise PolicyError(
+            "approver-identity: the approver App's token or login is missing or "
+            "is the workflow token's; nothing was approved or merged"
+        )
+    return login
+
+
+def approval_review(review, head, state, login=None):
+    """An autopilot approval review of `head` in `state`, posted by `login`.
+
+    login=None accepts any App or bot reviewer. Only prepare uses that, because
+    its job does not hold the approver App's identity, and there a match can
+    only make the run wait.
+    """
+    user = review.get("user") or {}
+    return (
+        (user.get("login") == login if login is not None else True)
+        and user.get("type") == "Bot"
+        and review.get("state") == state
+        and review.get("commit_id") == head
+        and (review.get("body") or "").startswith(APPROVAL_MARKER)
+    )
 
 
 def fetch(cache, key, read, what):
@@ -1241,7 +1277,9 @@ def prepare(api, policy, settings, event, event_name):
     if not decision["allow"]:
         summary("Waiting: " + " ".join(decision["reasons"]))
         return
-    if bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), context["head"]):
+    # Any bot's dismissed autopilot approval: this job cannot know the approver
+    # App's login. The merge step rechecks with the exact login.
+    if bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), context["head"], None):
         summary(
             "Waiting: a maintainer dismissed the automated approval for this head, "
             "which counts as autopilot-hold. Push a new revision or merge by hand."
@@ -1446,15 +1484,9 @@ def no_requested_changes(reviews):
     return all(review["state"] != "CHANGES_REQUESTED" for review in latest.values())
 
 
-def bot_approval_dismissed(reviews, head):
-    """A maintainer withdrew the bot's approval of this head: treat it as a hold."""
-    return any(
-        (review.get("user") or {}).get("login") == "github-actions[bot]"
-        and review.get("state") == "DISMISSED"
-        and review.get("commit_id") == head
-        and (review.get("body") or "").startswith(APPROVAL_MARKER)
-        for review in reviews
-    )
+def bot_approval_dismissed(reviews, head, login):
+    """A maintainer withdrew the autopilot's approval of this head: a hold."""
+    return any(approval_review(review, head, "DISMISSED", login) for review in reviews)
 
 
 def validate_live(api, policy, settings, context):
@@ -1471,7 +1503,7 @@ def validate_live(api, policy, settings, context):
     reviews = api.pages(f"pulls/{context['pr']}/reviews")
     if not no_requested_changes(reviews):
         raise PolicyError("an outstanding human change request blocks automation")
-    if bot_approval_dismissed(reviews, context["head"]):
+    if bot_approval_dismissed(reviews, context["head"], approver_identity(settings)):
         raise PolicyError(
             "a maintainer dismissed the automated approval for this head, which "
             "counts as autopilot-hold; push a new revision or merge by hand"
@@ -1495,7 +1527,25 @@ def validate_live(api, policy, settings, context):
     return latest, sorted(requirements)
 
 
-def merge(api, policy, settings, context):
+def approve(approver, login, number, head, body):
+    """Post the approval as the approver App and confirm GitHub recorded it so."""
+    review = approver.request(
+        "POST",
+        f"pulls/{number}/reviews",
+        {"event": "APPROVE", "commit_id": head, "body": body},
+    )
+    user = (review.get("user") or {}) if isinstance(review, dict) else {}
+    # A review recorded under another login would never be found as this
+    # autopilot's own again: every later run would approve once more.
+    if user.get("login") != login or user.get("type") != "Bot":
+        raise PolicyError("approver-identity: GitHub recorded the approval under another login")
+
+
+def merge(api, policy, settings, context, approver):
+    # Before any request: approvals come only from the approver App.
+    login = approver_identity(settings)
+    if approver is None:
+        raise PolicyError("approver-identity: the approver App's token is missing")
     pr, checks = validate_live(api, policy, settings, context)
     number = context["pr"]
     audit = (
@@ -1509,27 +1559,13 @@ def merge(api, policy, settings, context):
     # unexplained bot approval. Retries do not create duplicate approvals.
     add_label(api, number, policy["labels"]["approved"])
     reviews = api.pages(f"pulls/{number}/reviews")
-    already = any(
-        r.get("user", {}).get("login") == "github-actions[bot]"
-        and r.get("state") == "APPROVED"
-        and r.get("commit_id") == context["head"]
-        and r.get("body", "").startswith(APPROVAL_MARKER)
-        for r in reviews
-    )
+    already = any(approval_review(r, context["head"], "APPROVED", login) for r in reviews)
     if not already:
         comment(api, number, APPROVAL_MARKER + "\n" + audit)
         # The audit writes and duplicate-approval lookup can race a new hold or
         # change request. Refresh every gate after them, immediately before APPROVE.
         validate_live(api, policy, settings, context)
-        api.request(
-            "POST",
-            f"pulls/{number}/reviews",
-            {
-                "event": "APPROVE",
-                "commit_id": context["head"],
-                "body": APPROVAL_MARKER + "\n" + audit,
-            },
-        )
+        approve(approver, login, number, context["head"], APPROVAL_MARKER + "\n" + audit)
     summary(audit)
     # Re-read AFTER approval. GitHub can take a moment to update protection; a
     # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
@@ -1647,7 +1683,9 @@ def main():
                     os.environ.get("AI_JOB_RESULT", ""),
                 )
                 return 0
-            merge(api, policy, settings, context)
+            approver_identity(settings)
+            approver = GitHub(settings["repository"], os.environ.get("APPROVER_TOKEN", ""))
+            merge(api, policy, settings, context, approver)
         return 0
     except (PolicyError, ValueError, KeyError, TypeError, OSError) as exc:
         # Unexpected schema/data exceptions carry no API response or patch content.

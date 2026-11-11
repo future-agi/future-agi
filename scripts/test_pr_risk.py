@@ -24,6 +24,7 @@ BASE = "b" * 40
 OTHER = "d" * 40
 NOW = dt.datetime(2026, 11, 9, 10, tzinfo=dt.timezone.utc)
 REPO = "example/project"
+APPROVER = "pr-approver[bot]"
 TEST_ROOTS = (
     "futureagi/tests",
     "futureagi/tracer/tests",
@@ -89,6 +90,7 @@ def settings(**overrides):
         "hours": "",
         "key_present": True,
         "repository": REPO,
+        "approver_login": APPROVER,
         **overrides,
     }
 
@@ -116,6 +118,38 @@ def verdict(**overrides):
             **overrides,
         }
     )
+
+
+class FakeApprover:
+    """The approver App's client: it may only post reviews."""
+
+    repository = REPO
+
+    def __init__(self, github, login=APPROVER):
+        self.github = github
+        self.login = login
+        self.calls = []
+
+    def request(self, method, route, data=None, *, graphql=False):
+        self.calls.append((method, route, copy.deepcopy(data)))
+        assert (method, route, graphql) == ("POST", "pulls/42/reviews", False), route
+        if self.github.refuse_approval is not None:
+            raise risk.ApiError(
+                f"GitHub API denied or failed a request (HTTP {self.github.refuse_approval})",
+                self.github.refuse_approval,
+            )
+        # The same request log as the workflow token, so writes() sees approvals.
+        self.github.requests.append((method, route, copy.deepcopy(data)))
+        result = {
+            "id": len(self.github.reviews) + 1,
+            "user": {"login": self.login, "type": "Bot"},
+            "state": "APPROVED",
+            **data,
+        }
+        self.github.reviews.append(result)
+        if self.github.after_approval:
+            self.github.after_approval(self.github)
+        return copy.deepcopy(result)
 
 
 class FakeGitHub:
@@ -166,6 +200,8 @@ class FakeGitHub:
         self.dev_tip = BASE
         self.behind = 1
         self.behind_override = None
+        self.refuse_approval = None
+        self.approver = FakeApprover(self)
 
     @staticmethod
     def dispatch_run(sha, number=42):
@@ -367,16 +403,7 @@ class FakeGitHub:
                 target.update(data)
             return copy.deepcopy(target)
         if method == "POST" and route == "pulls/42/reviews":
-            result = {
-                "id": len(self.reviews) + 1,
-                "user": {"login": "github-actions[bot]"},
-                "state": "APPROVED",
-                **data,
-            }
-            self.reviews.append(result)
-            if self.after_approval:
-                self.after_approval(self)
-            return result
+            raise AssertionError("the workflow token must never post a review")
         if method == "PUT" and route == "pulls/42/merge":
             if data["sha"] != self.pr["head"]["sha"]:
                 raise risk.PolicyError("head SHA mismatch")
@@ -1042,7 +1069,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_full_positive_path_is_head_bound_and_audited(self):
         context = self.passing_review()
-        risk.merge(self.api, POLICY, settings(), context)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertEqual(
             self.api.writes("pulls/42/merge")[0][2],
             {"sha": HEAD, "merge_method": "merge"},
@@ -1129,7 +1156,7 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(self.publish(context, raw, job_result), outcome)
                 self.assertEqual(self.api.checks[-1]["conclusion"], conclusion)
                 with self.assertRaises(risk.PolicyError):
-                    risk.merge(self.api, POLICY, settings(), context)
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_head_change_during_review_makes_a_pass_retryable(self):
@@ -1167,7 +1194,7 @@ class ControllerTests(unittest.TestCase):
             ("authors", "other"),
         ):
             with self.assertRaises(risk.PolicyError):
-                risk.merge(self.api, POLICY, settings(**{key: value}), context)
+                risk.merge(self.api, POLICY, settings(**{key: value}), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_failed_or_cancelled_revision_never_automatically_retries(self):
@@ -1343,7 +1370,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.reservations()), reservations)
         self.assertTrue(any("not the trusted dev run" in body for body in self.escalations()))
         with self.assertRaises(risk.PolicyError):
-            risk.merge(self.api, POLICY, settings(), {**forged, "check_id": 900})
+            risk.merge(self.api, POLICY, settings(), {**forged, "check_id": 900}, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_forged_check_on_a_new_head_citing_a_real_run_goes_to_a_person(self):
@@ -1507,7 +1534,7 @@ class ControllerTests(unittest.TestCase):
                     # Not even this run's "Review reserved" step is listed yet;
                     # its own reservation status is read from the context.
                     self.api.run_jobs.pop((context["run_id"], 1))
-                risk.merge(self.api, POLICY, settings(), context)
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 self.assertTrue(self.api.writes("pulls/42/merge"))
         # Without the publish step's "passed" the same run has no evidence.
         self.api = FakeGitHub()
@@ -1515,7 +1542,7 @@ class ControllerTests(unittest.TestCase):
         self.api.drop_outcome(context["run_id"])
         os.environ["REVIEW_OUTCOME"] = ""
         with self.assertRaises(risk.PolicyError):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_comment_failure_does_not_change_a_published_pass(self):
@@ -1681,7 +1708,7 @@ class ControllerTests(unittest.TestCase):
         edits = len(self.api.writes(f"issues/comments/{escalation['id']}"))
         self.prepare()
         self.assertEqual(len(self.api.writes(f"issues/comments/{escalation['id']}")), edits)
-        risk.merge(self.api, POLICY, settings(), self.outputs["context"])
+        risk.merge(self.api, POLICY, settings(), self.outputs["context"], self.api.approver)
         self.assertTrue(self.api.writes("pulls/42/merge"))
         self.assertEqual(len(self.escalations()), 1)
 
@@ -1799,7 +1826,7 @@ class ControllerTests(unittest.TestCase):
         context = self.prepare()
         self.assertEqual(context["head"], HEAD)
         self.assertEqual(len(self.reservations()), 1)
-        risk.merge(self.api, POLICY, settings(), context)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("pulls/42/merge"))
 
     def test_forged_or_misplaced_reservation_status_goes_to_a_person(self):
@@ -1842,7 +1869,7 @@ class ControllerTests(unittest.TestCase):
         context = self.passing_review()
         self.forge_status(OTHER, risk.RUN_URL.format(repository=REPO, run_id=context["run_id"]))
         with self.assertRaisesRegex(risk.NeedsPerson, "did not reserve"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
@@ -1934,7 +1961,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(context["head"], HEAD)
         self.assertNotIn("check_id", context)
         self.assertTrue(escalation["body"].startswith(risk.RESOLVED))
-        risk.merge(self.api, POLICY, settings(), context)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("pulls/42/merge"))
 
     def test_transient_api_failures_fail_the_run_without_escalating(self):
@@ -1952,7 +1979,7 @@ class ControllerTests(unittest.TestCase):
                     self.assertNotIsInstance(caught.exception, risk.NeedsPerson)
                     self.assertEqual(self.outputs["context"], "")
                     with self.assertRaises(risk.ApiError) as caught:
-                        risk.merge(self.api, POLICY, settings(), reused)
+                        risk.merge(self.api, POLICY, settings(), reused, self.api.approver)
                     self.assertNotIsInstance(caught.exception, risk.NeedsPerson)
                     self.assertFalse(self.api.writes("pulls/42/reviews"))
                     self.assertFalse(self.escalations())
@@ -1960,7 +1987,7 @@ class ControllerTests(unittest.TestCase):
                     # contradictory escalation on the PR.
                     restore()
                     self.assertEqual(self.prepare()["head"], HEAD)
-                    risk.merge(self.api, POLICY, settings(), self.outputs["context"])
+                    risk.merge(self.api, POLICY, settings(), self.outputs["context"], self.api.approver)
                     self.assertTrue(self.api.writes("pulls/42/merge"))
                     self.assertFalse(self.escalations())
 
@@ -2017,7 +2044,7 @@ class ControllerTests(unittest.TestCase):
         context = self.passing_review()
         self.api.behind_override = 41
         with self.assertRaisesRegex(risk.PolicyError, "changed"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
 
     # --- Who pushed (finding 20) ---
@@ -2068,7 +2095,7 @@ class ControllerTests(unittest.TestCase):
         context = self.passing_review()
         self.api.activity = [newest, {**created, "activity_type": "push"}]
         with self.assertRaisesRegex(risk.NeedsPerson, "creation"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
 
     def test_unavailable_push_history_fails_closed(self):
@@ -2085,7 +2112,7 @@ class ControllerTests(unittest.TestCase):
              "activity_type": "branch_creation"},
         ]
         with self.assertRaisesRegex(risk.NeedsPerson, "not a trusted author"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
@@ -2094,7 +2121,7 @@ class ControllerTests(unittest.TestCase):
     def test_failing_advisory_checks_do_not_block_the_merge(self):
         context = self.passing_review()
         self.api.pr["mergeable_state"] = "unstable"
-        risk.merge(self.api, POLICY, settings(), context)
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("pulls/42/merge"))
         for state in ("blocked", "behind", "dirty", "unknown", None):
             with self.subTest(state=state):
@@ -2102,7 +2129,7 @@ class ControllerTests(unittest.TestCase):
                 context = self.passing_review()
                 self.api.pr["mergeable_state"] = state
                 with self.assertRaises(risk.PolicyError):
-                    risk.merge(self.api, POLICY, settings(), context)
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_post_merge_dispatches_survive_a_label_failure(self):
@@ -2115,7 +2142,7 @@ class ControllerTests(unittest.TestCase):
             return original(method, route, data, **kwargs)
         self.api.request = flaky
         with patch.object(risk.time, "sleep"), self.assertRaisesRegex(risk.PolicyError, "merged, but"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
 
     def test_hold_head_base_and_required_check_races_after_approval(self):
@@ -2131,7 +2158,7 @@ class ControllerTests(unittest.TestCase):
             context = self.passing_review()
             self.api.after_approval = change
             with self.assertRaises(risk.PolicyError):
-                risk.merge(self.api, POLICY, settings(), context)
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
             self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_existing_change_request_cannot_be_overridden(self):
@@ -2140,7 +2167,7 @@ class ControllerTests(unittest.TestCase):
             {"id": 5, "user": {"login": "human-reviewer"}, "state": "CHANGES_REQUESTED"}
         ]
         with self.assertRaises(risk.PolicyError):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
 
     def test_approval_is_idempotent_on_retry(self):
@@ -2148,20 +2175,20 @@ class ControllerTests(unittest.TestCase):
         self.api.pr["mergeable_state"] = "blocked"
         for _ in range(2):
             with self.assertRaises(risk.PolicyError):
-                risk.merge(self.api, POLICY, settings(), context)
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertEqual(len(self.api.writes("pulls/42/reviews")), 1)
 
     def test_dismissed_bot_approval_is_a_hold(self):
         context = self.passing_review()
         self.api.pr["mergeable_state"] = "blocked"
         with self.assertRaises(risk.PolicyError):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertEqual(len(self.api.writes("pulls/42/reviews")), 1)
         self.api.reviews[0]["state"] = "DISMISSED"
         self.api.pr["mergeable_state"] = "clean"
         comments = len(self.api.comments)
         with self.assertRaisesRegex(risk.PolicyError, "dismissed"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertEqual(len(self.api.writes("pulls/42/reviews")), 1)
         self.assertEqual(len(self.api.comments), comments)
         self.assertFalse(self.api.writes("pulls/42/merge"))
@@ -2169,6 +2196,71 @@ class ControllerTests(unittest.TestCase):
         self.prepare()
         self.assertEqual((self.outputs["review"], self.outputs["context"]), ("false", ""))
         self.assertTrue(any("dismissed" in str(call) for call in self.summary.call_args_list))
+
+    # --- Approver App (approvals never use the workflow token) ---
+
+    def test_approvals_come_only_from_the_approver_app(self):
+        context = self.passing_review()
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual([call[:2] for call in self.api.approver.calls], [("POST", "pulls/42/reviews")])
+        self.assertEqual(self.api.reviews[0]["user"], {"login": APPROVER, "type": "Bot"})
+        # Comments, labels and the merge stay on the workflow token.
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        self.assertTrue(all(c["user"]["login"] == "github-actions[bot]" for c in self.api.comments))
+
+    def test_missing_or_unsafe_approver_identity_stops_before_any_request(self):
+        context = self.passing_review()
+        for login in ("", "github-actions[bot]", "pr-approver", "pr approver[bot]"):
+            with self.subTest(login=login):
+                self.api.requests.clear()
+                with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+                    risk.merge(self.api, POLICY, settings(approver_login=login), context, self.api.approver)
+                self.assertEqual(self.api.requests, [])
+        with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+            risk.merge(self.api, POLICY, settings(), context, None)
+        self.assertEqual(self.api.requests, [])
+        self.assertFalse(self.api.approver.calls)
+
+    def test_approval_recorded_under_another_login_stops_the_merge(self):
+        context = self.passing_review()
+        self.api.approver.login = "other-app[bot]"
+        with self.assertRaisesRegex(risk.PolicyError, "approver-identity"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+
+    def test_only_the_approver_apps_reviews_are_the_autopilots_own(self):
+        # A workflow-token approval of this head with the marker is not ours:
+        # the App still approves, and its dismissal is not our hold either.
+        context = self.passing_review()
+        legacy = {"id": 7, "user": {"login": "github-actions[bot]", "type": "Bot"},
+                  "state": "APPROVED", "commit_id": HEAD, "body": risk.APPROVAL_MARKER + "\nold"}
+        self.api.reviews.append(dict(legacy))
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(len(self.api.approver.calls), 1)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        self.assertFalse(risk.bot_approval_dismissed([{**legacy, "state": "DISMISSED"}], HEAD, APPROVER))
+        self.assertTrue(risk.bot_approval_dismissed(
+            [{**legacy, "state": "DISMISSED", "user": {"login": APPROVER, "type": "Bot"}}], HEAD, APPROVER))
+        # A person's review that copies the marker is never an App approval.
+        person = {**legacy, "user": {"login": APPROVER, "type": "User"}}
+        self.assertFalse(risk.approval_review(person, HEAD, "APPROVED", APPROVER))
+
+    def test_dismissed_app_approval_waits_quietly_on_every_sweep(self):
+        # prepare cannot know the App's login, so any bot's dismissed autopilot
+        # approval of this head makes it wait: green, no gate job, no writes.
+        context = self.passing_review()
+        self.api.pr["mergeable_state"] = "blocked"
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.api.reviews[0]["state"] = "DISMISSED"
+        self.api.pr["mergeable_state"] = "clean"
+        comments = len(self.api.comments)
+        for _ in range(3):
+            self.assertEqual(self.prepare(), "")
+            self.assertEqual(self.outputs["review"], "false")
+        self.assertEqual(len(self.api.comments), comments)
+        self.assertEqual(len(self.api.approver.calls), 1)
+        self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_stats_mismatch_and_stale_policy_checkout_stop_automation(self):
         self.api.pr["additions"] = 2
@@ -2207,7 +2299,7 @@ class ControllerTests(unittest.TestCase):
 
         self.api.pages = pages
         with self.assertRaises(risk.PolicyError):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
@@ -2227,7 +2319,7 @@ class ControllerTests(unittest.TestCase):
 
         self.api.pages = pages
         with self.assertRaisesRegex(risk.PolicyError, "autopilot-hold"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertGreaterEqual(reads, 2)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
@@ -2248,7 +2340,7 @@ class ControllerTests(unittest.TestCase):
 
         self.api.request = request
         with self.assertRaisesRegex(risk.PolicyError, "autopilot-hold"):
-            risk.merge(self.api, POLICY, settings(), context)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.writes("pulls/42/reviews"))
         self.assertFalse(self.api.writes("pulls/42/merge"))
 
@@ -2398,6 +2490,41 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn(
             "needs.prepare.outputs.review == 'true'", workflow_job("ai-review")
         )
+
+    def test_only_the_approving_step_gets_the_approver_app_key(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        workflow = yaml.safe_load(WORKFLOW_TEXT)
+        for name in ("policy-tests", "prepare", "ai-review"):
+            with self.subTest(job=name):
+                self.assertNotIn("environment", workflow["jobs"][name])
+                self.assertNotIn("AUTOPILOT_APPROVER", workflow_job(name))
+                self.assertNotIn("APPROVER_", workflow_job(name))
+        gate = workflow["jobs"]["review-gate-and-merge"]
+        self.assertEqual(gate["environment"], "pr-autopilot")
+        steps = gate["steps"]
+        mint = next(step for step in steps if step.get("id") == "approver")
+        merge = steps[-1]
+        markers = [i for i, step in enumerate(steps) if str(step.get("name", "")).startswith("Review ")]
+        # After every outcome marker, so a broken key never loses a verdict.
+        self.assertEqual(len(markers), 3)
+        self.assertGreater(steps.index(mint), max(markers))
+        self.assertEqual(steps.index(mint), len(steps) - 2)
+        self.assertEqual(mint["if"], merge["if"])
+        self.assertEqual(mint["uses"], "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510")
+        self.assertEqual(mint["with"], {
+            "client-id": "${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}",
+            "private-key": "${{ secrets.AUTOPILOT_APPROVER_PRIVATE_KEY }}",
+            "permission-pull-requests": "write",
+        })
+        self.assertEqual(merge["env"]["APPROVER_TOKEN"], "${{ steps.approver.outputs.token }}")
+        self.assertEqual(merge["env"]["APPROVER_LOGIN"], "${{ steps.approver.outputs.app-slug }}[bot]")
+        self.assertEqual(merge["env"]["GH_TOKEN"], "${{ github.token }}")
+        for step in steps[:-1]:
+            self.assertNotIn("APPROVER_TOKEN", step.get("env") or {})
+        self.assertEqual(WORKFLOW_TEXT.count("secrets.AUTOPILOT_APPROVER_PRIVATE_KEY"), 1)
 
     def test_review_and_merge_jobs_run_only_in_dispatch_runs_on_dev(self):
         for name in ("ai-review", "review-gate-and-merge"):

@@ -182,6 +182,12 @@ jobs:
       always() && !cancelled() && github.run_attempt == '1' &&
       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' &&
       needs.prepare.result == 'success' && needs.prepare.outputs.context != ''
+    # Holds the approver App's client ID and private key. Its deployment branch
+    # rule allows only dev, so no copy of this workflow on another branch (and
+    # no pull_request_target run, which runs on main) can read the key. It must
+    # have no required reviewers or wait timer: they would hold the job that
+    # writes the outcome marker.
+    environment: pr-autopilot
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -238,6 +244,17 @@ jobs:
       - name: "Review retryable: head ${{ fromJSON(needs.prepare.outputs.context).head }} base ${{ fromJSON(needs.prepare.outputs.context).base }} patch ${{ fromJSON(needs.prepare.outputs.context).patch }}"
         if: steps.publish.outputs.outcome == 'retryable'
         run: 'true'
+      # After the outcome markers, so a missing or broken App key can never
+      # stop a verdict from being recorded. The approval is the only thing this
+      # token does; comments, labels, the merge and dispatches use github.token.
+      - name: Mint the approver App token
+        id: approver
+        if: steps.publish.outputs.outcome == 'passed' || !fromJSON(needs.prepare.outputs.context).check_id
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOPILOT_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write
       # Only after a pass published in this run, or for a reused pass (no
       # reservation in this run).
       - name: Re-read every merge gate, then approve and merge
@@ -245,6 +262,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          APPROVER_TOKEN: ${{ steps.approver.outputs.token }}
+          APPROVER_LOGIN: ${{ steps.approver.outputs.app-slug }}[bot]
           PR_AUTOPILOT: ${{ vars.PR_AUTOPILOT }}
           PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
           AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
