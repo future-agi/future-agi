@@ -70,6 +70,23 @@ def workflow_applies_to(version_id: Any) -> bool:
     return workflow_applies(_side_row(version_id))
 
 
+def document_reading_applies(runtime: HarnessAgentVersionRuntime | None) -> bool:
+    """Whether a version is read only for its document: a later code version of an
+    agent made with its environment, while readings are on. Its first version takes
+    the document its environment's build writes."""
+    return (
+        reading_enabled()
+        and runtime is not None
+        and runtime.parent_id is not None
+        and runtime.source_kind in CODE_KINDS
+        and (runtime.agent_payload or {}).get("definition_owner") != CONNECTED_OWNER
+    )
+
+
+def document_reading_applies_to(version_id: Any) -> bool:
+    return document_reading_applies(_side_row(version_id))
+
+
 def _note(version_id: Any, **changes: Any) -> None:
     """Merge ``changes`` into the version's preflight report, under its lock."""
     with transaction.atomic():

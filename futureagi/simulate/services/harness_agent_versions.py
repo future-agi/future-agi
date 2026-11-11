@@ -1211,8 +1211,14 @@ def change_credentials(
 def _schedule_preflight(version_id: Any) -> None:
     """Start the version's check: a code version of an Agents-page agent goes through
     its workflow (read, then checked); any other is checked at once."""
-    from simulate.services.agent_version_steps import workflow_applies_to
-    from simulate.tasks.harness_agent_versions import schedule_agent_preflight
+    from simulate.services.agent_version_steps import (
+        document_reading_applies_to,
+        workflow_applies_to,
+    )
+    from simulate.tasks.harness_agent_versions import (
+        schedule_agent_document_reading,
+        schedule_agent_preflight,
+    )
 
     try:
         if workflow_applies_to(version_id):
@@ -1221,6 +1227,8 @@ def _schedule_preflight(version_id: Any) -> None:
             start_agent_version_workflow(str(version_id))
         else:
             schedule_agent_preflight(version_id)
+            if document_reading_applies_to(version_id):
+                schedule_agent_document_reading(version_id)
     except Exception:  # noqa: BLE001 - a retry starts it again
         logger.exception("could not start the agent preflight version=%s", version_id)
 
