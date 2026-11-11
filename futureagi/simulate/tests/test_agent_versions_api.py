@@ -775,6 +775,27 @@ class TestVersionAtHead:
         assert (version.id, created) == (synced.id, False)
         assert _versions(agent) == 2
 
+    def test_a_pending_version_whose_check_never_started_is_queued_again(
+        self, agent, production
+    ):
+        stalled = _connect(agent, parent=production, commit="b", trigger=Trigger.SYNC)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=stalled
+        ).update(preflight_status=Status.PENDING, check_started_at=None)
+
+        with patch(
+            "simulate.services.harness_agent_versions._schedule_preflight"
+        ) as scheduled:
+            version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+
+        assert (version.id, created) == (stalled.id, False)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=stalled
+        )
+        assert runtime.check_started_at is not None
+        assert scheduled.call_args.args == (stalled.id,)
+        assert _versions(agent) == 2
+
     def test_a_failed_version_at_the_commit_does_not_stand_for_it(
         self, agent, production
     ):

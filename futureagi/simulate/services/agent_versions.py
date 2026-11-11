@@ -223,6 +223,21 @@ def live_version_at(definition_id: Any, commit_sha: str) -> AgentVersion | None:
     return runtime.agent_version if runtime is not None else None
 
 
+def _restart_stalled_check(version: AgentVersion) -> None:
+    """Start the check of a pending version whose check never began, so a version
+    whose workflow failed to start is not reported as up to date forever."""
+    from simulate.services.harness_agent_versions import queue_check
+
+    runtime = _runtime(version)
+    if (
+        runtime is not None
+        and runtime.preflight_status == Status.PENDING
+        and runtime.check_started_at is None
+    ):
+        logger.info("agent_version_check_restarted", version_id=str(version.id))
+        queue_check(version)
+
+
 def version_at_head(
     definition: AgentDefinition,
     head_sha: str,
@@ -240,6 +255,7 @@ def version_at_head(
         return parent, False
     existing = live_version_at(definition.id, head_sha)
     if existing is not None:
+        _restart_stalled_check(existing)
         return existing, False
     first_new = next_version_number(definition.id)
     version = create_agent_version(
