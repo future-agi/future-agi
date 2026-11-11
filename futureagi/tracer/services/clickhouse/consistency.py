@@ -83,6 +83,16 @@ class ConsistencyChecker:
     QUERY_TIMEOUT_MS = 1000
     CHECK_TIMEOUT_SECONDS = 5
 
+    # The lag sample's fixed read size. ``_peerdb_synced_at`` is in no sorting or
+    # partition key, so a whole-table max() grows with the table and cannot fit
+    # the short statement cap on large mirrors. A few million rows can.
+    LAG_SAMPLE_MAX_ROWS = 10_000_000
+    LAG_SAMPLE_MAX_PARTS = 64
+    # system.parts columns the sample reads. Stock ClickHouse configs require a
+    # grant for system tables; a role that cannot see all of them keeps the
+    # whole-table aggregate instead of issuing a query that would be denied.
+    PART_COLUMNS = ("database", "table", "name", "rows", "active", "modification_time")
+
     def __init__(self):
         self._ch_client = get_clickhouse_client()
 
@@ -155,16 +165,19 @@ class ConsistencyChecker:
 
     def _inspect(
         self, tables: list[_Table], *, deadline: float, row_counts: bool = False
-    ) -> tuple[dict[str, ClickHouseClient], dict[str, str], bool]:
-        """Return clients, per-table readiness and aggregate connectivity.
+    ) -> tuple[dict[str, ClickHouseClient], dict[str, str], bool, set[str]]:
+        """Return clients, per-table readiness, connectivity and part visibility.
 
         Query system metadata before issuing data probes. An empty or inaccessible
         inventory is a required-check failure, not evidence that CDC is optional.
         Reasons stay internal; the public endpoint retains its existing shape.
+        The last value names the connections whose role can read the
+        ``system.parts`` columns the lag sample needs.
         """
         clients = {}
         checks = {}
         connected = True
+        part_metadata: set[str] = set()
         # Connection dependencies outlive the legacy trace-table inventory.
         for role in dict.fromkeys(["legacy", *(table.connection for table in tables)]):
             client = self._ch_client if role == "legacy" else get_v2_query_client()
@@ -176,16 +189,26 @@ class ConsistencyChecker:
                 reachable = True
                 if not selected:
                     continue
+                # system.columns lists only what this role may read, so the
+                # same statement reports whether system.parts is usable.
                 rows = self._read(
                     client,
-                    "SELECT table, name FROM system.columns "
-                    "WHERE database = currentDatabase() AND table IN %(tables)s",
-                    {"tables": tuple(table.name for table in selected)},
+                    "SELECT if(database = 'system', 'system.parts', table), name "
+                    "FROM system.columns "
+                    "WHERE (database = currentDatabase() AND table IN %(tables)s) "
+                    "OR (database = 'system' AND table = 'parts' "
+                    "AND name IN %(part_columns)s)",
+                    {
+                        "tables": tuple(table.name for table in selected),
+                        "part_columns": self.PART_COLUMNS,
+                    },
                     deadline=deadline,
                 )
                 columns: dict[str, set[str]] = {}
                 for table_name, column in rows:
                     columns.setdefault(table_name, set()).add(column)
+                if set(self.PART_COLUMNS) <= columns.get("system.parts", set()):
+                    part_metadata.add(role)
                 for table in selected:
                     if table.cdc:
                         required = (
@@ -231,7 +254,7 @@ class ConsistencyChecker:
                     exc_info=True,
                 )
                 checks.update({table.key: "unavailable" for table in selected})
-        return clients, checks, connected
+        return clients, checks, connected, part_metadata
 
     def check_row_counts(
         self,
@@ -243,7 +266,9 @@ class ConsistencyChecker:
         """Compare only declared CDC mirrors; native writes are not PG mirrors."""
         tables = [table for table in self._tables() if table.cdc]
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, _ = self._inspect(tables, deadline=deadline, row_counts=True)
+        clients, checks, _, _ = self._inspect(
+            tables, deadline=deadline, row_counts=True
+        )
         results = []
         for table in tables:
             pg_count = ch_count = diff = diff_pct = -1
@@ -285,14 +310,111 @@ class ConsistencyChecker:
             )
         return results
 
+    def _recent_parts(
+        self,
+        tables: list[_Table],
+        clients: dict[str, ClickHouseClient],
+        checks: dict[str, str],
+        part_metadata: set[str],
+        *,
+        deadline: float,
+    ) -> dict[str, list[str]]:
+        """Pick each ready CDC table's newest active parts within the row budget.
+
+        A row is only ever stored in parts written no earlier than its sync:
+        inserts, merges and replica fetches each write a new part. While CDC is
+        current the latest sync is therefore in a small, recently written part.
+        Walking parts newest first and skipping any that would overrun
+        ``LAG_SAMPLE_MAX_ROWS`` bounds the read regardless of table size. A large
+        part holds the latest sync only briefly (a bulk load, or a merge that
+        absorbed the newest small parts before the next sync). The sample's max
+        never exceeds the table's, so the sampled lag is exact while CDC is
+        current and is otherwise never smaller than the true lag.
+
+        Tables absent from the result keep the whole-table aggregate: their role
+        cannot read ``system.parts`` or the read failed.
+        """
+        selected: dict[str, list[_Table]] = {}
+        for table in tables:
+            if (
+                table.cdc
+                and checks[table.key] == "ready"
+                and table.connection in part_metadata
+            ):
+                selected.setdefault(table.connection, []).append(table)
+        samples = {}
+        for role, ready in selected.items():
+            try:
+                rows = self._read(
+                    clients[role],
+                    "SELECT table, name, rows FROM system.parts "
+                    "WHERE database = currentDatabase() AND active AND rows > 0 "
+                    "AND table IN %(tables)s "
+                    "ORDER BY table, modification_time DESC, rows "
+                    f"LIMIT {int(self.LAG_SAMPLE_MAX_PARTS)} BY table",
+                    {"tables": tuple(table.name for table in ready)},
+                    deadline=deadline,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "CDC lag check failed",
+                    connection=role,
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+                checks.update({table.key: "unavailable" for table in ready})
+                continue
+            parts: dict[str, list[str]] = {table.name: [] for table in ready}
+            budget = dict.fromkeys(parts, self.LAG_SAMPLE_MAX_ROWS)
+            for table_name, part, part_rows in rows:
+                if table_name in parts and part_rows <= budget[table_name]:
+                    parts[table_name].append(part)
+                    budget[table_name] -= part_rows
+            samples.update({table.key: parts[table.name] for table in ready})
+        return samples
+
+    def _latest_sync(
+        self,
+        client: ClickHouseClient,
+        table: str,
+        parts: list[str] | None,
+        *,
+        deadline: float,
+    ) -> list[tuple]:
+        """Return ``(count, max(_peerdb_synced_at))`` for the sample or the table.
+
+        An empty sample (no active part, or none within the budget) and a sample
+        with no visible row use the exact whole-table aggregate, which is free on
+        an empty table. max() alone returns an epoch default on an empty table.
+        """
+        if parts:
+            rows = self._read(
+                client,
+                f"SELECT count(), max(_peerdb_synced_at) FROM {table} "
+                "WHERE _part IN %(parts)s",
+                {"parts": tuple(parts)},
+                deadline=deadline,
+            )
+            if rows and rows[0][0]:
+                return rows
+        return self._read(
+            client,
+            f"SELECT count(), max(_peerdb_synced_at) FROM {table}",
+            deadline=deadline,
+        )
+
     def _lag(
         self,
         tables: list[_Table],
         clients: dict[str, ClickHouseClient],
         checks: dict[str, str],
+        part_metadata: set[str],
         *,
         deadline: float,
     ) -> dict[str, float]:
+        samples = self._recent_parts(
+            tables, clients, checks, part_metadata, deadline=deadline
+        )
         lag = {}
         for table in tables:
             if not table.cdc:
@@ -300,10 +422,10 @@ class ConsistencyChecker:
             value = -1.0
             if checks[table.key] == "ready":
                 try:
-                    # max() alone returns an epoch default on an empty table.
-                    rows = self._read(
+                    rows = self._latest_sync(
                         clients[table.connection],
-                        f"SELECT count(), max(_peerdb_synced_at) FROM {table.name}",
+                        table.name,
+                        samples.get(table.key),
                         deadline=deadline,
                     )
                     if rows and rows[0][0] == 0:
@@ -337,8 +459,8 @@ class ConsistencyChecker:
         """Lag for declared CDC tables; omit native/retired tables, use -1 if unknown."""
         tables = [table for table in self._tables() if table.cdc]
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, _ = self._inspect(tables, deadline=deadline)
-        return self._lag(tables, clients, checks, deadline=deadline)
+        clients, checks, _, part_metadata = self._inspect(tables, deadline=deadline)
+        return self._lag(tables, clients, checks, part_metadata, deadline=deadline)
 
     def get_health_status(self) -> HealthStatus:
         if not is_clickhouse_enabled():
@@ -348,8 +470,10 @@ class ConsistencyChecker:
 
         tables = self._tables()
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, connected = self._inspect(tables, deadline=deadline)
-        cdc_lag = self._lag(tables, clients, checks, deadline=deadline)
+        clients, checks, connected, part_metadata = self._inspect(
+            tables, deadline=deadline
+        )
+        cdc_lag = self._lag(tables, clients, checks, part_metadata, deadline=deadline)
         if (
             not connected
             or not tables

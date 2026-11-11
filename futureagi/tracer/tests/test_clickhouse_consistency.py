@@ -61,7 +61,12 @@ def configure(monkeypatch, settings):
     return apply
 
 
-def fake_client(columns, *, sample=None):
+def fake_client(columns, *, sample=None, parts=()):
+    """Schema-only double; ``columns["system.parts"]`` opts into the part sample.
+
+    ``parts`` are the ``(table, part, rows)`` rows the system.parts read returns,
+    already newest first as the real ORDER BY delivers them.
+    """
     if sample is None:
         sample = (1, datetime.now(UTC))
 
@@ -72,6 +77,8 @@ def fake_client(columns, *, sample=None):
             return [
                 (table, column) for table, names in columns.items() for column in names
             ]
+        if "FROM system.parts" in sql:
+            return [row for row in parts if row[0] in params["tables"]]
         if "max(_peerdb_synced_at)" in sql:
             # Match both old and new aggregate query shapes.
             return [sample if "count()" in sql else (sample[1],)]

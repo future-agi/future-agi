@@ -1,6 +1,7 @@
 """Health regressions for retained readers, verified sidecars and stalled queries."""
 
 from contextlib import contextmanager
+from datetime import datetime
 from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -381,3 +382,133 @@ def test_every_health_query_has_a_short_transport_timeout(
         assert driver.connection.sync_request_timeout == 5
     finally:
         client._return_client(driver)
+
+
+PART_COLUMNS = {"database", "table", "name", "rows", "active", "modification_time"}
+
+
+def _lag_reads(client, table):
+    return [
+        call.args
+        for call in client.execute_read.call_args_list
+        if "max(_peerdb_synced_at)" in call.args[0] and f"FROM {table}" in call.args[0]
+    ]
+
+
+@pytest.mark.unit
+def test_lag_sample_reads_newest_parts_that_fit_the_budget(configure, monkeypatch):
+    from tracer.services.clickhouse import consistency
+
+    # raising=False keeps the regression runnable against the unsampled checker.
+    monkeypatch.setattr(
+        consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000, raising=False
+    )
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    inventory["system.parts"] = PART_COLUMNS
+    # Newest first, as the system.parts ORDER BY returns them.
+    parts = [
+        ("tracer_trace", "just_merged", 5_000),  # oversized: skipped, not a stop
+        ("tracer_trace", "fresh", 10),
+        ("tracer_trace", "recent", 900),
+        ("tracer_trace", "older", 200),  # would overrun the remaining budget
+        ("tracer_trace", "oldest", 50),
+        ("trace_session", "only", 3),
+    ]
+    client = health_tests.fake_client(inventory, parts=parts)
+    health = configure(client).get_health_status()
+
+    assert health.status == "healthy"
+    assert all(0 <= lag < 60 for lag in health.cdc_lag.values())
+    sql = [call.args[0] for call in client.execute_read.call_args_list]
+    assert sql[0] == "SELECT 1" and "system.columns" in sql[1]
+    assert "FROM system.parts" in sql[2] and len(sql) == 6
+    trace = _lag_reads(client, "tracer_trace")
+    assert [params for _, params in trace] == [{"parts": ("fresh", "recent", "oldest")}]
+    assert "WHERE _part IN" in trace[0][0]
+    assert [params for _, params in _lag_reads(client, "trace_session")] == [
+        {"parts": ("only",)}
+    ]
+    # No active part: the whole-table aggregate, free on an empty table.
+    assert _lag_reads(client, "tracer_eval_logger") == [
+        ("SELECT count(), max(_peerdb_synced_at) FROM tracer_eval_logger", None)
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("visible", [set(), {"name", "rows"}])
+def test_lag_sample_needs_every_part_column_visible(configure, visible):
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    if visible:
+        inventory["system.parts"] = visible
+    client = health_tests.fake_client(inventory, parts=[("tracer_trace", "fresh", 1)])
+    assert configure(client).get_health_status().status == "healthy"
+    assert not any(
+        "FROM system.parts" in call.args[0]
+        for call in client.execute_read.call_args_list
+    )
+    for table in health_tests.CDC_TABLES:
+        assert [sql for sql, _ in _lag_reads(client, table)] == [
+            f"SELECT count(), max(_peerdb_synced_at) FROM {table}"
+        ]
+
+
+@pytest.mark.unit
+def test_lag_sample_falls_back_when_no_part_fits_or_sample_is_empty(
+    configure, monkeypatch
+):
+    from tracer.services.clickhouse import consistency
+
+    # raising=False keeps the regression runnable against the unsampled checker.
+    monkeypatch.setattr(
+        consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 100, raising=False
+    )
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    inventory["system.parts"] = PART_COLUMNS
+    client = health_tests.fake_client(
+        inventory,
+        parts=[
+            ("tracer_trace", "bulk", 1_000),
+            ("trace_session", "masked", 5),
+            ("tracer_eval_logger", "fresh", 1),
+        ],
+    )
+    read = client.execute_read.side_effect
+
+    def masked_sample(sql, params=None, **kwargs):
+        # Parts can hold only masked rows, e.g. after a lightweight delete.
+        if "FROM trace_session WHERE _part IN" in sql:
+            return [(0, datetime(1970, 1, 1))], [], 0
+        return read(sql, params, **kwargs)
+
+    client.execute_read.side_effect = masked_sample
+    assert configure(client).get_health_status().status == "healthy"
+    assert [sql for sql, _ in _lag_reads(client, "tracer_trace")] == [
+        "SELECT count(), max(_peerdb_synced_at) FROM tracer_trace"
+    ]
+    assert [params for _, params in _lag_reads(client, "trace_session")] == [
+        {"parts": ("masked",)},
+        None,
+    ]
+    assert [params for _, params in _lag_reads(client, "tracer_eval_logger")] == [
+        {"parts": ("fresh",)}
+    ]
+
+
+@pytest.mark.unit
+def test_failed_part_inventory_is_unavailable_not_healthy(configure):
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    inventory["system.parts"] = PART_COLUMNS
+    client = health_tests.fake_client(inventory)
+    read = client.execute_read.side_effect
+
+    def unavailable(sql, params=None, **kwargs):
+        if "FROM system.parts" in sql:
+            raise ConnectionError("synthetic metadata outage")
+        return read(sql, params, **kwargs)
+
+    client.execute_read.side_effect = unavailable
+    health = configure(client).get_health_status()
+    assert health.status == "unhealthy"
+    assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
+    assert set(health.details["checks"].values()) == {"unavailable"}
+    assert not any(_lag_reads(client, table) for table in health_tests.CDC_TABLES)
