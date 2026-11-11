@@ -106,9 +106,12 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
     this boundary. Only the supplied version changes; key-only edits must not
     replace its assistant with the mutable definition's current assistant.
     """
-    locked_version = AgentVersion.objects.select_for_update(of=("self",)).get(
-        pk=version.pk
-    )
+    # The caller resolved and authorized ``version``; re-read it by key alone so
+    # the thread-local workspace scope (which can name another workspace, e.g.
+    # during harness creation) never hides the row being locked.
+    locked_version = AgentVersion.no_workspace_objects.select_for_update(
+        of=("self",)
+    ).get(pk=version.pk)
     if not _has_credential_fields(data):
         # When no credential fields are provided, attempt to adopt legacy
         # credentials from the old agent_definition FK if they exist.
