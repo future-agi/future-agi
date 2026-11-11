@@ -89,7 +89,10 @@ def _url(agent, version, leaf):
 
 
 def test_tree_lists_the_folder_the_agent_lives_in(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
@@ -110,7 +113,10 @@ def test_tree_lists_the_folder_the_agent_lives_in(
 
 
 def test_tree_covers_the_whole_repository_without_a_subfolder(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a", subfolder="")
@@ -125,7 +131,10 @@ def test_tree_covers_the_whole_repository_without_a_subfolder(
 
 
 def test_file_answers_text_with_its_language_and_kinds_without_content(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
@@ -159,7 +168,11 @@ def test_file_answers_text_with_its_language_and_kinds_without_content(
     ["../etc/passwd", "/agents/support/agent.py", "agents/../README.md", "", "a\\b"],
 )
 def test_a_path_outside_the_archive_is_refused(
-    auth_client, organization, storage, agent, path  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,
+    path,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
@@ -171,7 +184,10 @@ def test_a_path_outside_the_archive_is_refused(
 
 
 def test_a_missing_file_and_a_version_without_code_answer_404(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
@@ -188,7 +204,10 @@ def test_a_missing_file_and_a_version_without_code_answer_404(
 
 
 def test_a_stored_archive_that_cannot_be_read_is_unavailable(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
@@ -201,7 +220,10 @@ def test_a_stored_archive_that_cannot_be_read_is_unavailable(
 
 
 def test_changes_compare_with_the_previous_version_within_the_folder(
-    auth_client, organization, storage, agent  # noqa: F811
+    auth_client,
+    organization,
+    storage,
+    agent,  # noqa: F811
 ):
     _stored(organization, "a", FIRST)
     _stored(organization, "b", SECOND)
@@ -230,15 +252,45 @@ def test_changes_compare_with_the_previous_version_within_the_folder(
 
 
 def test_another_organization_cannot_read_the_code(
-    api_client, organization, storage, agent, user  # noqa: F811
+    organization,
+    storage,
+    agent,
+    user,  # noqa: F811
 ):
+    from rest_framework.test import APIClient
+
+    from accounts.models import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from tfc.constants.roles import OrganizationRoles
+
     _stored(organization, "a", FIRST)
     version = _version(agent, commit="a")
+    other_org = Organization.objects.create(name="Other Org")
+    other = User.objects.create_user(
+        email="other-org@futureagi.com",
+        password="testpassword123",
+        name="Other",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=other, organization=other_org, defaults={"role": OrganizationRoles.OWNER}
+    )
+    theirs = APIClient()
+    theirs.force_authenticate(user=other)
 
-    response = api_client.get(_url(agent, version, "tree"))
-
-    assert response.status_code in (
-        status.HTTP_401_UNAUTHORIZED,
-        status.HTTP_403_FORBIDDEN,
-        status.HTTP_404_NOT_FOUND,
+    assert (
+        theirs.get(_url(agent, version, "tree")).status_code
+        == status.HTTP_404_NOT_FOUND
+    )
+    assert (
+        theirs.get(
+            _url(agent, version, "file"), {"path": "agents/support/agent.py"}
+        ).status_code
+        == status.HTTP_404_NOT_FOUND
+    )
+    assert (
+        theirs.get(_url(agent, version, "changes")).status_code
+        == status.HTTP_404_NOT_FOUND
     )
