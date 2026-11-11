@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"The three primary colors of light are red,"}]}}],"modelVersion":"gemini-3.8-flash","createTime":"2026-10-28T09:14:03.218734Z","responseId":"VqgnXm-fC1ELi4zlQMvROHo"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":" green and blue."}]}}],"modelVersion":"gemini-3.8-flash","createTime":"2026-10-28T09:14:03.218734Z","responseId":"VqgnXm-fC1ELi4zlQMvROHo"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"","thoughtSignature":"GDjOphOX7IMt8Wu4xKG5opGDrd8f0IpoiRJqsMYBW75ymosr/q/zl3kBk8v0KMbVByrxhFgbc8EOo2tciPmLhCLnBsq+2nBxZuL2dstiB3pR35PWGfOY0c744XYo78jv"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":11,"thoughtsTokenCount":142,"totalTokenCount":162,"trafficType":"ON_DEMAND","promptTokensDetails":[{"modality":"TEXT","tokenCount":9}],"candidatesTokensDetails":[{"modality":"TEXT","tokenCount":11}]},"modelVersion":"gemini-3.8-flash","createTime":"2026-10-28T09:14:03.218734Z","responseId":"VqgnXm-fC1ELi4zlQMvROHo"}
+

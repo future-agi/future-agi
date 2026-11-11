@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "gpt-4o-mini-tts-2025-12-15",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /audio/speech: the audio bytes come back as they are (CreateSpeech passes the body through with the upstream Content-Type); the model is the dated gpt-4o-mini-tts snapshot CreateSpeechRequest.model lists. The response.bin is an ID3 header and MPEG frame headers, not real audio. The spec marks tts-1, tts-1-hd and every gpt-4o-mini-tts snapshot deprecated, shutting down on 2027-01-06, in favour of gpt-realtime-2.1-mini on the Realtime API, which no adapter implements: move these cases then, or retire the surface.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

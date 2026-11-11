@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "A compiler translates source code written in a high-level programming language into a lower-level form, such as machine code or bytecode, that a computer can execute.",
+            "thoughtSignature": "mOAYtUpu8YXCpEG9Lhvyi1KrY8aGIiqdwATZMSCJLeNqyVGJHM69n5MEeiK/c084bOo9OpvVHiVJEyBwPIhZjCIppkxCECW5vbjeEhjReB8MGYZO8cJHjPfzetI6E29q"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 11,
+    "candidatesTokenCount": 31,
+    "thoughtsTokenCount": 318,
+    "totalTokenCount": 360,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 11
+      }
+    ]
+  },
+  "modelVersion": "gemini-4-argon",
+  "responseId": "2y0w66Mz6K2llt6MSXwPv9U"
+}

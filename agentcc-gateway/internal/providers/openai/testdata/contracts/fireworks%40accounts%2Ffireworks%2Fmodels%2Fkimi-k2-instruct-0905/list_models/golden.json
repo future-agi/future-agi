@@ -1,0 +1,20 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "accounts/fireworks/models/kimi-k2-instruct-0905",
+    "object": "model",
+    "owned_by": "fireworks"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+    "object": "model",
+    "owned_by": "fireworks"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "nomic-ai/nomic-embed-text-v1.5",
+    "object": "model",
+    "owned_by": "fireworks"
+  }
+]

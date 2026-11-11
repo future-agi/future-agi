@@ -1,0 +1,2 @@
+data: {"promptFeedback":{"blockReason":"SAFETY","safetyRatings":[{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","probability":"NEGLIGIBLE"},{"category":"HARM_CATEGORY_HATE_SPEECH","probability":"NEGLIGIBLE"},{"category":"HARM_CATEGORY_HARASSMENT","probability":"HIGH","blocked":true},{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","probability":"NEGLIGIBLE"}]},"usageMetadata":{"promptTokenCount":11,"totalTokenCount":11,"promptTokensDetails":[{"modality":"TEXT","tokenCount":11}]},"modelVersion":"gemini-3.1-flash-lite","responseId":"AcYjcXFrNlyLE2iN2hlvrB0"}
+

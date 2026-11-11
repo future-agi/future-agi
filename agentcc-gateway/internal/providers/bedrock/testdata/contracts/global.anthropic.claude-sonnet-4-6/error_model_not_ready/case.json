@@ -1,0 +1,9 @@
+{
+  "status": 429,
+  "headers": {
+    "x-amzn-ErrorType": "ModelNotReadyException",
+    "x-amzn-RequestId": "7f2a6c9e-1b4d-4a08-93e5-c6d0b8f14a27"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). ModelNotReadyException is 429 (\"the AWS SDK will automatically retry the operation up to 5 times\"); it is answered while an imported or on-demand model is being loaded. Not recordable: nothing a request controls induces it. Message invented. The golden pins type rate_limit_error: gap B15 (the exception name, which says the model is loading rather than the account being throttled, is in x-amzn-ErrorType, which the adapter does not read)."
+}

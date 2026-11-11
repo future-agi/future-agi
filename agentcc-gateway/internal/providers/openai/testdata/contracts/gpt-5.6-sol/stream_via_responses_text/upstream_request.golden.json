@@ -1,0 +1,36 @@
+{
+  "body": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "You are a helpful assistant.",
+            "type": "input_text"
+          }
+        ],
+        "role": "system",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "Hello!",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "model": "gpt-5.6-sol",
+    "store": false,
+    "stream": true
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

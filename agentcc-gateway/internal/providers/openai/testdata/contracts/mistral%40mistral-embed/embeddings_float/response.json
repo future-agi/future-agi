@@ -1,0 +1,21 @@
+{
+  "id": "emb-a1b2c3",
+  "object": "list",
+  "model": "mistral-embed",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "index": 0
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 0,
+    "total_tokens": 10
+  }
+}

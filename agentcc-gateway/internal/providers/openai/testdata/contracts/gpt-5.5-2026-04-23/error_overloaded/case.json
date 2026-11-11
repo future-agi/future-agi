@@ -1,0 +1,14 @@
+{
+  "status": 503,
+  "headers": {
+    "retry-after": "1"
+  },
+  "recordable": false,
+  "notes": "Synthetic: components/responses/InferenceServiceUnavailable (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)), the 503 of /chat/completions: its serverOverloaded example verbatim and its Retry-After header. Not recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap O6: the retry-after header is dropped (and retry-after-ms and x-request-id, which openai-python reads too); models.APIError has no retry field, so the gateway retries and fails over on its own schedule instead of when OpenAI says, and the client loses the hint"
+    }
+  ]
+}

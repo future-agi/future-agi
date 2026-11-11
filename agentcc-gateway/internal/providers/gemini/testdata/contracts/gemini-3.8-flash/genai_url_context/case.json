@@ -1,0 +1,10 @@
+{
+  "endpoint": "genai_generate",
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). The url_context tool, as the chat url_context case of this model: the fetched page is billed as input through toolUsePromptTokenCount (ai.google.dev/gemini-api/docs/url-context).",
+  "sanity_gaps": [
+    {
+      "failure": "toolUsePromptTokenCount",
+      "reason": "known gap G18: native GenAI billing ignores toolUsePromptTokenCount, so the 9634 tokens of the fetched page, billed by Google as input, are never billed (input_tokens 31 of 9665)"
+    }
+  ]
+}

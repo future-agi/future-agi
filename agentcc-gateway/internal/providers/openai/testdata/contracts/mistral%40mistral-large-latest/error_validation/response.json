@@ -1,0 +1,16 @@
+{
+  "detail": [
+    {
+      "type": "greater_than_equal",
+      "loc": [
+        "body",
+        "max_tokens"
+      ],
+      "msg": "Input should be greater than or equal to 0",
+      "input": -1,
+      "ctx": {
+        "ge": 0
+      }
+    }
+  ]
+}

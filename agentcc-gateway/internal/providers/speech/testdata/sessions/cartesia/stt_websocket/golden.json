@@ -1,0 +1,20 @@
+{
+  "upstream": {
+    "header": {
+      "Cartesia-Version": [
+        "2026-08-14"
+      ],
+      "X-Api-Key": [
+        "platform-key"
+      ]
+    },
+    "kind": "transcription",
+    "url": "wss://api.cartesia.ai/stt/websocket?encoding=pcm_s16le&language=en&model=ink-2&sample_rate=16000"
+  },
+  "usage": {
+    "audio_seconds": 1,
+    "characters": 0,
+    "model": "cartesia/ink-2",
+    "voice": ""
+  }
+}

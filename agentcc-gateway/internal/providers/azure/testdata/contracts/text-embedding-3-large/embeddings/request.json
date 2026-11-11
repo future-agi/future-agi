@@ -1,0 +1,7 @@
+{
+  "model": "text-embedding-3-large",
+  "input": [
+    "this is a test"
+  ],
+  "dimensions": 8
+}

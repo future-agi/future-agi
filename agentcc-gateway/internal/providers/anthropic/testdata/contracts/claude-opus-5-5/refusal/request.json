@@ -1,0 +1,10 @@
+{
+  "model": "claude-opus-5-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "[A request the cyber safety classifier declines before any output]"
+    }
+  ],
+  "max_tokens": 1024
+}

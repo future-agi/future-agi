@@ -1,0 +1,20 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v1/listen with channels and multichannel (channels defaults to 1), encoding mulaw",
+  "path": "/v1/listen",
+  "query": "model=nova-3&encoding=mulaw&sample_rate=8000&channels=2&multichannel=true",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "messages": [
+    {
+      "binary": 4000,
+      "repeat": 4
+    },
+    {
+      "json": {
+        "type": "CloseStream"
+      }
+    }
+  ],
+  "notes": "One second of two-channel 8 kHz mu-law (16000 bytes): the meter counts every channel's bytes toward one second of audio."
+}

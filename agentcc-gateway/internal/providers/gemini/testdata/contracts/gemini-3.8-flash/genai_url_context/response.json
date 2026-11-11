@@ -1,0 +1,46 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "RFC 9110 defines the semantics of HTTP shared by every version of the protocol: methods, status codes, header fields and content negotiation. It obsoletes the older RFCs that described them piecemeal.",
+            "thoughtSignature": "/8RPP9/pzXDNBACVwhH6Gzq4iAGkJx0OIeyEZHuhwxgHeSZBc0fRGrVbHKFfx+zetMskZ+wljnrESNt3UJK9oXtubQIXtCZYKlktgdA87LBusW4H8tjotuV3485Xv2qy"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "urlContextMetadata": {
+        "urlMetadata": [
+          {
+            "retrievedUrl": "https://www.rfc-editor.org/rfc/rfc9110.html",
+            "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 31,
+    "candidatesTokenCount": 46,
+    "thoughtsTokenCount": 245,
+    "toolUsePromptTokenCount": 9634,
+    "totalTokenCount": 9956,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 31
+      }
+    ],
+    "toolUsePromptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 9634
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "aMUFcOcuTldgkWUKTq_AtYc"
+}

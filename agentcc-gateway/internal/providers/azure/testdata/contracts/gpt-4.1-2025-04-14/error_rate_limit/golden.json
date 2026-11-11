@@ -1,0 +1,6 @@
+{
+  "code": "429",
+  "message": "Requests to the ChatCompletions_Create Operation under Azure OpenAI API version 2024-10-21 have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 6 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.",
+  "status": 429,
+  "type": ""
+}

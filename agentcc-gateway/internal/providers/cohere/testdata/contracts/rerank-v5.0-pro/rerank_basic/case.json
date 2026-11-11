@@ -1,0 +1,10 @@
+{
+  "endpoint": "rerank",
+  "notes": "Synthetic, from the v2 reranking guide (fern/pages/v2/text-embeddings/reranking/overview.mdx, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience): its rerank-v5.0-pro request (five documents, top_n 5) and the V2RerankResponse it prints (results, meta.api_version version 2, billed_units.search_units 1), written as JSON (search_units as the integer the v1 reference example shows), with cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) for the field names. Drives Rerank. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "billed search_units",
+      "reason": "known gap K8: translateRerankResponse reports billed_units.input_tokens as search_units, and cohereBilledUnits has no search_units field: a real search_units bill is read as 0, so every call is priced at the cost plugin's one-unit fallback whatever it used (a query over more than 100 documents is several units)"
+    }
+  ]
+}

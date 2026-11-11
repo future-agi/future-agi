@@ -1,0 +1,65 @@
+{
+  "body": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "What's the weather like in San Francisco right now?",
+        "role": "user"
+      },
+      {
+        "content": "I will look up the current weather in San Francisco.",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"San Francisco, CA\",\"unit\":\"fahrenheit\"}",
+              "name": "get_weather"
+            },
+            "id": "get_weather_1byjy32y4hvq",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"temperature\": \"62°F\", \"conditions\": \"partly cloudy\"}",
+        "role": "tool",
+        "tool_call_id": "get_weather_1byjy32y4hvq"
+      }
+    ],
+    "model": "command-a-03-2025",
+    "tools": [
+      {
+        "function": {
+          "description": "Get the current weather in a given location",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "location": {
+                "description": "The city and state, e.g. San Francisco, CA",
+                "type": "string"
+              },
+              "unit": {
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "location"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/chat"
+}

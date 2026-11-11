@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "A compiler translates source code written in a high-level programming language into a lower-level form, such as machine code or bytecode, that a computer can execute.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-4-argon",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 349,
+    "prompt_tokens": 11,
+    "total_tokens": 360
+  }
+}

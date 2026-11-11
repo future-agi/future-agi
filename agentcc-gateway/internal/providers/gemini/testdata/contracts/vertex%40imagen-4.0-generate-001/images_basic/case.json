@@ -1,0 +1,4 @@
+{
+  "notes": "Imagen on Vertex AI: publishers.models.predict (aiplatform v1beta1 PredictResponse.predictions, opaque in the discovery document); each prediction's fields are those googleapis/go-genai models.go generatedImageFromVertex and imageFromVertex read (bytesBase64Encoded, mimeType; raiFilteredReason, safetyAttributes and the enhanced prompt only when asked for, which the adapter never does). Imagen is deprecated on the Gemini API (google-gemini/cookbook quickstarts/Get_started_imagen.ipynb), so the predict path is exercised on Vertex AI. The image is a 1x1 PNG. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "endpoint": "images"
+}

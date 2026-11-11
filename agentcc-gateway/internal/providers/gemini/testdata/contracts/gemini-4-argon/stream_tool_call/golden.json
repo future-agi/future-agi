@@ -1,0 +1,54 @@
+{
+  "assembled": {
+    "content": "",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\":\"Madrid, Spain\"}",
+          "name": "get_weather"
+        },
+        "id": "call_0::sig::ExgTrXOtL8L1iHxF7bsRXY4iae1MKh1KFN7regvxS7lz8CHX5qm8XazZGGn6EHfbgOQO6MEz1Cj1c36WxY5cJFKqwCl4B5EEzO6Jql0MeBoX6jdnIiscqZbDNMSAwx51",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 225,
+      "prompt_tokens": 62,
+      "total_tokens": 287
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\":\"Madrid, Spain\"}",
+                  "name": "get_weather"
+                },
+                "id": "call_0::sig::ExgTrXOtL8L1iHxF7bsRXY4iae1MKh1KFN7regvxS7lz8CHX5qm8XazZGGn6EHfbgOQO6MEz1Cj1c36WxY5cJFKqwCl4B5EEzO6Jql0MeBoX6jdnIiscqZbDNMSAwx51",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 225,
+        "prompt_tokens": 62,
+        "total_tokens": 287
+      }
+    }
+  ],
+  "error": null
+}

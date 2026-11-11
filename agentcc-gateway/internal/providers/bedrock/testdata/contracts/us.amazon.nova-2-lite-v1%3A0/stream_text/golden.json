@@ -1,0 +1,106 @@
+{
+  "assembled": {
+    "content": "Hello! How can I assist you today?",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 10,
+      "prompt_tokens": 8,
+      "total_tokens": 18
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "! How can I assist"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " you today?"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 10,
+        "prompt_tokens": 8,
+        "total_tokens": 18
+      }
+    }
+  ],
+  "error": null
+}

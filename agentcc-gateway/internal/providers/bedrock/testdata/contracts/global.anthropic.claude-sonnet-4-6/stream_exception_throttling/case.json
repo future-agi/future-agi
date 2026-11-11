@@ -1,0 +1,10 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from the ConverseStreamOutput / ResponseStream unions of the same model (an exception is an event-stream message with :message-type exception and :exception-type <member>, its members as the JSON payload), and the event-stream framing described in contract_eventstream_test.go. throttlingException is a member of ConverseStreamOutput (ThrottlingException, 429). Not recordable: throttling cannot be induced on demand, least of all mid-stream. Message invented.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 429 became 502",
+      "reason": "known gap B16: a mid-stream exception becomes a 502 upstream_error (code provider_0) whatever the exception, with the raw payload JSON as its message; a throttlingException mid-stream is a 429 by its definition, so the gateway retries, fails over and counts it against the circuit breaker as a server error"
+    }
+  ]
+}

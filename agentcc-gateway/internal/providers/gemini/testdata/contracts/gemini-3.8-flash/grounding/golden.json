@@ -1,0 +1,41 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "annotations": [
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "end_index": 109,
+              "start_index": 0,
+              "title": "uefa.com",
+              "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHq3ZbP34KCzb01Msy0ayBqZZerQShBZvGRlQ-GYPz"
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "end_index": 109,
+              "start_index": 0,
+              "title": "aljazeera.com",
+              "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG0KdGwGBc8zKhhsObX5O02Ba55pxp9Yu6ND8RTXM8"
+            }
+          }
+        ],
+        "content": "Spain won Euro 2024, defeating England 2-1 in the final. This was Spain's fourth European Championship title.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 171,
+    "prompt_tokens": 9,
+    "total_tokens": 180
+  }
+}

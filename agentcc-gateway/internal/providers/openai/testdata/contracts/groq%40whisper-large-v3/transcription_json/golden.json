@@ -1,0 +1,7 @@
+{
+  "passthrough": {
+    "bytes": 99,
+    "content_type": "application/json"
+  },
+  "text": "Your transcribed text appears here..."
+}

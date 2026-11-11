@@ -1,0 +1,26 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Summarize the purpose of the document at https://www.rfc-editor.org/rfc/rfc9110.html in two sentences."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "urlContext": {}
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

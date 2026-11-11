@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The /v1/responses passthrough (CreateResponse): the spec's request example and 200 example verbatim. Recordable."
+}

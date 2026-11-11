@@ -1,0 +1,6 @@
+{
+  "code": "provider_INVALID_ARGUMENT",
+  "message": "API key not valid. Please pass a valid API key.",
+  "status": 400,
+  "type": "invalid_request_error"
+}

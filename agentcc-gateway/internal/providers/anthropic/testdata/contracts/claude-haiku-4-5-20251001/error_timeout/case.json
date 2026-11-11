@@ -1,0 +1,8 @@
+{
+  "status": 504,
+  "headers": {
+    "request-id": "req_011CVnAN3fZs5Te7Ph2wYz4q"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (504 timeout_error; the message is the page's description of it); request_id invented. Not recordable: nothing a client sends induces it on demand. It becomes 502 upstream_error (gap X4's fallback), which is still a 5xx."
+}

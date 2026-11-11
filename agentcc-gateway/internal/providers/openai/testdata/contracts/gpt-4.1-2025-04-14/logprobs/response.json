@@ -1,0 +1,100 @@
+{
+  "id": "chatcmpl-htLcYdQgIemM6Ryn37wO0TrWZzrCL",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "gpt-4.1-2025-04-14",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello!",
+        "refusal": null,
+        "annotations": []
+      },
+      "logprobs": {
+        "content": [
+          {
+            "token": "Hello",
+            "logprob": -0.31725305,
+            "bytes": [
+              72,
+              101,
+              108,
+              108,
+              111
+            ],
+            "top_logprobs": [
+              {
+                "token": "Hello",
+                "logprob": -0.31725305,
+                "bytes": [
+                  72,
+                  101,
+                  108,
+                  108,
+                  111
+                ]
+              },
+              {
+                "token": "Hi",
+                "logprob": -1.3190403,
+                "bytes": [
+                  72,
+                  105
+                ]
+              }
+            ]
+          },
+          {
+            "token": "!",
+            "logprob": -0.02380986,
+            "bytes": [
+              33
+            ],
+            "top_logprobs": [
+              {
+                "token": "!",
+                "logprob": -0.02380986,
+                "bytes": [
+                  33
+                ]
+              },
+              {
+                "token": " there",
+                "logprob": -3.787621,
+                "bytes": [
+                  32,
+                  116,
+                  104,
+                  101,
+                  114,
+                  101
+                ]
+              }
+            ]
+          }
+        ],
+        "refusal": null
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 2,
+    "total_tokens": 11,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "service_tier": "default",
+  "system_fingerprint": "fp_84c7637a30"
+}

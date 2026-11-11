@@ -1,0 +1,50 @@
+{
+  "data": [
+    {
+      "id": "latest",
+      "aliases": [],
+      "context_length": 131072,
+      "created": 1776556800,
+      "object": "model",
+      "owned_by": "xai",
+      "prompt_text_token_price": 12500,
+      "cached_prompt_text_token_price": 2000,
+      "prompt_image_token_price": 12500,
+      "completion_text_token_price": 25000
+    },
+    {
+      "id": "grok-420-reasoning",
+      "aliases": [],
+      "context_length": 256000,
+      "created": 1768003200,
+      "object": "model",
+      "owned_by": "xai",
+      "prompt_text_token_price": 20000,
+      "cached_prompt_text_token_price": 2000,
+      "prompt_image_token_price": 0,
+      "completion_text_token_price": 80000,
+      "prompt_text_token_price_long_context": 40000,
+      "completion_text_token_price_long_context": 160000,
+      "long_context_threshold": 128000,
+      "capabilities": {
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_reasoning_effort": "high"
+      }
+    },
+    {
+      "id": "grok-imagine-image",
+      "aliases": [],
+      "context_length": 1024,
+      "created": 1769472000,
+      "object": "model",
+      "owned_by": "xai",
+      "image_price": 200000000
+    }
+  ],
+  "object": "list"
+}

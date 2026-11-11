@@ -1,0 +1,91 @@
+{
+  "assembled": {
+    "content": "The greatest common divisor of 1071 and 462 is 21.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 214,
+      "prompt_tokens": 52,
+      "total_tokens": 266
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The greatest common divisor"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " of 1071 and 462 is 21."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 214,
+        "prompt_tokens": 52,
+        "total_tokens": 266
+      }
+    }
+  ],
+  "error": null
+}

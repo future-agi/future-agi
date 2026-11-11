@@ -1,0 +1,5 @@
+{
+  "model": "grok-4.6",
+  "input": "Say hello",
+  "stream": true
+}

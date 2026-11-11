@@ -1,0 +1,8 @@
+{
+  "model": "whisper-1",
+  "file": "audio.mp3",
+  "response_format": "verbose_json",
+  "timestamp_granularities": [
+    "segment"
+  ]
+}

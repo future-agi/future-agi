@@ -1,0 +1,10 @@
+{
+  "model": "mistral-large-latest",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say hello."
+    }
+  ],
+  "max_tokens": -1
+}

@@ -1,0 +1,6 @@
+# Provider contract-test fixtures are byte-exact: recorded bodies are kept as
+# the provider sent them (Gemini's SSE uses CRLF line endings), and goldens are
+# compared byte for byte. Never convert their line endings on checkout.
+internal/providers/*/testdata/contracts/** -text
+# Binary AWS event-stream bodies (Bedrock streaming fixtures).
+*.eventstream binary

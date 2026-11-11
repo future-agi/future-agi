@@ -1,0 +1,12 @@
+{
+  "body": {
+    "input": "What is the capital of France?",
+    "model": "mistral-large-latest"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

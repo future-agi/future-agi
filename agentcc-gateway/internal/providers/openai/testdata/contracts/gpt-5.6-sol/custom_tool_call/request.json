@@ -1,0 +1,19 @@
+{
+  "model": "gpt-5.6-sol",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Use the code_exec tool to print hello world to the console."
+    }
+  ],
+  "tools": [
+    {
+      "type": "custom",
+      "custom": {
+        "name": "code_exec",
+        "description": "Executes arbitrary python code"
+      }
+    }
+  ],
+  "reasoning_effort": "low"
+}

@@ -1,0 +1,26 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 16
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Write a short story about a lighthouse keeper."
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "f381119b22b2ba8b4b4fa3727aebf0e804ff57de3efb308aef33223a33d14b08",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/us.amazon.nova-2-lite-v1:0/converse"
+}

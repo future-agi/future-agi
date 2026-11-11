@@ -1,0 +1,11 @@
+{
+  "model": "gpt-5.5-2026-04-23",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say hello."
+    }
+  ],
+  "max_tokens": 64,
+  "stream": true
+}

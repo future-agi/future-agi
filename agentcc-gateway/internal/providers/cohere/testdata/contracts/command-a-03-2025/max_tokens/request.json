@@ -1,0 +1,10 @@
+{
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short story about a lighthouse keeper."
+    }
+  ],
+  "max_tokens": 16
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "The maximum tokens you requested exceeds the model limit of 64000. Try again with a maximum tokens value that is lower than 64000.",
+  "status": 400,
+  "type": "invalid_request_error"
+}

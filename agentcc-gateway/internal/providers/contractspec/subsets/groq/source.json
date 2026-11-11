@@ -1,0 +1,24 @@
+{
+  "provider": "groq",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/groq/groq-python/55066d94acca028c3cb74e050f2711b80ade6298/scripts/mock",
+  "repo": "groq/groq-python",
+  "path": "scripts/mock",
+  "commit": "55066d94acca028c3cb74e050f2711b80ade6298",
+  "decode": "embedded-mock",
+  "spec_version": {
+    "info.version": "2.1",
+    "openapi": "3.0.1"
+  },
+  "sha256": "21ab718c8b1374e992901eb70f3360af1f3e743908e6443f018699beac43d4d5",
+  "decoded_sha256": "372870924527dbca12a2921eec01c3d9c8a5d7023e53f7249c8508c7601a0606",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "spec embedded in an Apache-2.0 SDK; termsOfService, no licence of its own",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "embeddings",
+    "models",
+    "transcription"
+  ]
+}

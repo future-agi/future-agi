@@ -1,0 +1,8 @@
+data: {"id":"a3d1008e-4544-40d4-d075-11527e794e4a","object":"chat.completion.chunk","created":1752854522,"model":"latest","choices":[{"index":0,"delta":{"role":"assistant","content":"101 multiplied"}}],"service_tier":"default","system_fingerprint":"fp_3a7881249c"}
+
+data: {"id":"a3d1008e-4544-40d4-d075-11527e794e4a","object":"chat.completion.chunk","created":1752854522,"model":"latest","choices":[{"index":0,"delta":{"content":" by 3 is 303."}}],"service_tier":"default","system_fingerprint":"fp_3a7881249c"}
+
+data: {"id":"a3d1008e-4544-40d4-d075-11527e794e4a","object":"chat.completion.chunk","created":1752854522,"model":"latest","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"service_tier":"default","system_fingerprint":"fp_3a7881249c","usage":{"prompt_tokens":32,"completion_tokens":9,"total_tokens":135,"prompt_tokens_details":{"text_tokens":32,"audio_tokens":0,"image_tokens":0,"cached_tokens":6},"completion_tokens_details":{"reasoning_tokens":94,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0},"num_sources_used":0}}
+
+data: [DONE]
+

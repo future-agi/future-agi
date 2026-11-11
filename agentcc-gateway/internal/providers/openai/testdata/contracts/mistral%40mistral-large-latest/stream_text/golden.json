@@ -1,0 +1,81 @@
+{
+  "assembled": {
+    "content": "Comté, Roquefort and Brie de Meaux.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 9,
+      "prompt_tokens": 16,
+      "total_tokens": 25
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "cmpl-2a3b4c5d6e7f48a9b0c1d2e3f4a5b6c7",
+      "model": "mistral-large-latest",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Comté, Roquefort"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "cmpl-2a3b4c5d6e7f48a9b0c1d2e3f4a5b6c7",
+      "model": "mistral-large-latest",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and Brie de Meaux."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "cmpl-2a3b4c5d6e7f48a9b0c1d2e3f4a5b6c7",
+      "model": "mistral-large-latest",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": ""
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "cmpl-2a3b4c5d6e7f48a9b0c1d2e3f4a5b6c7",
+      "model": "mistral-large-latest",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 16,
+        "total_tokens": 25
+      }
+    }
+  ],
+  "error": null
+}

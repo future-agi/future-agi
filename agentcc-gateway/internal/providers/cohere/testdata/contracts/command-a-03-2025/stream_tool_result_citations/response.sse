@@ -1,0 +1,41 @@
+event: message-start
+data: {"id":"d93f187e-e9ac-44a9-a2d9-bdf2d65fee94","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: content-start
+data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"It's currently "}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"62°F"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" and "}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"partly cloudy"}}}}
+
+event: content-delta
+data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" in San Francisco."}}}}
+
+event: citation-start
+data: {"type":"citation-start","index":0,"delta":{"message":{"citations":{"start":15,"end":19,"text":"62°F","sources":[{"type":"tool","id":"get_weather_1byjy32y4hvq:0","tool_output":{"temperature":"62°F","conditions":"partly cloudy"}}],"content_index":0,"type":"TEXT_CONTENT"}}}}
+
+event: citation-end
+data: {"type":"citation-end","index":0}
+
+event: citation-start
+data: {"type":"citation-start","index":1,"delta":{"message":{"citations":{"start":24,"end":37,"text":"partly cloudy","sources":[{"type":"tool","id":"get_weather_1byjy32y4hvq:0","tool_output":{"temperature":"62°F","conditions":"partly cloudy"}}],"content_index":0,"type":"TEXT_CONTENT"}}}}
+
+event: citation-end
+data: {"type":"citation-end","index":1}
+
+event: content-end
+data: {"type":"content-end","index":0}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":87,"output_tokens":19},"tokens":{"input_tokens":1061,"output_tokens":85},"cached_tokens":0}}}
+
+data: [DONE]
+

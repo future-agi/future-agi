@@ -1,0 +1,16 @@
+{
+  "body": {
+    "input": "How much wood would a woodchuck chuck?",
+    "model": "gpt-6-sol",
+    "reasoning": {
+      "effort": "high",
+      "summary": "auto"
+    }
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

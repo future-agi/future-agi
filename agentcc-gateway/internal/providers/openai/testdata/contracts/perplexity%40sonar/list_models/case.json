@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /v1/models (ListModels): the SDK integration test's catalog body verbatim (see meta.json). Recordable."
+}

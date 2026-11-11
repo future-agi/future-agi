@@ -1,0 +1,5 @@
+{
+  "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+  "input": "Write a 20-word poem about a sunflower, one word at a time.",
+  "stream": true
+}

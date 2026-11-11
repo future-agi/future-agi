@@ -1,0 +1,104 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28. ai.google.dev and docs.cloud.google.com were blocked by this session's network policy, so the field names and enums come from the machine-readable form of the official REST reference (ai.google.dev/api/generate-content): the generativelanguage v1beta discovery document, revision 20261028 (GenerateContentResponse, Candidate, Part, UsageMetadata, GroundingMetadata, UrlContextMetadata, PromptFeedback, SafetyRating, FinishReason). Body layout (key order, index, responseId, modelVersion, promptTokensDetails, groundingMetadata contents) follows the recorded outputs in the official google-gemini/cookbook (quickstarts/rest/Search_Grounding, Batch_mode, Audio_REST); the stream framing, mid-stream error chunk and continuation protocol follow the official googleapis/go-genai SDK (api_client.go scan / iterateResponseStream, continuation.go). Model behaviour comes from search excerpts of the ai.google.dev pages named per model below; read them directly before trusting a detail they alone support. Ids, signatures, continuation tokens, token counts and text are invented. SSE bodies are data-only (alt=sse) with CRLF line endings; go-genai's splitter accepts CRLF and LF, so a recording will settle which the API sends. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Model: Gemini 3.8 Flash, the thinking model (ai.google.dev/gemini-api/docs/whats-new-gemini-3.8, docs/generate-content/thinking, docs/generate-content/thought-signatures, docs/gemini-3). Thinking levels low / medium (default) / high, no minimal; it thinks on every request, so thoughtsTokenCount is always present, and thought summary parts (thought: true) appear only with includeThoughts, which the gateway sets when reasoning_effort is passed. Signatures ride on the first functionCall part (parallel calls after it have none) and on the last part of a non-function-call answer; when streaming, on an empty text part in the final chunk. No long decode: that is Gemini 4 Argon only (docs/generate-content/long-decode). Also covers google_search grounding (groundingMetadata laid out as in the cookbook's recorded Search_Grounding output) and url_context (urlContextMetadata, toolUsePromptTokenCount; docs/url-context) and code_execution (executableCode / codeExecutionResult parts between text parts; docs/code-execution and the cookbook's Code_Execution notebook). Error, native and non-chat cases (added 2026-10-28): error_* and stream_error_* follow Google's error model (google.rpc.Status in its HTTP JSON mapping, googleapis google/rpc/code.proto, error_details.proto, google/api/error_reason.proto), the 429 body is a real one captured in google-gemini/gemini-cli's tests; each case.json names its sources and whether a real request can induce it. genai_* and stream_genai_* drive the native google-genai passthrough (GenerateContent / StreamGenerateContent, GenAICountTokens) and pin what the server bills from the relayed body; list_models pins that ListModels never calls GET /v1beta/models.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.candidates[].content.parts[].codeExecutionResult",
+      "reason": "known gap G10: code_execution is forwarded to Gemini (geminiServerTools) but the executableCode and codeExecutionResult parts it produces are dropped; the caller gets the final text without the code that was run or its output, and cannot replay the turn"
+    },
+    {
+      "path": "$.candidates[].content.parts[].executableCode",
+      "reason": "known gap G10: code_execution is forwarded to Gemini (geminiServerTools) but the executableCode and codeExecutionResult parts it produces are dropped; the caller gets the final text without the code that was run or its output, and cannot replay the turn"
+    },
+    {
+      "path": "$.candidates[].groundingMetadata.groundingSupports",
+      "reason": "known gap G7: which span of the answer each source supports (segment offsets, chunk indices, confidence) is dropped; every url_citation spans the whole answer (groundingAnnotations), and the stream path drops the sources entirely (see unknown_block:groundingMetadata)"
+    },
+    {
+      "path": "$.candidates[].groundingMetadata.retrievalMetadata",
+      "reason": "no canonical field: retrievalMetadata only carries googleSearchDynamicRetrievalScore, populated by the googleSearchRetrieval dynamic threshold, and is empty for google_search"
+    },
+    {
+      "path": "$.candidates[].groundingMetadata.searchEntryPoint",
+      "reason": "known gap G7: the Google Search suggestions widget (searchEntryPoint.renderedContent) is dropped; Grounding with Google Search requires applications to display the search suggestions with grounded answers, so a client of the gateway cannot comply"
+    },
+    {
+      "path": "$.candidates[].groundingMetadata.webSearchQueries",
+      "reason": "known gap G7: the search queries the model ran are dropped; they back the search suggestions and show what the answer was grounded on"
+    },
+    {
+      "path": "$.candidates[].urlContextMetadata",
+      "reason": "known gap G8: url_context retrieval status per URL (SUCCESS / ERROR / PAYWALL / UNSAFE) is dropped, so a caller cannot tell whether the model actually read the page it was given"
+    },
+    {
+      "path": "$.responseId",
+      "reason": "known gap G12: Gemini's responseId is dropped and the canonical id is a gateway-generated gen-<nanos>, so a response cannot be traced back to Google (support cases, logs)"
+    },
+    {
+      "path": "$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality prompt token breakdown (TEXT / IMAGE / AUDIO / VIDEO / DOCUMENT) is dropped; Gemini prices audio input above text and OpenAI's prompt_tokens_details.audio_tokens has a slot for it, so audio prompts are costed as text"
+    },
+    {
+      "path": "$.usageMetadata.toolUsePromptTokenCount",
+      "reason": "known gap G9: tokens of tool results fed back to the model (here the fetched page, billed as input) are not added to prompt_tokens, so usage and cost under-count the request (here by over 300x) and total_tokens no longer equals prompt + completion (see the case's case.json sanity_gaps)"
+    },
+    {
+      "path": "$.usageMetadata.toolUsePromptTokensDetails",
+      "reason": "known gap G9: the per-modality breakdown of toolUsePromptTokenCount is dropped with it"
+    },
+    {
+      "path": "error:$.error.details",
+      "reason": "known gap G19: error.details is dropped (geminiErrorDetail has code, message and status only): RetryInfo.retryDelay, so a 429 carries no retry hint and the gateway retries on its own schedule; ErrorInfo.reason (API_KEY_INVALID, SERVICE_DISABLED, IAM_PERMISSION_DENIED, ACCESS_TOKEN_EXPIRED), so a failure of the gateway's own credential or project cannot be told from the client's mistake; QuotaFailure (which quota, which limit), BadRequest field violations and Help links"
+    },
+    {
+      "path": "genai:$.usageMetadata.cacheTokensDetails",
+      "reason": "known gap G18: native GenAI billing (genaifmt.ExtractUsageMetadata, applyGenAIUsage) ignores cachedContentTokenCount, so cached prompt tokens, which promptTokenCount includes, are billed at the full input rate instead of the cached rate"
+    },
+    {
+      "path": "genai:$.usageMetadata.cachedContentTokenCount",
+      "reason": "known gap G18: native GenAI billing (genaifmt.ExtractUsageMetadata, applyGenAIUsage) ignores cachedContentTokenCount, so cached prompt tokens, which promptTokenCount includes, are billed at the full input rate instead of the cached rate"
+    },
+    {
+      "path": "genai:$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: native GenAI billing ignores the per-modality prompt breakdown, so audio and image input are priced as text"
+    },
+    {
+      "path": "genai:$.usageMetadata.serviceTier",
+      "reason": "known gap G25: native GenAI billing ignores usageMetadata.serviceTier, so a flex (discounted) or priority (premium) request is priced at the standard rate"
+    },
+    {
+      "path": "genai:$.usageMetadata.toolUsePromptTokenCount",
+      "reason": "known gap G18: native GenAI billing ignores toolUsePromptTokenCount, the tool results (fetched pages, search results) Google bills as input, which promptTokenCount does not include: those tokens are never billed"
+    },
+    {
+      "path": "genai:$.usageMetadata.toolUsePromptTokensDetails",
+      "reason": "known gap G18: native GenAI billing ignores toolUsePromptTokenCount, the tool results (fetched pages, search results) Google bills as input, which promptTokenCount does not include: those tokens are never billed"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "codeExecutionResult",
+      "reason": "known gap G10: code_execution is forwarded to Gemini (geminiServerTools) but the executableCode and codeExecutionResult parts it produces are dropped; the caller gets the final text without the code that was run or its output, and cannot replay the turn"
+    },
+    {
+      "kind": "unknown_block",
+      "value": "executableCode",
+      "reason": "known gap G10: code_execution is forwarded to Gemini (geminiServerTools) but the executableCode and codeExecutionResult parts it produces are dropped; the caller gets the final text without the code that was run or its output, and cannot replay the turn"
+    },
+    {
+      "kind": "unknown_block",
+      "value": "groundingMetadata",
+      "reason": "known gap G6: the stream parser drops groundingMetadata, so a streamed grounded answer carries no url_citation annotations; the non-stream path has them"
+    }
+  ],
+  "allowed_type_mismatches": [
+    {
+      "path": "error_array:$",
+      "reason": "known gap G21: an error body wrapped in a one-element JSON array (the framing python-genai's APIError unwraps) does not decode into geminiErrorResponse, so parseGeminiError falls back to a 502 whose message is the raw body: a 429 is retried at once and fails over"
+    }
+  ]
+}

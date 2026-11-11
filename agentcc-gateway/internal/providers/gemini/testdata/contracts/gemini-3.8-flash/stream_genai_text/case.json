@@ -1,0 +1,4 @@
+{
+  "endpoint": "genai_generate",
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). Streamed with streamGenerateContent?alt=sse: usageMetadata repeats on every chunk and the last carries the final counts; the signature rides on an empty text part in the final chunk (ai.google.dev/gemini-api/docs/thought-signatures)."
+}

@@ -1,0 +1,11 @@
+{
+  "recordable": false,
+  "sanity_gaps": [
+    {
+      "failure": "became 502",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError cannot decode any OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and the client gets the raw body as the message"
+    }
+  ],
+  "status": 402,
+  "notes": "The 402 (PaymentRequiredResponse) example of POST /chat/completions verbatim. Needs an account without credits."
+}

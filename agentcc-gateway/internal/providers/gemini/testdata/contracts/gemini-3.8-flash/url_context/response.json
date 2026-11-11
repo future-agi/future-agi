@@ -1,0 +1,46 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "RFC 9110 defines the semantics of HTTP: the architecture, terminology, request methods, status codes and header fields shared by every HTTP version. It obsoletes the earlier HTTP/1.1 semantics documents so that HTTP/1.1, HTTP/2 and HTTP/3 build on one common definition.",
+            "thoughtSignature": "MlxTCVnJBfzlcH70GOITPPVXqAwBNWMl11jlWil8mvsRb3IPpQNMl1l9/f/MTDYsv5uFKbehsKnB+wKYRqiG72o/dQigWM6aTdvBRogxXaczrhgTLPQUB51J3eAq5bBq"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "urlContextMetadata": {
+        "urlMetadata": [
+          {
+            "retrievedUrl": "https://www.rfc-editor.org/rfc/rfc9110.html",
+            "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 31,
+    "candidatesTokenCount": 58,
+    "toolUsePromptTokenCount": 9634,
+    "thoughtsTokenCount": 233,
+    "totalTokenCount": 9956,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 31
+      }
+    ],
+    "toolUsePromptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 9634
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "9REJKmnuI8oAtT1kfkHtIFA"
+}

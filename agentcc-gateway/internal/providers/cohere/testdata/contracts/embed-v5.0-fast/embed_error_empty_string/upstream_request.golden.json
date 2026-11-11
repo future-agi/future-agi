@@ -1,0 +1,18 @@
+{
+  "body": {
+    "embedding_types": [
+      "float"
+    ],
+    "input_type": "search_document",
+    "model": "embed-v5.0-fast",
+    "texts": [
+      ""
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/embed"
+}

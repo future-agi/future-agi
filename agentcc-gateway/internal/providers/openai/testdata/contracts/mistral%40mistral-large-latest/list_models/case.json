@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /v1/models (ListModels): ModelList with one BaseModelCard (see meta.json). Filed under mistral-large-latest because the request names no model. Recordable."
+}

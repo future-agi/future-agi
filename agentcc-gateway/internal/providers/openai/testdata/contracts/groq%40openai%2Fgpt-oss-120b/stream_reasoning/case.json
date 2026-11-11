@@ -1,0 +1,8 @@
+{
+  "sanity_gaps": [
+    {
+      "failure": "usage is missing",
+      "reason": "known gap GQ3: Groq streams usage under x_groq.usage, which reaches the client through StreamChunk.Extra but never becomes StreamChunk.Usage, so the gateway's own accounting sees none"
+    }
+  ]
+}

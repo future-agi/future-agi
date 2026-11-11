@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28): POST /v2/embed (EmbedByTypeResponse, ApiMeta, EmbeddingType) and its example for embed-v5.0-fast (texts hello and goodbye, meta with api_version, warnings and billed_units), each vector cut to its first 8 values. Drives CreateEmbedding. Recordable."
+}

@@ -1,0 +1,48 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "**Fetching both cities**\n\nI need the current weather for Paris and for Tokyo; the two lookups are independent, so I'll request them together.",
+            "thought": true
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Paris, France"
+              }
+            },
+            "thoughtSignature": "ac1r+7rHlOic8GSQNbsdobMiInRpaUSQRLmMatbfQI+fPPldHOKfbr09+MJaFh54FKtdTWjgbCSj2Vd4MRDjlUS1o+HclYGsTFhAZlhojGNtEEYohUBITCmKpA7D/U3e"
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Tokyo, Japan"
+              }
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 71,
+    "candidatesTokenCount": 34,
+    "thoughtsTokenCount": 96,
+    "totalTokenCount": 201,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 71
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "vFEdLDvoQkCmpu74RfT53F8"
+}

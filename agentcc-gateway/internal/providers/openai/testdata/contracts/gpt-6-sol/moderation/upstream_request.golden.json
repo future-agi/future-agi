@@ -1,0 +1,20 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Summarise the plot of Macbeth in two sentences.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-6-sol",
+    "moderation": {
+      "model": "omni-moderation-latest"
+    }
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

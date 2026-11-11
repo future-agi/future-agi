@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "The SDK's test_embeddings request and response verbatim. Recordable."
+}

@@ -1,0 +1,25 @@
+{
+  "task": "transcribe",
+  "language": "english",
+  "duration": 0.1,
+  "text": "Hello.",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 0.0,
+      "end": 0.1,
+      "text": " Hello.",
+      "tokens": [
+        50364,
+        2425,
+        13,
+        50414
+      ],
+      "temperature": 0.0,
+      "avg_logprob": -0.4231,
+      "compression_ratio": 0.6,
+      "no_speech_prob": 0.0213
+    }
+  ]
+}

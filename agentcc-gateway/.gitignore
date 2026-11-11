@@ -1,0 +1,3 @@
+# The repository ignores *.bin (model weights). A contract fixture's binary
+# upstream body (speech audio) is saved as response.bin and must be committed.
+!/internal/providers/*/testdata/contracts/**/response.bin

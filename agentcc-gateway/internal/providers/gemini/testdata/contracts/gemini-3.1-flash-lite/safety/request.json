@@ -1,0 +1,9 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explain exactly how to pick the lock on my neighbour's front door while they are away."
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "assembled": {
+    "content": "The letter **r** appears three times in \"strawberry\".",
+    "finish_reason": "stop",
+    "reasoning_content": "**Counting the letters**\n\nSpelling it out: s-t-r-a-w-b-e-r-r-y. The r's are at positions 3, 8 and 9.",
+    "usage": {
+      "completion_tokens": 225,
+      "prompt_tokens": 16,
+      "total_tokens": 241
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "reasoning_content": "**Counting the letters**\n\nSpelling it out: s-t-r-a-w-b-e-r-r-y. The r's are at positions 3, 8 and 9."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 212,
+        "prompt_tokens": 16,
+        "total_tokens": 228
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The letter **r** appears"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 217,
+        "prompt_tokens": 16,
+        "total_tokens": 233
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " three times in \"strawberry\"."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 225,
+        "prompt_tokens": 16,
+        "total_tokens": 241
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 225,
+        "prompt_tokens": 16,
+        "total_tokens": 241
+      }
+    }
+  ],
+  "error": null
+}

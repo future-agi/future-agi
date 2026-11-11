@@ -1,0 +1,56 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockStart",
+    "payload": {
+      "start": {
+        "toolUse": {
+          "toolUseId": "tooluse_9bXr2TqLQ0eZk4Hn7sVw5g",
+          "name": "get_weather"
+        }
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "toolUse": {
+          "input": "{\"location\":\"San Francisco, CA\"}"
+        }
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "tool_use"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 431,
+        "outputTokens": 41,
+        "totalTokens": 472
+      },
+      "metrics": {
+        "latencyMs": 688
+      }
+    }
+  }
+]

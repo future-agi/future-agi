@@ -1,0 +1,165 @@
+{
+  "provider": "xai",
+  "note": "The xai preset's spec (contractspec/subsets/xai) against what the openai adapter decodes; see spec_allowlist.json for the official API. Its contract fixtures are the xai@<model> directories under testdata/contracts. Its responses subset is checked elsewhere: the /v1/responses passthrough relays xAI's body (presetSpecRoots).",
+  "unmapped": [
+    {
+      "subset": "xai/chat",
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation"
+    },
+    {
+      "subset": "xai/chat",
+      "path": "$.choices[].message.tool_calls[].index",
+      "reason": "no canonical field: the call's position, which its place in tool_calls already gives"
+    },
+    {
+      "subset": "xai/chat_stream",
+      "path": "chunk:$.choices[].delta.images",
+      "reason": "known gap XA7: images an image-output model streams (delta.images) are dropped; models.Delta has no slot, so an image generated in a streamed chat never reaches the client"
+    },
+    {
+      "subset": "xai/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.data[].file_output",
+      "reason": "known gap XA5: xAI's image metadata is dropped: models.ImageData has no field for mime_type, file_output (the file xAI stored the image as: its id, name and public URL with their expiry) or storage_error, so the client cannot tell the image's format or reach the stored file"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.data[].mime_type",
+      "reason": "known gap XA5: xAI's image metadata is dropped: models.ImageData has no field for mime_type, file_output (the file xAI stored the image as: its id, name and public URL with their expiry) or storage_error, so the client cannot tell the image's format or reach the stored file"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.data[].storage_error",
+      "reason": "known gap XA5: xAI's image metadata is dropped: models.ImageData has no field for mime_type, file_output (the file xAI stored the image as: its id, name and public URL with their expiry) or storage_error, so the client cannot tell the image's format or reach the stored file"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.usage.cost_in_usd_ticks",
+      "reason": "known gap XA6: xAI's image usage cost_in_usd_ticks (what xAI charged) and input_tokens_details.cached_tokens are dropped: models.ImageUsage has no field for either, so the client loses the charge and cached prompt tokens cannot be priced at the cached rate"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.usage.input_tokens_details.cached_tokens",
+      "reason": "known gap XA6: xAI's image usage cost_in_usd_ticks (what xAI charged) and input_tokens_details.cached_tokens are dropped: models.ImageUsage has no field for either, so the client loses the charge and cached prompt tokens cannot be priced at the cached rate"
+    },
+    {
+      "subset": "xai/images",
+      "path": "$.usage.output_tokens_details",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].aliases",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].cached_prompt_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].cached_prompt_text_token_price_long_context",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].capabilities",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].completion_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].completion_text_token_price_long_context",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].context_length",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].image_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].long_context_threshold",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].pricing",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].prompt_image_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].prompt_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "xai/models",
+      "path": "$.data[].prompt_text_token_price_long_context",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token and per-image prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "xai/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "xai/chat",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/chat",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/chat_stream",
+      "path": "chunk:$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/chat_stream",
+      "path": "chunk:$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/completions",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/completions",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "xai/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [],
+  "events": []
+}

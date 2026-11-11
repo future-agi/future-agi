@@ -1,0 +1,14 @@
+{
+  "provider": "openai",
+  "model": "gpt-4o-mini-transcribe-2025-12-15",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /audio/transcriptions: CreateTranscriptionResponseJson (text, usage of type \"tokens\") and the operation's \"Default\" example verbatim but for the model (the dated gpt-4o-mini-transcribe snapshot). The adapter lifts text and passes the body through. Requests carry the uploaded file's name (\"file\"); the test uploads placeholder bytes, so a recording needs real audio. Not covered: streaming transcription (transcript.text.delta / .done events), because models.TranscriptionRequest has no stream field (gap O22): a request.json with \"stream\" would also be read as a chat stream case by the harness.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.usage",
+      "reason": "known gap O18: the upstream usage is ignored; the server prices transcription and translation from the uploaded WAV's duration (server/handlers_audio.go), so token-billed gpt-4o-*-transcribe models are priced by the wrong unit and non-WAV uploads go unpriced. The body still reaches the client unchanged"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,7 @@
+{
+  "passthrough": {
+    "bytes": 211,
+    "content_type": "application/json"
+  },
+  "text": "Hello, this is a test of OpenAI speech-to-text transcription."
+}

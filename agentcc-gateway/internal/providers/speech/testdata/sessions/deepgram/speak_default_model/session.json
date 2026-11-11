@@ -1,0 +1,32 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v1/speak without model, whose default is aura-asteria-en",
+  "path": "/v1/speak",
+  "query": "encoding=linear16&sample_rate=24000",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "messages": [
+    {
+      "json": {
+        "type": "Speak",
+        "text": "Hello, how can I help you today?"
+      }
+    },
+    {
+      "json": {
+        "type": "Flush"
+      }
+    },
+    {
+      "json": {
+        "type": "Close"
+      }
+    }
+  ],
+  "sanity_gaps": [
+    {
+      "failure": "deepgram synthesizes with aura-asteria-en",
+      "reason": "known gap DG1: /v1/speak without a model query runs Deepgram's default aura-asteria-en, but the session records no model or voice, so its characters cannot be priced"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "id": "3f1c2a9e-7b4d-4e0a-9c55-2d8e6b1f0a47",
+  "model": "sonar",
+  "created": 1793170512,
+  "usage": {
+    "prompt_tokens": 17,
+    "completion_tokens": 31,
+    "total_tokens": 48,
+    "search_context_size": "low",
+    "cost": {
+      "input_tokens_cost": 0.0,
+      "output_tokens_cost": 0.0,
+      "request_cost": 0.005,
+      "total_cost": 0.005
+    }
+  },
+  "citations": [
+    "https://science.nasa.gov/mission/webb/",
+    "https://www.esa.int/Science_Exploration/Space_Science/Webb"
+  ],
+  "search_results": [
+    {
+      "title": "James Webb Space Telescope - NASA Science",
+      "url": "https://science.nasa.gov/mission/webb/",
+      "date": "2021-12-25",
+      "last_updated": "2026-09-30",
+      "snippet": "Webb launched on Dec. 25th 2021 on an Ariane 5 rocket from Europe's Spaceport in French Guiana.",
+      "source": "web"
+    },
+    {
+      "title": "ESA - Webb",
+      "url": "https://www.esa.int/Science_Exploration/Space_Science/Webb",
+      "date": "2022-01-24",
+      "last_updated": "2026-07-14",
+      "snippet": "The James Webb Space Telescope lifted off on an Ariane 5 from Europe's Spaceport in Kourou.",
+      "source": "web"
+    }
+  ],
+  "object": "chat.completion",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "The James Webb Space Telescope launched on 25 December 2021 on an Ariane 5 rocket from Kourou, French Guiana[1][2]."
+      },
+      "delta": {
+        "role": "assistant",
+        "content": ""
+      }
+    }
+  ]
+}

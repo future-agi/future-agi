@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "provider": "bedrock",
+  "root": "invoke_stream",
+  "format": "smithy",
+  "select": "operation com.amazonaws.bedrockruntime#InvokeModelWithResponseStream -> output com.amazonaws.bedrockruntime#InvokeModelWithResponseStreamResponse (httpPayload body -> com.amazonaws.bedrockruntime#ResponseStream), events",
+  "description": "InvokeModelWithResponseStream event stream: chunk{bytes} carries a base64 model-native event (Anthropic MessageStreamEvent for Claude)",
+  "events": ["chunk","internalServerException","modelStreamErrorException","modelTimeoutException","serviceUnavailableException","throttlingException","validationException"],
+  "exception_events": ["internalServerException","modelStreamErrorException","modelTimeoutException","serviceUnavailableException","throttlingException","validationException"],
+  "paths": {
+    "chunk:$": {"kinds":["object"]},
+    "chunk:$.bytes": {"kinds":["blob"]},
+    "internalServerException:$": {"kinds":["object"]},
+    "internalServerException:$.message": {"kinds":["string"]},
+    "modelStreamErrorException:$": {"kinds":["object"]},
+    "modelStreamErrorException:$.message": {"kinds":["string"]},
+    "modelStreamErrorException:$.originalMessage": {"kinds":["string"]},
+    "modelStreamErrorException:$.originalStatusCode": {"kinds":["integer"]},
+    "modelTimeoutException:$": {"kinds":["object"]},
+    "modelTimeoutException:$.message": {"kinds":["string"]},
+    "serviceUnavailableException:$": {"kinds":["object"]},
+    "serviceUnavailableException:$.message": {"kinds":["string"]},
+    "throttlingException:$": {"kinds":["object"]},
+    "throttlingException:$.message": {"kinds":["string"]},
+    "validationException:$": {"kinds":["object"]},
+    "validationException:$.message": {"kinds":["string"]}
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "model": "gpt-4o-transcribe",
+  "file": "audio.mp3",
+  "response_format": "json"
+}

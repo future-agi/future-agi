@@ -1,0 +1,18 @@
+{
+  "body": {
+    "max_completion_tokens": 5,
+    "messages": [
+      {
+        "content": "Write a haiku about the sea.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

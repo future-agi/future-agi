@@ -1,0 +1,11 @@
+{
+  "model": "voxtral-mini-latest",
+  "text": "The beach was a popular spot on a hot summer day.",
+  "language": "en",
+  "usage": {
+    "prompt_audio_seconds": 4,
+    "prompt_tokens": 52,
+    "completion_tokens": 12,
+    "total_tokens": 64
+  }
+}

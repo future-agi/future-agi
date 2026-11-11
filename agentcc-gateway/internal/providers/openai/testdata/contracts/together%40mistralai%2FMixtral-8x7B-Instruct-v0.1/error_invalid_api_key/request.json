@@ -1,0 +1,5 @@
+{
+  "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+  "prompt": "<s>[INST] What is the capital of France? [/INST]",
+  "max_tokens": 32
+}

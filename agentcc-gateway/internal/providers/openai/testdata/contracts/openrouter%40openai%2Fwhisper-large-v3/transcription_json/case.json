@@ -1,0 +1,4 @@
+{
+  "endpoint": "transcription",
+  "notes": "The spec's multipart example and 200 example. Recordable with real audio. The upload, audio.mp3, is the suite's 3.2 s of English speech (\"The beach was a popular spot on a hot summer day.\"), generated with espeak-ng 1.51 and encoded with ffmpeg (see whisper-1's cases): synthetic, so free of licence terms."
+}

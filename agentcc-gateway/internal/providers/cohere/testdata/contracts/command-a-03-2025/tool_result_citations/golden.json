@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "It's currently 62°F and partly cloudy in San Francisco.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "e8f9afc1-0888-46f0-a9ed-eb0e5a51e17f",
+  "model": "command-a-03-2025",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 85,
+    "prompt_tokens": 1061,
+    "total_tokens": 1146
+  }
+}

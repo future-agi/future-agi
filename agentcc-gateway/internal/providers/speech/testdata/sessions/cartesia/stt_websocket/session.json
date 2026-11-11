@@ -1,0 +1,22 @@
+{
+  "source": "Cartesia Python SDK (github.com/cartesia-ai/cartesia-python at 3cb04193): /stt/websocket as src/cartesia/resources/stt/manual_finalize.py opens it (query encoding, model, sample_rate, language) and examples/examples.py stt_manual_finalize_websocket drives it: 100 ms pcm_s16le frames, then the text commands finalize and close",
+  "path": "/stt/websocket",
+  "query": "encoding=pcm_s16le&model=ink-2&sample_rate=16000&language=en",
+  "headers": {
+    "Authorization": "Bearer gateway-key",
+    "Cartesia-Version": "2026-08-14"
+  },
+  "messages": [
+    {
+      "binary": 3200,
+      "repeat": 10
+    },
+    {
+      "text": "finalize"
+    },
+    {
+      "text": "close"
+    }
+  ],
+  "notes": "One second of mono 16 kHz pcm_s16le; the text commands are not metered."
+}

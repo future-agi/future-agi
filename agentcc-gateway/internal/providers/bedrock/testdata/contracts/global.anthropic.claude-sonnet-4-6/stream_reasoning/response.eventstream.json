@@ -1,0 +1,92 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "reasoningContent": {
+          "text": "Use the Euclidean algorithm. 1071 = 2 × 462 + 147."
+        }
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "reasoningContent": {
+          "text": " 462 = 3 × 147 + 21. 147 = 7 × 21 + 0. The last non-zero remainder is 21."
+        }
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "reasoningContent": {
+          "signature": "EuUBCkgIDBACGAIqQFq1wE9rT3yU7iO2pA6sD0fG4hJ8kL3zX7cV1bN5mQ9wE2rT6yU0iO4pA8sD3fG7hJ1kL5zX9cV2bN6mQ0wEhwSDCo8mN2bV6cX0zL4kJ8hGgy7fD1sA5pO9iU3yT2rE6wQ0aS4dF8gH1jK5lZ9xC3vB7nM2qW6eR0tY4uI8oP3aS7dF1gH5jK9lZ2xC6vB0nM4qW8eR3tY7uI1oP5aS9dF2gH6jK0lZ4xC8vB1nM5qW9eR"
+        }
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "The greatest common divisor"
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": " of 1071 and 462 is 21."
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "end_turn"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 52,
+        "outputTokens": 214,
+        "totalTokens": 266,
+        "cacheReadInputTokens": 0,
+        "cacheWriteInputTokens": 0
+      },
+      "metrics": {
+        "latencyMs": 4105
+      }
+    }
+  }
+]

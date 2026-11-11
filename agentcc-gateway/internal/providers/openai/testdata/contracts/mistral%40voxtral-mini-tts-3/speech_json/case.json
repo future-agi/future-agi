@@ -1,0 +1,15 @@
+{
+  "endpoint": "speech",
+  "content_type": "application/json",
+  "notes": "SpeechResponse, the application/json 200 (see meta.json); request.json names the voice as Mistral does (voice_id). Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "the speech body is application/json, not audio",
+      "reason": "known gap MI4: Mistral's speech answer is JSON, {\"audio_data\": \"<base64>\"} (SpeechResponse), not the audio bytes OpenAI returns; CreateSpeech passes the body and its application/json Content-Type through, so a client expecting OpenAI's audio stream gets a JSON document it cannot play, and the gateway cannot meter the audio"
+    },
+    {
+      "failure": "request.json key \"voice_id\" is not in the upstream request",
+      "reason": "known gap MI5: Mistral's voice_id (the preset or custom voice to speak with) is dropped: models.SpeechRequest has OpenAI's voice, which Mistral's SpeechRequest does not define, and no voice_id, so the voice a client asks for never reaches Mistral"
+    }
+  ]
+}

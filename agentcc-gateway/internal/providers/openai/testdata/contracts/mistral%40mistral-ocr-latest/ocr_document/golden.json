@@ -1,0 +1,24 @@
+{
+  "model": "mistral-ocr-2505-completion",
+  "object": "",
+  "pages": [
+    {
+      "dimensions": {
+        "dpi": 200,
+        "height": 2200,
+        "width": 1700
+      },
+      "images": [
+        {
+          "image_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP////8="
+        }
+      ],
+      "index": 0,
+      "markdown": "# LEARNING TO REASON\n\n![img-0.jpeg](img-0.jpeg)\n\nWe study ..."
+    }
+  ],
+  "usage_info": {
+    "doc_size_bytes": 634181,
+    "pages_processed": 1
+  }
+}

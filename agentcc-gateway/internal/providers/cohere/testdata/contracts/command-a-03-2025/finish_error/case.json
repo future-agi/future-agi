@@ -1,0 +1,10 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28): ChatResponseV2 with finish_reason ERROR (ChatFinishReason: \"The generation failed due to an internal error\"); text, id and token counts invented. Not recordable: nothing a client sends induces it.",
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason is ERROR",
+      "reason": "known gap K7: lookupCohereFinishReason maps ERROR to \"stop\" as a known reason, so a generation Cohere reports as failed reaches the client, the request log and the router as a normal completion, and nothing is reported"
+    }
+  ]
+}

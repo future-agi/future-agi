@@ -1,0 +1,5 @@
+{
+  "endpoint": "speech",
+  "content_type": "audio/pcm",
+  "notes": "The spec's request example; audio/pcm, the content type the 200 description gives for pcm. Recordable."
+}

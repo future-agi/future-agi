@@ -1,0 +1,11 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Name three primary colors."
+    }
+  ],
+  "max_tokens": 256,
+  "stream": true
+}

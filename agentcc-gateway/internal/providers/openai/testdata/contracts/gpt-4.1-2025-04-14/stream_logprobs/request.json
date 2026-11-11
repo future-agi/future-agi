@@ -1,0 +1,14 @@
+{
+  "model": "gpt-4.1-2025-04-14",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say foo"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "logprobs": true
+}

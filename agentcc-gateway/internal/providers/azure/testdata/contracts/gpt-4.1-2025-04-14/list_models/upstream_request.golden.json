@@ -1,0 +1,9 @@
+{
+  "body": "",
+  "headers": {
+    "api-key": "REDACTED"
+  },
+  "method": "GET",
+  "path": "/openai/models",
+  "query": "api-version=2024-10-21"
+}

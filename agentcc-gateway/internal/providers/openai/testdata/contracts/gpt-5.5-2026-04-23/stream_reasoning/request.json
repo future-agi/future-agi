@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5.5-2026-04-23",
+  "messages": [
+    {
+      "role": "developer",
+      "content": "Answer concisely."
+    },
+    {
+      "role": "user",
+      "content": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "reasoning_effort": "high"
+}

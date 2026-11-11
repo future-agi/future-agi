@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "embedding": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "index": 0,
+      "object": "embedding"
+    }
+  ],
+  "model": "mistral-embed",
+  "object": "list",
+  "usage": {
+    "prompt_tokens": 10,
+    "total_tokens": 10
+  }
+}

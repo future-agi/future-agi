@@ -1,0 +1,10 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Name the three primary colors of light."
+    }
+  ],
+  "stream": true
+}

@@ -1,0 +1,54 @@
+{
+  "assembled": {
+    "content": "Hello",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": null
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "e3c8a1f5-4b2d-4e97-8a6c-1d5f9b3e7c20",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "e3c8a1f5-4b2d-4e97-8a6c-1d5f9b3e7c20",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "e3c8a1f5-4b2d-4e97-8a6c-1d5f9b3e7c20",
+      "model": "command-a-03-2025",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "error": null
+}

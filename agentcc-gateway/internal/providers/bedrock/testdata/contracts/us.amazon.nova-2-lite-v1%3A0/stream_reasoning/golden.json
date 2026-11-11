@@ -1,0 +1,91 @@
+{
+  "assembled": {
+    "content": "The greatest common divisor of 1071 and 462 is 21.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 356,
+      "prompt_tokens": 23,
+      "total_tokens": 379
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The greatest common divisor"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " of 1071 and 462 is 21."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 356,
+        "prompt_tokens": 23,
+        "total_tokens": 379
+      }
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,17 @@
+{
+  "upstream": {
+    "header": {
+      "Authorization": [
+        "Token platform-key"
+      ]
+    },
+    "kind": "synthesis",
+    "url": "wss://api.deepgram.com/v1/speak?encoding=linear16&sample_rate=24000"
+  },
+  "usage": {
+    "audio_seconds": 0,
+    "characters": 32,
+    "model": "",
+    "voice": ""
+  }
+}

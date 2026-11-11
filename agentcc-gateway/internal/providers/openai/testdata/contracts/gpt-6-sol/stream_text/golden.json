@@ -1,0 +1,201 @@
+{
+  "assembled": {
+    "content": "Hello! How can I assist you today?",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 10,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 19,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 29
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "MA45zLr6D5fxoq",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello!"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "5TVv5bHDYja",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " How"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "Ni",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " can"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "xVXZNsfCe",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " I"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "vw",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " assist"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "OGSpYT0nGP8Wnf",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " you"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "hB2V",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " today?"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "RzSWBktsCrS",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "H0ztMS2fYoPYy",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "chatcmpl-123",
+      "model": "gpt-6-sol",
+      "obfuscation": "uowrs94hBiOze",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_44709d6fcb",
+      "usage": {
+        "completion_tokens": 10,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0
+        },
+        "prompt_tokens": 19,
+        "prompt_tokens_details": {
+          "audio_tokens": 0,
+          "cached_tokens": 0
+        },
+        "total_tokens": 29
+      }
+    }
+  ],
+  "error": null
+}

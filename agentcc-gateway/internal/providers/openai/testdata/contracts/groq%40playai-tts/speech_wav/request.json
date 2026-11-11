@@ -1,0 +1,6 @@
+{
+  "model": "playai-tts",
+  "input": "I love building and shipping new features for our users!",
+  "voice": "Fritz-PlayAI",
+  "response_format": "wav"
+}

@@ -1,0 +1,104 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "I'll check the current weather"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": " in San Francisco for you."
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStart",
+    "payload": {
+      "start": {
+        "toolUse": {
+          "toolUseId": "tooluse_Q2vTt4xDQy6gX1rW9mJ3dA",
+          "name": "get_weather"
+        }
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "toolUse": {
+          "input": "{\"location\": \"San"
+        }
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "toolUse": {
+          "input": " Francisco, CA\", \"unit\""
+        }
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "toolUse": {
+          "input": ": \"fahrenheit\"}"
+        }
+      },
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 1
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "tool_use"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 412,
+        "outputTokens": 87,
+        "totalTokens": 499,
+        "cacheReadInputTokens": 0,
+        "cacheWriteInputTokens": 0
+      },
+      "metrics": {
+        "latencyMs": 1517
+      }
+    }
+  }
+]

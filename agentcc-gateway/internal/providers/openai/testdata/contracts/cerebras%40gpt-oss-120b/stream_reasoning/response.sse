@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f","object":"chat.completion.chunk","created":1793170600,"model":"gpt-oss-120b","system_fingerprint":"fp_70185065a4","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Answer briefly:"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f","object":"chat.completion.chunk","created":1793170600,"model":"gpt-oss-120b","system_fingerprint":"fp_70185065a4","choices":[{"index":0,"delta":{"reasoning":" latency and cost."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f","object":"chat.completion.chunk","created":1793170600,"model":"gpt-oss-120b","system_fingerprint":"fp_70185065a4","choices":[{"index":0,"delta":{"content":"Fast inference keeps interactive apps responsive"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f","object":"chat.completion.chunk","created":1793170600,"model":"gpt-oss-120b","system_fingerprint":"fp_70185065a4","choices":[{"index":0,"delta":{"content":" and makes multi-step agents affordable."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f","object":"chat.completion.chunk","created":1793170600,"model":"gpt-oss-120b","system_fingerprint":"fp_70185065a4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":72,"completion_tokens":58,"total_tokens":130,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":21}},"time_info":{"queue_time":0.000208,"prompt_time":0.002831,"completion_time":0.026478,"total_time":0.031233,"created":1793170512.1}}
+
+data: [DONE]
+

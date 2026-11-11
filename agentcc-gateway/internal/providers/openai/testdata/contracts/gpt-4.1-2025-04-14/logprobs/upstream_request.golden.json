@@ -1,0 +1,19 @@
+{
+  "body": {
+    "logprobs": true,
+    "messages": [
+      {
+        "content": "Hello!",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14",
+    "top_logprobs": 2
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

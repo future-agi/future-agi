@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "The model `gpt-5.5-2026-04-23` does not exist or you do not have access to it.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}

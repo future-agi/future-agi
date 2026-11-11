@@ -1,0 +1,339 @@
+{
+  "assembled": {
+    "content": "Version 2.3.0 adds prompt cache breakpoints, fixes retry jitter and drops Python 3.9 support.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 46,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 24,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 1562,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cache_write_tokens": 0,
+        "cached_tokens": 1536
+      },
+      "total_tokens": 1608
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "AbBiSn",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Version"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "EsKr1o5mlvA",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " 2.3.0"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "47E",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " adds"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "D3v",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " prompt"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "5u45TEy",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " cache"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "HJ8Gjxj9WhV",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " breakpoints,"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "iNx2a",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " fixes"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "77XSoLu5ziCU",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " retry"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "Zf6uqZSXtzlS",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " jitter"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "wh3ongVswNv",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "gg3",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " drops"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "ndC1",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " Python"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "K1qFZRKINZp9",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " 3.9"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "2KnEbA",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " support."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "RYiGKD",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "ppK",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "chatcmpl-wz2xP9bVAhJLjI7WFMOpPy1RXxSNn",
+      "model": "gpt-5.6-sol",
+      "obfuscation": "V1LeJd5BaQ",
+      "object": "chat.completion.chunk",
+      "service_tier": "priority",
+      "system_fingerprint": "fp_612bff683b",
+      "usage": {
+        "completion_tokens": 46,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 24,
+          "rejected_prediction_tokens": 0
+        },
+        "prompt_tokens": 1562,
+        "prompt_tokens_details": {
+          "audio_tokens": 0,
+          "cache_write_tokens": 0,
+          "cached_tokens": 1536
+        },
+        "total_tokens": 1608
+      }
+    }
+  ],
+  "error": null
+}

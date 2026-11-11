@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "The spec's \"Streaming\" example (event: and data: per event, sequence_number on each) with the model changed; the output_text.delta events it elides (\": Intermediate response events omitted.\") are filled in, one per word. Recordable."
+}

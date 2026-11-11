@@ -1,0 +1,6 @@
+{
+  "code": "provider_INVALID_ARGUMENT",
+  "message": "* GenerateContentRequest.tools[0].function_declarations[0].name: Invalid function name. Must be a-z, A-Z, 0-9, or contain underscores, colons, dots, and dashes, with a maximum length of 128.\n",
+  "status": 400,
+  "type": "invalid_request_error"
+}

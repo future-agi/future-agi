@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "status": "succeeded",
+      "capabilities": {
+        "fine_tune": true,
+        "inference": true,
+        "completion": false,
+        "chat_completion": true,
+        "embeddings": false
+      },
+      "lifecycle_status": "generally-available",
+      "deprecation": {
+        "fine_tune": 1807228800,
+        "inference": 1807228800
+      },
+      "id": "gpt-4.1-2025-04-14",
+      "created_at": 1744588800,
+      "object": "model"
+    },
+    {
+      "status": "succeeded",
+      "capabilities": {
+        "fine_tune": false,
+        "inference": true,
+        "completion": false,
+        "chat_completion": false,
+        "embeddings": true
+      },
+      "lifecycle_status": "generally-available",
+      "deprecation": {
+        "inference": 1801526400
+      },
+      "id": "text-embedding-3-large",
+      "created_at": 1706140800,
+      "object": "model"
+    }
+  ],
+  "object": "list"
+}

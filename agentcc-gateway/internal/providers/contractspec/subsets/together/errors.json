@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "provider": "together",
+  "root": "errors",
+  "format": "openapi",
+  "select": "POST /v1/chat/completions -> 400,401,404,429,503,504 application/json",
+  "description": "error bodies of the chat endpoint (every modeled 4xx/5xx), decoded by the adapter's error parser; OpenAI-compatible preset served by the openai adapter",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.error": {"kinds":["object"]},
+    "$.error.code": {"kinds":["string"],"nullable":true},
+    "$.error.message": {"kinds":["string"]},
+    "$.error.param": {"kinds":["string"],"nullable":true},
+    "$.error.type": {"kinds":["string"]}
+  }
+}

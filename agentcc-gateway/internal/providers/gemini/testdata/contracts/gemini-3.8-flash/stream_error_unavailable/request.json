@@ -1,0 +1,10 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a one-line haiku about autumn rain."
+    }
+  ],
+  "stream": true
+}

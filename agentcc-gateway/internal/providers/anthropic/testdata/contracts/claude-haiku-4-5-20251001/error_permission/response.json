@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "permission_error",
+    "message": "Your API key does not have permission to use the specified resource."
+  },
+  "request_id": "req_011CVnA7Hs3xNw9Kc2pRtB5m"
+}

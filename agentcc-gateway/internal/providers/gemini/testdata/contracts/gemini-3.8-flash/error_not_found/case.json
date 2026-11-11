@@ -1,0 +1,5 @@
+{
+  "status": 404,
+  "recordable": false,
+  "notes": "What the API answers for a model it does not serve (a retired or mistyped ID). Not recordable under this directory: the request names a served model. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

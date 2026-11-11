@@ -1,0 +1,31 @@
+{
+  "id": "6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d11",
+  "object": "chat.completion",
+  "created": 1793170700,
+  "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_Qv2pXr8mKt5nWz1bLc7d",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Paris\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 96,
+    "total_tokens": 116,
+    "completion_tokens": 20
+  }
+}

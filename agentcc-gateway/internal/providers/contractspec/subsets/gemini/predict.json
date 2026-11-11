@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "provider": "gemini",
+  "root": "predict",
+  "format": "discovery",
+  "select": "method models.predict -> PredictResponse",
+  "description": "Imagen predict response, decoded by translateImageResponse",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.predictions": {"kinds":["array"]},
+    "$.predictions[]": {"kinds":["any"],"opaque":true}
+  }
+}

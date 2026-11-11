@@ -1,0 +1,5 @@
+{
+  "model": "gemini-3.8-flash-tts",
+  "input": "Have a wonderful day!",
+  "voice": "Kore"
+}

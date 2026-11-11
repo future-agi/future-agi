@@ -1,0 +1,317 @@
+{
+  "provider": "cohere",
+  "note": "Spec paths, blobs, enum values and events the adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec).",
+  "unmapped": [
+    {
+      "subset": "cohere/chat",
+      "path": "$.logprobs",
+      "reason": "known gap K12: logprobs are dropped: translateRequest does not forward the canonical request's logprobs, and the adapter's types have no field for the response's, so a client asking for token log probabilities gets none"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.message.citations",
+      "reason": "known gap K3: citations (cited span, text and the tool output or document it came from) are dropped; the canonical message has annotations, but the adapter emits none, so a client cannot show sources for a grounded answer"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.message.tool_plan",
+      "reason": "known gap K5: the tool plan (the model's stated reasoning before its tool calls) is dropped instead of becoming content or reasoning_content; Cohere expects it back as tool_plan on the next turn"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.billed_units.classifications",
+      "reason": "not billed by v2 chat, which bills input and output tokens (every documented example); the Usage schema is shared with classify"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.billed_units.search_units",
+      "reason": "not billed by v2 chat, which bills input and output tokens (every documented example); the Usage schema is shared with endpoints that bill search units"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.cached_tokens",
+      "reason": "known gap K2: cached prompt tokens are dropped instead of reported as prompt_tokens_details.cached_tokens, so cache hits are invisible to cost accounting"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "content-delta:$.delta.message.content.thinking",
+      "reason": "known gap K4: a reasoning model's thinking is dropped (unknown_block / unknown_delta thinking) instead of becoming reasoning_content"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "content-delta:$.logprobs",
+      "reason": "known gap K12: logprobs are dropped: translateRequest does not forward the canonical request's logprobs, and the adapter's types have no field for the response's, so a client asking for token log probabilities gets none"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings.base64",
+      "reason": "known gap K9: never requested: the adapter always asks for embedding_types [\"float\"] (encoding_format and dimensions are not forwarded), so this type never comes back and a client asking for base64 gets float arrays"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings.binary",
+      "reason": "known gap K9: never requested: the adapter always asks for embedding_types [\"float\"] (encoding_format and dimensions are not forwarded), so this type never comes back and a client asking for base64 gets float arrays"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings.int8",
+      "reason": "known gap K9: never requested: the adapter always asks for embedding_types [\"float\"] (encoding_format and dimensions are not forwarded), so this type never comes back and a client asking for base64 gets float arrays"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings.ubinary",
+      "reason": "known gap K9: never requested: the adapter always asks for embedding_types [\"float\"] (encoding_format and dimensions are not forwarded), so this type never comes back and a client asking for base64 gets float arrays"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings.uint8",
+      "reason": "known gap K9: never requested: the adapter always asks for embedding_types [\"float\"] (encoding_format and dimensions are not forwarded), so this type never comes back and a client asking for base64 gets float arrays"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings[]",
+      "reason": "not sent by /v2/embed: the spec gives EmbedByTypeResponse.embeddings an array (items) form beside the object one; the endpoint answers the object form (embeddings_by_type: every documented example, and the SDK's EmbedByTypeResponseEmbeddings), which cohereEmbeddings decodes; an array would fail the decode of the whole response"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.images",
+      "reason": "not requested: the image inputs' metadata; the canonical embeddings request carries text only, so no images are sent"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.api_version",
+      "reason": "no canonical field: the API version (and its deprecated / experimental flags) has no slot in the canonical response"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.classifications",
+      "reason": "not billed by embed: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, pages and search units"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.image_tokens",
+      "reason": "not billed on a text embed: image inputs are billed as images / image_tokens, and the canonical embeddings request carries text only"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.images",
+      "reason": "not billed on a text embed: image inputs are billed as images / image_tokens, and the canonical embeddings request carries text only"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.pages",
+      "reason": "not billed by embed: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, pages and search units"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.search_units",
+      "reason": "not billed by embed: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, pages and search units"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.cached_tokens",
+      "reason": "not billed by embed: ApiMeta's cached_tokens is shared with chat (where it is known gap K2); embed bills billed_units.input_tokens, which the adapter reports"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.tokens",
+      "reason": "no canonical field: the raw token counts; the adapter reports usage from billed_units.input_tokens, which is what Cohere bills"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.warnings",
+      "reason": "no canonical field: the canonical response has no slot for the API's warnings (an experimental or deprecated API version)"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.response_type",
+      "reason": "no canonical field: always embeddings_by_type on /v2/embed; the canonical response has one shape"
+    },
+    {
+      "subset": "cohere/errors",
+      "path": "$.id",
+      "reason": "known gap K11: the error id is dropped (parseCohereError reads only message), so a failed request cannot be traced with Cohere support"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.api_version",
+      "reason": "no canonical field: the API version (and its deprecated / experimental flags) has no slot in the canonical response"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.classifications",
+      "reason": "not billed by rerank: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, images and pages"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.image_tokens",
+      "reason": "not billed by rerank: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, images and pages"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.images",
+      "reason": "not billed by rerank: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, images and pages"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.pages",
+      "reason": "not billed by rerank: ApiMeta's billed_units schema is shared with the endpoints that bill classifications, images and pages"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.search_units",
+      "reason": "known gap K8: translateRerankResponse reports billed_units.input_tokens as search_units, and cohereBilledUnits has no search_units field, so the search units Cohere billed are read as 0 and every call is priced at the cost plugin's one-unit fallback (a token-billed rerank is priced as that many searches)"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.cached_tokens",
+      "reason": "not billed by rerank: ApiMeta's cached_tokens is shared with chat (where it is known gap K2)"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.tokens",
+      "reason": "no canonical field: the raw token counts; rerank cost comes from billed_units (see known gap K8)"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.warnings",
+      "reason": "no canonical field: the canonical response has no slot for the API's warnings (an experimental or deprecated API version)"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.results[].relevant_spans",
+      "reason": "no canonical field: RerankResult has no spans, and the canonical rerank request cannot ask for them (relevant_spans), so they never come back"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "cohere/chat_stream",
+      "path": "content-start:$.delta",
+      "reason": "no content: a content block's type with an empty text or thinking; the content arrives in content-delta (the parser skips content-start)"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage; the delta's error is lost with it (known gap K7)"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-start:$.delta",
+      "reason": "no content: always role assistant with an empty message; the content arrives in later events (the parser reads only the event's id)"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "cohere/chat",
+      "path": "$.finish_reason",
+      "value": "TIMEOUT",
+      "reason": "known gap K6: finish_reason TIMEOUT falls back to \"stop\", so a generation the API cut off for time looks complete; \"length\" is the nearest canonical reason"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.message.content[].type",
+      "value": "thinking",
+      "reason": "known gap K4: a reasoning model's thinking is dropped (unknown_block / unknown_delta thinking) instead of becoming reasoning_content"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "COMPLETE",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "ERROR",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "MAX_TOKENS",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "STOP_SEQUENCE",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "TIMEOUT",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "path": "message-end:$.delta.finish_reason",
+      "value": "TOOL_CALL",
+      "reason": "known gap K1: the stream parser reads finish_reason and usage from the top level of message-end, where the API never sends them, so every stream ends with \"stop\" (an unmapped empty reason) whatever the upstream's finish_reason, and reports no usage"
+    }
+  ],
+  "events": [
+    {
+      "subset": "cohere/chat_stream",
+      "event": "citation-start",
+      "reason": "known gap K3: citations (cited span, text and the tool output or document it came from) are dropped; the canonical message has annotations, but the adapter emits none, so a client cannot show sources for a grounded answer"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "event": "debug",
+      "reason": "no canonical field: a debug event carries the rendered prompt (ChatDebugEvent.prompt); OpenAI's stream has no slot for it, and the parser reports it as unknown_event"
+    },
+    {
+      "subset": "cohere/chat_stream",
+      "event": "tool-plan-delta",
+      "reason": "known gap K5: the tool plan (the model's stated reasoning before its tool calls) is dropped instead of becoming content or reasoning_content; Cohere expects it back as tool_plan on the next turn"
+    }
+  ],
+  "kinds": [
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.billed_units.input_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.billed_units.output_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.tokens.input_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/chat",
+      "path": "$.usage.tokens.output_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.embeddings",
+      "reason": "not sent by /v2/embed: the spec gives EmbedByTypeResponse.embeddings an array (items) form beside the object one; the endpoint answers the object form (embeddings_by_type: every documented example, and the SDK's EmbedByTypeResponseEmbeddings), which cohereEmbeddings decodes; an array would fail the decode of the whole response"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.input_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/embed",
+      "path": "$.meta.billed_units.output_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.input_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    },
+    {
+      "subset": "cohere/rerank",
+      "path": "$.meta.billed_units.output_tokens",
+      "reason": "known gap K13: latent: the spec types every billed and token count as number, and the adapter decodes them into int; every documented example and fixture carries whole numbers, but a fractional count (the Python SDK models them as floats) would fail json.Unmarshal of the whole response and turn a 200 into a 502"
+    }
+  ]
+}

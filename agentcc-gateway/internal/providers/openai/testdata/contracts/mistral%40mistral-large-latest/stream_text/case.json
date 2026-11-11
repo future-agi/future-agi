@@ -1,0 +1,3 @@
+{
+  "notes": "CompletionChunk events, usage on the finish chunk (CompletionChunk.usage), then data: [DONE]. Stream requests carry stream_options.include_usage because StreamChatCompletion forces it on every stream. Recordable."
+}

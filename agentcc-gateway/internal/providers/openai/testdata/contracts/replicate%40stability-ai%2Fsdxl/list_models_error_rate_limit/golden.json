@@ -1,0 +1,7 @@
+{
+  "code": "",
+  "go_type": "*errors.errorString",
+  "message": "list models returned status 429",
+  "status": 0,
+  "type": ""
+}

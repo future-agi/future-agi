@@ -1,0 +1,75 @@
+{
+  "assembled": {
+    "content": "",
+    "finish_reason": "tool_calls",
+    "reasoning_content": "**Checking the forecast**\n\nWhether to take an umbrella depends on today's weather in London, so I'll look it up.",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\":\"London, United Kingdom\"}",
+          "name": "get_weather"
+        },
+        "id": "call_0::sig::MlD8tkwoTZxUh2KU9tmJPSJYBbmeXpAQxHz0lsz/PpL/7KUoGLFrh+HVyqVopZuEZybK1/Oqg4dKK0JKRKku3uQpQD7mElnlSUAfFU3FbJRxB4t6KQKrWTqOFOODcrtz",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 92,
+      "prompt_tokens": 60,
+      "total_tokens": 152
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "reasoning_content": "**Checking the forecast**\n\nWhether to take an umbrella depends on today's weather in London, so I'll look it up."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 74,
+        "prompt_tokens": 60,
+        "total_tokens": 134
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\":\"London, United Kingdom\"}",
+                  "name": "get_weather"
+                },
+                "id": "call_0::sig::MlD8tkwoTZxUh2KU9tmJPSJYBbmeXpAQxHz0lsz/PpL/7KUoGLFrh+HVyqVopZuEZybK1/Oqg4dKK0JKRKku3uQpQD7mElnlSUAfFU3FbJRxB4t6KQKrWTqOFOODcrtz",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 92,
+        "prompt_tokens": 60,
+        "total_tokens": 152
+      }
+    }
+  ],
+  "error": null
+}

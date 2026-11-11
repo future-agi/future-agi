@@ -1,0 +1,30 @@
+{
+  "pages": [
+    {
+      "index": 0,
+      "markdown": "# LEARNING TO REASON\n\n![img-0.jpeg](img-0.jpeg)\n\nWe study ...",
+      "images": [
+        {
+          "id": "img-0.jpeg",
+          "top_left_x": 413,
+          "top_left_y": 612,
+          "bottom_right_x": 1290,
+          "bottom_right_y": 1105,
+          "image_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP////8=",
+          "image_annotation": null
+        }
+      ],
+      "dimensions": {
+        "dpi": 200,
+        "height": 2200,
+        "width": 1700
+      }
+    }
+  ],
+  "model": "mistral-ocr-2505-completion",
+  "usage_info": {
+    "pages_processed": 1,
+    "doc_size_bytes": 634181
+  },
+  "document_annotation": null
+}

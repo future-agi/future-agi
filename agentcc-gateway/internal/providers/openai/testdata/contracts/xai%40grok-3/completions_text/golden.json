@@ -1,0 +1,32 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "logprobs": null,
+      "text": "5, "
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "873492b3-6144-4279-ac2e-2c45242c5ce6",
+  "model": "grok-3",
+  "object": "text_completion",
+  "system_fingerprint": "fp_156d35dcaa",
+  "usage": {
+    "completion_tokens": 3,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens": 12,
+    "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cached_tokens": 0,
+      "image_tokens": 0,
+      "text_tokens": 12
+    },
+    "total_tokens": 15
+  }
+}

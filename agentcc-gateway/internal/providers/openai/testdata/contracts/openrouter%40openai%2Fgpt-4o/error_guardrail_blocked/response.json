@@ -1,0 +1,48 @@
+{
+  "error": {
+    "code": 403,
+    "message": "Request blocked: prompt injection patterns detected",
+    "metadata": {
+      "patterns": [
+        "ignore all previous instructions"
+      ]
+    }
+  },
+  "openrouter_metadata": {
+    "attempt": 1,
+    "endpoints": {
+      "available": [
+        {
+          "model": "openai/gpt-4o",
+          "provider": "OpenAI",
+          "selected": false
+        }
+      ],
+      "total": 1
+    },
+    "is_byok": false,
+    "pipeline": [
+      {
+        "data": {
+          "action": "blocked",
+          "detected": true,
+          "engines": [
+            "regex"
+          ],
+          "patterns": [
+            "ignore all previous instructions"
+          ]
+        },
+        "guardrail_id": "grd_abc123",
+        "guardrail_scope": "api-key",
+        "name": "regex_pi_detection",
+        "summary": "Blocked: prompt injection detected (1 pattern matched)",
+        "type": "guardrail"
+      }
+    ],
+    "region": "iad",
+    "requested": "openai/gpt-4o",
+    "strategy": "direct",
+    "summary": "available=1"
+  }
+}

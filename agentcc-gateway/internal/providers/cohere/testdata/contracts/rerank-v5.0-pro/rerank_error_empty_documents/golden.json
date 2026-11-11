@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "invalid request: list of documents must not be empty",
+  "status": 400,
+  "type": "invalid_request_error"
+}

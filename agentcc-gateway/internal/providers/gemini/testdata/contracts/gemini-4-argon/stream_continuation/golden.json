@@ -1,0 +1,94 @@
+{
+  "assembled": {
+    "content": "# CalcLang: a statically typed expression compiler\n\n## Stage 1: Lexical analysis\n\n```python\nclass TokenKind(Enum):\n    INT_LIT = auto()\n```\n\n## Stage 2: Pratt parser\n\nEach token gets a binding power and a prefix handler",
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 65536,
+      "prompt_tokens": 41,
+      "total_tokens": 65577
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "# CalcLang: a statically typed expression compiler\n\n"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 14032,
+        "prompt_tokens": 41,
+        "total_tokens": 14073
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "## Stage 1: Lexical analysis\n\n```python\nclass TokenKind(Enum):\n    INT_LIT = auto()\n```\n\n"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 44178,
+        "prompt_tokens": 41,
+        "total_tokens": 44219
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "## Stage 2: Pratt parser\n\nEach token gets a binding power and"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 65536,
+        "prompt_tokens": 41,
+        "total_tokens": 65577
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " a prefix handler"
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 65536,
+        "prompt_tokens": 41,
+        "total_tokens": 65577
+      }
+    }
+  ],
+  "error": null
+}

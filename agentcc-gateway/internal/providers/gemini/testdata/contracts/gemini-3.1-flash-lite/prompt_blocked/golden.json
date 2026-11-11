@@ -1,0 +1,12 @@
+{
+  "choices": null,
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.1-flash-lite",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 11,
+    "total_tokens": 11
+  }
+}

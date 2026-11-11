@@ -1,0 +1,14 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the sum of the first 50 prime numbers? Generate and run code for the calculation."
+    }
+  ],
+  "tools": [
+    {
+      "code_execution": {}
+    }
+  ]
+}

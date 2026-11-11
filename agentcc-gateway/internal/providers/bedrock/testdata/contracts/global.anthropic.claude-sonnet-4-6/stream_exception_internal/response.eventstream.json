@@ -1,0 +1,23 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "In Denmark,"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "exception": "internalServerException",
+    "payload": {
+      "message": "The system encountered an unexpected error during processing. Try your request again."
+    }
+  }
+]

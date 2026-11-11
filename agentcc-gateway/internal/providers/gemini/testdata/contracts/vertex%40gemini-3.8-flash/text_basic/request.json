@@ -1,0 +1,9 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Is 9.11 larger than 9.9? Answer briefly."
+    }
+  ]
+}

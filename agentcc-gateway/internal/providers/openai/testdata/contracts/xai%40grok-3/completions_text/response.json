@@ -1,0 +1,31 @@
+{
+  "id": "873492b3-6144-4279-ac2e-2c45242c5ce6",
+  "object": "text_completion",
+  "created": 1743771779,
+  "model": "grok-3",
+  "choices": [
+    {
+      "index": 0,
+      "text": "5, ",
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 3,
+    "total_tokens": 15,
+    "prompt_tokens_details": {
+      "text_tokens": 12,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "system_fingerprint": "fp_156d35dcaa"
+}

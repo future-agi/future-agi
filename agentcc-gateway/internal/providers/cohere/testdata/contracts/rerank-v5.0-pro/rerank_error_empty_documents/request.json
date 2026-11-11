@@ -1,0 +1,5 @@
+{
+  "model": "rerank-v5.0-pro",
+  "query": "What is the capital of the United States?",
+  "documents": []
+}

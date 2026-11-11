@@ -1,0 +1,5 @@
+{
+  "status": 402,
+  "recordable": false,
+  "notes": "Synthetic, from the errors page (fern/pages/cohere-api/errors.mdx, docs.cohere.com/reference/errors, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience) (402 Payment Required: the account reached its billing limit; the message is one of its examples; the reference itself lists no 402) and the error body {id, message} the reference gives every error response (components/responses in cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28)); id invented. Not recordable: it needs an account without a payment method."
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_rate_limit_error",
+  "message": "You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization's API tier. You will regain access on 2026-11-01 at 00:00 UTC.",
+  "status": 429,
+  "type": "rate_limit_error"
+}

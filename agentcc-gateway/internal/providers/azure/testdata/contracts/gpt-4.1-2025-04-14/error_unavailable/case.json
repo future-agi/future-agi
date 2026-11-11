@@ -1,0 +1,8 @@
+{
+  "status": 503,
+  "headers": {
+    "apim-request-id": "c9f1a6d3-8e4b-4b27-95c0-4a7d2e1f8b69"
+  },
+  "recordable": false,
+  "notes": "Synthetic, the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json, whose default response is described as \"Service unavailable\") with code and message; code and wording invented. Not recordable: an outage cannot be induced. The golden pins type \"\" (gap A6)."
+}

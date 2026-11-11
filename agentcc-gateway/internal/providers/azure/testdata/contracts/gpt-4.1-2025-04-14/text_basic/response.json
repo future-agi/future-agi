@@ -1,0 +1,77 @@
+{
+  "id": "chatcmpl-7R1nGnsXO8n4oi9UPz2f3UHdgAYMn",
+  "object": "chat.completion",
+  "created": 1686676106,
+  "model": "gpt-4.1-2025-04-14",
+  "prompt_filter_results": [
+    {
+      "prompt_index": 0,
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "jailbreak": {
+          "filtered": false,
+          "detected": false
+        }
+      }
+    }
+  ],
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "refusal": null,
+        "content": "Ahoy matey! Give yer parrot a sturdy cage, fresh water 'n pellets daily, perches o' many sizes, an' plenty o' company, arrr!"
+      },
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "protected_material_text": {
+          "filtered": false,
+          "detected": false
+        },
+        "protected_material_code": {
+          "filtered": false,
+          "detected": false
+        }
+      },
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "completion_tokens": 37,
+    "prompt_tokens": 33,
+    "total_tokens": 70
+  },
+  "system_fingerprint": "fp_b705f0c291"
+}

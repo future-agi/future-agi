@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-7d4e5f6a-8b9c-4d0e-1f2a-3b4c5d6e7f80",
+  "object": "chat.completion",
+  "created": 1793170700,
+  "model": "gpt-oss-120b",
+  "system_fingerprint": "fp_70185065a4",
+  "time_info": {
+    "queue_time": 0.000208,
+    "prompt_time": 0.002831,
+    "completion_time": 0.026478,
+    "total_time": 0.031233,
+    "created": 1793170512.1
+  },
+  "usage": {
+    "prompt_tokens": 140,
+    "completion_tokens": 31,
+    "total_tokens": 171
+  },
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "b5a1c9e3d",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Paris\"}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

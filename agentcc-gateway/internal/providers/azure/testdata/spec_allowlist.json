@@ -1,0 +1,95 @@
+{
+  "provider": "azure",
+  "note": "Spec paths, blobs, enum values and events the azure adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec). Gap IDs are the azure contract tests' (testdata/contracts/*/meta.json); O* IDs are the openai adapter's, whose canonical types this adapter decodes into too.",
+  "unmapped": [
+    {
+      "subset": "azure/chat",
+      "path": "$.choices[].content_filter_results",
+      "reason": "known gap A1: Azure's per-choice content filter verdicts (category, severity, filtered, protected material) are dropped; models.Choice has no field for them and no Extra, so a client cannot see why a completion was cut to finish_reason \"content_filter\""
+    },
+    {
+      "subset": "azure/chat",
+      "path": "$.choices[].message.context",
+      "reason": "known gap A2: Azure On Your Data's message.context (citations, intent) is dropped, so answers grounded on data_sources reach the client with [docN] markers and no citations"
+    },
+    {
+      "subset": "azure/chat",
+      "path": "$.choices[].message.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical message has only tool_calls (the adapter decodes into the same canonical types as the openai adapter)"
+    },
+    {
+      "subset": "azure/chat",
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation"
+    },
+    {
+      "subset": "azure/chat_stream",
+      "path": "chunk:$.choices[].delta.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical delta has only tool_calls"
+    },
+    {
+      "subset": "azure/chat_stream",
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas"
+    },
+    {
+      "subset": "azure/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    },
+    {
+      "subset": "azure/errors",
+      "path": "$.error.inner_error",
+      "reason": "known gap A4: a content-filter rejection's inner error (code ResponsibleAIPolicyViolation and the per-category verdicts) is dropped; parseProviderError keeps message, type and code, so the client cannot tell which category blocked the prompt. The spec spells it inner_error / content_filter_results; the live service sends innererror / content_filter_result (contract case error_content_filter), dropped all the same"
+    },
+    {
+      "subset": "azure/images",
+      "path": "$.data[].content_filter_results",
+      "reason": "known gap A3: each image's content filter verdicts are dropped; models.ImageData has no field for them and models.ImageResponse no Extra, so a client cannot see why an image was filtered"
+    },
+    {
+      "subset": "azure/images",
+      "path": "$.data[].prompt_filter_results",
+      "reason": "known gap A3: each image's prompt filter verdicts (including jailbreak and profanity) are dropped, as content_filter_results"
+    },
+    {
+      "subset": "azure/transcription",
+      "path": "$.duration",
+      "reason": "known gap A9: the audio duration Azure reports (and bills by) reaches the client in the passed-through body but is not read: the gateway prices a transcription from the length of the uploaded WAV, so a non-WAV upload is unpriced although the upstream says how long it was"
+    },
+    {
+      "subset": "azure/transcription",
+      "path": "$.language",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "azure/transcription",
+      "path": "$.segments",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "azure/transcription",
+      "path": "$.task",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "azure/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "azure/chat",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "azure/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [],
+  "events": []
+}

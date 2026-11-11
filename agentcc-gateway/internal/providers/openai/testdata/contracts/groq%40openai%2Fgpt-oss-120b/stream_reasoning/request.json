@@ -1,0 +1,15 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many prime numbers are there between 10 and 30?"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "reasoning_format": "parsed",
+  "reasoning_effort": "medium"
+}

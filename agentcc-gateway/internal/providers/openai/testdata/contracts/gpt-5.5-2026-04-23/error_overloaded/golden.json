@@ -1,0 +1,6 @@
+{
+  "code": "server_is_overloaded",
+  "message": "The model is temporarily overloaded. Please retry your request after a brief delay.",
+  "status": 502,
+  "type": "service_unavailable_error"
+}

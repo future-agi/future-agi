@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "The requested DALL-E image endpoint is unavailable because it has been retired.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}

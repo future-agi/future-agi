@@ -1,0 +1,235 @@
+{
+  "assembled": {
+    "content": "Ahoy matey! Fresh water, good pellets an' plenty o' company, arrr!",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 18,
+      "prompt_tokens": 33,
+      "total_tokens": 51
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Ahoy"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " matey!"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " Fresh"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " water,"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " good"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " pellets"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " an'"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " plenty"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " o'"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " company,"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " arrr!"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "chatcmpl-l3xAcZ21txYPCjHFxL3fvdQBoLzHZ",
+      "model": "gpt-4.1-2025-04-14",
+      "object": "chat.completion.chunk",
+      "system_fingerprint": "fp_b705f0c291",
+      "usage": {
+        "completion_tokens": 18,
+        "prompt_tokens": 33,
+        "total_tokens": 51
+      }
+    }
+  ],
+  "error": null
+}

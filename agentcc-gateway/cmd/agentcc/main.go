@@ -57,6 +57,7 @@ import (
 	validationplugin "github.com/futureagi/agentcc-gateway/internal/plugins/validation"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	providercommon "github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/rbac"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	secretspkg "github.com/futureagi/agentcc-gateway/internal/secrets"
@@ -560,6 +561,14 @@ func main() {
 	if cfg.Prometheus.Enabled {
 		metricsRegistry = metrics.NewRegistry()
 		plugins = append(plugins, promplugin.New(metricsRegistry, true))
+		// Labelled by adapter and kind only: both are closed sets. The
+		// upstream value that was not understood goes to the log instead.
+		reg := metricsRegistry
+		providercommon.SetUnknownShapeHook(func(s providercommon.UnknownShape) {
+			reg.CounterInc("agentcc_provider_unknown_shape_total",
+				"Upstream responses carrying a shape the provider adapter does not translate",
+				map[string]string{"provider": s.Provider, "kind": string(s.Kind)})
+		})
 		slog.Info("prometheus metrics enabled")
 	}
 

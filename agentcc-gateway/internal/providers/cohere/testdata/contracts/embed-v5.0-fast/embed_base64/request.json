@@ -1,0 +1,9 @@
+{
+  "model": "embed-v5.0-fast",
+  "input": [
+    "hello",
+    "goodbye"
+  ],
+  "encoding_format": "base64",
+  "dimensions": 512
+}

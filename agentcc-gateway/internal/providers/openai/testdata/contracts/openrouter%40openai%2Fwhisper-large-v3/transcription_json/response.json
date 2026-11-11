@@ -1,0 +1,10 @@
+{
+  "text": "Hello, this is a test of OpenAI speech-to-text transcription.",
+  "usage": {
+    "cost": 0.000508,
+    "input_tokens": 83,
+    "output_tokens": 30,
+    "seconds": 9.2,
+    "total_tokens": 113
+  }
+}

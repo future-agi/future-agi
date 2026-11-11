@@ -1,0 +1,16 @@
+{
+  "body": {
+    "model": "gpt-image-1",
+    "n": 1,
+    "prompt": "In the style of WordArt, Microsoft Clippy wearing a cowboy hat.",
+    "quality": "high",
+    "size": "1024x1024"
+  },
+  "headers": {
+    "api-key": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/openai/deployments/gpt-image-1/images/generations",
+  "query": "api-version=2025-04-01-preview"
+}

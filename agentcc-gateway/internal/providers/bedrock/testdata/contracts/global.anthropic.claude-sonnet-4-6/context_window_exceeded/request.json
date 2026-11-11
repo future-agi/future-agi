@@ -1,0 +1,10 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize every chapter of the attached manuscript in detail."
+    }
+  ],
+  "max_tokens": 64000
+}

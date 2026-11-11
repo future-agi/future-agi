@@ -1,0 +1,11 @@
+{
+  "model": "gpt-4.1-2025-04-14",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "logprobs": true,
+  "top_logprobs": 2
+}

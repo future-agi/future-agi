@@ -1,0 +1,37 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"Boston, MA\",\"unit\":\"celsius\"}",
+              "name": "get_current_weather"
+            },
+            "id": "call_unLAR8MvFNptuiZK6K6HCy5k",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "resp_67ca09c5efe0819096d0511c92b8c890096610f474011cc0",
+  "model": "gpt-5.6-sol",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 23,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 291,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 314
+  }
+}

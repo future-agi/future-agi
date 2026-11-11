@@ -109,7 +109,7 @@ func TestTranslateConverseResponse_Basic(t *testing.T) {
 		Usage:      converseUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
 	}
 
-	out := translateConverseResponse(resp, modelID)
+	out := translateConverseResponse(resp, modelID, nil)
 
 	if out.ID == "" {
 		t.Fatal("ID should be populated for converse responses")

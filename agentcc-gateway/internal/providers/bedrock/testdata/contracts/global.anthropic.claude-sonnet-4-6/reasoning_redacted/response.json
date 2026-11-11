@@ -1,0 +1,28 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "reasoningContent": {
+            "redactedContent": "RW13S0FoZ0JFZ3kzdmEzcHppeC9MYWZQc240YURGSVQyWGx4aDBMNUw4ckxWeUl3AAFvcGFxdWUgZW5jcnlwdGVkIHJlYXNvbmluZyBibG9i"
+          }
+        },
+        {
+          "text": "The greatest common divisor of 1071 and 462 is 21."
+        }
+      ]
+    }
+  },
+  "stopReason": "end_turn",
+  "usage": {
+    "inputTokens": 52,
+    "outputTokens": 198,
+    "totalTokens": 250,
+    "cacheReadInputTokens": 0,
+    "cacheWriteInputTokens": 0
+  },
+  "metrics": {
+    "latencyMs": 3655
+  }
+}

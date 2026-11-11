@@ -1,0 +1,26 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 64
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Say hello."
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "7c2d803a3a71eed033d0a70b93113dd346ebfd3419cff984f0cfcba2ccc6d1b9",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/global.anthropic.claude-sonnet-4-6/converse-stream"
+}

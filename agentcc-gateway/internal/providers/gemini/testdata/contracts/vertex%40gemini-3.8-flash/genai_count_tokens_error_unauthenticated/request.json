@@ -1,0 +1,12 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "The quick brown fox jumps over the lazy dog."
+        }
+      ]
+    }
+  ]
+}

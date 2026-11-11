@@ -1,0 +1,49 @@
+{
+  "canonical_error": {
+    "code": "provider_502",
+    "message": "Rate limit reached for gpt-5.6-sol. Please try again in 2s.",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "stream": {
+    "assembled": {
+      "content": "Hi",
+      "finish_reason": "",
+      "role": "assistant",
+      "usage": null
+    },
+    "chunks": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "resp_67c9fdcecf488190bdd9a0409de3a1ec07b8b0ad4e5eb654",
+        "model": "gpt-5.6-sol",
+        "object": "chat.completion.chunk"
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "Hi"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "resp_67c9fdcecf488190bdd9a0409de3a1ec07b8b0ad4e5eb654",
+        "model": "gpt-5.6-sol",
+        "object": "chat.completion.chunk"
+      }
+    ],
+    "error": "provider_502: Rate limit reached for gpt-5.6-sol. Please try again in 2s."
+  }
+}

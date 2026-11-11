@@ -1,0 +1,6 @@
+{
+  "model": "mistral-embed",
+  "input": [
+    "What is the best French cheese?"
+  ]
+}

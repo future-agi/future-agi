@@ -1,0 +1,23 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "Chapter 1 introduces the narrator, a lighthouse keeper on the Breton coast, and"
+        }
+      ]
+    }
+  },
+  "stopReason": "model_context_window_exceeded",
+  "usage": {
+    "inputTokens": 999812,
+    "outputTokens": 188,
+    "totalTokens": 1000000,
+    "cacheReadInputTokens": 0,
+    "cacheWriteInputTokens": 0
+  },
+  "metrics": {
+    "latencyMs": 41230
+  }
+}

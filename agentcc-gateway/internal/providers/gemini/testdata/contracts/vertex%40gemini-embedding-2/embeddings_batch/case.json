@@ -1,0 +1,11 @@
+{
+  "notes": "Vertex AI embedContent (aiplatform v1beta1 discovery, revision 20261012: projects.locations.publishers.models.embedContent -> EmbedContentResponse {embedding {values}, usageMetadata, truncated}); googleapis/go-genai models.go embedContentResponseFromVertex reads the same fields and, through tIsVertexEmbedContentModel, sends Gemini embedding models other than gemini-embedding-001 to embedContent one content at a time. Vertex AI publisher models have no batchEmbedContents method (the discovery document lists embedContent, predict, countTokens, computeTokens, generateContent, streamGenerateContent and the raw predicts), so the adapter's multi-input path is answered not found. The body is the google.rpc.Status a Google API answers for an unknown method; its exact text is unverified. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "endpoint": "embeddings",
+  "status": 404,
+  "sanity_gaps": [
+    {
+      "failure": "is not a method",
+      "reason": "known gap V2: CreateEmbedding sends more than one input to batchEmbedContents, which Vertex AI does not serve (embedContent takes one content per call), so every multi-input embedding request on Vertex AI fails"
+    }
+  ]
+}

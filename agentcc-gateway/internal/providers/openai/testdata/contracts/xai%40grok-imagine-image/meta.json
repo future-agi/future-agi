@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "xai@grok-imagine-image",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from xAI's OpenAPI spec as published in its official SDK, github.com/xai-org/xai-sdk-ts spec/openapi.json at 51bfc686c74310226d601e6037fa6c2e562244f7 (2026-10-28; pinned as contractspec/subsets/xai), POST /v1/images/generations: the request and 200 examples verbatim (GenerateImageRequest, GeneratedImageResponse); the urls are the example's \"...\" placeholders. GeneratedImageResponse has no created, so the canonical response's is 0. No error case here: the spec declares 400 and 422 without a body, and the SDK's error tests (test/errors.test.ts) are pinned under xai@latest.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model"
+      },
+      "finishReason": "MAX_TOKENS",
+      "index": 0,
+      "continuationToken": "OUzqLFJLlBTMMUmHuwPXQ4cAKD0PrGSguA62PI6rrUsHDp/21dweNFqUx/G/FdxL"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 19,
+    "thoughtsTokenCount": 4096,
+    "totalTokenCount": 4115,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 19
+      }
+    ]
+  },
+  "modelVersion": "gemini-4-argon",
+  "responseId": "oM6VHfLChDhmhP-Sp77gMkU"
+}

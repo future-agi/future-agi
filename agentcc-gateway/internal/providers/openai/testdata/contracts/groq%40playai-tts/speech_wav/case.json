@@ -1,0 +1,5 @@
+{
+  "endpoint": "speech",
+  "content_type": "audio/wav",
+  "notes": "The spec's \"Default\" example request; audio/wav, the 200 content type the spec lists. Recordable."
+}

@@ -1,0 +1,9 @@
+{
+  "status": 429,
+  "headers": {
+    "x-amzn-ErrorType": "ThrottlingException",
+    "x-amzn-RequestId": "5b8c2e9f-7a1d-4f36-9e04-c3a6d8b2f175"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). A ConverseStream request answered 429 ThrottlingException before the stream starts, which pins StreamChatCompletion's pre-stream error path. Not recordable: inducing it would mean exhausting a real account's quota."
+}

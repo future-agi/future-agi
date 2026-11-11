@@ -1,0 +1,34 @@
+{
+  "language": "english",
+  "duration": 4.2,
+  "text": "Hello, my name is Wolfgang and I come from Germany. Where are you heading today?",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 0.0,
+      "end": 4.199999809265137,
+      "text": " Hello, my name is Wolfgang and I come from Germany. Where are you heading today?",
+      "tokens": [
+        50364,
+        440,
+        7534,
+        390,
+        257,
+        3743,
+        4008,
+        322,
+        257,
+        2368,
+        4266,
+        786,
+        13,
+        50530
+      ],
+      "temperature": 0.0,
+      "avg_logprob": -0.2860786020755768,
+      "compression_ratio": 1.2363636493682861,
+      "no_speech_prob": 0.00985979475080967
+    }
+  ]
+}

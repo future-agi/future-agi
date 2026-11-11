@@ -1,0 +1,467 @@
+{
+  "provider": "anthropic",
+  "note": "Spec paths, blobs, enum values and events the adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec).",
+  "unmapped": [
+    {
+      "subset": "anthropic/errors",
+      "path": "$.error.details",
+      "reason": "known gap X5: error.details (the machine-readable error_code such as enforced_spend_limit_reached, and appeal_url) is dropped; the client and the router see only the message"
+    },
+    {
+      "subset": "anthropic/errors",
+      "path": "$.request_id",
+      "reason": "known gap X2: the request_id of an error body is dropped (anthropicErrorResponse has no field for it), so a failed request cannot be traced back to Anthropic in logs or a support ticket"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.container",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].caller",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].document_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].document_title",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].encrypted_index",
+      "reason": "known gap C2: web-search citations lose encrypted_index, which Anthropic needs passed back to continue a conversation that cites search results"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].end_block_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].end_char_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].end_page_number",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].file_id",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].search_result_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].source",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].start_block_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].start_char_index",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations[].start_page_number",
+      "reason": "known gap C3: citationsForBlock keeps only web_search_result_location citations (url, title, cited_text); document, page, content-block and search-result locations, and their indices, are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].signature",
+      "reason": "known gap T1: thinking-block signatures are dropped (anthropicContentBlock has no signature field), so thinking_blocks reach the inbound translator unsigned"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].toolset_name",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.diagnostics",
+      "reason": "known gap X12: diagnostics (cache_miss_reason: why the prompt cache missed) is dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_details",
+      "reason": "known gap S2: the refusal category and explanation (stop_details) are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.inference_geo",
+      "reason": "known gap U7: the region that served inference (inference_geo) is dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.output_tokens_details",
+      "reason": "known gap U6: output_tokens_details.thinking_tokens is dropped instead of mapped to completion_tokens_details.reasoning_tokens"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.server_tool_use.web_fetch_requests",
+      "reason": "known gap U10: server_tool_use.web_fetch_requests is dropped (anthropicServerTool has only web_search_requests), so per-fetch fees of the web fetch tool are invisible to cost accounting"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.speed",
+      "reason": "known gap U7: usage.speed is dropped; a fast-mode response (speed \"fast\") is billed at a premium the gateway's cost accounting cannot see"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.caller",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.citations",
+      "reason": "no content at block start: always empty; citations arrive as citations_delta (see known gap C1)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.content",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.input",
+      "reason": "no content at block start: always {}; input arrives as input_json_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.text",
+      "reason": "no content at block start: always empty; text arrives as text_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.tool_use_id",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.toolset_name",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.container",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_details",
+      "reason": "known gap S2: the refusal category and explanation (stop_details) are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.output_tokens_details",
+      "reason": "known gap U6: output_tokens_details.thinking_tokens is dropped instead of mapped to completion_tokens_details.reasoning_tokens"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.server_tool_use.web_fetch_requests",
+      "reason": "known gap U10: server_tool_use.web_fetch_requests is dropped (anthropicServerTool has only web_search_requests), so per-fetch fees of the web fetch tool are invisible to cost accounting"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.container",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.content",
+      "reason": "no content: always empty at message_start; content arrives as content blocks"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.diagnostics",
+      "reason": "known gap X12: diagnostics (cache_miss_reason: why the prompt cache missed) is dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.role",
+      "reason": "no content: always \"assistant\" at message_start"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_details",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_reason",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_sequence",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.type",
+      "reason": "no content: always \"message\" at message_start"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read and write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.inference_geo",
+      "reason": "known gap U7: the region that served inference (inference_geo) is dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.output_tokens_details",
+      "reason": "known gap U6: output_tokens_details.thinking_tokens is dropped instead of mapped to completion_tokens_details.reasoning_tokens"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.server_tool_use.web_fetch_requests",
+      "reason": "known gap U10: server_tool_use.web_fetch_requests is dropped (anthropicServerTool has only web_search_requests), so per-fetch fees of the web fetch tool are invisible to cost accounting"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.speed",
+      "reason": "known gap U7: usage.speed is dropped; a fast-mode response (speed \"fast\") is billed at a premium the gateway's cost accounting cannot see"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].content",
+      "reason": "known gap X11: server tool result payloads (web_search_tool_result results, code-execution, web-fetch and tool-search output) are decoded as raw JSON in anthropicContentBlock.Content and dropped with their block; search results reach the client only through citations"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "anthropic/errors",
+      "path": "$.error.type",
+      "value": "api_error",
+      "reason": "500 api_error: 502 upstream_error is the canonical mapping for an upstream failure"
+    },
+    {
+      "subset": "anthropic/errors",
+      "path": "$.error.type",
+      "value": "billing_error",
+      "reason": "known gap X4: error type falls back to 502 upstream_error, which the router retries and fails over: billing_error (402) is a billing state, not upstream trouble, and timeout_error (504) is a timeout"
+    },
+    {
+      "subset": "anthropic/errors",
+      "path": "$.error.type",
+      "value": "overloaded_error",
+      "reason": "529 overloaded_error: mapAnthropicStatus maps it to 502 explicitly, so the router retries and fails over, as it should for an overloaded upstream"
+    },
+    {
+      "subset": "anthropic/errors",
+      "path": "$.error.type",
+      "value": "timeout_error",
+      "reason": "known gap X4: error type falls back to 502 upstream_error, which the router retries and fails over: billing_error (402) is a billing state, not upstream trouble, and timeout_error (504) is a timeout"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "bash_code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "container_upload",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "redacted_thinking",
+      "reason": "known gap T3: redacted_thinking blocks are dropped with their encrypted data; Anthropic requires them passed back unchanged in tool-use turns"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "text_editor_code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "tool_search_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "web_fetch_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_reason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap S3: stop_reason \"model_context_window_exceeded\" falls back to \"stop\"; the response was truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_reason",
+      "value": "refusal",
+      "reason": "known gap S1: stop_reason \"refusal\" has no mapping and falls back to \"stop\", so a declined or cut-off response looks like a normal completion; \"content_filter\" is the canonical reason"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "citations_delta",
+      "reason": "known gap C1: streamed citations are dropped; the non-stream path turns them into url_citation annotations, the stream path emits none"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "signature_delta",
+      "reason": "known gap T4: the stream parser drops thinking entirely (thinking blocks, thinking_delta, signature_delta); streamed responses carry no reasoning"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "thinking_delta",
+      "reason": "known gap T4: the stream parser drops thinking entirely (thinking blocks, thinking_delta, signature_delta); streamed responses carry no reasoning"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "bash_code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "container_upload",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "redacted_thinking",
+      "reason": "known gap T3: redacted_thinking blocks are dropped with their encrypted data; Anthropic requires them passed back unchanged in tool-use turns"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "text_editor_code_execution_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "thinking",
+      "reason": "known gap T4: the stream parser drops thinking entirely (thinking blocks, thinking_delta, signature_delta); streamed responses carry no reasoning"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "tool_search_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "web_fetch_tool_result",
+      "reason": "known gap X11: server tools other than web search (code execution, bash / text-editor code execution, web fetch, tool search, container uploads, programmatic tool calling and the code-execution container) are not translated; their blocks and fields are dropped, so a client that enabled them gets neither the results nor the container to reuse"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_reason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap S3: stop_reason \"model_context_window_exceeded\" falls back to \"stop\"; the response was truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_reason",
+      "value": "refusal",
+      "reason": "known gap S1: stop_reason \"refusal\" has no mapping and falls back to \"stop\", so a declined or cut-off response looks like a normal completion; \"content_filter\" is the canonical reason"
+    }
+  ],
+  "events": []
+}

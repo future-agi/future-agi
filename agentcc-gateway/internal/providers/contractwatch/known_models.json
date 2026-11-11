@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "about": "Every model ID each provider's list-models API returns, with exactly one status: covered (it has contract fixtures under internal/providers/<fixtures.provider>/testdata/contracts/), alias (alias_of a covered model) or ignored (with a reason); ignore_rules cover whole classes. A listed ID with none of these is NEW. go test ./internal/providers/contractwatch/ checks this file against the fixture directories; the daily AgentCC Provider New Models workflow checks it against the live APIs. See cmd/model-watch/README.md.",
+  "providers": {
+    "anthropic": {
+      "list": "api",
+      "note": "GET /v1/models lists active and deprecated models; retired ones only on request. Deprecated models are ignored from their lifecycle metadata, so only covered ones need an entry. The SDK's undated aliases (claude-haiku-4-5) are not listed, so they have no alias entries.",
+      "models": [
+        {"id": "claude-haiku-4-5-20251001", "status": "covered"},
+        {"id": "claude-opus-5-5", "status": "covered"},
+        {"id": "claude-sonnet-4-5-20250929", "status": "covered"}
+      ]
+    },
+    "azure": {
+      "list": "none",
+      "note": "Azure OpenAI serves deployments a resource owner names, not models: GET /openai/models lists what a resource could deploy, not what the gateway calls, and the fixtures key on deployment names. Only the coverage check applies; new OpenAI models reach Azure after the openai section has seen them.",
+      "models": [
+        {"id": "dall-e-3", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "gpt-4.1-2025-04-14", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "gpt-4o-mini-tts", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "gpt-4o-transcribe", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "gpt-image-1", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "text-embedding-3-large", "status": "covered", "note": "a deployment named after the model"},
+        {"id": "whisper", "status": "covered", "note": "a deployment named after the model"}
+      ]
+    },
+    "bedrock": {
+      "list": "api",
+      "note": "ListFoundationModels + ListInferenceProfiles (SYSTEM_DEFINED) in the workflow's region (AWS_REGION, default us-east-1); entries assume that region lists us. and global. profiles. Metadata ignores models that are LEGACY, have no TEXT output, are provisioned-throughput only, or are invocable only through a profile (the profile is listed instead). Base IDs (InvokeModel) and profiles (Converse) are different contracts, so us.anthropic.claude-opus-5-5 is not an alias of anthropic.claude-opus-5-5. The vendor rules exist because the adapter sends every ID that is not an inference profile to InvokeModel with an Anthropic Messages body (bedrock.go ChatCompletion), so a non-Anthropic base ID cannot work; delete them when the adapter routes base IDs by vendor.",
+      "ignore_rules": [
+        {"match": "amazon.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "meta.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "mistral.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "cohere.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "ai21.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "deepseek.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "qwen.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "openai.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "writer.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "twelvelabs.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "stability.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "luma.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "moonshot.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "moonshotai.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "minimax.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "google.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "nvidia.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "zai.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "xai.*", "reason": "base model ID of a non-Anthropic vendor, which the adapter cannot serve (see the note); its profiles are tracked"},
+        {"match": "*.twelvelabs.pegasus*", "reason": "video-understanding model: it needs a video input the contract cases do not send"},
+        {"match": "*nova*sonic*", "reason": "speech-to-speech model on the bidirectional streaming API, not Converse"}
+      ],
+      "models": [
+        {"id": "anthropic.claude-opus-5-5", "status": "covered"},
+        {"id": "global.amazon.nova-2-lite-v1:0", "status": "alias", "alias_of": "us.amazon.nova-2-lite-v1:0", "note": "same model and API (Converse), global routing"},
+        {"id": "global.anthropic.claude-sonnet-4-6", "status": "covered"},
+        {"id": "us.amazon.nova-2-lite-v1:0", "status": "covered"},
+        {"id": "us.anthropic.claude-sonnet-4-6", "status": "alias", "alias_of": "global.anthropic.claude-sonnet-4-6", "note": "same model and API (Converse), US geography"}
+      ]
+    },
+    "cerebras": {
+      "list": "api",
+      "note": "GET /v1/models on api.cerebras.ai, with CEREBRAS_API_KEY. The openai suite files Cerebras' models as cerebras@<model>. The listing has no capability metadata; every model Cerebras serves is a chat model.",
+      "fixtures": {"provider": "openai", "prefix": "cerebras@"},
+      "models": [
+        {"id": "gpt-oss-120b", "status": "covered"}
+      ]
+    },
+    "cohere": {
+      "list": "api",
+      "note": "GET /v1/models carries endpoints, finetuned and is_deprecated: a model with none of the endpoints the adapter serves (chat, embed, rerank), a fine-tune or a deprecated model is ignored from that metadata.",
+      "ignore_rules": [
+        {"match": "*-nightly", "reason": "nightly build: changes without notice, so it is no stable contract target"}
+      ],
+      "models": [
+        {"id": "command-a-03-2025", "status": "covered"},
+        {"id": "command-a-reasoning-08-2025", "status": "covered"},
+        {"id": "embed-v5.0-fast", "status": "covered"},
+        {"id": "rerank-v5.0-pro", "status": "covered"}
+      ]
+    },
+    "fireworks": {
+      "list": "none",
+      "note": "Fireworks is an aggregator: GET /inference/v1/models lists every third-party model it routes (its serverless catalog plus the account's own deployments), all answered in Fireworks's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with FIREWORKS_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
+      "fixtures": {"provider": "openai", "prefix": "fireworks@"},
+      "models": [
+        {"id": "accounts/fireworks/models/kimi-k2-instruct-0905", "status": "covered"},
+        {"id": "accounts/fireworks/models/llama-v3p1-8b-instruct", "status": "covered"},
+        {"id": "nomic-ai/nomic-embed-text-v1.5", "status": "covered"}
+      ]
+    },
+    "gemini": {
+      "list": "api",
+      "note": "GET v1beta/models carries supportedGenerationMethods: a model with neither generateContent (chat, speech) nor embedContent (embeddings), the methods the adapter parses (Imagen's predict, Veo, AQA, Live-only), is ignored from that metadata. The rules cover generateContent models whose output no contract case reads.",
+      "ignore_rules": [
+        {"match": "*-image*", "reason": "image output model; the contract cases expect text"},
+        {"match": "*nano-banana*", "reason": "image output model; the contract cases expect text"},
+        {"match": "*live*", "reason": "Live API (bidiGenerateContent) model"},
+        {"match": "*native-audio*", "reason": "Live API native-audio model"},
+        {"match": "*transcribe*", "reason": "speech transcription model, not chat"},
+        {"match": "lyria-*", "reason": "music generation, not chat"},
+        {"match": "deep-research-*", "reason": "Deep Research agent, served by the Interactions API, not generateContent"},
+        {"match": "gemini-robotics-*", "reason": "embodied-reasoning model for robotics (preview): its answers are points and trajectories, not a general chat target"},
+        {"match": "*computer-use*", "reason": "computer-use model: it needs the computer_use tool, which the contract cases do not send"},
+        {"match": "*-latest", "reason": "moving alias (gemini-flash-latest): it follows whatever model Google points it at, which is tracked under its own ID"}
+      ],
+      "models": [
+        {"id": "gemini-3.1-flash-lite", "status": "covered"},
+        {"id": "gemini-3.8-flash", "status": "covered"},
+        {"id": "gemini-3.8-flash-tts", "status": "covered"},
+        {"id": "gemini-4-argon", "status": "covered"},
+        {"id": "gemini-embedding-2", "status": "covered"}
+      ]
+    },
+    "groq": {
+      "list": "api",
+      "note": "GET /openai/v1/models. The openai suite files Groq's models as groq@<model>. A model with active: false is ignored from that metadata.",
+      "fixtures": {"provider": "openai", "prefix": "groq@"},
+      "ignore_rules": [
+        {"match": "whisper-large-v3-*", "reason": "another Whisper build (whisper-large-v3-turbo): the same /openai/v1/audio/transcriptions and translations answer whisper-large-v3 (covered) pins"},
+        {"match": "distil-whisper-*", "reason": "another Whisper build (distil-whisper-large-v3-en): the same transcription answer whisper-large-v3 (covered) pins"},
+        {"match": "playai-tts-*", "reason": "another PlayAI voice set (playai-tts-arabic): the same /openai/v1/audio/speech answer playai-tts (covered) pins"},
+        {"match": "canopylabs/*", "reason": "speech synthesis (Orpheus): the same /openai/v1/audio/speech answer playai-tts (covered) pins"},
+        {"match": "*guard*", "reason": "safety classifier (Llama Guard, Prompt Guard, gpt-oss-safeguard): it answers with a verdict, not a chat completion"}
+      ],
+      "models": [
+        {"id": "nomic-embed-text-v1_5", "status": "covered"},
+        {"id": "openai/gpt-oss-120b", "status": "covered"},
+        {"id": "playai-tts", "status": "covered"},
+        {"id": "whisper-large-v3", "status": "covered"}
+      ]
+    },
+    "mistral": {
+      "list": "api",
+      "note": "GET /v1/models on api.mistral.ai, with MISTRAL_API_KEY. The openai suite files Mistral's models as mistral@<model>. Mistral lists every alias (mistral-large-latest) beside the dated model it points at, and its capabilities, deprecation and type: a model whose capabilities name only endpoints the gateway does not parse (moderation, classification, completion_fim, audio_transcription_realtime: none of completion_chat, ocr, audio_transcription or audio_speech, and not an embedding model, which sets no flag), a fine-tune, or a model with an announced deprecation is ignored from that metadata, unless it is covered. Chat, OCR, embedding, transcription and speech models are contract targets (mistral-large-latest, mistral-ocr-latest, mistral-embed, voxtral-mini-latest and voxtral-mini-tts-3 cover them). The covered fixtures key on the -latest aliases the gateway's users send; when the dated model behind one changes, the new dated ID shows as NEW (consider an alias entry).",
+      "fixtures": {"provider": "openai", "prefix": "mistral@"},
+      "models": [
+        {"id": "mistral-embed", "status": "covered"},
+        {"id": "mistral-large-latest", "status": "covered"},
+        {"id": "mistral-ocr-latest", "status": "covered"},
+        {"id": "voxtral-mini-latest", "status": "covered"},
+        {"id": "voxtral-mini-tts-3", "status": "covered"}
+      ]
+    },
+    "openai": {
+      "list": "api",
+      "note": "GET /v1/models has no capability flags, so classes no contract case covers are ignored by ID pattern. Chat, completions, embeddings, images, speech, transcription and translation models are contract targets: each class has a covered template. A model with an announced shutdown_date is ignored from that metadata unless it is covered.",
+      "ignore_rules": [
+        {"match": "ft:*", "reason": "fine-tuned model: specific to the organisation that owns the key"},
+        {"match": "tts-*", "reason": "previous-generation speech model: /v1/audio/speech answers it with raw audio, the contract gpt-4o-mini-tts-2025-12-15's speech cases pin"},
+        {"match": "*realtime*", "reason": "Realtime API only (WebSocket/WebRTC); the gateway relays it without parsing"},
+        {"match": "gpt-audio*", "reason": "audio-output chat model: it needs modalities [\"audio\"], and the contract cases are text-only"},
+        {"match": "*-audio-preview*", "reason": "audio-output chat model: it needs modalities [\"audio\"], and the contract cases are text-only"},
+        {"match": "sora-*", "reason": "video generation (/v1/videos), not chat"},
+        {"match": "*moderation*", "reason": "moderation endpoint (/v1/moderations), not chat"},
+        {"match": "*deep-research*", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"match": "computer-use-preview*", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"match": "*codex*", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"match": "babbage-*", "reason": "legacy completions base model: /v1/completions answers it in the shape gpt-3.5-turbo-instruct (covered) pins"},
+        {"match": "davinci-*", "reason": "legacy completions base model: /v1/completions answers it in the shape gpt-3.5-turbo-instruct (covered) pins"},
+        {"match": "gpt-3.5-turbo-instruct-*", "reason": "dated snapshot of gpt-3.5-turbo-instruct (covered): the same /v1/completions shape"},
+        {"match": "*-latest", "reason": "moving alias (chatgpt-4o-latest, gpt-5-chat-latest): it follows whatever snapshot OpenAI points it at, which is tracked under its own ID"}
+      ],
+      "models": [
+        {"id": "dall-e-2", "status": "ignored", "reason": "previous-generation image model: /v1/images answers it in the shape dall-e-3 (covered) pins (data[].url or b64_json, no usage)"},
+        {"id": "dall-e-3", "status": "covered"},
+        {"id": "gpt-3.5-turbo-instruct", "status": "covered"},
+        {"id": "gpt-4.1", "status": "alias", "alias_of": "gpt-4.1-2025-04-14"},
+        {"id": "gpt-4.1-2025-04-14", "status": "covered"},
+        {"id": "gpt-4o-mini-transcribe", "status": "alias", "alias_of": "gpt-4o-mini-transcribe-2025-12-15"},
+        {"id": "gpt-4o-mini-transcribe-2025-12-15", "status": "covered"},
+        {"id": "gpt-4o-mini-tts", "status": "alias", "alias_of": "gpt-4o-mini-tts-2025-12-15"},
+        {"id": "gpt-4o-mini-tts-2025-12-15", "status": "covered"},
+        {"id": "gpt-5-pro", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "gpt-5-pro-2025-10-06", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "gpt-5.5", "status": "alias", "alias_of": "gpt-5.5-2026-04-23"},
+        {"id": "gpt-5.5-2026-04-23", "status": "covered"},
+        {"id": "gpt-5.5-pro", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "gpt-5.5-pro-2026-04-23", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "gpt-5.6-cyber", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "gpt-5.6-sol", "status": "covered"},
+        {"id": "gpt-6-sol", "status": "covered"},
+        {"id": "gpt-image-2", "status": "alias", "alias_of": "gpt-image-2-2026-04-21"},
+        {"id": "gpt-image-2-2026-04-21", "status": "covered"},
+        {"id": "gpt-rosalind-research", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "o1-pro", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "o1-pro-2025-03-19", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "o3-pro", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "o3-pro-2025-06-10", "status": "ignored", "reason": "Responses API only (openai-python lists it in ResponsesModel, not ChatModel): a template's chat cases cannot reach it. The Responses passthrough's shape is pinned by gpt-6-sol's responses_* cases, which do not depend on the model"},
+        {"id": "text-embedding-3-large", "status": "covered"},
+        {"id": "text-embedding-3-small", "status": "covered"},
+        {"id": "text-embedding-ada-002", "status": "ignored", "reason": "previous-generation embeddings model: /v1/embeddings answers it in the shape text-embedding-3-small and text-embedding-3-large (covered) pin"},
+        {"id": "whisper-1", "status": "covered"}
+      ]
+    },
+    "openrouter": {
+      "list": "none",
+      "note": "OpenRouter is an aggregator: GET /api/v1/models lists every third-party model it routes (several hundred, from dozens of vendors), all answered in OpenRouter's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with OPENROUTER_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
+      "fixtures": {"provider": "openai", "prefix": "openrouter@"},
+      "models": [
+        {"id": "anthropic/claude-4.5-sonnet", "status": "covered"},
+        {"id": "mistralai/voxtral-mini-tts-2603", "status": "covered"},
+        {"id": "openai/gpt-4o", "status": "covered"},
+        {"id": "openai/text-embedding-3-small", "status": "covered"},
+        {"id": "openai/whisper-large-v3", "status": "covered"}
+      ]
+    },
+    "perplexity": {
+      "list": "static",
+      "note": "Sonar's chat completions have no list API: Perplexity's GET /v1/models (perplexity-py client.models.list) lists the Agent API's models. This list was assembled on 2026-10-28 from internal/modeldb/litellm.json's current perplexity/* chat entries, because docs.perplexity.ai was not reachable from the authoring session: verify it against the source page. model-watch reminds when static.checked is older than 90 days. pplx-embed-v1-0.6b (POST /v1/embeddings) and openai/gpt-5.4 (POST /v1/responses, the Agent API) are added by hand: the first is generated/api.py's EmbeddingsRequestInput.model literal and the second the model of the SDK's own responses test (perplexityai/perplexity-py@1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced tests/test_generated_api_integration.py).",
+      "fixtures": {"provider": "openai", "prefix": "perplexity@"},
+      "static": {
+        "checked": "2026-10-28",
+        "source": "https://docs.perplexity.ai/getting-started/models",
+        "models": [
+          "sonar",
+          "sonar-pro",
+          "sonar-reasoning-pro",
+          "sonar-deep-research",
+          "pplx-embed-v1-0.6b",
+          "openai/gpt-5.4"
+        ]
+      },
+      "models": [
+        {"id": "openai/gpt-5.4", "status": "covered"},
+        {"id": "pplx-embed-v1-0.6b", "status": "covered"},
+        {"id": "sonar", "status": "covered"},
+        {"id": "sonar-deep-research", "status": "ignored", "reason": "asynchronous multi-minute research runs, priced per search: too slow and costly to record daily; its chat-completions shape is sonar's"}
+      ]
+    },
+    "replicate": {
+      "list": "none",
+      "note": "Replicate is not OpenAI-compatible: GET /v1/models answers a page of Replicate models ({next, previous, results}, gap RP1), which the OpenAI lister reads as empty, and the preset reaches no other OpenAI endpoint. The covered entry pins that page; Replicate's models are not contract targets of this gateway.",
+      "fixtures": {"provider": "openai", "prefix": "replicate@"},
+      "models": [
+        {"id": "stability-ai/sdxl", "status": "covered"}
+      ]
+    },
+    "together": {
+      "list": "none",
+      "note": "Together is an aggregator: GET /v1/models lists every third-party model it routes (about two hundred open-weight chat, image, embedding and audio models), all answered in Together's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with TOGETHER_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
+      "fixtures": {"provider": "openai", "prefix": "together@"},
+      "models": [
+        {"id": "black-forest-labs/FLUX.1-schnell", "status": "covered"},
+        {"id": "canopylabs/orpheus-3b-0.1-ft", "status": "covered"},
+        {"id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "status": "covered"},
+        {"id": "mistralai/Mixtral-8x7B-Instruct-v0.1", "status": "covered"},
+        {"id": "openai/whisper-large-v3", "status": "covered"},
+        {"id": "togethercomputer/m2-bert-80M-8k-retrieval", "status": "covered"}
+      ]
+    },
+    "vertex": {
+      "list": "none",
+      "note": "The gemini adapter in Vertex AI mode; the gemini suite files its fixtures as vertex@<publisher model>. Vertex AI's publisher-model listing needs a short-lived OAuth access token (gcloud auth print-access-token), which a repository secret cannot hold, so it is not listed: new Gemini models are noticed by the gemini section (AI Studio) and reach Vertex AI under the same publisher model ID. The IDs below are Vertex publisher model IDs.",
+      "fixtures": {"provider": "gemini", "prefix": "vertex@"},
+      "models": [
+        {"id": "gemini-3.8-flash", "status": "covered"},
+        {"id": "gemini-3.8-flash-tts", "status": "covered"},
+        {"id": "gemini-embedding-2", "status": "covered"},
+        {"id": "imagen-4.0-generate-001", "status": "covered"}
+      ]
+    },
+    "xai": {
+      "list": "api",
+      "note": "GET /v1/models on api.x.ai, with XAI_API_KEY (the spec's ListModelsResponse, pinned as contractspec/subsets/xai/models). The openai suite files xAI's models as xai@<model>. latest is the alias every example of xAI's spec names; v1 is the embedding model the spec's example names (xAI lists embedding models at GET /v1/embedding-models, which model-watch does not read).",
+      "fixtures": {"provider": "openai", "prefix": "xai@"},
+      "models": [
+        {"id": "grok-3", "status": "covered"},
+        {"id": "grok-4.6", "status": "covered"},
+        {"id": "grok-imagine-image", "status": "covered"},
+        {"id": "latest", "status": "covered"},
+        {"id": "v1", "status": "covered"}
+      ]
+    }
+  }
+}

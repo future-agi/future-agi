@@ -1,0 +1,5 @@
+{
+  "model": "gemini-embedding-2",
+  "input": "The jetpack is cool",
+  "dimensions": 128
+}

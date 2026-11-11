@@ -1,0 +1,23 @@
+{
+  "upstream": {
+    "header": {
+      "Cartesia-Version": [
+        "2026-08-14"
+      ],
+      "X-Api-Key": [
+        "platform-key"
+      ]
+    },
+    "kind": "synthesis",
+    "url": "wss://api.cartesia.ai/tts/websocket"
+  },
+  "usage": {
+    "admitted_models": [
+      "cartesia/sonic-latest"
+    ],
+    "audio_seconds": 0,
+    "characters": 26,
+    "model": "cartesia/sonic-latest",
+    "voice": ""
+  }
+}

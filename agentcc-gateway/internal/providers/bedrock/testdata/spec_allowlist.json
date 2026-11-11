@@ -1,0 +1,794 @@
+{
+  "provider": "bedrock",
+  "note": "Spec paths, blobs, enum values and events the bedrock adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec). bedrock/* roots are the Bedrock Runtime Smithy model; anthropic/* roots are the InvokeModel bodies Claude returns (Anthropic Messages), the stream ones as parseStreamPayload is written to read them inside a chunk's bytes (see gap B1). Gap IDs are the bedrock contract tests' (testdata/contracts/*/meta.json).",
+  "unmapped": [
+    {
+      "subset": "anthropic/messages",
+      "path": "$.container",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].caller",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].citations",
+      "reason": "known gap B19: citations are dropped on both APIs (Converse citationsContent blocks and citation deltas; InvokeModel content[].citations, which bedrockContentBlock has no field for), so grounded answers reach the client with no sources"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].toolset_name",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.diagnostics",
+      "reason": "known gap B23: InvokeModel diagnostics (cache_miss_reason: why the prompt cache missed) is dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_details",
+      "reason": "known gap B21: InvokeModel stop_details (the refusal category and explanation) is dropped, so there is no way to tell why a response was refused"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_creation",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.inference_geo",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.output_tokens_details",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.server_tool_use",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.service_tier",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.usage.speed",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.caller",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.citations",
+      "reason": "no content at block start: always empty; citations arrive as citations_delta (gap B19)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.input",
+      "reason": "no content at block start: always {}; input arrives as input_json_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.text",
+      "reason": "no content at block start: always empty; text arrives as text_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.toolset_name",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.container",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_details",
+      "reason": "known gap B21: InvokeModel stop_details (the refusal category and explanation) is dropped, so there is no way to tell why a response was refused"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.cache_creation_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.cache_read_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.output_tokens_details",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.usage.server_tool_use",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.container",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.content",
+      "reason": "no content: always empty at message_start; content arrives as content blocks"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.diagnostics",
+      "reason": "known gap B23: InvokeModel diagnostics (cache_miss_reason: why the prompt cache missed) is dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.role",
+      "reason": "no content: always \"assistant\" at message_start"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_details",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_reason",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.stop_sequence",
+      "reason": "no content: always null at message_start; stop_reason, stop_sequence and stop_details arrive on message_delta"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.type",
+      "reason": "no content: always \"message\" at message_start"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_creation",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap B9: InvokeModel prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.inference_geo",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.output_tokens_details",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.server_tool_use",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.service_tier",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_start:$.message.usage.speed",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.additionalModelResponseFields",
+      "reason": "no content today: additionalModelResponseFields holds only the model-specific fields a request names in additionalModelResponseFieldPaths, which the gateway never sends (request side, known gap B10, defined in contract_surface_test.go)"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.metrics",
+      "reason": "no canonical field: Bedrock's server-side latency (metrics.latencyMs) has no slot in the OpenAI response"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].image.error",
+      "reason": "known gap B25: image output (a Converse image content block, a ConverseStream image start or delta) is dropped; converseContentPart decodes image only because it is also the request type, and translateConverseResponse / parseConverseEvent keep text and toolUse alone"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].image.source.s3Location",
+      "reason": "known gap B25: image output (a Converse image content block, a ConverseStream image start or delta) is dropped; converseContentPart decodes image only because it is also the request type, and translateConverseResponse / parseConverseEvent keep text and toolUse alone"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolResult.content[].image.error",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolResult.content[].image.source.s3Location",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolResult.content[].json",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolResult.status",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolResult.type",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].toolUse.type",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.performanceConfig",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.serviceTier",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.trace",
+      "reason": "no content today: the guardrail / prompt-router trace is returned only when the request enables tracing in guardrailConfig, which the gateway never sends"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.usage.cacheDetails",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.usage.cacheReadInputTokens",
+      "reason": "known gap B8: Converse prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests (0 today: the gateway never sends a cachePoint)"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.usage.cacheWriteInputTokens",
+      "reason": "known gap B8: Converse prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests (0 today: the gateway never sends a cachePoint)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockStart:$.start.toolUse.type",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockStop:$.contentBlockIndex",
+      "reason": "no content: contentBlockStop only closes the block; its content arrived in its deltas"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "internalServerException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStart:$.role",
+      "reason": "no content: always \"assistant\"; parseConverseEvent does not decode messageStart"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.additionalModelResponseFields",
+      "reason": "no content today: additionalModelResponseFields holds only the model-specific fields a request names in additionalModelResponseFieldPaths, which the gateway never sends (request side, known gap B10, defined in contract_surface_test.go)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.metrics",
+      "reason": "no canonical field: Bedrock's server-side latency (metrics.latencyMs) has no slot in the OpenAI response"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.performanceConfig",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.serviceTier",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.trace",
+      "reason": "no content today: the guardrail / prompt-router trace is returned only when the request enables tracing in guardrailConfig, which the gateway never sends"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.usage.cacheDetails",
+      "reason": "known gap B22: billing details beyond input and output tokens are dropped: the per-TTL cache-write breakdown, thinking tokens, server-tool request counts, the service tier, speed and inference geography (InvokeModel usage), and Converse's serviceTier, performanceConfig and usage.cacheDetails, so priority, flex, latency-optimized, fast-mode and 1h-cache pricing cannot be seen"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.usage.cacheReadInputTokens",
+      "reason": "known gap B8: Converse prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests (0 today: the gateway never sends a cachePoint)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.usage.cacheWriteInputTokens",
+      "reason": "known gap B8: Converse prompt-cache read / write tokens are dropped instead of counted in prompt_tokens / prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests (0 today: the gateway never sends a cachePoint)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "metadata:$.usage.totalTokens",
+      "reason": "no content: derived; total_tokens is prompt + completion, as on the non-stream path"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "modelStreamErrorException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "serviceUnavailableException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "throttlingException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "validationException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "internalServerException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "modelStreamErrorException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "modelTimeoutException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "serviceUnavailableException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "throttlingException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "path": "validationException:$",
+      "reason": "known gap B16: a mid-stream exception's payload is not decoded: parseConverseEvent / parseStreamPayload put its raw JSON into the error message of a 502 upstream_error (code provider_0), whatever the exception (contract cases stream_exception_*)"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].content",
+      "reason": "known gap B20: server-tool result payloads (web search, code execution, web fetch, tool search) would land in bedrockContentBlock.Content, the raw tool_result content of the request type, and are dropped with their block"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "bash_code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "container_upload",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "redacted_thinking",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "server_tool_use",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "text_editor_code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "thinking",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "tool_search_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "web_fetch_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.content[].type",
+      "value": "web_search_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_reason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap B6: model_context_window_exceeded falls back to \"stop\" (lookupStopReason serves both APIs); the response was truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_reason",
+      "value": "pause_turn",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "anthropic/messages",
+      "path": "$.stop_reason",
+      "value": "refusal",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "citations_delta",
+      "reason": "known gap B19: citations are dropped on both APIs (Converse citationsContent blocks and citation deltas; InvokeModel content[].citations, which bedrockContentBlock has no field for), so grounded answers reach the client with no sources"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "signature_delta",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn (and the stream parser drops them too, before gap B1 even applies)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_delta:$.delta.type",
+      "value": "thinking_delta",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn (and the stream parser drops them too, before gap B1 even applies)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "bash_code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "container_upload",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "redacted_thinking",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn (and the stream parser drops them too, before gap B1 even applies)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "server_tool_use",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "text_editor_code_execution_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "thinking",
+      "reason": "known gap B3: thinking and redacted_thinking blocks are dropped whole on the InvokeModel path, signatures included; Anthropic requires them passed back unchanged in a tool-use turn (and the stream parser drops them too, before gap B1 even applies)"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "tool_search_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "web_fetch_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "content_block_start:$.content_block.type",
+      "value": "web_search_tool_result",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_reason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap B6: model_context_window_exceeded falls back to \"stop\" (lookupStopReason serves both APIs); the response was truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_reason",
+      "value": "pause_turn",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "anthropic/stream",
+      "path": "message_delta:$.delta.stop_reason",
+      "value": "refusal",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "audio",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "cachePoint",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "citationsContent",
+      "reason": "known gap B19: citations are dropped on both APIs (Converse citationsContent blocks and citation deltas; InvokeModel content[].citations, which bedrockContentBlock has no field for), so grounded answers reach the client with no sources"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "document",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "guardContent",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "image",
+      "reason": "known gap B25: image output (a Converse image content block, a ConverseStream image start or delta) is dropped; converseContentPart decodes image only because it is also the request type, and translateConverseResponse / parseConverseEvent keep text and toolUse alone"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "reasoningContent",
+      "reason": "known gap B2: Converse reasoningContent (reasoning text, signature, redactedContent) is dropped, stream and non-stream; Claude requires reasoning blocks passed back unchanged in a tool-use turn"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "searchResult",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "toolAddition",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "toolRemoval",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "toolResult",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.output.message.content[].<union>",
+      "value": "video",
+      "reason": "known gap B26: content-block members other than text, toolUse, reasoningContent (B2), citationsContent (B19), toolResult (B20) and image (B25) are dropped by translateConverseResponse (and reported); the ContentBlock union serves requests and responses alike, and whether a model returns these is unverified"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.stopReason",
+      "value": "content_filtered",
+      "reason": "known gap B5: stopReason content_filtered falls back to \"stop\", so a response the model's content filters blocked looks like a normal completion; \"content_filter\" is the canonical reason"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.stopReason",
+      "value": "guardrail_intervened",
+      "reason": "known gap B4: stopReason guardrail_intervened falls back to \"stop\", so a response a guardrail blocked looks like a normal completion; \"content_filter\" is the canonical reason"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.stopReason",
+      "value": "malformed_model_output",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.stopReason",
+      "value": "malformed_tool_use",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "bedrock/converse",
+      "path": "$.stopReason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap B6: model_context_window_exceeded falls back to \"stop\" (lookupStopReason serves both APIs); the response was truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockDelta:$.delta.<union>",
+      "value": "citation",
+      "reason": "known gap B19: citations are dropped on both APIs (Converse citationsContent blocks and citation deltas; InvokeModel content[].citations, which bedrockContentBlock has no field for), so grounded answers reach the client with no sources"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockDelta:$.delta.<union>",
+      "value": "image",
+      "reason": "known gap B25: image output (a Converse image content block, a ConverseStream image start or delta) is dropped; converseContentPart decodes image only because it is also the request type, and translateConverseResponse / parseConverseEvent keep text and toolUse alone"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockDelta:$.delta.<union>",
+      "value": "reasoningContent",
+      "reason": "known gap B2: Converse reasoningContent (reasoning text, signature, redactedContent) is dropped, stream and non-stream; Claude requires reasoning blocks passed back unchanged in a tool-use turn"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockDelta:$.delta.<union>",
+      "value": "toolResult",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockStart:$.start.<union>",
+      "value": "image",
+      "reason": "known gap B25: image output (a Converse image content block, a ConverseStream image start or delta) is dropped; converseContentPart decodes image only because it is also the request type, and translateConverseResponse / parseConverseEvent keep text and toolUse alone"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "contentBlockStart:$.start.<union>",
+      "value": "toolResult",
+      "reason": "known gap B20: server-side tools are not translated on either API (Converse toolUse of type server_tool_use and toolResult blocks / starts / deltas; InvokeModel server_tool_use and *_tool_result blocks, their caller and toolset_name, and the code-execution container); their calls and results are dropped"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.stopReason",
+      "value": "content_filtered",
+      "reason": "known gap B5: stopReason content_filtered falls back to \"stop\", so a response the model's content filters blocked looks like a normal completion; \"content_filter\" is the canonical reason"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.stopReason",
+      "value": "guardrail_intervened",
+      "reason": "known gap B4: stopReason guardrail_intervened falls back to \"stop\", so a response a guardrail blocked looks like a normal completion; \"content_filter\" is the canonical reason"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.stopReason",
+      "value": "malformed_model_output",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.stopReason",
+      "value": "malformed_tool_use",
+      "reason": "known gap B7: this stop reason has no mapping and falls back to \"stop\" (lookupStopReason), so a malformed generation, a paused server-tool turn or a refusal looks like a normal completion"
+    },
+    {
+      "subset": "bedrock/converse_stream",
+      "path": "messageStop:$.stopReason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap B6: model_context_window_exceeded falls back to \"stop\" (lookupStopReason serves both APIs); the response was truncated, so \"length\" is the honest canonical reason"
+    }
+  ],
+  "events": [
+    {
+      "subset": "bedrock/converse_errors",
+      "event": "AccessDeniedException",
+      "reason": "known gap B15: parseBedrockError types an error by its HTTP status alone and never reads x-amzn-ErrorType, so this exception gets the wrong canonical type (AccessDenied: authentication_error, not permission_error; ModelTimeout and ModelError: invalid_request_error, not a timeout or an upstream failure; ModelNotReady: rate_limit_error, indistinguishable from throttling); see the error_* contract cases"
+    },
+    {
+      "subset": "bedrock/converse_errors",
+      "event": "ModelErrorException",
+      "reason": "known gap B15: parseBedrockError types an error by its HTTP status alone and never reads x-amzn-ErrorType, so this exception gets the wrong canonical type (AccessDenied: authentication_error, not permission_error; ModelTimeout and ModelError: invalid_request_error, not a timeout or an upstream failure; ModelNotReady: rate_limit_error, indistinguishable from throttling); see the error_* contract cases"
+    },
+    {
+      "subset": "bedrock/converse_errors",
+      "event": "ModelNotReadyException",
+      "reason": "known gap B15: parseBedrockError types an error by its HTTP status alone and never reads x-amzn-ErrorType, so this exception gets the wrong canonical type (AccessDenied: authentication_error, not permission_error; ModelTimeout and ModelError: invalid_request_error, not a timeout or an upstream failure; ModelNotReady: rate_limit_error, indistinguishable from throttling); see the error_* contract cases"
+    },
+    {
+      "subset": "bedrock/converse_errors",
+      "event": "ModelTimeoutException",
+      "reason": "known gap B15: parseBedrockError types an error by its HTTP status alone and never reads x-amzn-ErrorType, so this exception gets the wrong canonical type (AccessDenied: authentication_error, not permission_error; ModelTimeout and ModelError: invalid_request_error, not a timeout or an upstream failure; ModelNotReady: rate_limit_error, indistinguishable from throttling); see the error_* contract cases"
+    },
+    {
+      "subset": "bedrock/invoke_stream",
+      "event": "chunk",
+      "reason": "known gap B1: parseStreamPayload decodes the chunk envelope {\"bytes\": <base64 Anthropic event>} as if it were the Anthropic event and never reads bytes, so every InvokeModel stream yields no content, no finish_reason and no usage (contract fixtures: anthropic.claude-opus-5-5 stream_*)"
+    }
+  ]
+}

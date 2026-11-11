@@ -1,0 +1,39 @@
+{
+  "body": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "What is the weather in Paris?",
+        "role": "user"
+      }
+    ],
+    "model": "anthropic/claude-4.5-sonnet",
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "description": "Get the current weather for a city.",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

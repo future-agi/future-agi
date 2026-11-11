@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "recordable": false,
+  "notes": "OUT_OF_RANGE (HTTP 400 in google/rpc/code.proto). No documented Gemini request is known to induce it; the case pins how the adapter maps a status from the Google error model it does not list. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28).",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 400 became 502",
+      "reason": "known gap G20: OUT_OF_RANGE, a client error, becomes a retryable 502 (see error_failed_precondition)"
+    }
+  ]
+}

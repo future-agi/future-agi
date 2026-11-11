@@ -1,0 +1,20 @@
+{
+  "body": {
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": "Alice has 3 brothers and she also has 2 sisters. How many sisters does Alice's brother have?",
+        "role": "user"
+      }
+    ],
+    "model": "command-a-reasoning-08-2025",
+    "stream": true
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/chat"
+}

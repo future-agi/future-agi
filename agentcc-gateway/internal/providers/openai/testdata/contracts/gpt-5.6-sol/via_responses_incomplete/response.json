@@ -1,0 +1,62 @@
+{
+  "id": "resp_68a1f3c2b4e08190a7c9d1e3f5b7a9c1072912b2993db808",
+  "object": "response",
+  "access_programs": null,
+  "created_at": 1793171000,
+  "status": "incomplete",
+  "completed_at": null,
+  "error": null,
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "instructions": null,
+  "max_output_tokens": 40,
+  "model": "gpt-5.6-sol",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_68a1f3c3d5f68190b8dae2f4a6c8e0b2072912b2993db808",
+      "status": "incomplete",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "In a peaceful grove beneath a silver moon, a unicorn named Lumina",
+          "annotations": [],
+          "logprobs": []
+        }
+      ]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 36,
+    "input_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "output_tokens": 40,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 76
+  },
+  "user": null,
+  "metadata": {}
+}

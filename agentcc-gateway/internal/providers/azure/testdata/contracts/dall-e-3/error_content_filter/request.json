@@ -1,0 +1,7 @@
+{
+  "model": "dall-e-3",
+  "prompt": "A photorealistic scene of a violent street fight.",
+  "n": 1,
+  "style": "natural",
+  "quality": "standard"
+}

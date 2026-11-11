@@ -1,0 +1,31 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": "I'll check the current weather in San Francisco.",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"San Francisco, CA\",\"unit\":\"fahrenheit\"}",
+              "name": "get_weather"
+            },
+            "id": "toolu_bdrk_01T1x1fJ34qAmk2tNTrN7Up6",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_bdrk_01Wq5zR8sT1yU4iO7pA2sD6f",
+  "model": "claude-opus-5-5",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 89,
+    "prompt_tokens": 472,
+    "total_tokens": 561
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "provider": "openai",
+  "model": "openrouter@mistralai/voxtral-mini-tts-2603",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from OpenRouter's OpenAPI spec as vendored in its official SDK, github.com/OpenRouterTeam/python-sdk .speakeasy/in.openapi.yaml at 752139b7d0b9a71baece3468203a358e07a341b5 (2026-10-28; pinned as contractspec/subsets/openrouter), POST /audio/speech: the request example verbatim (mistralai/voxtral-mini-tts-2603, voice en_paul_neutral, response_format pcm, speed 1) and the 200 answer, a raw audio bytestream whose Content-Type follows the format (\"audio/pcm for pcm — 16-bit little-endian\"), which CreateSpeech passes through. response.bin is 32 samples of 16-bit silence, not real speech. Error bodies are the operation's examples verbatim; their integer code is gap OR1, so each comes back as a 502.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": [],
+  "allowed_type_mismatches": [
+    {
+      "path": "error:$.error.code",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError cannot decode any OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and the client gets the raw body as the message"
+    }
+  ]
+}

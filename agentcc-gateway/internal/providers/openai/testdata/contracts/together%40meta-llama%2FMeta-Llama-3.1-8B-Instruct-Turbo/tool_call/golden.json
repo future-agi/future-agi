@@ -1,0 +1,32 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"city\":\"Paris\"}",
+              "name": "get_weather"
+            },
+            "id": "call_9a8b7c6d5e4f3a2b1c0d9e8f",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "8f2c3a1b7d9e4f07-SJC",
+  "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+  "object": "chat.completion",
+  "prompt": [],
+  "usage": {
+    "completion_tokens": 19,
+    "prompt_tokens": 201,
+    "total_tokens": 220
+  }
+}

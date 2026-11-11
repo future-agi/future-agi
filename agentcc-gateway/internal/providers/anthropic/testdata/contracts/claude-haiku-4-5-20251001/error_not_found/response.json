@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "not_found_error",
+    "message": "model: claude-haiku-0-0-00000000"
+  },
+  "request_id": "req_011CVnAA2bVq8Ys6Lh4cJm7n"
+}

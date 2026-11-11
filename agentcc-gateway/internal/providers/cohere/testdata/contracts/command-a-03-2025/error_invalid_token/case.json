@@ -1,0 +1,5 @@
+{
+  "status": 498,
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (498 InvalidToken: a request or response contains a deny-listed token); the docs give no 498 message, so it is invented, as is the id. Not recordable: Cohere does not publish the deny list. 498 is not a standard HTTP status, and the adapter passes it to the client as is."
+}

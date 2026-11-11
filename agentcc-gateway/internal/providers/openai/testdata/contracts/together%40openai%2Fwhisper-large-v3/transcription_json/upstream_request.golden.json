@@ -1,0 +1,16 @@
+{
+  "body": {
+    "file": {
+      "bytes": 9612,
+      "filename": "audio.mp3"
+    },
+    "language": "en",
+    "model": "openai/whisper-large-v3"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "multipart/form-data; boundary=<random>"
+  },
+  "method": "POST",
+  "path": "/v1/audio/transcriptions"
+}

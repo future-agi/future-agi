@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /v1/models (ListModels): ModelMetadataList, the default variant (see meta.json). Filed under gpt-oss-120b because the request names no model. Recordable."
+}

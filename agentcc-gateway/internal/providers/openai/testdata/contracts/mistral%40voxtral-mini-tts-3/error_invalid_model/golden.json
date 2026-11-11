@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "provider error (HTTP 400): {\n  \"object\": \"error\",\n  \"message\": \"Invalid model: nonexistent-model\",\n  \"type\": \"invalid_model\",\n  \"param\": null,\n  \"code\": \"1500\"\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

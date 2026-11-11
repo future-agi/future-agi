@@ -1,0 +1,45 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Fill in the weather report for my neighbour's house using their private camera feed.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14",
+    "response_format": {
+      "json_schema": {
+        "name": "weather",
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "temperature": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "city",
+            "temperature"
+          ],
+          "type": "object"
+        },
+        "strict": true
+      },
+      "type": "json_schema"
+    },
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

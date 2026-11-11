@@ -1,0 +1,6 @@
+{
+  "code": "provider_INVALID_ARGUMENT",
+  "message": "thinking_budget is not supported by this model. Use thinking_level instead.",
+  "status": 400,
+  "type": "invalid_request_error"
+}

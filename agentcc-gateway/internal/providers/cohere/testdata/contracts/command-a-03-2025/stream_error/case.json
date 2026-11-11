@@ -1,0 +1,10 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28): ChatMessageEndEvent's delta carries error (\"An error message if an error occurred during the generation\") with finish_reason ERROR (ChatFinishReason: \"The generation failed due to an internal error\"); the error text, ids and token counts are invented. Events before it as in stream_text. Not recordable: nothing a client sends induces it.",
+  "sanity_gaps": [
+    {
+      "failure": "the upstream's stream ended with an error",
+      "reason": "known gap K7: a stream that fails mid-generation (message-end with delta.error and finish_reason ERROR) ends as a normal one: the parser reads neither (ERROR would map to \"stop\" anyway, see gap K1), so the client and the request log see a success"
+    }
+  ]
+}

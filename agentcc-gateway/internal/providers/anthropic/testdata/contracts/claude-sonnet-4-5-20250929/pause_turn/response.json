@@ -1,0 +1,49 @@
+{
+  "id": "msg_01KcmhGqMHM8kDP4gpF2Qq8Z",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll look up recent population figures for each of the five largest US cities."
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_01Ba2GNJ7G1Xo2tWUbydUmxF",
+      "name": "web_search",
+      "input": {
+        "query": "New York City population 2015 2025 census estimate"
+      }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_01Ba2GNJ7G1Xo2tWUbydUmxF",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.census.gov/quickfacts/newyorkcitynewyork",
+          "title": "U.S. Census Bureau QuickFacts: New York city, New York",
+          "encrypted_content": "Ev0DCioIAxgCIiQ3NmU4ZmI4OC1kNjg4LTQ2NjctODMwMC04NWRmZDRmODIzODgSDDzGyqiPbAjhZ3ZRXhoMfAbdGcDrhNh2Dd5tIjCSAEo",
+          "page_age": null
+        }
+      ]
+    }
+  ],
+  "stop_reason": "pause_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 2147,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 118,
+    "server_tool_use": {
+      "web_search_requests": 1
+    },
+    "service_tier": "standard"
+  }
+}

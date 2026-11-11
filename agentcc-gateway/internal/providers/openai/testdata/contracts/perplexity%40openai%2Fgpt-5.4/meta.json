@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "perplexity@openai/gpt-5.4",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Perplexity's official SDK, github.com/perplexityai/perplexity-py at 1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced (2026-10-23), whose generated/api.py is generated from Perplexity's OpenAPI spec, POST /v1/responses (ResponsesResource.create, the /v1/responses passthrough: bodies go back unchanged; the server prices them from model and usage). responses_text is the SDK's tests/test_generated_api_integration.py test_responses_cache_controls_and_tool_usage verbatim: its request (input, service_tier priority, prompt_cache_key doc-1) plus the model its response names, which the gateway needs to route, and its ResponsesResponseOutput (output empty, usage with tool_calls_details: the fetch_url tool's invocation, cost_usd and token usage). stream_responses_text is data lines alone, each event's type in its data and no sentinel, as the same test file frames a Responses stream (RESUMED_EVENT, \"data: {json}\"; the SDK's _streaming.py stops at a [DONE] if one comes), with ResponseStreamEventOutput's event types (ResponseCreatedEventOutput, ResponseInProgressEventOutput, OutputItemAddedEventOutput, TextDeltaEventOutput, TextDoneEventOutput, OutputItemDoneEventOutput, ResponseCompletedEventOutput; Perplexity has no content_part events): ids resp-1 and msg-1, model and usage from the same test, the text a placeholder. No error case: the SDK types only a 422 (HTTPValidationErrorOutput {detail[] {loc, msg, type}}) and gives no example of it or of any other error body. docs.perplexity.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,14 @@
+{
+  "provider": "openai",
+  "model": "perplexity@pplx-embed-v1-0.6b",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Perplexity's official SDK, github.com/perplexityai/perplexity-py at 1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced (2026-10-23), whose generated/api.py is generated from Perplexity's OpenAPI spec, POST /v1/embeddings (EmbeddingsResource.create): EmbeddingsRequestInput (model pplx-embed-v1-0.6b or pplx-embed-v1-4b, input, dimensions, encoding_format base64_int8 | base64_binary) and EmbeddingsResponseOutput (object, model, data[] EmbeddingObjectOutput {object, index, embedding: a base64 string}, usage EmbeddingsUsageOutput {prompt_tokens, total_tokens, cost {currency USD, input_cost, total_cost}}). The requests are the SDK's tests/api_resources/test_embeddings.py (input \"x\", model pplx-embed-v1-0.6b), with no response example: the vectors (8 int8 values; a real one has as many as the model's dimensions) and the counts and costs are placeholders. No error case: the SDK types only a 422 (HTTPValidationErrorOutput {detail[] {loc, msg, type}}) and gives no example of it or of any other error body. docs.perplexity.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.usage.cost",
+      "reason": "known gap P2: Perplexity's embedding cost (usage.cost: currency, input_cost, total_cost) is dropped: models.EmbeddingUsage has no Extra, unlike chat's models.Usage, so the client loses what Perplexity charged"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

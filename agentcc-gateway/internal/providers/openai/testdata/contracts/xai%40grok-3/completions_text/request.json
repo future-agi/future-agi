@@ -1,0 +1,5 @@
+{
+  "prompt": "1, 2, 3, 4, ",
+  "model": "grok-3",
+  "max_tokens": 3
+}

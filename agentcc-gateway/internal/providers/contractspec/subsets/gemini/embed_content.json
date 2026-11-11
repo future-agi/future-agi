@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "provider": "gemini",
+  "root": "embed_content",
+  "format": "discovery",
+  "select": "method models.embedContent -> EmbedContentResponse",
+  "description": "embedContent response, decoded by translateSingleEmbedResponse",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.embedding": {"kinds":["object"]},
+    "$.embedding.shape": {"kinds":["array"]},
+    "$.embedding.shape[]": {"kinds":["integer"]},
+    "$.embedding.values": {"kinds":["array"]},
+    "$.embedding.values[]": {"kinds":["number"]},
+    "$.usageMetadata": {"kinds":["object"]},
+    "$.usageMetadata.promptTokenCount": {"kinds":["integer"]},
+    "$.usageMetadata.promptTokenDetails": {"kinds":["array"]},
+    "$.usageMetadata.promptTokenDetails[]": {"kinds":["object"]},
+    "$.usageMetadata.promptTokenDetails[].modality": {"kinds":["string"],"enum":["AUDIO","DOCUMENT","IMAGE","MODALITY_UNSPECIFIED","TEXT","VIDEO"]},
+    "$.usageMetadata.promptTokenDetails[].tokenCount": {"kinds":["integer"]}
+  }
+}

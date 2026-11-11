@@ -1,0 +1,51 @@
+{
+  "canonical_error": {
+    "code": "",
+    "message": "We are experiencing high traffic. Please try again later.",
+    "status": 502,
+    "type": ""
+  },
+  "stream": {
+    "assembled": {
+      "content": "Fast inference",
+      "finish_reason": "",
+      "role": "assistant",
+      "usage": null
+    },
+    "chunks": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "role": "assistant"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f",
+        "model": "gpt-oss-120b",
+        "object": "chat.completion.chunk",
+        "system_fingerprint": "fp_70185065a4"
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "Fast inference"
+            },
+            "finish_reason": null,
+            "index": 0
+          }
+        ],
+        "created": "<nonzero>",
+        "id": "chatcmpl-6c3d4e5f-7a8b-4c9d-0e1f-2a3b4c5d6e7f",
+        "model": "gpt-oss-120b",
+        "object": "chat.completion.chunk",
+        "system_fingerprint": "fp_70185065a4"
+      }
+    ],
+    "error": ": We are experiencing high traffic. Please try again later."
+  }
+}

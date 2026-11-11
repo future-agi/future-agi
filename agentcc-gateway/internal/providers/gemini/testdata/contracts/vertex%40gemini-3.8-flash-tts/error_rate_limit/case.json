@@ -1,0 +1,6 @@
+{
+  "endpoint": "speech",
+  "status": 429,
+  "recordable": false,
+  "notes": "Vertex AI's 429 for dynamic shared quota answered to the speech route's generateContent: RESOURCE_EXHAUSTED with no details and no retry hint, the body vertex@gemini-3.8-flash/error_rate_limit pins for chat (the same method on another publisher model). The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28). Not recordable: no request the recorder sends, with working credentials, induces it."
+}

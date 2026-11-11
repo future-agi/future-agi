@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"parts":[{"text":"Sunlight scatters off air molecules, and shorter blue"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":9,"thoughtsTokenCount":96,"totalTokenCount":116,"promptTokensDetails":[{"modality":"TEXT","tokenCount":11}]},"modelVersion":"gemini-3.8-flash","responseId":"RVc6RhwIQPw4GE39EPsbpBc"}
+
+data: {"candidates":[{"content":{"parts":[{"text":" wavelengths scatter far more than red ones (Rayleigh scattering), so blue light reaches us from every part of the sky."}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":33,"thoughtsTokenCount":96,"totalTokenCount":140,"promptTokensDetails":[{"modality":"TEXT","tokenCount":11}]},"modelVersion":"gemini-3.8-flash","responseId":"RVc6RhwIQPw4GE39EPsbpBc"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"vix1Uzhv8PByS1Rdh4+0Qyn5S1Sf/PGI7R8J3AhqnHfC5lwurjvpMCHmOdsrTZ+JIVr0ROwUrOyf3rL2L7EMtic+Lr4q7a6HFBsVOXjGxAJ7ux069KHnS45SHGqL+L3e"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":33,"thoughtsTokenCount":96,"totalTokenCount":140,"promptTokensDetails":[{"modality":"TEXT","tokenCount":11}]},"modelVersion":"gemini-3.8-flash","responseId":"RVc6RhwIQPw4GE39EPsbpBc"}
+

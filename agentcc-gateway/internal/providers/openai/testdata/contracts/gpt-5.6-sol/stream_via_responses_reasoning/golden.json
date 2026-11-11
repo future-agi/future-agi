@@ -1,0 +1,127 @@
+{
+  "assembled": {
+    "content": "The classic tongue twister has no literal answer.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 1035,
+      "completion_tokens_details": {
+        "reasoning_tokens": 832
+      },
+      "prompt_tokens": 81,
+      "prompt_tokens_details": {
+        "cached_tokens": 64
+      },
+      "total_tokens": 1116
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The classic"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " tongue twister"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " has no"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " literal answer."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+      "model": "gpt-5.6-sol",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 1035,
+        "completion_tokens_details": {
+          "reasoning_tokens": 832
+        },
+        "prompt_tokens": 81,
+        "prompt_tokens_details": {
+          "cached_tokens": 64
+        },
+        "total_tokens": 1116
+      }
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,74 @@
+{
+  "provider": "openai",
+  "model": "xai@latest",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from xAI's OpenAPI spec as published in its official SDK, github.com/xai-org/xai-sdk-ts spec/openapi.json at 51bfc686c74310226d601e6037fa6c2e562244f7 (2026-10-28; pinned as contractspec/subsets/xai). latest is the model every example of the spec names (ChatRequest.model's example). text_basic is POST /v1/chat/completions' request and 200 examples verbatim (ChatResponse). Its usage counts the reasoning tokens in total_tokens and not in completion_tokens (32 + 9 + 94 reasoning = 135), gap XA1. text_end_turn is the same example with finish_reason \"end_turn\", the third value the finish_reason description names beside stop and length (the spec gives no enum), gap XA2. stream_text follows ChatResponseChunk (id, object, created, model, choices[] {index, delta, finish_reason}, service_tier, system_fingerprint, usage on the last chunk) with the 200 example's values split into deltas, data lines alone and data: [DONE] at the end, as ChatRequest.stream describes. responses_text is POST /v1/responses' request and 200 examples verbatim (ModelResponse); list_models is GET /v1/models' 200 example verbatim (filed here because the request names no model). The error bodies are the SDK's own (the same SDK's tests at that commit, test/errors.test.ts): error_invalid_model is \"exposes structured error details\" ({error: {type, code, param, message}}, 400), responses_error_invalid_argument is \"uses a string error field as the message\" ({code, error: \"<message>\"}, 400), the flat form src/errors.ts errorFromResponse reads beside OpenAI's (gap XA3); the spec declares 400 and 422 without a body.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.data[].aliases",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].capabilities",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].context_length",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].cached_prompt_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].completion_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].completion_text_token_price_long_context",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].image_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].long_context_threshold",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].prompt_image_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].prompt_text_token_price",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].prompt_text_token_price_long_context",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; xAI's model metadata (aliases, context length, per-token prices, capabilities) has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
+    },
+    {
+      "path": "error:$.code",
+      "reason": "known gap XA3: xAI's flat error body {\"code\", \"error\": \"<message>\"}, the form its SDK parses beside OpenAI's, does not decode: error is a string where models.ErrorResponse expects an object, so parseProviderError falls back to a 502 with the raw body as the message, and a 400 is retried, failed over and counted against the circuit breaker"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "end_turn",
+      "reason": "known gap XA2: xAI's finish_reason \"end_turn\" passes through unmapped: not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it"
+    }
+  ],
+  "allowed_type_mismatches": [
+    {
+      "path": "error:$.error",
+      "reason": "known gap XA3: xAI's flat error body {\"code\", \"error\": \"<message>\"}, the form its SDK parses beside OpenAI's, does not decode: error is a string where models.ErrorResponse expects an object, so parseProviderError falls back to a 502 with the raw body as the message, and a 400 is retried, failed over and counted against the circuit breaker"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "endpoint": "images",
+  "notes": "Request-side: the parameters CreateImageRequest documents for GPT image models. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "request.json key \"background\"",
+      "reason": "known gap O20: models.ImageRequest has no field for it and no Extra, so the GPT-image request parameters background, output_format, output_compression, moderation, partial_images and stream never reach OpenAI and the client silently gets the defaults"
+    },
+    {
+      "failure": "request.json key \"output_format\"",
+      "reason": "known gap O20: models.ImageRequest has no field for it and no Extra, so the GPT-image request parameters background, output_format, output_compression, moderation, partial_images and stream never reach OpenAI and the client silently gets the defaults"
+    },
+    {
+      "failure": "request.json key \"moderation\"",
+      "reason": "known gap O20: models.ImageRequest has no field for it and no Extra, so the GPT-image request parameters background, output_format, output_compression, moderation, partial_images and stream never reach OpenAI and the client silently gets the defaults"
+    }
+  ]
+}

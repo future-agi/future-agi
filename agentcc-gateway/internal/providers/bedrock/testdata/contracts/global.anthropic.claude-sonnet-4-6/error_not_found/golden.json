@@ -1,0 +1,6 @@
+{
+  "code": "provider_404",
+  "message": "The specified model ARN was not found.",
+  "status": 404,
+  "type": "not_found"
+}

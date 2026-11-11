@@ -1,0 +1,16 @@
+{
+  "body": {
+    "dimensions": 8,
+    "input": [
+      "this is a test"
+    ],
+    "model": "text-embedding-3-large"
+  },
+  "headers": {
+    "api-key": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/openai/deployments/text-embedding-3-large/embeddings",
+  "query": "api-version=2024-10-21"
+}

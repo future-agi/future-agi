@@ -1,0 +1,95 @@
+{
+  "provider": "groq",
+  "note": "The groq preset's spec (contractspec/subsets/groq) against what the openai adapter decodes; see spec_allowlist.json for the official API. Its contract fixtures are the groq@<model> directories under testdata/contracts.",
+  "unmapped": [
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].message.executed_tools",
+      "reason": "known gap GQ4: the results of Groq's built-in tools (compound models' web search, code execution, browser automation: executed_tools with arguments, output, search and code results) are dropped; models.Message has no slot, so the client sees the answer without the tool runs it rests on"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].message.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical message has only tool_calls"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].message.reasoning",
+      "reason": "known gap GQ1: Groq's parsed reasoning (message.reasoning) is dropped; models.Message has reasoning_content, the canonical slot, but nothing maps one to the other"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].delta.annotations",
+      "reason": "known gap GQ5: streamed annotations (document_citation, function_citation) are dropped (models.Delta has no annotations); the non-stream message keeps them as raw JSON"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].delta.executed_tools",
+      "reason": "known gap GQ4: as on the non-stream path, streamed executed_tools are dropped"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].delta.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical message has only tool_calls"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].delta.reasoning",
+      "reason": "known gap GQ2: Groq's streamed reasoning (delta.reasoning) is dropped; models.Delta has reasoning_content, the canonical slot"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.choices[].message.annotations",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "groq/chat",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "groq/chat_stream",
+      "path": "chunk:$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "groq/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [],
+  "events": []
+}

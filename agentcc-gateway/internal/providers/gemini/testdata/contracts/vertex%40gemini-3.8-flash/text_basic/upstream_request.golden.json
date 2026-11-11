@@ -1,0 +1,23 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Is 9.11 larger than 9.9? Answer briefly."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {}
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-gcp-location": "global",
+    "x-gcp-project": "test-project"
+  },
+  "method": "POST",
+  "path": "/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash:generateContent"
+}

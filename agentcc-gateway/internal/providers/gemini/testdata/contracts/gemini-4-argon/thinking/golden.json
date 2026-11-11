@@ -1,0 +1,22 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Yes. 2^31 - 1 = 2,147,483,647 is a Mersenne prime (Euler, 1772).",
+        "reasoning_content": "**Recognising the number**\n\n2^31 - 1 = 2147483647 is a Mersenne number with a prime exponent, and it is the Mersenne prime Euler proved prime in 1772.**Double-checking**\n\nAny prime factor of 2^31 - 1 must have the form 62k + 1; checking those up to its square root finds none.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-4-argon",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 2918,
+    "prompt_tokens": 24,
+    "total_tokens": 2942
+  }
+}

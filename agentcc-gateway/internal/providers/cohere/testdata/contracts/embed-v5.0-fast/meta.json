@@ -1,0 +1,46 @@
+{
+  "provider": "cohere",
+  "model": "embed-v5.0-fast",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (POST /v2/embed, EmbedByTypeResponse, ApiMeta, EmbeddingType and the endpoint's embed-v5.0-fast example) and the errors page (fern/pages/cohere-api/errors.mdx, docs.cohere.com/reference/errors, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience) for the error case, read 2026-10-28. Vectors are the example's first 8 values; ids invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. embed-v5.0-fast is the model the reference's examples use; docs/models lists it (and embed-v5.0-pro) as current.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.embeddings.base64",
+      "reason": "not requested: the adapter always asks for embedding_types [\"float\"] (gap K9); recorded with upstream_patch.json to pin this type's shape for when it does"
+    },
+    {
+      "path": "$.embeddings.binary",
+      "reason": "not requested: the adapter always asks for embedding_types [\"float\"] (gap K9); recorded with upstream_patch.json to pin this type's shape for when it does"
+    },
+    {
+      "path": "$.embeddings.int8",
+      "reason": "not requested: the adapter always asks for embedding_types [\"float\"] (gap K9); recorded with upstream_patch.json to pin this type's shape for when it does"
+    },
+    {
+      "path": "$.embeddings.ubinary",
+      "reason": "not requested: the adapter always asks for embedding_types [\"float\"] (gap K9); recorded with upstream_patch.json to pin this type's shape for when it does"
+    },
+    {
+      "path": "$.embeddings.uint8",
+      "reason": "not requested: the adapter always asks for embedding_types [\"float\"] (gap K9); recorded with upstream_patch.json to pin this type's shape for when it does"
+    },
+    {
+      "path": "$.meta.api_version",
+      "reason": "no canonical field: the API version (and its deprecated / experimental flags) has no slot in EmbeddingResponse"
+    },
+    {
+      "path": "$.meta.warnings",
+      "reason": "no canonical field: EmbeddingResponse has no slot for the API's warnings (an experimental or deprecated version)"
+    },
+    {
+      "path": "$.response_type",
+      "reason": "no canonical field: always embeddings_by_type on /v2/embed; the canonical response has one shape"
+    },
+    {
+      "path": "error:$.id",
+      "reason": "known gap K11: the error id is dropped (parseCohereError reads only message), so a failed request cannot be traced with Cohere support"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

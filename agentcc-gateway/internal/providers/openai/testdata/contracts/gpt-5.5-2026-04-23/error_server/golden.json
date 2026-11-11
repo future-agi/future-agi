@@ -1,0 +1,6 @@
+{
+  "code": "",
+  "message": "The server had an error while processing your request. Sorry about that!",
+  "status": 502,
+  "type": "server_error"
+}

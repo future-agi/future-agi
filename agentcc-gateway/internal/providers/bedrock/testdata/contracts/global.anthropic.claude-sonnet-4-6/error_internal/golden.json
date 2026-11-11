@@ -1,0 +1,6 @@
+{
+  "code": "provider_500",
+  "message": "The system encountered an unexpected error during processing. Try your request again.",
+  "status": 502,
+  "type": "upstream_error"
+}

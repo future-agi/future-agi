@@ -1,0 +1,28 @@
+{
+  "body": {
+    "anthropic_version": "bedrock-2023-05-31",
+    "max_tokens": 256,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is the capital of France? Answer in one sentence.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "system": "You are a concise assistant.",
+    "temperature": 0.2
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "0eb760c5831362c8d66cbc2d512885c9354a5eea7473979d565c9f9fb4af9d8b",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/anthropic.claude-opus-5-5/invoke"
+}

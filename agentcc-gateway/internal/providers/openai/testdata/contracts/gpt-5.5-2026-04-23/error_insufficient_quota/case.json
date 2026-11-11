@@ -1,0 +1,5 @@
+{
+  "status": 429,
+  "recordable": false,
+  "notes": "Synthetic: the 429 body quoted verbatim in openai-cookbook examples/How_to_handle_rate_limits.ipynb (a8132ca, 2026-10-26). No Retry-After: the spec says it \"may be omitted for 429 responses that require user action\". It stays a 429, which the gateway retries and fails over like a rate limit although only a billing change clears it. Needs an organization out of quota."
+}

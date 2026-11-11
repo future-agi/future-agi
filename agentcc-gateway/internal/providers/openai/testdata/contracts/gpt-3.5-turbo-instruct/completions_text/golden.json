@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "logprobs": null,
+      "text": "\n\nThis is indeed a test"
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "cmpl-uqkvlQyYK7bGYrRHQ0eXlWi7",
+  "model": "gpt-3.5-turbo-instruct",
+  "object": "text_completion",
+  "system_fingerprint": "fp_44709d6fcb",
+  "usage": {
+    "completion_tokens": 7,
+    "prompt_tokens": 5,
+    "total_tokens": 12
+  }
+}

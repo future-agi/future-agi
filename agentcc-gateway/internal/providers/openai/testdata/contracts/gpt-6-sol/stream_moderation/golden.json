@@ -1,0 +1,459 @@
+{
+  "assembled": {
+    "content": "Macbeth murders King Duncan to seize the crown and is destroyed by guilt and by Macduff.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 22,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 21,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 43
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "139aLx78",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Macbeth"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "1E2kwei",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " murders"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "dj",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " King"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "NARLDhOCf",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " Duncan"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "JRzbP6t8",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " to"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "ms0pF",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " seize"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "rJA",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " the"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "JKF",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " crown"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "1nmVItif5U1gp",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "cQ8unFbR",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " is"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "d9WS1OELh",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " destroyed"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "xqVGOFe5Km0C",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " by"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "WdNTAtf",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " guilt"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "r340QAz",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "cddTlmPZsGf2",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " by"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "fnYHqlKJu",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " Macduff."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "5WVWj0gEwR3hE",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "uwapUAlEJrp",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "moderation": {
+        "input": {
+          "model": "omni-moderation-latest",
+          "results": [
+            {
+              "categories": {
+                "harassment": false,
+                "hate": false,
+                "illicit": false,
+                "self-harm": false,
+                "sexual": false,
+                "violence": false
+              },
+              "category_applied_input_types": {
+                "harassment": [
+                  "text"
+                ],
+                "hate": [
+                  "text"
+                ],
+                "illicit": [
+                  "text"
+                ],
+                "self-harm": [
+                  "text"
+                ],
+                "sexual": [
+                  "text"
+                ],
+                "violence": [
+                  "text"
+                ]
+              },
+              "category_scores": {
+                "harassment": 0.0001,
+                "hate": 0.0001,
+                "illicit": 0.0001,
+                "self-harm": 0.0001,
+                "sexual": 0.0001,
+                "violence": 0.0001
+              },
+              "flagged": false,
+              "model": "omni-moderation-latest",
+              "type": "moderation_result"
+            }
+          ],
+          "type": "moderation_results"
+        },
+        "output": {
+          "model": "omni-moderation-latest",
+          "results": [
+            {
+              "categories": {
+                "harassment": false,
+                "hate": false,
+                "illicit": false,
+                "self-harm": false,
+                "sexual": false,
+                "violence": true
+              },
+              "category_applied_input_types": {
+                "harassment": [
+                  "text"
+                ],
+                "hate": [
+                  "text"
+                ],
+                "illicit": [
+                  "text"
+                ],
+                "self-harm": [
+                  "text"
+                ],
+                "sexual": [
+                  "text"
+                ],
+                "violence": [
+                  "text"
+                ]
+              },
+              "category_scores": {
+                "harassment": 0.0001,
+                "hate": 0.0001,
+                "illicit": 0.0001,
+                "self-harm": 0.0001,
+                "sexual": 0.0001,
+                "violence": 0.81
+              },
+              "flagged": true,
+              "model": "omni-moderation-latest",
+              "type": "moderation_result"
+            }
+          ],
+          "type": "moderation_results"
+        }
+      },
+      "obfuscation": "bdyA2FLTv7",
+      "object": "chat.completion.chunk",
+      "service_tier": "default"
+    },
+    {
+      "choices": [],
+      "created": "<nonzero>",
+      "id": "chatcmpl-fS4adbsE1hPSSyg6EBXgBwewHQSmM",
+      "model": "gpt-6-sol",
+      "obfuscation": "cDvpyoDMSF",
+      "object": "chat.completion.chunk",
+      "service_tier": "default",
+      "usage": {
+        "completion_tokens": 22,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": 0,
+          "audio_tokens": 0,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": 0
+        },
+        "prompt_tokens": 21,
+        "prompt_tokens_details": {
+          "audio_tokens": 0,
+          "cached_tokens": 0
+        },
+        "total_tokens": 43
+      }
+    }
+  ],
+  "error": null
+}

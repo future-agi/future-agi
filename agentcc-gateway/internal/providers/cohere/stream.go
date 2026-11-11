@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // streamState tracks state across Cohere stream events.
@@ -16,6 +17,10 @@ type streamState struct {
 
 	// toolCallIndex tracks the current tool call index for streaming tool calls.
 	toolCallIndex int
+
+	// shape receives a report for every event and delta type this parser
+	// skips without translating. nil (the default) discards reports.
+	shape *common.ShapeReporter
 }
 
 func newStreamState(model string) *streamState {
@@ -79,8 +84,14 @@ type toolCallDeltaPayload struct {
 // parseStreamData parses a Cohere SSE data payload and returns a StreamChunk.
 // Returns (chunk, done, error).
 func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, error) {
+	if data == "[DONE]" {
+		// The API's stream terminator; message-end has already ended the
+		// stream by the time it arrives.
+		return nil, false, nil
+	}
 	var event streamEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		s.shape.Report(common.ShapeMalformed, "stream event")
 		return nil, false, nil // Skip unparseable.
 	}
 
@@ -114,6 +125,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 				Text string `json:"text"`
 			}
 			if err2 := json.Unmarshal(event.Delta, &simple); err2 != nil {
+				s.shape.Report(common.ShapeMalformed, "content-delta")
 				return nil, false, nil
 			}
 			content := simple.Text
@@ -130,6 +142,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 				},
 			}, false, nil
 		}
+		s.reportUntranslatedContent(event.Delta)
 		content := cd.Message.Content.Text
 		return &models.StreamChunk{
 			ID:      s.chunkID,
@@ -154,8 +167,13 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 		// No action needed on tool-call-end; the tool call is complete.
 		return nil, false, nil
 
+	case "content-start", "content-end", "citation-end":
+		// Markers: content-start opens a block whose text arrives in
+		// content-delta, and the end events carry only an index.
+		return nil, false, nil
+
 	case "message-end":
-		finishReason := mapCohereFinishReason(event.FinishReason)
+		finish := finishReason(s.shape, event.FinishReason)
 		chunk := &models.StreamChunk{
 			ID:      s.chunkID,
 			Object:  "chat.completion.chunk",
@@ -164,7 +182,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 			Choices: []models.StreamChoice{
 				{
 					Index:        0,
-					FinishReason: &finishReason,
+					FinishReason: &finish,
 				},
 			},
 		}
@@ -178,7 +196,30 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 		return chunk, true, nil
 	}
 
+	s.shape.Report(common.ShapeUnknownEvent, event.Type)
 	return nil, false, nil
+}
+
+// reportUntranslatedContent reports the members of a content-delta's
+// delta.message.content other than text, such as a reasoning model's
+// thinking, which this parser does not translate.
+func (s *streamState) reportUntranslatedContent(delta json.RawMessage) {
+	if s.shape == nil {
+		return
+	}
+	var probe struct {
+		Message struct {
+			Content map[string]json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(delta, &probe) != nil {
+		return
+	}
+	for name := range probe.Message.Content {
+		if name != "text" {
+			s.shape.Report(common.ShapeUnknownDelta, name)
+		}
+	}
 }
 
 // handleToolCallStart processes a tool-call-start event by emitting a chunk
@@ -190,6 +231,7 @@ func (s *streamState) handleToolCallStart(event streamEvent) (*models.StreamChun
 
 	var tcs toolCallStartDelta
 	if err := json.Unmarshal(event.Delta, &tcs); err != nil {
+		s.shape.Report(common.ShapeMalformed, "tool-call-start")
 		return nil, false, nil
 	}
 
@@ -230,6 +272,7 @@ func (s *streamState) handleToolCallDelta(event streamEvent) (*models.StreamChun
 
 	var tcd toolCallDeltaPayload
 	if err := json.Unmarshal(event.Delta, &tcd); err != nil {
+		s.shape.Report(common.ShapeMalformed, "tool-call-delta")
 		return nil, false, nil
 	}
 

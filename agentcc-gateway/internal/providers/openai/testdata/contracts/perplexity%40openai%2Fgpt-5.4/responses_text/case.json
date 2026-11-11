@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The SDK integration test's response verbatim (see meta.json); its output is empty, as there. Recordable."
+}

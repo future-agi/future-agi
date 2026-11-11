@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "headers": {
+    "apim-request-id": "a4c7e2f9-1b6d-4d38-9e05-7f2a8c3b6d41"
+  },
+  "notes": "Synthetic, the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json: message, type, param, code) of a request the model rejects. Recordable: request.json asks for max_tokens 1000000 (sent as max_completion_tokens, see upstream_request.golden.json), above gpt-4.1's 32768 output tokens; the wording is invented, so a recording should replace it. The golden has no param. Known gap A7: parseProviderError never copies error.param, so the canonical error does not say which parameter was rejected."
+}

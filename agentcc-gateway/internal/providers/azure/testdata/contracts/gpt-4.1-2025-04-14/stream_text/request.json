@@ -1,0 +1,17 @@
+{
+  "model": "gpt-4.1-2025-04-14",
+  "messages": [
+    {
+      "role": "system",
+      "content": "you are a helpful assistant that talks like a pirate"
+    },
+    {
+      "role": "user",
+      "content": "can you tell me how to care for a parrot?"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}

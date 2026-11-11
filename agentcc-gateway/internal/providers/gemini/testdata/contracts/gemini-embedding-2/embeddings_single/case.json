@@ -1,0 +1,10 @@
+{
+  "endpoint": "embeddings",
+  "notes": "One input: embedContent. Gemini API embeddings (generativelanguage v1beta discovery, revision 20261028: EmbedContentResponse {embedding, usageMetadata}, BatchEmbedContentsResponse {embeddings, usageMetadata}, ContentEmbedding, EmbeddingUsageMetadata {promptTokenCount, promptTokenDetails}); layout as the recorded embedContent/batchEmbedContents output in google-gemini/cookbook quickstarts/rest/Embeddings_REST.ipynb. gemini-embedding-2 is the current embedding model (cookbook quickstarts/Embeddings.ipynb). Vector values are invented; 128 dimensions because the requests ask for them.",
+  "sanity_gaps": [
+    {
+      "failure": "embedding usage",
+      "reason": "known gap G23: the embedding usage Gemini reports (usageMetadata.promptTokenCount, what Gemini API embeddings are priced in) is dropped; the canonical usage is hard-coded 0, so embeddings are never billed"
+    }
+  ]
+}

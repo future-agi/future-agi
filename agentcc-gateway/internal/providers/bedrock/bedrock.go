@@ -19,6 +19,9 @@ import (
 
 const bedrockService = "bedrock"
 
+// adapterName labels this adapter's unknown-shape reports and metric.
+const adapterName = "bedrock"
+
 // Provider implements the Provider interface for AWS Bedrock.
 type Provider struct {
 	id          string
@@ -152,7 +155,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock: parsing response: %v", err))
 	}
 
-	return translateResponse(&br2), nil
+	return translateResponse(&br2, common.NewShapeReporter(ctx, adapterName, p.id)), nil
 }
 
 // StreamChatCompletion sends a streaming request to Bedrock.
@@ -241,6 +244,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		}
 
 		state := newBedrockStreamState(modelID)
+		state.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 
 		for {
 			select {

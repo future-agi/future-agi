@@ -1,0 +1,8 @@
+{
+  "status": 429,
+  "headers": {
+    "request-id": "req_018EeWyXxfu5pfWkrYcMdjWG"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/rate-limits (\"Reaching your spend cap\": a 429 rate_limit_error with error.details.error_code enforced_spend_limit_reached and no retry-after header; body and request_id are the page's example, with the reset date moved to the next month). Not recordable: it needs an organization at its tier's monthly spend cap."
+}

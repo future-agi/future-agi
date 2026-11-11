@@ -1,0 +1,5 @@
+{
+  "endpoint": "chat_via_responses",
+  "recordable": false,
+  "notes": "A stream that ends with an error event (ResponseErrorEvent: code, message, param, sequence_number; code from ResponseError.code) instead of a terminal response event. Message invented. Not recordable."
+}

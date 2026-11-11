@@ -1,0 +1,23 @@
+{
+  "id": "gen-1793212800-a1B2c3D4e5F6g7H8i9J0",
+  "object": "text_completion",
+  "created": 1793212800,
+  "model": "openai/gpt-4o",
+  "provider": "OpenAI",
+  "system_fingerprint": "fp_a1b2c3d4e5",
+  "choices": [
+    {
+      "text": "Waves fold into foam,\nsalt wind carries gull voices,\nthe tide keeps its time.",
+      "index": 0,
+      "logprobs": null,
+      "finish_reason": "stop",
+      "native_finish_reason": "stop",
+      "reasoning": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 13,
+    "completion_tokens": 21,
+    "total_tokens": 34
+  }
+}

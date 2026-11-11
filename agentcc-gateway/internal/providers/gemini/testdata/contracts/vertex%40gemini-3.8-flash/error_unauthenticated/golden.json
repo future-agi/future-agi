@@ -1,0 +1,6 @@
+{
+  "code": "provider_UNAUTHENTICATED",
+  "message": "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.",
+  "status": 401,
+  "type": "authentication_error"
+}

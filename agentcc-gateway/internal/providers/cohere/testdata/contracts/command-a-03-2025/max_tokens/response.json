@@ -1,0 +1,24 @@
+{
+  "id": "0b7e2f4a-9c1d-4e3b-8a6f-5d2c7e9a1b04",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "On a rocky spit of the Breton coast, old Yann tended the lamp every"
+      }
+    ]
+  },
+  "finish_reason": "MAX_TOKENS",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 10,
+      "output_tokens": 16
+    },
+    "tokens": {
+      "input_tokens": 499,
+      "output_tokens": 16
+    },
+    "cached_tokens": 0
+  }
+}

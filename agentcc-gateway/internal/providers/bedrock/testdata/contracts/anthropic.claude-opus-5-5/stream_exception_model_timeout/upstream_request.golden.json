@@ -1,0 +1,26 @@
+{
+  "body": {
+    "anthropic_version": "bedrock-2023-05-31",
+    "max_tokens": 256,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Summarize the plot of Hamlet in two sentences.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "cb8c7189b006d006ee5d8def5062e70fc064e7242641f39bbce2e6fc6249e786",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/anthropic.claude-opus-5-5/invoke-with-response-stream"
+}

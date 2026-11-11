@@ -1,0 +1,12 @@
+{
+  "body": {
+    "input": "Write a 20-word poem about a sunflower, one word at a time.",
+    "model": "accounts/fireworks/models/llama-v3p1-8b-instruct"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

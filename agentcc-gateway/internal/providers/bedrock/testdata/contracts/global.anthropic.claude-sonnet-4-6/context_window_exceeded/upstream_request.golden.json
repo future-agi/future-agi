@@ -1,0 +1,26 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 64000
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Summarize every chapter of the attached manuscript in detail."
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "c75696cad4d568acf012e48b4428efa1503426c46a9a0dc5873e62f925185072",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/global.anthropic.claude-sonnet-4-6/converse"
+}

@@ -1,0 +1,24 @@
+{
+  "body": {
+    "max_completion_tokens": 200,
+    "messages": [
+      {
+        "content": "Describe the scene.",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "api-key": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/openai/deployments/gpt-4.1-2025-04-14/chat/completions",
+  "query": "api-version=2024-10-21"
+}

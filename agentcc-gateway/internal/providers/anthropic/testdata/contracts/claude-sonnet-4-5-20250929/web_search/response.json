@@ -1,0 +1,77 @@
+{
+  "id": "msg_01Hn8yFy1pBf3a9X9LQqWb3K",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll search for when Claude Shannon was born."
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_01WYG3ziw53XMcoyKL4XcZmE",
+      "name": "web_search",
+      "input": {
+        "query": "claude shannon birth date"
+      }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_01WYG3ziw53XMcoyKL4XcZmE",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://en.wikipedia.org/wiki/Claude_Shannon",
+          "title": "Claude Shannon - Wikipedia",
+          "encrypted_content": "EqgfCioIARgBIiQ3YTAwMjY1Mi1mZjM5LTQ1NGUtODgxNC1kNjNjNTk1ZWI3YjQSDLpFWa9BNyz7c7c9choMh1dqzzT1Qw8EjzCAIjB0w5Jqoy",
+          "page_age": "April 30, 2025"
+        },
+        {
+          "type": "web_search_result",
+          "url": "https://www.britannica.com/biography/Claude-Shannon",
+          "title": "Claude Shannon | Biography & Facts | Britannica",
+          "encrypted_content": "Ev0DCioIAxgCIiQ3NmU4ZmI4OC1kNjg4LTQ2NjctODMwMC04NWRmZDRmODIzODgSDDzGyqiPbAjhZ3ZRXhoMfAbdGcDrhNh2Dd5tIjCSAEo",
+          "page_age": null
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": "Based on the search results, "
+    },
+    {
+      "type": "text",
+      "text": "Claude Shannon was born on April 30, 1916, in Petoskey, Michigan",
+      "citations": [
+        {
+          "type": "web_search_result_location",
+          "url": "https://en.wikipedia.org/wiki/Claude_Shannon",
+          "title": "Claude Shannon - Wikipedia",
+          "encrypted_index": "Eo8BCioIAhgBIiQyYjQ0OWJmZi1lNmY1LTRkNGMtOTUyOC02OTRmODRhMzM0OTMSDPIGbKqiT9oSU8yo1hoMYuP8Uk0bL1pkJGa0IjBk",
+          "cited_text": "Claude Elwood Shannon (April 30, 1916 – February 24, 2001) was an American mathematician, electrical engineer, computer scientist, cryptographer and i..."
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": "."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 6039,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 931,
+    "server_tool_use": {
+      "web_search_requests": 1
+    },
+    "service_tier": "standard"
+  }
+}

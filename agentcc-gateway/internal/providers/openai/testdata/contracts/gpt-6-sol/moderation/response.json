@@ -1,0 +1,131 @@
+{
+  "id": "chatcmpl-heHu2dmvmfvu7LOPaRfkHCjoSLqsL",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "gpt-6-sol",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Macbeth, spurred by a prophecy and his wife's ambition, murders King Duncan to take the throne of Scotland. Guilt and paranoia drive him to further killings until he is overthrown and slain by Macduff.",
+        "refusal": null,
+        "annotations": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 21,
+    "completion_tokens": 44,
+    "total_tokens": 65,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "service_tier": "default",
+  "moderation": {
+    "input": {
+      "type": "moderation_results",
+      "model": "omni-moderation-latest",
+      "results": [
+        {
+          "type": "moderation_result",
+          "model": "omni-moderation-latest",
+          "flagged": false,
+          "categories": {
+            "harassment": false,
+            "hate": false,
+            "illicit": false,
+            "self-harm": false,
+            "sexual": false,
+            "violence": false
+          },
+          "category_scores": {
+            "harassment": 0.0001,
+            "hate": 0.0001,
+            "illicit": 0.0001,
+            "self-harm": 0.0001,
+            "sexual": 0.0001,
+            "violence": 0.0001
+          },
+          "category_applied_input_types": {
+            "harassment": [
+              "text"
+            ],
+            "hate": [
+              "text"
+            ],
+            "illicit": [
+              "text"
+            ],
+            "self-harm": [
+              "text"
+            ],
+            "sexual": [
+              "text"
+            ],
+            "violence": [
+              "text"
+            ]
+          }
+        }
+      ]
+    },
+    "output": {
+      "type": "moderation_results",
+      "model": "omni-moderation-latest",
+      "results": [
+        {
+          "type": "moderation_result",
+          "model": "omni-moderation-latest",
+          "flagged": true,
+          "categories": {
+            "harassment": false,
+            "hate": false,
+            "illicit": false,
+            "self-harm": false,
+            "sexual": false,
+            "violence": true
+          },
+          "category_scores": {
+            "harassment": 0.0001,
+            "hate": 0.0001,
+            "illicit": 0.0001,
+            "self-harm": 0.0001,
+            "sexual": 0.0001,
+            "violence": 0.81
+          },
+          "category_applied_input_types": {
+            "harassment": [
+              "text"
+            ],
+            "hate": [
+              "text"
+            ],
+            "illicit": [
+              "text"
+            ],
+            "self-harm": [
+              "text"
+            ],
+            "sexual": [
+              "text"
+            ],
+            "violence": [
+              "text"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "inlineData": {
+              "mimeType": "audio/L16;codec=pcm;rate=24000",
+              "data": "AACXAyIHlQrlDQUR6xOOFuQY5RqMHNEdsh4qHzgf3R4ZHu4cYht5GTkXqhTVEcQOgAsWCJAE+wBj/dP5WPb+8tDv2ewj6rfnnuXe433igeHs4MHgAOGn4bbiKOT55SLonOpf7WHwl/P49nj6Cv6iATYFtwgcDFcPXhInFacX2BmxGywdRB71Hj4fHB+RHp4dRhyPGn0YGBZpE3cQTg33CX8G8AJZ/8P7O/jO9IbxcO6V6wDpuObH5DLj/uEx4cvg0OA/4RbiUuPw5OrmOenV67Xu0fEc9Yz4Fvyt/0QD0QZGCpkNvhCqE1MWsRi6GmkcuB2iHiMfPB/qHi8eDh2KG6kZcBfpFBoSDg/OC2cI4wRPAbf9Jfqo9kvzGPAc7V/q7OfL5QPkmeKU4fbgwOD24JThmeID5Mvl7Odf6hztGPBL86j2Jfq3/U8B4wRnCM4LDg8aEukUcBepGYobDh0vHuoePB8jH6IeuB1pHLoasRhTFqoTvhCZDUYK0QZEA63/FvyM+Bz10fG17tXrOenq5vDkUuMW4j/h0ODL4DHh/uEy48fkuOYA6ZXrcO6G8c70O/jD+1n/8AJ/BvcJTg13EGkTGBZ9GI8aRhyeHZEeHB8+H/UeRB4sHbEb2BmnFycVXhJXDxwMtwg2BaIBCv54+vj2l/Nh8F/tnOoi6PnlKOS24qfhAOHB4OzggeF94t7jnuW35yPq2ezQ7/7yWPbT+WP9+wCQBBYIgAvEDtURqhQ5F3kZYhvuHBke3R44Hyofsh7RHYwc5RrkGI4W6xMFEeUNlQoiB5cDAABp/N74a/Ub8vvuFexy6RznG+V04y/iTuHW4MjgI+Hn4RLjnuSH5sfoVusr7jzxgPTq93D7Bf+dAi0GqAkCDTAQJxPdFUkYYhoiHIMdfx4UHz8fAB9ZHkod2BsHGt4XZBWhEqAPaQwICYgF9gFe/sr6Sffk86nwou3Z6lnoKOZP5NTivOEL4cLg5OBv4WLiuuNx5YPn6OmX7InvsvIJ9oH5EP2nAD0ExQcyC3oOkBFrFAAXSBk5G84cAh7PHjUfMB/BHuodrhwQGxYZxxYrFEsRLw7kCnQH6gNTALz8L/m69WfyQu9W7K3pT+dG5ZfjSOJe4d3gxOAW4dHh8uJ25FfmkOgX6+bt8vAy9Jn3Hfux/kkC2wVYCbUM6A/kEqEVFBg1Gv0bZx1sHgofQB8KH2weZx39GzUaFBihFeQS6A+1DFgJ2wVJArH+HfuZ9zL08vDm7RfrkOhX5nbk8uLR4RbhxODd4F7h"
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 6,
+    "candidatesTokenCount": 25,
+    "totalTokenCount": 31,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 6
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "AUDIO",
+        "tokenCount": 25
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash-tts",
+  "createTime": "2026-10-28T09:20:41.507218Z",
+  "responseId": "Z-HsTTSyWf_Velx1nvUdqMq"
+}

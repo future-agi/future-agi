@@ -1,0 +1,5 @@
+{
+  "input": "x",
+  "model": "pplx-embed-v1-0.6b",
+  "encoding_format": "base64_int8"
+}

@@ -1,0 +1,26 @@
+{
+  "provider": "azure",
+  "model": "whisper",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json (audio/transcriptions: audioResponse, audioVerboseResponse, and text/plain for text, srt and vtt) and its examples audio_transcription_object.json and audio_transcription_text.json, whose bodies are kept for json and text; the verbose_json body follows audioVerboseResponse with invented values. The adapter passes the body through (TranscriptionResponse.Body) and lifts only text out of a JSON body. learn.microsoft.com was not reachable from the authoring session.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.duration",
+      "reason": "known gap A9: the audio duration Azure reports (and bills by) is passed through to the client but not read: the gateway prices a transcription from the length of the uploaded WAV, so a non-WAV upload is unpriced although the upstream says how long it was"
+    },
+    {
+      "path": "$.language",
+      "reason": "passed through: the body reaches the client unchanged (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "path": "$.segments",
+      "reason": "passed through: the body reaches the client unchanged (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "path": "$.task",
+      "reason": "passed through: the body reaches the client unchanged (TranscriptionResponse.Body); the gateway reads only text"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}
