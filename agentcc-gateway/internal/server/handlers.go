@@ -426,12 +426,16 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 // When every match fails to build, it returns the first failure and that
 // provider's ID instead.
 func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, string, error) {
+	return h.orgProviderForExcluding(orgID, orgCfg, model, nil)
+}
+
+func (h *Handlers) orgProviderForExcluding(orgID string, orgCfg *tenant.OrgConfig, model string, excluded map[string]bool) (providers.Provider, string, string, error) {
 	if orgCfg == nil || h.orgProviderCache == nil {
 		return nil, "", "", nil
 	}
 	ids := make([]string, 0, len(orgCfg.Providers))
 	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() && !excluded[providerID] {
 			ids = append(ids, providerID)
 		}
 	}
@@ -484,8 +488,8 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 }
 
 func (h *Handlers) resolveFallbackProviderExcluding(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string, excluded map[string]bool) (providers.Provider, string, string, bool) {
-	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil && !excluded[orgProviderID] {
-		return orgProvider, orgProviderID, fallbackModel, true
+	if p, providerID, upstreamModel, _ := h.orgProviderForExcluding(orgID, orgCfg, fallbackModel, excluded); p != nil {
+		return p, providerID, upstreamModel, true
 	}
 
 	fbResult, fbErr := h.registry.ResolveExcluding(fallbackModel, excluded)

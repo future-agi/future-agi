@@ -216,6 +216,10 @@ func TestProbeStreamTerminalOutcome(t *testing.T) {
 				t.Fatal("first chunk not delivered")
 			}
 			cb := srv.handlers.circuitBreakers.Load().Get("probe")
+			if generation, allowed := cb.Allow(); allowed {
+				cb.RecordFailure(generation, nil)
+				t.Error("stream released its admission token at the first chunk")
+			}
 			if status, body := probeRequest(t, gateway, "primary", "", true); status != 503 || !strings.Contains(body, "circuit_open") {
 				t.Errorf("stream released probe at first chunk: status=%d", status)
 			}
@@ -291,6 +295,55 @@ func TestProbeTenantFallbackIsolation(t *testing.T) {
 			}
 			if status, body := probeRequest(t, gateway, "primary", "synthetic-internal-b", stream); status != 200 || !strings.Contains(body, "isolated") {
 				t.Fatalf("tenant B blocked by tenant A: status=%d, isolated=%t", status, strings.Contains(body, "isolated"))
+			}
+		})
+	}
+}
+
+func TestProbeOrgFallbackReselectsSaturatedTarget(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+			t.Cleanup(primary.Close)
+			var blockedCalls atomic.Int32
+			blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					blockedCalls.Add(1)
+				}
+				writeProbeResponse(w, stream, "wrong")
+			}))
+			t.Cleanup(blocked.Close)
+			healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeProbeResponse(w, stream, "org-alternative") }))
+			t.Cleanup(healthy.Close)
+			cfg := probeConfig(primary.URL)
+			cfg.Providers["a-blocked"] = config.ProviderConfig{BaseURL: blocked.URL, APIFormat: "openai", Models: []string{"operator-blocked"}}
+			cfg.Providers["b-healthy"] = config.ProviderConfig{BaseURL: healthy.URL, APIFormat: "openai", Models: []string{"operator-healthy"}}
+			cfg.Routing.ModelFallbacks = map[string][]string{"primary": {"org-fallback"}}
+			cfg.Auth.Enabled = true
+			cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic", Key: "synthetic-internal", KeyType: "internal", Metadata: map[string]string{"org_id": "probe-org"}}}
+			orgCfg := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"a-blocked": {Enabled: true, APIKey: "synthetic-org", Models: []string{"org-fallback"}},
+				"b-healthy": {Enabled: true, APIKey: "synthetic-org", Models: []string{"org-fallback"}},
+			}}
+			tenants := tenant.NewStore()
+			tenants.Set("probe-org", orgCfg)
+			srv, gateway := newProbeServer(t, cfg, tenants)
+			p, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("probe-org", "a-blocked", "synthetic-org", orgCfg.Providers["a-blocked"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			cb := srv.handlers.circuitBreakers.Load().GetScoped("probe-org", p.ID(), p)
+			generation, _ := cb.Allow()
+			cb.RecordFailure(generation, routing.CircuitOpenError())
+			time.Sleep(30 * time.Millisecond)
+			generation, allowed := cb.Allow()
+			if !allowed {
+				t.Fatal("could not hold the org probe")
+			}
+			defer cb.RecordFailure(generation, nil)
+			status, body := probeRequest(t, gateway, "primary", "synthetic-internal", stream)
+			if status != 200 || !strings.Contains(body, "org-alternative") || blockedCalls.Load() != 0 {
+				t.Fatalf("org fallback selection: status=%d alternative=%t blocked_calls=%d", status, strings.Contains(body, "org-alternative"), blockedCalls.Load())
 			}
 		})
 	}
