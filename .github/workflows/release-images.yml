@@ -69,6 +69,8 @@ on:
 
 permissions:
   contents: read
+  # The release policy proves the previous release shipped (release-images runs).
+  actions: read
 
 concurrency:
   group: release-images-${{ inputs.version || github.ref_name }}
@@ -231,6 +233,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
           python3 scripts/release_autopilot.py environment --version "$VERSION"
 
   # Every other job still waits here. Unknown/new migrations and dispatches
@@ -387,6 +390,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
           python3 scripts/release_autopilot.py environment --version "$VERSION" \
             --expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"
 

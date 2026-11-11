@@ -308,8 +308,12 @@ class MetadataPolicyTests(unittest.TestCase):
 
 
 class EnvironmentPolicyTests(unittest.TestCase):
-    def decide(self, enabled="on", event="push", ref="refs/tags/v1.2.3", version="v1.2.3", count=0):
-        return policy.environment_decision(enabled, event, ref, version, count)[0]
+    def decide(self, enabled="on", event="push", ref="refs/tags/v1.2.3", version="v1.2.3", count=0, actor=policy.AUTHOR):
+        return policy.environment_decision(enabled, event, ref, version, count, actor)[0]
+
+    def test_only_the_release_app_tag_push_skips_review(self):
+        for actor in (None, "", "someone", "github-actions[bot]"):
+            self.assertEqual(self.decide(actor=actor), "Production")
 
     def test_only_opted_in_exact_tag_push_without_new_migrations_is_auto(self):
         self.assertEqual(self.decide(), "production-auto")
@@ -328,7 +332,10 @@ class EnvironmentPolicyTests(unittest.TestCase):
     def test_oss_and_ee_migration_paths_and_initializers(self):
         for path in ("futureagi/accounts/migrations/0002_new.py",
                      "futureagi/ee/billing/migrations/0002_new.py", "ee/billing/migrations/0002_new.py",
-                     "futureagi/app/migrations/0002___init___data.py"):
+                     "futureagi/app/migrations/0002___init___data.py", "futureagi/app/migrations/0003_schema.sql",
+                     "futureagi/tracer/services/clickhouse/schema/spans.sql",
+                     "futureagi/tracer/services/clickhouse/oss_cdc_migrations/0001.sql",
+                     "futureagi/tracer/services/clickhouse/v2/apply_schema.py"):
             self.assertTrue(policy.is_migration(path), path)
         for path in ("futureagi/app/migrations/__init__.py", "futureagi/ee/billing/migrations/__init__.py",
                      "futureagi/app/migrations/README.md", "other/app/migrations/new.py", "futureagi/app/views.py"):
@@ -365,6 +372,10 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("tag", "v1.1.0")
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         self.sha = self.git("rev-parse", "HEAD").strip()
+        # Every earlier release shipped unless a test says otherwise (no GitHub API here).
+        self.shipped = patch.object(policy, "published", return_value=True)
+        self.shipped.start()
+        self.addCleanup(self.shipped.stop)
 
     def git(self, *args):
         return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args],
@@ -382,6 +393,7 @@ class GitEvidenceTests(unittest.TestCase):
     def release(self, *, event="push", version="v1.1.0", sha=None, **kwargs):
         output = self.root / "outputs"
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": f"refs/tags/{version}",
+                                     "GITHUB_ACTOR": policy.AUTHOR,
                                      "GITHUB_SHA": sha or self.sha, "RELEASE_AUTO_APPROVE": "on",
                                      "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(self.root / "summary")}, clear=True), \
                 patch("sys.stdout", new_callable=io.StringIO):
@@ -422,6 +434,31 @@ class GitEvidenceTests(unittest.TestCase):
             self.release(expected_sha=prior, event="workflow_dispatch")
         self.assertIn("environment=production-auto", self.release(expected_sha=self.sha))
 
+    def test_unshipped_previous_release_is_not_a_baseline(self):
+        with patch.object(policy, "published", return_value=False):
+            self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
+            text = self.release()
+        self.assertIn("environment=Production", text)
+        self.assertIn("migrations=unknown", text)
+        with patch.object(policy, "published", side_effect=RuntimeError("api")):
+            self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
+
+    def test_tag_pushed_by_a_person_keeps_review(self):
+        output = self.root / "outputs"
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/v1.1.0", "GITHUB_ACTOR": "someone",
+                                     "GITHUB_SHA": self.sha, "RELEASE_AUTO_APPROVE": "on", "GITHUB_OUTPUT": str(output),
+                                     "GITHUB_STEP_SUMMARY": str(self.root / "summary")}, clear=True), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            policy.release_environment("v1.1.0")
+        self.assertIn("environment=Production", output.read_text())
+
+    def test_edited_and_deleted_migrations_and_schema_files_count(self):
+        self.write("futureagi/app/migrations/0001_initial.py", "edited\n")
+        self.write("futureagi/tracer/services/clickhouse/schema/spans.sql")
+        self.commit()
+        sha = self.git("rev-parse", "HEAD").strip()
+        self.assertEqual(policy.migration_evidence("v1.2.0", sha), ("v1.1.0", 2))
+
     def test_added_ee_and_oss_files_count_but_modified_and_init_do_not(self):
         self.write("futureagi/app/migrations/0001_initial.py", "modified\n")
         self.write("futureagi/app/migrations/0002_new.py")
@@ -432,7 +469,8 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("tag", "v1.2.0")
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         sha = self.git("rev-parse", "HEAD").strip()
-        self.assertEqual(policy.migration_evidence("v1.2.0", sha), ("v1.1.0", 3))
+        # Edits count too now: three additions plus the edited 0001_initial.py.
+        self.assertEqual(policy.migration_evidence("v1.2.0", sha), ("v1.1.0", 4))
         self.assertIn("environment=Production", self.release(version="v1.2.0", sha=sha))
         with self.assertRaises(RuntimeError):
             self.release(version="v1.2.0", sha=sha, approved_environment="production-auto")
@@ -649,6 +687,7 @@ class ExecutionTests(unittest.TestCase):
                 patch.object(policy, "snapshot", side_effect=[evidence(first, first_metadata), evidence(final, final_metadata)]), \
                 patch.object(policy, "pages", side_effect=[comments, reviews]), \
                 patch.object(policy, "api", return_value={"merged": merge_result}) as api, \
+                patch.object(policy, "release_gates", return_value=(True, "synthetic gates passed")), \
                 patch("sys.stdout", new_callable=io.StringIO):
             policy.autopilot(merge=True)
             return api.call_args_list
@@ -743,6 +782,35 @@ class ExecutionTests(unittest.TestCase):
                 api.assert_not_called()
 
 
+class ReleaseGateTests(unittest.TestCase):
+    NOW = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+
+    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None):
+        responses = {"git/ref/heads/main": {"object": {"sha": "c" * 40}},
+                     f"compare/{'c' * 40}...{SHA}": {"behind_by": behind},
+                     f"commits/{'c' * 40}": {"commit": {"committer": {"date": main_date}}}}
+        with patch.object(policy, "pages", return_value=runs), \
+                patch.object(policy, "api", side_effect=lambda path, **kw: responses[path]):
+            return policy.release_gates(PR, config or {}, self.NOW)
+
+    def callout_run(self, **fields):
+        return {"id": 5, "path": policy.CALLOUT_WORKFLOW, "head_sha": SHA, "status": "completed",
+                "conclusion": "success", **fields}
+
+    def test_callout_workflow_must_pass_on_this_head(self):
+        self.assertTrue(self.gates([self.callout_run()])[0])
+        for runs in ([], [self.callout_run(conclusion="failure")], [self.callout_run(status="in_progress")],
+                     [self.callout_run(head_sha="d" * 40)], [self.callout_run(path=".github/workflows/other.yml")],
+                     [self.callout_run(), self.callout_run(id=6, conclusion="failure")]):
+            with self.subTest(runs=runs):
+                self.assertFalse(self.gates(runs)[0])
+
+    def test_behind_main_waits_for_the_cooldown(self):
+        self.assertFalse(self.gates([self.callout_run()], behind=1, main_date="2026-11-11T11:50:00Z")[0])
+        self.assertTrue(self.gates([self.callout_run()], behind=1, main_date="2026-11-11T10:00:00Z")[0])
+        self.assertFalse(self.gates([self.callout_run()], behind=1, main_date="not a date")[0])
+
+
 class WorkflowContractTests(unittest.TestCase):
     def test_existing_inline_guards_remain_identical_and_policy_follows_both(self):
         text = (Path(__file__).resolve().parents[1] / ".github/workflows/release-images.yml").read_text()
@@ -765,7 +833,7 @@ class WorkflowContractTests(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1] / ".github/workflows/release-autopilot.yml").read_text()
         for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI"]', "workflow_dispatch:",
                          "github.event.repository.default_branch", "persist-credentials: false", "checks: read",
-                         "statuses: read", "permission-contents: write", "permission-pull-requests: write",
+                         "statuses: read", "actions: read", "permission-contents: write", "permission-pull-requests: write",
                          "python3 -m pip install --disable-pip-version-check PyYAML==6.0.3"):
             self.assertIn(fragment, text)
         self.assertNotIn("pull_request_target:", text)

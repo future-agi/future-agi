@@ -29,6 +29,8 @@ jobs:
       contents: read
       checks: read
       statuses: read
+      # Reads the migrations-callout workflow run on the release head.
+      actions: read
       pull-requests: write
       issues: write
     env:

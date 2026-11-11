@@ -134,14 +134,19 @@ approval. New steps then fetch full history and execute the policy from `main`:
 2. Select the highest-version **stable** tag below the requested version that is
    reachable from that commit. Exclude the current release, beta, rc, dev and
    unrelated-history tags. This is the previous stable baseline; a newer tag
-   pushed while approval waits cannot become the baseline.
-3. Reuse the callout check's added-Python-migration rule, explicitly covering
-   `futureagi/*/migrations/*.py`, nested `futureagi/ee/**/migrations/*.py` and
-   `ee/**/migrations/*.py`. Exclude only `__init__.py`. Treat renames into these
-   directories as additions. Existing migration edits are not *new files*.
+   pushed while approval waits cannot become the baseline. The baseline must have
+   **shipped**: a successful `release-images` run for that tag. If the previous
+   tag is still waiting for approval, was rejected or failed, the count is
+   unknown and the release keeps human review.
+3. Count every added, edited, deleted or renamed migration or schema file since
+   that baseline: `futureagi/*/migrations/*.py` and `*.sql`, nested
+   `futureagi/ee/**/migrations/`, `ee/**/migrations/`, and the ClickHouse schema
+   sources (`tracer/services/clickhouse/schema/`, `oss_cdc_migrations/`,
+   `schema.py`, `v2/apply_schema*.py`). `__init__.py` files do not count.
 4. Choose `production-auto` only when `RELEASE_AUTO_APPROVE=on`, the event is an
-   exact tag push, and the count is known to be zero. Otherwise choose
-   `Production`. Missing baseline/history/diff means **unknown**, never zero.
+   exact tag push by the release App (`GITHUB_ACTOR` is
+   `futureagi-release-bot[bot]`), and the count is known to be zero. Otherwise
+   choose `Production`. Missing baseline/history/diff means **unknown**, never zero.
    An ancestry failure stops the run altogether, rather than offering approval.
 5. Repeat the evidence check after entering the selected environment. If an
    automatic decision is no longer safe, stop; a fresh run is needed to select
@@ -183,6 +188,18 @@ pending-migration check remains mandatory; migrations are never run by this bot.
   approvals and completed merges independently. GitHub cannot transact a merge
   and its subsequent audit label together: a post-merge API failure leaves the
   pre-merge audit/review, but an operator must repair the success annotation.
+- Before `RELEASE_AUTO_APPROVE=on`, add a tag ruleset on `v*` so only the release
+  App (and named release managers) can create, update or delete release tags,
+  and limit the `production-auto` environment to `v*` tags. The in-code actor
+  check is defence in depth; the ruleset is the control that matters.
+- Do not cut beta/rc tags from dev until this change has reached main: the policy
+  runs from main, and both release-images steps stop with a clear error if the
+  script is missing there. Keep the script's arguments and outputs backward
+  compatible until a change reaches main.
+- The merge also requires the `migrations-callout` workflow to have passed on the
+  release head (identified by its workflow file, because its job is named
+  `check` like other checks), and the release PR to be current with main or main
+  to have been quiet for the cooldown.
 - First merge with both variables unset. Verify labels, App permissions,
   environment protections, default-branch/main availability, required check
   names, and immutable-tag rules. Then enable PR merging during an explicit

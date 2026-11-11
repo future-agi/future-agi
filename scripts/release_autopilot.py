@@ -235,6 +235,35 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
     return True, "release metadata, author, age, hours, hold and current-head checks passed"
 
 
+CALLOUT_WORKFLOW = ".github/workflows/migrations-callout-check.yml"
+
+
+def release_gates(pr, config, now):
+    """Live evidence beyond the PR itself: the callout workflow and main's position."""
+    sha = pr["head"]["sha"]
+    runs = pages(f"actions/runs?head_sha={sha}&event=pull_request", "workflow_runs")
+    callout = [run for run in runs if run.get("path") == CALLOUT_WORKFLOW and run.get("head_sha") == sha
+               and type(run.get("id")) is int]
+    latest = max(callout, key=lambda run: run["id"], default=None)
+    # Identified by workflow path: its job is named "check", like other checks on release heads.
+    if not latest or latest.get("status") != "completed" or latest.get("conclusion") != "success":
+        return False, "the migrations-callout workflow has not passed on this head"
+    main_sha = (api("git/ref/heads/main").get("object") or {}).get("sha", "")
+    if not SHA.fullmatch(main_sha):
+        return False, "main's tip is unknown"
+    if api(f"compare/{main_sha}...{sha}").get("behind_by") != 0:
+        # release-please may not rebuild the PR for hidden commit types. Wait the
+        # same cooldown after main last moved, then release what main contains.
+        try:
+            moved = datetime.fromisoformat(api(f"commits/{main_sha}")["commit"]["committer"]["date"].replace("Z", "+00:00"))
+            age = config.get("RELEASE_AUTOPILOT_MIN_AGE_MINUTES", "") or "30"
+            if (now.astimezone(timezone.utc) - moved).total_seconds() < int(age) * 60:
+                return False, "main moved recently; waiting for the release PR to catch up"
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return False, "main's last change time is unknown"
+    return True, "migrations-callout passed and the release PR is current with main"
+
+
 def api(path, *, token=None, method="GET", data=None):
     env = dict(os.environ)
     if token is not None:
@@ -395,7 +424,10 @@ def autopilot(merge=False):
     evidence = snapshot(number)
     pr = evidence[0]
     sha = pr["head"]["sha"]
-    allowed, reason = merge_decision(*evidence, os.environ, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    allowed, reason = merge_decision(*evidence, os.environ, now)
+    if allowed:
+        allowed, reason = release_gates(pr, os.environ, now)
     if expected_sha is not None and sha != expected_sha:
         allowed, reason = False, "head changed since the initial decision"
     summary(f"Release autopilot: PR #{number}, head `{sha}`: {reason}.")
@@ -438,7 +470,10 @@ def autopilot(merge=False):
             data={"event": "APPROVE", "commit_id": sha, "body": marker + "\n" + audit})
     summary(audit)
     final = snapshot(number)
-    allowed, reason = merge_decision(*final, os.environ, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    allowed, reason = merge_decision(*final, os.environ, now)
+    if allowed:
+        allowed, reason = release_gates(final[0], os.environ, now)
     if (final[0]["head"]["sha"] != sha
             or final[0]["base"].get("sha") != pr["base"].get("sha")):
         allowed, reason = False, "head or base changed after approval"
@@ -475,13 +510,35 @@ def version_tuple(tag):
     return tuple(map(int, match.groups())) if match else None
 
 
+CLICKHOUSE_SCHEMA = ("futureagi/tracer/services/clickhouse/schema/",
+                     "futureagi/tracer/services/clickhouse/oss_cdc_migrations/",
+                     "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
+                     "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
+                     "futureagi/tracer/services/clickhouse/schema.py")
+
+
 def is_migration(path):
-    # Same added-Python-file rule as migrations-callout-check.yml, expanded
-    # explicitly to nested futureagi/ee and an ee/ tree. Initializers are not migrations.
+    # Django migration files (nested futureagi/ee and an ee/ tree; initializers
+    # are not migrations), SQL under any migrations/ directory, and the
+    # ClickHouse schema sources. Callers count additions, edits and deletions.
     parts = path.split("/")
+    if path.startswith(CLICKHOUSE_SCHEMA):
+        return True
     return (len(parts) >= 4 and parts[0] in {"futureagi", "ee"}
-            and parts[-2] == "migrations" and parts[-1].endswith(".py")
+            and parts[-2] == "migrations" and parts[-1].endswith((".py", ".sql"))
             and parts[-1] != "__init__.py")
+
+
+def published(tag):
+    """A stable tag whose release-images run succeeded, i.e. a release that shipped."""
+    sha = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+    if not SHA.fullmatch(sha):
+        return False
+    data = api(f"actions/workflows/release-images.yml/runs?head_sha={sha}&event=push&per_page=50")
+    runs = data.get("workflow_runs") if isinstance(data, dict) else None
+    if not isinstance(runs, list):
+        return False
+    return any(run.get("head_branch") == tag and run.get("conclusion") == "success" for run in runs)
 
 
 def migration_evidence(version, sha):
@@ -491,25 +548,37 @@ def migration_evidence(version, sha):
     if not previous:
         return None, None
     last = max(previous, key=version_tuple)
+    # The previous tag is a baseline only if that release actually shipped. A
+    # tag whose run is still waiting, was rejected or failed would hide its own
+    # migrations from the next release.
+    try:
+        shipped = published(last)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        shipped = False
+    if not shipped:
+        return last, None
     # --no-renames treats files moved into a migration directory as additions.
     # NUL delimiting prevents unusual filenames from hiding migration files.
-    added = git("diff", "--name-only", "-z", "--no-renames", "--diff-filter=A",
-                f"refs/tags/{last}..{sha}", "--", "futureagi/", "ee/")
-    return last, sum(is_migration(path) for path in added.split("\0") if path)
+    # Additions, edits and deletions all count as schema changes.
+    changed = git("diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACDMRT",
+                  f"refs/tags/{last}..{sha}", "--", "futureagi/", "ee/")
+    return last, sum(is_migration(path) for path in changed.split("\0") if path)
 
 
-def environment_decision(enabled, event, ref, version, count):
+def environment_decision(enabled, event, ref, version, count, actor=None):
     if enabled != "on":
         return "Production", "RELEASE_AUTO_APPROVE is not on"
     if event != "push" or ref != f"refs/tags/{version}":
         return "Production", "only an exact tag push may skip review; dispatches require a person"
+    if actor != AUTHOR:
+        return "Production", "the tag was not pushed by the release App"
     if version_tuple(version) is None:
         return "Production", "prerelease tags keep human review"
     if type(count) is not int or count < 0:
-        return "Production", "migration baseline or diff is unknown"
+        return "Production", "migration baseline or diff is unknown (or the previous release did not ship)"
     if count:
-        return "Production", f"release adds {count} migration files"
-    return "production-auto", "tag push with zero new migration files since the previous stable tag"
+        return "Production", f"release changes {count} migration or schema files"
+    return "production-auto", "release App tag push with no migration or schema changes since the previous shipped release"
 
 
 def release_environment(version, expected_sha=None, approved_environment=None):
@@ -539,7 +608,8 @@ def release_environment(version, expected_sha=None, approved_environment=None):
         last, count = None, None
     environment, reason = environment_decision(os.environ.get("RELEASE_AUTO_APPROVE"),
                                                os.environ.get("GITHUB_EVENT_NAME"),
-                                               os.environ.get("GITHUB_REF"), version, count)
+                                               os.environ.get("GITHUB_REF"), version, count,
+                                               os.environ.get("GITHUB_ACTOR"))
     summary(f"Release approval: `{environment}` for `{version}` at `{sha}`. {reason}.\n\n"
             f"Migration baseline: `{last or 'unknown'}`; new files: {count if count is not None else 'unknown'}. "
             "The tag commit is on a reviewed branch.")
