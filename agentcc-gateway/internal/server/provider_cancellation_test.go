@@ -13,10 +13,27 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 
+// Hold stream opening until the real adapter has queued its normalized error.
+// This exercises the race where both the error and ctx.Done are ready on entry.
+type adaptiveBufferedStreamProvider struct {
+	providers.Provider
+}
+
+func (p *adaptiveBufferedStreamProvider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	chunks, errs := p.Provider.StreamChatCompletion(ctx, req)
+	ready := make(chan error, 1)
+	if err, ok := <-errs; ok {
+		ready <- err
+	}
+	close(ready)
+	return chunks, ready
+}
+
 func TestAdaptiveHealthHTTPClientCancellation(t *testing.T) {
-	for _, mode := range []string{"chat", "native", "translated", "chat-stream", "legacy-stream"} {
+	for _, mode := range []string{"chat", "native", "translated", "chat-stream", "legacy-stream", "chat-stream-race", "legacy-stream-race"} {
 		for _, cancelClient := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/client-cancel=%t", mode, cancelClient), func(t *testing.T) {
 				started := make(chan struct{}, 1)
@@ -39,6 +56,10 @@ func TestAdaptiveHealthHTTPClientCancellation(t *testing.T) {
 					cfg.Server.DefaultRequestTimeout = 100 * time.Millisecond
 				}
 				srv, _ := adaptiveServer(t, cfg)
+				if strings.HasSuffix(mode, "-race") {
+					provider, _ := srv.registry.GetProvider("fast")
+					srv.registry.RegisterProvider("fast", &adaptiveBufferedStreamProvider{Provider: provider}, nil)
+				}
 				finished := make(chan struct{}, 1)
 				gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					srv.httpServer.Handler.ServeHTTP(w, r)
@@ -53,7 +74,7 @@ func TestAdaptiveHealthHTTPClientCancellation(t *testing.T) {
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				body := fmt.Sprintf(`{"model":"adaptive-sample","stream":%t,%s}`, strings.HasSuffix(mode, "stream"), input)
+				body := fmt.Sprintf(`{"model":"adaptive-sample","stream":%t,%s}`, strings.Contains(mode, "stream"), input)
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, gateway.URL+endpoint, strings.NewReader(body))
 				if err != nil {
 					t.Fatal(err)
@@ -89,7 +110,7 @@ func TestAdaptiveHealthHTTPClientCancellation(t *testing.T) {
 					}
 					// Chat stream-open can return the raw context error (500) or
 					// the adapter's normalized timeout (504); both are upstream failures.
-					deadlineStatus := got.status == http.StatusGatewayTimeout || (mode == "chat-stream" && got.status == http.StatusInternalServerError)
+					deadlineStatus := got.status == http.StatusGatewayTimeout || (strings.HasPrefix(mode, "chat-stream") && got.status == http.StatusInternalServerError)
 					if !cancelClient && (got.err != nil || !deadlineStatus) {
 						t.Fatalf("deadline response status=%d", got.status)
 					}
