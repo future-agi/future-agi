@@ -369,7 +369,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await navigate(`/dashboard/skills/contexts/${parent.id}?tab=consumers`, `parent-${index}-consumers`);
             const row = page.getByRole('table', { name: 'Context delivery observations' }).getByRole('row').filter({ hasText: `${parent.name}-runtime` });
             const expected = index < 2 ? ['Old thread retained', 'v2'] : ['Pinned as intended', 'v1'];
-            await operator.review(`runtime-${index}-delivery-inspection`, ['fresh-session-delivery', 'resumed-thread-retention'], index < 2 ? [] : ['deliberate-pin'], async () => {
+            await operator.review(`runtime-${index}-delivery-inspection`, index < 2 ? ['fresh-session-delivery', 'resumed-thread-retention'] : ['fresh-session-delivery', 'resumed-thread-retention', 'deliberate-pin'], index < 2 ? [] : ['deliberate-pin'], async () => {
               for (const text of expected) await expect(row.getByText(text, { exact: true }).first()).toBeVisible();
             });
             await snapshot(`parent-${index}-sessions`, page);
