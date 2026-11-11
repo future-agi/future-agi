@@ -517,7 +517,13 @@ def submit_release_request(
         HubSkillReleaseRecipient.objects.get_or_create(
             request=request, recipient_id=user_id, defaults=_scope(principal)
         )
-    _supersede_stale_requests(principal=principal, skill=skill, keep=request)
+    _supersede_stale_requests(
+        principal=principal,
+        skill=skill,
+        keep=request,
+        candidate_id=packet["candidate_version_id"],
+        label=actual["transition"]["label"],
+    )
     return _receipt(
         lookup,
         digest,
@@ -538,15 +544,21 @@ _STALE_PACKET_CODES = frozenset(
 
 
 def _supersede_stale_requests(
-    *, principal: SkillPrincipal, skill: HubSkill, keep: HubSkillReleaseRequest
+    *,
+    principal: SkillPrincipal,
+    skill: HubSkill,
+    keep: HubSkillReleaseRequest,
+    candidate_id: object,
+    label: str,
 ) -> None:
-    """Close the author's other open requests on this skill whose packet went stale.
+    """Close the author's other open requests for the same candidate and label that went stale.
 
-    A fresh packet from the same author replaces a request that can no longer be
-    approved or executed, so no reviewer has to open and decline it. Only a packet
-    that fails the current-state check is closed; a still-current request, a
-    released one and another author's request are untouched. Closing grants and
-    moves nothing: the status only records why the request cannot proceed.
+    A fresh packet from the same author for the same candidate and label replaces
+    a request that can no longer be approved or executed, so no reviewer has to
+    open and decline it. Only a packet that fails the current-state check is
+    closed; a still-current request, a released one, another candidate or label
+    and another author's request are untouched. Closing grants and moves
+    nothing: the status only records why the request cannot proceed.
     """
     for other in (
         HubSkillReleaseRequest.objects.select_for_update()
@@ -559,7 +571,11 @@ def _supersede_stale_requests(
         .exclude(pk=keep.pk)
     ):
         packet = other.hub_skill_packets.filter(revision=other.revision).first()
-        if packet is None:
+        if (
+            packet is None
+            or str(packet.candidate_id) != str(candidate_id)
+            or packet.packet["transition"]["label"] != label
+        ):
             continue
         try:
             _validate_packet(principal, packet.packet, lock=True)

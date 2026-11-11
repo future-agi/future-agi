@@ -342,8 +342,8 @@ export async function createDriver({ jobId, runId, registration }) {
         // as a fault precondition exactly as the hops are): only the current-state check can now stop the stale approval.
         const staleApproval = await call(reviewer, 'POST', `release-requests/${stale.id}/decisions/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint, decision: 'approve', comment: 'Synthetic J6 reviewer approval before the ABA hop' }, signal);
         requireValue(staleApproval.status >= 200 && staleApproval.status < 300, 'The reviewer approval of the soon-stale packet failed');
-        // ABA: another releaser (the second administrator, a different author) moves production away and back before execution.
-        for (const target of [v4, v3]) await moveProduction({ api: apiOk(signal), author: reviewer, reviewer: author, contextId: input.contextId, version: target });
+        // ABA: another releaser moves production away and back (other candidates) before execution.
+        for (const target of [v4, v3]) await moveProduction({ api: apiOk(signal), author, reviewer, contextId: input.contextId, version: target });
         const afterAba = await labelEvents();
         requireValue(afterAba.length === eventsBefore.length + 2
           && JSON.stringify(afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version])) === JSON.stringify([[3, 4], [4, 3]]), 'The ABA hop must record exactly v3 to v4 and back');

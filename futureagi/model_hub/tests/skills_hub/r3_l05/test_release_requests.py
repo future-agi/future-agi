@@ -415,6 +415,23 @@ def test_fresh_packet_supersedes_the_authors_stale_request_only(
     assert [row["id"] for row in inbox["results"]] == [current["id"]]
 
 
+def test_a_stale_request_for_another_candidate_is_not_superseded(
+    actors, hub_skill, candidate, hub_actor
+):
+    author, reviewer = actors
+    stale = submit(author, reviewer, preview(author, hub_skill, candidate[1]))
+    set_label(
+        skill=hub_skill,
+        actor=hub_actor,
+        name="production",
+        version_number=candidate[1].number,
+    )
+    # The first request is now stale, but this packet is for a different candidate.
+    other = submit(author, reviewer, preview(author, hub_skill, candidate[0]))
+    assert HubSkillReleaseRequest.objects.get(pk=stale["id"]).status == "pending"
+    assert HubSkillReleaseRequest.objects.get(pk=other["id"]).status == "pending"
+
+
 def test_a_still_current_request_is_not_superseded(actors, hub_skill, candidate):
     author, reviewer = actors
     first_review = preview(author, hub_skill, candidate[1])

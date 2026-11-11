@@ -65,8 +65,8 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     resource_id: created.context_id, kind: 'agent_context', candidate_version_id: version.id,
     label: 'production', target: null, evidence: [], external_pipeline: null,
   });
-  const submit = async (preview: any, actor: any = author) => api(actor, 'POST', 'release-requests/', {
-    packet: preview.packet, expected_fingerprint: preview.fingerprint, recipient_ids: [reviewer.userId], revision: 0,
+  const submit = async (preview: any, actor: any = author, recipient: any = reviewer) => api(actor, 'POST', 'release-requests/', {
+    packet: preview.packet, expected_fingerprint: preview.fingerprint, recipient_ids: [recipient.userId], revision: 0,
   });
   const approve = async (preview: any, submitted: any, actor: any = reviewer) => api(actor, 'POST', `release-requests/${submitted.id}/decisions/`, {
     revision: submitted.revision, expected_fingerprint: preview.fingerprint, decision: 'approve', comment: 'Synthetic recovery prerequisite review',
@@ -76,7 +76,7 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
   });
   const move = async (version: any, requester: any = author, approver: any = reviewer) => {
     const preview = await packet(version, requester);
-    const submitted = await submit(preview, requester);
+    const submitted = await submit(preview, requester, approver);
     await approve(preview, submitted, approver);
     return execute(preview, submitted, approver);
   };
@@ -96,10 +96,10 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
   const stalePreview = await packet(versions[0]);
   const staleRequest = await submit(stalePreview);
   await approve(stalePreview, staleRequest);
-  // Another releaser moves production away and back. The hops are requested by the second administrator so the
-  // author's own stale request stays approved and only the compare-and-swap check can refuse it.
-  await move(versions[0], reviewer, author);
-  await move(versions[1], reviewer, author);
+  // Production moves away and back through other candidates, so the approved stale request stays approved and only the
+  // compare-and-swap check can refuse it.
+  await move(versions[0]);
+  await move(versions[1]);
   const eventCount = async () => (await probe.pg<any>('SELECT count(*)::int AS count FROM model_hub_hubskilllabelevent WHERE skill_id=$1', [created.context_id]))[0].count;
   const before = await eventCount();
   const stale = await send(reviewer, 'POST', `release-requests/${staleRequest.id}/execute/`, { revision: staleRequest.revision, expected_fingerprint: stalePreview.fingerprint });
