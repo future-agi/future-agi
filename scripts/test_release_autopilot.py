@@ -955,7 +955,8 @@ class ExecutionTests(unittest.TestCase):
                 patch.object(policy, "snapshot", side_effect=[evidence(first, first_metadata), evidence(final, final_metadata)]), \
                 patch.object(policy, "pages", side_effect=[comments, reviews]), \
                 patch.object(policy, "api", side_effect=fake_api) as api, \
-                patch.object(policy, "release_gates", return_value=gates), \
+                patch.object(policy, "release_gates", **({"side_effect": gates} if isinstance(gates, list)
+                                                          else {"return_value": gates})), \
                 patch("sys.stdout", new_callable=io.StringIO):
             # Kept on the test so a case that expects an exception can still inspect the writes.
             self.calls = api.call_args_list
@@ -1115,6 +1116,15 @@ class ExecutionTests(unittest.TestCase):
     def test_a_gate_refusal_such_as_a_strict_main_writes_nothing(self):
         reason = "main requires an up-to-date branch; update the release branch or remove the rule"
         self.assertEqual(self.run_merge(gates=(False, reason)), [])
+
+    def test_a_strict_main_seen_only_at_the_recheck_defers_with_one_approval(self):
+        # GitHub can report "blocked" until the approval exists and "behind" after it.
+        reason = "main requires an up-to-date branch; update the release branch or remove the rule"
+        calls = self.run_merge(gates=[(True, "synthetic gates passed"), (False, reason)])
+        self.assertEqual(len([call for call in calls if call.args[0] == "pulls/42/reviews"]), 1)
+        self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
+        self.assertFalse(any(call.kwargs.get("data", {}).get("body", "").startswith(self.REFUSED)
+                             for call in calls))
 
     def test_other_merge_failures_still_fail_the_run_without_a_refusal_record(self):
         for status in (None, 409, 500, 502):

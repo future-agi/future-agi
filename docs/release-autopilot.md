@@ -24,8 +24,9 @@ An admin must also make these settings before enabling either policy. Code
 changes none of them.
 
 - **Labels.** Create the labels `autopilot-approved`, `autopilot-merged` and
-  `release-hold`. A missing `autopilot-approved` or `autopilot-merged` label
-  stops the policy before any approval. `release-hold` is the human stop.
+  `release-hold`; none of them exists yet (read-only check, 11 Nov). A missing
+  `autopilot-approved` or `autopilot-merged` label stops the policy before any
+  approval. `release-hold` is the human stop.
 - **Actions approvals off.** Turn off "Allow GitHub Actions to create and
   approve pull requests" on `future-agi/future-agi`. While it is on, any
   writer's branch workflow can approve that writer's own PR as
@@ -33,7 +34,8 @@ changes none of them.
   never approves with the workflow token. Turning the setting off stops
   `frontend-auto-approve-hotfix.yml`, which approves with that token. `ee` and
   `agent-learning-kit` also produce deployed images and had the setting on
-  (read-only check, 11 Nov); turn it off there too.
+  (read-only check, 11 Nov); turn it off there too. Their workflows were not
+  checked for anything that relies on it.
 - **Last-push approval.** On the ruleset that covers main and dev, require
   approval of the most recent reviewable push. Without it, a writer can push
   to someone else's PR branch and then approve that PR.
@@ -62,7 +64,9 @@ changes none of them.
     next release PR, with it. `gh pr view <number> --json reviewDecision,mergeStateStatus` must show
     `APPROVED` and `CLEAN`. Do not rely on the merge button: organisation
     admins bypass the ruleset. If `reviewDecision` stays `REVIEW_REQUIRED`,
-    grant the installation Contents: write and read the same PR again. An
+    grant the installation Contents: write and read the same PR again. If it
+    still does not count, the approver mint in `release-autopilot.yml` must
+    also request `permission-contents: write`, which is a code change. An
     approval that does not count makes the merge fail with HTTP 405; the
     second refusal of the same head fails the run.
 - **Environment `release-autopilot`.** Create it on `future-agi/future-agi`
@@ -125,9 +129,12 @@ changes none of them.
   is behind main once main has been quiet for the cooldown. Live main has
   `strict: false` today (11 Nov). A strict rule for dev, which the low-risk PR
   autopilot asks for, must go in a dev-only ruleset, not in the organisation
-  ruleset that also covers main. If main does become strict, the check step
-  stops before approving, with the reason "main requires an up-to-date branch",
-  and the release waits until a person updates the release branch.
+  ruleset that also covers main. If main does become strict and GitHub reports
+  the release PR as `behind`, the check step stops before approving, with the
+  reason "main requires an up-to-date branch". GitHub may instead report
+  `blocked` until the PR has its approval; then the first run approves and
+  defers the merge at its recheck, and later runs wait. Either way the release
+  waits, with green runs, until a person updates the release branch.
 - Restrict release-tag creation to the release App and trusted release managers;
   protect `main` and release tags from force updates/deletion. A tag containing
   a different workflow could omit any in-file guard, so tag creation authority
@@ -386,8 +393,10 @@ run by this bot.
   to have been quiet for the cooldown. A behind PR merges on checks that ran
   against an older main; the tag-time migration count still selects Production
   review for what main added. If GitHub reports the PR as `behind` (main
-  requires up-to-date branches), the check step waits without approving. If
-  GitHub still refuses the merge (HTTP 405 or 422), the run records the refused
+  requires up-to-date branches), the run waits: before approving when the
+  check step sees it, or at the recheck after approving when GitHub reported
+  `blocked` first. If GitHub still refuses the merge (HTTP 405 or 422), the
+  run records the refused
   head in a PR comment, keeps the approval and ends green; the next eligible run
   retries once, and a second refusal of the same head fails the run. Only runs
   from the release PR itself count: the run's head branch must be

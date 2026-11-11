@@ -104,8 +104,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
-      # Approvals only. GitHub counts an App's approval by its installation's
-      # access, so the token needs no contents permission (docs/release-autopilot.md).
+      # Approvals only. Whether an App's approval counts is reported to follow
+      # its installation's access, not the token's (not verified live; see
+      # docs/release-autopilot.md), so the token requests no contents permission.
       - name: Mint approver App token
         id: approver
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
