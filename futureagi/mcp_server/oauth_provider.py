@@ -4,6 +4,7 @@ Implements the OAuthAuthorizationServerProvider protocol using Django cache
 (Redis-backed) for storage of clients, codes, and tokens.
 """
 
+import hashlib
 import secrets
 import time
 import uuid
@@ -424,7 +425,12 @@ class FutureAGIOAuthProvider:
     ) -> OAuthToken:
         from mcp_server.oauth_utils import generate_oauth_token
 
-        family_id = refresh_token.family_id or uuid.uuid4().hex
+        # Tokens cached before families existed get a family id derived from
+        # the token, so concurrent consumers of one legacy token agree on it.
+        family_id = (
+            refresh_token.family_id
+            or hashlib.sha256(refresh_token.token.encode()).hexdigest()[:32]
+        )
         # Remember the token as used before consuming it, so a concurrent or
         # later replay is recognised as reuse rather than as an unknown token.
         await sync_to_async(cache.set)(

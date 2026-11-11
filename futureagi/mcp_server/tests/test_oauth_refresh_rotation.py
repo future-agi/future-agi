@@ -463,3 +463,86 @@ class TestSDKRefreshRotation:
         assert statuses == [200, 400], [r.text for r in responses]
         loser = next(r for r in responses if r.status_code == 400)
         assert loser.json()["error"] == "invalid_grant"
+
+
+@pytest.mark.django_db
+def test_late_duplicate_of_an_adopted_legacy_token_is_seen_as_reuse(user, workspace):
+    """A legacy token that another request already adopted and rotated (so the
+    connection no longer holds it) must resolve to its used record, not to
+    'not found', so the replay revokes the family."""
+    from mcp_server.models.connection import MCPConnection
+    from mcp_server.oauth_utils import hash_refresh_token
+    from mcp_server.refresh_tokens import _adopt_legacy_token, rotate_refresh_token
+
+    _client("rt-client")
+    set_workspace_context(
+        workspace=workspace, organization=user.organization, user=user
+    )
+    legacy = generate_refresh_token(
+        user_id=user.id, org_id=user.organization.id, client_id="rt-client"
+    )
+    connection = MCPConnection.no_workspace_objects.create(
+        user=user,
+        organization=user.organization,
+        workspace=workspace,
+        oauth_refresh_token_encrypted=legacy,
+    )
+    rotation = rotate_refresh_token(
+        legacy,
+        client_id="rt-client",
+        user_id=str(user.id),
+        org_id=str(user.organization.id),
+    )
+    assert rotation.ok
+    connection.oauth_refresh_token_encrypted = rotation.refresh_token
+    connection.save(update_fields=["oauth_refresh_token_encrypted"])
+
+    record = _adopt_legacy_token(
+        legacy, hash_refresh_token(legacy), client_id="rt-client", user_id=str(user.id)
+    )
+
+    assert record is not None and record.used_at is not None
+
+
+async def test_sdk_concurrent_refresh_of_a_legacy_token_revokes_the_winner(monkeypatch):
+    """Two concurrent refreshes of a refresh token cached before families
+    existed: one gets 200, and its successor is revoked like any other
+    concurrent duplicate."""
+    import asyncio
+
+    from mcp_server import oauth_provider
+
+    both_loaded = asyncio.Barrier(2)
+    racing = {"on": True}
+
+    class BothLoadFirst(oauth_provider.FutureAGIOAuthProvider):
+        async def load_refresh_token(self, client, refresh_token):
+            token = await super().load_refresh_token(client, refresh_token)
+            if racing["on"]:
+                await asyncio.wait_for(both_loaded.wait(), timeout=10)
+            return token
+
+    async with _sdk_session(monkeypatch, BothLoadFirst) as sdk:
+        legacy = "legacy-refresh-token-without-family"
+        cache.set(
+            f"{oauth_provider.REFRESH_PREFIX}{legacy}",
+            {
+                "token": legacy,
+                "client_id": sdk.client["client_id"],
+                "scopes": ["evaluations"],
+                "expires_at": None,
+                "user_id": "00000000-0000-0000-0000-000000000001",
+                "organization_id": "00000000-0000-0000-0000-000000000002",
+                "workspace_id": None,
+            },
+            3600,
+        )
+        responses = await asyncio.gather(sdk.refresh(legacy), sdk.refresh(legacy))
+        statuses = sorted(r.status_code for r in responses)
+        assert statuses == [200, 400], [r.text for r in responses]
+        winner = next(r for r in responses if r.status_code == 200)
+        racing["on"] = False
+        successor = await sdk.refresh(winner.json()["refresh_token"])
+
+    assert successor.status_code == 400, successor.text
+    assert successor.json()["error"] == "invalid_grant"

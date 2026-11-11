@@ -90,7 +90,13 @@ def _adopt_legacy_token(token, token_hash, *, client_id, user_id):
         user_id=user_id, oauth_refresh_token_encrypted=token, deleted=False
     ).first()
     if connection is None:
-        return None
+        # Another request may already have adopted and rotated it; return
+        # that record so the caller treats this presentation as reuse.
+        return (
+            MCPOAuthRefreshToken.objects.select_related("family")
+            .filter(token_hash=token_hash)
+            .first()
+        )
     try:
         with transaction.atomic():
             family = MCPOAuthRefreshFamily.objects.create(
