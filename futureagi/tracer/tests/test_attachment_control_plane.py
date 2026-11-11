@@ -23,7 +23,6 @@ from tracer.models.attachment import (
     AttachmentState,
 )
 from tracer.services.attachments import (
-    broker,
     control_plane,
     manifests,
     occurrences,
@@ -567,7 +566,9 @@ def other_setup(observe_project, user, setup):
         enabled=True,
         require_media_redaction=False,
     )
-    writer = broker.Writer("user", user.pk, scope.organization_id, scope.workspace_id)
+    writer = core.broker.Writer(
+        "user", user.pk, scope.organization_id, scope.workspace_id
+    )
     return scope, writer
 
 
