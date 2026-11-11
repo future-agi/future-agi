@@ -99,6 +99,13 @@ export async function createDriver({ jobId, runId, registration }) {
       const actor = actorFor[stage.id] || 'reviewer';
       const op = new MeasuredOperator({ ledger, actor, step: stage.id, phase: stage.phase, signal });
       const navigate = (target, name, url, operator = op) => operator.transition(name, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: operator.actor, step: stage.id, phase: stage.phase, target: name }, () => target.goto(url)));
+      // Open a context from Skills -> Agent contexts by its visible name; no ID is typed.
+      const openContext = async (target, name, operator = op) => {
+        await navigate(target, 'skills-home', '/dashboard/skills', operator);
+        await operator.transition('context-library', () => operator.click(target.getByRole('tab', { name: 'Agent contexts', exact: true }), 'open-context-library'));
+        await operator.transition(name, () => operator.click(target.getByRole('button', { name: input.contextName, exact: true }), 'open-context'));
+        await expect(target.getByRole('tab', { name: 'Consumers', exact: true })).toBeVisible();
+      };
       const choose = async (target, label, option, name, operator = op) => {
         await operator.click(target.getByLabel(label, { exact: true }), `${name}-open`);
         await operator.click(target.getByRole('option', { name: option, exact: typeof option === 'string' }), `${name}-select`);
@@ -158,11 +165,14 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue((await response).ok(), 'Reviewer decision rejected');
         await expect(ack(reviewer)).not.toBeChecked();
       };
+      // Each race must be refused for its own reason, never a leftover one.
+      const EXPECTED = { 'policy-aba': [409, 'release_conflict'], 'target-config-change': [409, 'impact_changed'],
+        'late-annotation': [409, 'annotation_conflict'], 'role-loss': [403, 'permission_denied'], 'evidence-expiry': [410, 'evidence_expired'] };
       const refused = async (fault, scenario, result, extra = {}) => {
         const events = await labelEvents();
-        const row = { fault, scenario, attempt: result, events: events.length, ...extra };
+        const row = { fault, scenario, attempt: result, expected: EXPECTED[fault], events: events.length, ...extra };
         refusals.push(row);
-        requireValue(result.status >= 400 && result.status < 500 && events.length === 0, `Stale approval executed under ${fault}`);
+        requireValue(result.status === EXPECTED[fault][0] && result.code === EXPECTED[fault][1] && events.length === 0, `Stale approval executed or refused for another reason under ${fault}`);
         ledger.fault(fault, scenario);
         return row;
       };
@@ -181,7 +191,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const roleResponse = admin.waitForResponse((res) => /members\/role\/$/.test(new URL(res.url()).pathname) && res.request().method() === 'POST');
           await op.click(admin.getByRole('option', { name: 'Workspace Admin', exact: true }), 'grant-workspace-admin');
           requireValue((await roleResponse).ok(), 'Reviewer authority not granted');
-          await navigate(admin, 'context-detail', `/dashboard/skills/contexts/${input.contextId}`);
+          await openContext(admin, 'context-detail');
           await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Consumers', exact: true }), 'open-consumers'));
           await op.click(admin.getByRole('button', { name: 'Register application target', exact: true }), 'open-target-registration');
           const dialog = admin.getByRole('dialog');
@@ -205,7 +215,7 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'publish-candidate') {
           const author = await page('author');
-          await navigate(author, 'own-context', `/dashboard/skills/contexts/${input.contextId}`);
+          await openContext(author, 'own-context');
           await op.transition('draft-editor', () => op.click(author.getByRole('button', { name: 'Resume your draft', exact: true }), 'resume-draft'));
           await op.transition('publication-review', () => op.click(author.getByRole('button', { name: 'Review changes', exact: true }), 'open-publication-review'));
           const draft = await read(`contexts/${input.contextId}/draft/`, signal, input.author);
@@ -442,7 +452,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const faults = ['policy-aba', 'target-config-change', 'late-annotation', 'role-loss', 'evidence-expiry'];
         const executions = await sql('SELECT response FROM model_hub_hubskillcontextoperation WHERE operation=$1 AND result_resource_id=$2', ['execute_release', submitted.id]);
         raw = { refusals, executions: executions.length, faults };
-        value = faults.every((fault) => refusals.some((row) => row.fault === fault && row.attempt.status >= 400 && row.attempt.status < 500 && row.events === 0))
+        value = faults.every((fault) => refusals.some((row) => row.fault === fault && row.attempt.status === row.expected[0] && row.attempt.code === row.expected[1] && row.events === 0))
           && executions.length === 1 && executions[0].response.revision === detail.revision;
       } else if (check.id === 'exact-release-event') {
         raw = await sql('SELECT id::text, from_version, to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=$2', [input.contextId, published.number]);

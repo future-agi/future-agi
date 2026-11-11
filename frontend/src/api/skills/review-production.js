@@ -98,7 +98,7 @@ export function useRenewReleaseRequest() {
   }, invalidate: () => [['release-request'], ['release-renewal'], ['review-inbox']] });
 }
 
-export async function loadReleaseRequest(requestId, contextId, config) {
+export async function loadReleaseRequest(requestId, contextId, config, rereadAfterRenewal = false) {
     let raw;
     try {
       raw = skillV11Result(await axios.get(detail(requestId), config));
@@ -112,7 +112,12 @@ export async function loadReleaseRequest(requestId, contextId, config) {
         // An assigned reviewer can still inspect what changed and renew
         // explicitly. The renewal endpoint authorizes only that reviewer.
         let renewal = null;
-        try { renewal = await loadRenewal(requestId, config); } catch { renewal = null; }
+        let renewedMeanwhile = false;
+        try { renewal = await loadRenewal(requestId, config); } catch (renewalError) {
+          // The packet was renewed after this read started: read it again once.
+          renewedMeanwhile = operationStatus(renewalError) === 409 && renewalError?.code === 'review_current';
+        }
+        if (renewedMeanwhile && !rereadAfterRenewal) return loadReleaseRequest(requestId, contextId, config, true);
         if (renewal && (!contextId || renewal.subjectId === contextId)) {
           return { request: { id: requestId, revision: renewal.revision, status: renewal.status, subjectId: renewal.subjectId, subjectKind: renewal.packet.subjectKind }, renewalRequired: error.code || 'evidence_expired', canExecute: false };
         }

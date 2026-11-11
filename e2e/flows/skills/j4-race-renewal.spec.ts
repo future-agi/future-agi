@@ -22,7 +22,9 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     id: 'SKILLS-E2E-041', area: 'skills',
     userGoal: 'An assigned reviewer cannot release an approval that a safety, target, annotation, role or retention race made stale, renews it explicitly with the exact changes shown, and releases only the renewed and re-approved packet',
     steps: [
-      'seed a released context, a published candidate, two shared text results, a registered target and an exact author packet',
+      'seed a released context, a published candidate and two shared text results',
+      'the workspace owner registers the application target from its manifest file in the context Consumers tab',
+      'seed the exact author packet assigned to the reviewer and the owner',
       'discover the request in Skills Reviews and approve it',
       'after each race, attempt the release, see the refusal, renew the review from the stale page and approve the new revision',
       'after a transient role loss, attempt the release and see the refusal',
@@ -32,7 +34,8 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
       'a safety quarantine A-B-A refuses the old approval with no label event',
       'a target configuration A-B-A refuses the old approval with no label event',
       'a late annotation refuses the old approval with no label event',
-      'a demoted approver cannot release and an unassigned releaser cannot address the request',
+      'the target registered in the UI stores the exact manifest and its server-derived digest',
+      'a demoted approver cannot release and an assigned, still-authorized releaser cannot use the demoted approval',
       'an expired attached result refuses the old approval and renewal removes only that result',
       'each renewal creates a pending revision whose fingerprint matches the inspected renewal and needs a new decision',
       'exactly one release event moves production to the candidate as the assigned reviewer, bound to the last renewed packet',
@@ -103,15 +106,49 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   expect(v2.digest).toBe(draft.digest);
   const wire = JSON.parse(await readFile(resolve(import.meta.dirname, '../../../frontend/src/api/skills/__tests__/r3_l07/wire-fixtures.json'), 'utf8'));
   const manifest = { ...wire.NativeConfiguration, observable_boundaries: ['model_request', 'root_delivery', 'checkpoint', 'child_selection', 'tool_result'].sort() };
-  const binding = await api(admin, 'POST', `contexts/${id}/bindings/`, { name: 'Refund agent', kind: 'runtime', selector: { label: 'production' }, update_mode: 'new_thread', profile: 'native-runtime', profile_version: '1', repository: null, expected_report_interval_seconds: 3600, configuration: manifest });
+  const manifestPath = `${output}/runtime-manifest.json`;
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  // The workspace owner registers the target through the product UI.
+  const ownerContext = await scopeActors.openContext(browser, admin);
+  const ownerPage = await ownerContext.newPage();
+  await ownerPage.setViewportSize({ width: 1440, height: 900 });
+  ownerPage.setDefaultTimeout(60_000);
+  let binding;
+  try {
+    await ownerPage.goto('/dashboard/skills');
+    await ownerPage.getByRole('tab', { name: 'Agent contexts', exact: true }).click();
+    await ownerPage.getByRole('button', { name, exact: true }).click();
+    await ownerPage.getByRole('tab', { name: 'Consumers', exact: true }).click();
+    await ownerPage.getByRole('button', { name: 'Register application target', exact: true }).click();
+    const dialog = ownerPage.getByRole('dialog');
+    await dialog.getByLabel('Target name', { exact: true }).fill('Refund agent');
+    await dialog.getByLabel('Runtime manifest file').setInputFiles(manifestPath);
+    await expect(dialog.getByText(manifest.entrypoint, { exact: true })).toBeVisible();
+    await ownerPage.screenshot({ path: `${output}/shots/00-register-target.png` });
+    const created = ownerPage.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/contexts/${id}/bindings/`) && res.request().method() === 'POST');
+    await dialog.getByRole('button', { name: 'Register target', exact: true }).click();
+    binding = (await (await created).json()).result;
+    await expect(ownerPage.getByText('Registered Refund agent · configuration r1', { exact: true })).toBeVisible();
+  } finally { await ownerContext.close(); }
+  const stored = await probe.pg<{ configuration: unknown; configuration_digest: string; kind: string; revision: number }>('SELECT configuration, configuration_digest, kind, revision::integer AS revision FROM model_hub_hubskillcontextbinding WHERE context_id=$1 AND retired_at IS NULL', [id]);
+  const registration = { rows: stored.length, configuration: stored[0]?.configuration, digest: stored[0]?.configuration_digest, kind: stored[0]?.kind, revision: stored[0]?.revision };
+  if (fallible('registration')) registration.configuration = { ...manifest, tools_digest: 'typed-by-hand' };
+  expect(registration).toEqual({ rows: 1, configuration: manifest, digest: binding.configuration_digest, kind: 'runtime', revision: 1 });
+  evidence.registration = registration;
   const target = { binding_id: binding.id, environment_id: null, revision: binding.revision, configuration_digest: binding.configuration_digest };
-  const packet = await submit(v2.id, reviewer.userId, target, runs.map((source_id) => ({ source: 'skills_text', source_id, annotation_revision: 0 })));
+  // The owner is also assigned, so it is a still-authorized releaser that can
+  // address the request when the approver loses authority.
+  const preview2 = await api(author, 'POST', 'release-requests/preview/', { resource_id: id, kind: 'agent_context', candidate_version_id: v2.id, label: 'production', target, evidence: runs.map((source_id) => ({ source: 'skills_text', source_id, annotation_revision: 0 })), external_pipeline: null });
+  const packet = { preview: preview2, sent: await api(author, 'POST', 'release-requests/', { packet: preview2.packet, expected_fingerprint: preview2.fingerprint, recipient_ids: [reviewer.userId, admin.userId] }) };
   const requestId = packet.sent.id;
   const events = () => probe.pg<{ id: string }>('SELECT id::text FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=2', [id]);
   const context = await scopeActors.openContext(browser, reviewer);
   const page: Page = await context.newPage();
   await page.setViewportSize({ width: 1440, height: 900 });
   page.setDefaultTimeout(60_000);
+  const diagnostics: string[] = [];
+  page.on('console', (message) => { if (message.type() === 'error') diagnostics.push(`console:${message.text().slice(0, 300)}`); });
+  page.on('response', (res) => { if (res.url().includes('/model-hub/skills/release-requests/') || res.status() >= 400) diagnostics.push(`${Date.now() % 100000} ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname.replace('/model-hub/skills/', '')}`); });
   const ack = page.getByRole('checkbox', { name: ACK, exact: true });
   const attempt = async (acknowledge = true) => {
     if (acknowledge) await ack.check();
@@ -187,16 +224,24 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const roleAttempt = await attempt();
     const detail = await probe.pg<{ revision: number; fingerprint: string }>('SELECT p.revision::integer AS revision, p.fingerprint FROM model_hub_hubskillreleasepacket p JOIN model_hub_hubskillreleaserequest r ON r.id=p.request_id AND r.revision=p.revision WHERE r.id=$1', [requestId]);
     const ownerProbe = await raw(admin, 'POST', `release-requests/${requestId}/execute/`, { revision: detail[0].revision, expected_fingerprint: detail[0].fingerprint });
-    races.role = { attempt: roleAttempt, owner: ownerProbe.status, events: (await events()).length, receiptBefore };
-    if (fallible('role')) races.role = { attempt: { status: 200, code: null }, owner: 200, events: 1, receiptBefore: 200 };
-    expect(races.role).toEqual({ attempt: { status: 403, code: 'permission_denied' }, owner: 404, events: 0, receiptBefore: 404 });
+    races.role = { attempt: roleAttempt, owner: { status: ownerProbe.status, code: ownerProbe.body.code }, events: (await events()).length, receiptBefore };
+    if (fallible('role')) races.role = { attempt: { status: 200, code: null }, owner: { status: 200, code: null }, events: 1, receiptBefore: 200 };
+    expect(races.role).toEqual({ attempt: { status: 403, code: 'permission_denied' }, owner: { status: 403, code: 'permission_denied' }, events: 0, receiptBefore: 404 });
     await api(admin, 'POST', 'organization/members/role/', { user_id: reviewer.userId, ws_level: 8, workspace_id: admin.workspaceId }, '/accounts/');
     // Retention expiry of the second attached result (E2E-image clock seam).
     const expired = await api(admin, 'POST', 'model-hub/e2e/j4/evidence-clock/', { source: 'skills_text', source_id: runs[1] }, '/');
     races.expiry = { attempt: await attempt(false), events: (await events()).length, purged: expired.payload_purged };
     if (fallible('expiry')) races.expiry = { attempt: { status: 200, code: null }, events: 1, purged: true };
     expect(races.expiry).toEqual({ attempt: { status: 410, code: 'evidence_expired' }, events: 0, purged: true });
-    const expiryRenewal = await renew('expiry');
+    // Reopen in dark mode: detailed evidence is gone, so only explicit
+    // renewal is offered on the reloaded page.
+    await page.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
+    await page.reload();
+    await expect(page.getByText(/is no longer available \(evidence_expired\)/)).toBeVisible();
+    await page.screenshot({ path: `${output}/shots/03-renewal-required-dark.png` });
+    diagnostics.push('--- renew expiry');
+    const expiryRenewal = await renew('expiry-dark');
+    diagnostics.push('--- renewed expiry');
     expect(expiryRenewal.removed).toEqual([{ source: 'skills_text', source_id: runs[1], reason: 'evidence_expired' }]);
     const remaining = await api(reviewer, 'GET', `release-requests/${requestId}/`);
     expect(remaining.packet.evidence.map((ref: { source_id: string }) => ref.source_id)).toEqual([runs[0]]);
@@ -221,6 +266,6 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   } finally {
     if (testInfo.status !== testInfo.expectedStatus) await page.screenshot({ path: `${output}/shots/failure.png` }).catch(() => {});
     await context.close();
-    await writeFile(`${output}/observations.json`, `${JSON.stringify({ ...evidence, races, renewals }, null, 2)}\n`);
+    await writeFile(`${output}/observations.json`, `${JSON.stringify({ ...evidence, races, renewals, diagnostics }, null, 2)}\n`);
   }
 });

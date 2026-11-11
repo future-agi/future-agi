@@ -40,3 +40,23 @@ it('never treats authorization or unrelated failures as stale', async () => {
   axios.post.mockImplementationOnce(() => rejected(403, 'permission_denied'));
   await expect(loadReleaseRequest('request', 'context', {})).rejects.toMatchObject({ code: 'permission_denied' });
 });
+
+it('re-reads the request once when it was renewed while the stale read was in flight', async () => {
+  axios.get.mockImplementationOnce(() => rejected(410, 'evidence_expired'))
+    .mockImplementationOnce(() => rejected(409, 'review_current'))
+    .mockResolvedValueOnce({ data: { result: { ...detail, revision: 2, status: 'pending', fingerprint: 'renewed' } } });
+  axios.post.mockResolvedValueOnce({ data: { result: { ...inspection, fingerprint: 'renewed' } } }).mockResolvedValueOnce({ data: { result: { fingerprint: 'renewed' } } });
+  const value = await loadReleaseRequest('request', 'context', {});
+  expect(value.request).toMatchObject({ revision: 2, status: 'pending' });
+  expect(value.preview).toMatchObject({ fingerprint: 'renewed', current: true });
+  expect(axios.get).toHaveBeenCalledTimes(3);
+});
+
+it('does not loop when the re-read still cannot load', async () => {
+  axios.get.mockImplementation(() => rejected(410, 'evidence_expired'));
+  axios.get.mockImplementationOnce(() => rejected(410, 'evidence_expired')).mockImplementationOnce(() => rejected(409, 'review_current'))
+    .mockImplementationOnce(() => rejected(410, 'evidence_expired')).mockImplementationOnce(() => rejected(409, 'review_current'));
+  await expect(loadReleaseRequest('request', 'context', {})).rejects.toMatchObject({ code: 'evidence_expired' });
+  expect(axios.get).toHaveBeenCalledTimes(4);
+  axios.get.mockReset();
+});

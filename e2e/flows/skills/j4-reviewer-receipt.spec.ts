@@ -196,9 +196,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(events).toEqual([{ id: receipt.post_move_state.event_id, from_version: 1, to_version: 2, actor_id: reviewer.userId }]);
     const durable = await api(reviewer, 'GET', `release-requests/${submitted.id}/receipt/`);
     if (process.env.J4_FALLIBILITY === 'receipt') durable.currentness_at_action.release_revision = durable.post_move_state.release_revision;
-    expect(durable).toEqual(receipt);
     expect(durable.currentness_at_action.release_revision).toBe(restored.release_revision);
     expect(durable.post_move_state.release_revision).toBe(restored.release_revision + 1);
+    expect(durable).toEqual(receipt);
     await page.reload();
     await expect(page.getByText('Durable release receipt', { exact: true })).toBeVisible();
     await expect(page.getByText('Currentness before the move', { exact: true })).toBeVisible();
