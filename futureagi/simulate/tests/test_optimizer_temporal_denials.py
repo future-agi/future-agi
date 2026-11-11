@@ -424,3 +424,112 @@ def test_temporal_result_adapter_rejects_denial_before_scoring(
     with pytest.raises(EvaluationDenied) as caught:
         evaluator.evaluate(scenarios(True))
     assert caught.value.as_dict() == denial.as_dict()
+
+
+TRIAL_DENIAL_CONFIGS = {
+    "random_search": {"num_variations": 3},
+    "metaprompt": {"num_rounds": 3},
+    "bayesian": {"n_trials": 3, "min_examples": 1, "max_examples": 1},
+}
+
+
+@pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
+@pytest.mark.parametrize("optimiser_type", sorted(TRIAL_DENIAL_CONFIGS))
+def test_trial_denial_escapes_every_optimizer(
+    monkeypatch, temporal_case, optimiser_type, code
+):
+    """A graded baseline, then refused trials: no later scenario batch starts."""
+    from ee.agent_opt.generators.litellm_generator import LiteLLMGenerator
+    from ee.agent_opt.optimizers import random_search
+    from tfc.utils.evaluation_denials import EvaluationDenied
+
+    case = temporal_case
+    seen = {"phase": "baseline", "denials": 0, "batches": [], "callbacks": []}
+
+    def event():
+        return {"phase": seen["phase"], "after_denial": seen["denials"] > 0}
+
+    def judge(**kwargs):
+        if seen["phase"] == "trial":
+            seen["denials"] += 1
+            raise denial_for(code)
+        return {"output": 1.0, "reason": "Synthetic allowed grading"}
+
+    real_batch = case.optimizer.SimulationEvaluator._evaluate_via_temporal
+
+    def batch(self, inputs):
+        # Every scenario of a batch is dispatched before results are collected,
+        # so only a batch that *starts* after a refusal is repeated paid work.
+        seen["batches"].append(event())
+        return real_batch(self, inputs)
+
+    def on_trial(**trial):
+        seen["callbacks"].append({**event(), "is_baseline": trial["is_baseline"]})
+        if trial["is_baseline"]:
+            seen["phase"] = "trial"
+
+    monkeypatch.setattr(case.optimizer, "run_eval_func", judge)
+    monkeypatch.setattr(
+        case.optimizer.SimulationEvaluator, "_evaluate_via_temporal", batch
+    )
+    monkeypatch.setattr(
+        LiteLLMGenerator,
+        "generate",
+        lambda self, prompt_vars, **kw: json.dumps(
+            {"hypothesis": "synthetic", "improved_prompt": "synthetic candidate"}
+        ),
+    )
+    monkeypatch.setattr(
+        random_search, "_generate_variations", lambda *a, **kw: ["synthetic candidate"]
+    )
+    inputs = scenarios(False)
+    for item in inputs:
+        item["existing_transcript"] = "OK synthetic transcript"
+
+    outcome = None
+    denied = None
+    try:
+        outcome = case.optimizer.FixYourAgent().optimize(
+            initial_agent_prompt="base",
+            scenarios=inputs,
+            eval_configs=[case.config],
+            optimizer_type=optimiser_type,
+            optimizer_config=dict(TRIAL_DENIAL_CONFIGS[optimiser_type]),
+            use_synthetic=False,
+            optimization_model="gpt-4o-mini",
+            api_key="synthetic-not-a-real-key",
+            use_temporal_evaluation=True,
+            organization=case.organization,
+            workspace=case.workspace,
+            on_trial_callback=on_trial,
+        )
+    except EvaluationDenied as exc:
+        denied = exc
+
+    trial_batches = [b for b in seen["batches"] if b["phase"] == "trial"]
+    later_batches = [b for b in seen["batches"] if b["after_denial"]]
+    print(
+        "TRIAL_DENIAL",
+        optimiser_type,
+        code,
+        "returned_normally=",
+        outcome is not None,
+        "denials=",
+        seen["denials"],
+        "trial_batches=",
+        len(trial_batches),
+        "batches_after_denial=",
+        len(later_batches),
+    )
+    assert seen["callbacks"] and seen["callbacks"][0]["is_baseline"], (
+        "Baseline was not graded and persisted"
+    )
+    assert seen["denials"], "Fixture never reached the trial-phase refusal"
+    assert denied is not None and denied.code == code, (
+        f"{optimiser_type}: trial-phase {code} was swallowed; optimize() returned "
+        f"normally after {len(trial_batches)} trial batches "
+        f"({len(later_batches)} started after the first refusal)"
+    )
+    assert len(trial_batches) == 1
+    assert later_batches == []
+    assert not any(c["after_denial"] for c in seen["callbacks"])
