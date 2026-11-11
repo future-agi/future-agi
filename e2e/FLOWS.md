@@ -2384,6 +2384,29 @@
 - trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
 - all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
 
+### OBS-E2E-060 — Error Feed stays error-free without projects and Retry restores existing issues
+
+**Goal:** A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry.
+
+**Spec:** `flows/observe/error-feed-empty-projects.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe in a test-owned empty workspace and click Error Feed
+2. read the no-projects status without an error notification on first visit, reload and revisit
+3. create a project and two uniquely titled issues through the existing test-image issue seeder in the original workspace
+4. open Error Feed in the populated workspace and read exactly the seeded issue titles
+5. inject a browser-only feed-list 500 and read the inline error and Retry, never a success empty state
+6. remove the injected fault and click Retry to recover the same issue set from fresh real feed and project reads
+
+**Backend state verified:**
+
+- The empty workspace has zero live Observe projects in PG; its real project catalog and feed list return successful exact empty results on first visit, reload and revisit.
+- The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
+- After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
