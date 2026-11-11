@@ -11,6 +11,7 @@ if (!process.env.CTXHUB_NATIVE_ATTESTATION) {
 export default defineConfig({
   testDir: '.',
   testMatch: ['flows/skills/**/*.native.spec.ts'],
+  projects: [{ name: 'skills-native-qualification' }],
   globalSetup: fileURLToPath(new URL('./harness/skills-r3/native-setup.mjs', import.meta.url)),
   fullyParallel: false,
   forbidOnly: true,
