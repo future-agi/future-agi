@@ -60,7 +60,9 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
     python, evidenceDir: evidence, native: nativeConfig });
   const driver = await createDriver({ jobId: 'J5', runId, registration: flowRegistration });
   const ledger = new ActionLedger({ runId, job: 'J5', mode: 'product', path: join(evidence, `${runId}-partial.jsonl`) });
-  const signal = AbortSignal.timeout(1_750_000); const job = getJob('J5');
+  // Six parallel lifecycle workers share the VM; the configured cohort's
+  // separate setup round plus three native rounds needs ~28 minutes there.
+  const signal = AbortSignal.timeout(2_250_000); const job = getJob('J5');
   const missingLoad: string[] = []; const storage: unknown[] = []; const qualifiedChecks: string[] = [];
   let cleanup;
   try {
