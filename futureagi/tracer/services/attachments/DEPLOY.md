@@ -27,6 +27,10 @@ reserve, publish or finish; after the lease lapses the next tick retries.
 Imports are a per-project opt-in: `AttachmentScope.allow_import` (default
 off). Admission needs it on the scope AND in the capture session's policy
 snapshot, so switching it off denies live sessions and queued jobs at once.
+Switching it ON is not immediate for existing sessions: 0132's scope fence
+does not list `allow_import`, so the change does not force a
+`policy_version` bump, and a live session keeps its `allow_import: false`
+snapshot until it expires or the SDK bootstraps a new session.
 `record_audio` (creating new recordings) is a separate switch and never
 implies it. F01 `Policy` has no field for it yet, so bootstrap does not
 advertise it.
