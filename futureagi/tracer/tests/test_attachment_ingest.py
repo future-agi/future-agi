@@ -157,7 +157,15 @@ class AttachmentReferencesTests(TestCase):
 class AttachmentBindingTests(TestCase):
     def setUp(self):
         self.link = PendingLink(
-            1, "scope-pk", SCOPE, PARENT, A, B, "mixed", "audio", NOW,
+            1,
+            "scope-pk",
+            SCOPE,
+            PARENT,
+            A,
+            B,
+            "mixed",
+            "audio",
+            NOW,
             NOW + timedelta(hours=24),
         )
         self.source = ParentState(

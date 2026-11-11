@@ -94,7 +94,11 @@ def ready_upload(setup, monkeypatch, **overrides):
     upload, token, _, _ = initialized(setup, **overrides)
     store = ImmutableStore()
     uploads.transfer(
-        token, scope_id=scope.id, upload_id=upload.id, chunks=[wav_bytes()], storage=store
+        token,
+        scope_id=scope.id,
+        upload_id=upload.id,
+        chunks=[wav_bytes()],
+        storage=store,
     )
     uploads.complete(token, scope_id=scope.id, upload_id=upload.id)
     # Explicit parser double, NOT sandbox qualification.
@@ -137,9 +141,11 @@ def test_bound_source_equals_the_read_path_source(setup, user, monkeypatch):
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
     row.refresh_from_db()
     parent = occurrences.Parent(row.trace_id, row.span_id)
-    authority = LiveSession(span_reader=lambda project_id, span_id: spans(
-        project_id, {span_id}
-    ).get(span_id))
+    authority = LiveSession(
+        span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
+            span_id
+        )
+    )
     viewer = viewer_for(scope, user)
     read = authority.source(viewer, scope, parent)
     assert (row.source_started_at, row.source_expires_at, row.source_generation) == (
@@ -210,7 +216,9 @@ def test_negative_controls_never_bind(setup, monkeypatch, mutation, outcome):
     elif mutation == "other_direction":
         span = span_for(row, refs=[ref_for(row, direction="input")])
     elif mutation == "other_modality":
-        span = span_for(row, refs=[ref_for(row, modality="image", mime_type="image/png")])
+        span = span_for(
+            row, refs=[ref_for(row, modality="image", mime_type="image/png")]
+        )
     elif mutation == "tail_dropped":
         span = None
         AttachmentOccurrence.objects.filter(pk=row.pk).update(
@@ -240,11 +248,14 @@ def test_fences_and_disabled_scopes_are_not_bound(setup, monkeypatch):
     row = occurrence(setup, monkeypatch)
     spans = Spans()
     spans.put(scope.project_id, span_for(row))
-    scope.enabled = False
-    scope.save(update_fields=["enabled"])
-    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 0
-    scope.enabled = True
-    scope.policy_version += 1  # a policy change after upload fences the bind
+    # The scope trigger requires a policy version bump with every switch.
+    scope.enabled, scope.policy_version = False, scope.policy_version + 1
+    scope.save(update_fields=["enabled", "policy_version"])
+    assert control_plane.reconcile_tick(span_reader=spans) == dict.fromkeys(
+        ("bound", "pending", "rejected", "expired", "conflict"), 0
+    )
+    # Re-enabled under a newer policy: the upload's policy no longer matches.
+    scope.enabled, scope.policy_version = True, scope.policy_version + 1
     scope.save(update_fields=["enabled", "policy_version"])
     counts = control_plane.reconcile_tick(span_reader=spans)
     assert counts["conflict"] == 1 and counts["bound"] == 0
@@ -291,7 +302,9 @@ class Reader(control_plane.ControlPlaneReader):
 
 def target_for(scope, row):
     return ReadTarget(
-        Scope(str(scope.organization_id), str(scope.workspace_id), str(scope.project_id)),
+        Scope(
+            str(scope.organization_id), str(scope.workspace_id), str(scope.project_id)
+        ),
         Parent(str(row.trace_id), row.span_id),
     )
 
@@ -301,7 +314,9 @@ def test_reader_is_dark_when_disabled(setup, settings, django_assert_num_queries
     settings.FI_ATTACHMENTS_ENABLED = False
     reader = control_plane.ControlPlaneReader(span_reader=Spans())
     target = ReadTarget(
-        Scope(str(scope.organization_id), str(scope.workspace_id), str(scope.project_id)),
+        Scope(
+            str(scope.organization_id), str(scope.workspace_id), str(scope.project_id)
+        ),
         Parent(str(uuid.uuid4()), core.SPAN),
     )
     with django_assert_num_queries(0):
@@ -324,7 +339,11 @@ def test_reader_returns_only_bound_authorized_occurrences(setup, user, monkeypat
     (status,) = reader.list_authorized(object(), (target,), per_parent_limit=64)
     assert status.target == target
     assert status.reference["occurrence_id"] == str(bound.client_id)
-    assert (status.state, status.bound, status.capture_complete) == ("ready", True, True)
+    assert (status.state, status.bound, status.capture_complete) == (
+        "ready",
+        True,
+        True,
+    )
     assert status.recording_id is None
     assert str(unbound.client_id) != status.reference["occurrence_id"]
     # A foreign project reads as nothing; a deleted source reads as nothing.
@@ -339,8 +358,8 @@ def test_reader_returns_only_bound_authorized_occurrences(setup, user, monkeypat
 
 def test_reader_serves_the_authorized_recording_manifest(setup, user, monkeypatch):
     scope, _ = setup
-    scope.record_audio = True
-    scope.save(update_fields=["record_audio"])
+    scope.record_audio, scope.policy_version = True, scope.policy_version + 1
+    scope.save(update_fields=["record_audio", "policy_version"])
     recording_id = str(uuid.uuid4())
     upload, token = ready_upload(
         setup,
