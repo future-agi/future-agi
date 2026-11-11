@@ -21,6 +21,7 @@ import AssistPanel from '../assist/AssistPanel';
 import ContextLinksPanel from '../contexts/ContextLinksPanel';
 import HotfixHeadReview from './HotfixHeadReview';
 import RecoverableDraftChanges from './RecoverableDraftChanges';
+import J1MigrationDraftRecovery from './J1MigrationDraftRecovery';
 import DraftChecksPanel from "./DraftChecksPanel";
 import DraftConflictDialog from "./DraftConflictDialog";
 import PublishDialog from "./PublishDialog";
@@ -56,7 +57,10 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const [serverDraft, setServerDraft] = useState(null);
   const legacyDiscard = useDiscardSkillDraft(skill.id);
   const options = useSkillTestingOptions();
-  const session = useDraftSession(skill.id, initialDraft, preparing || discardOpen || Boolean(publishDraft), resourceApi);
+  // The recovery view has no editor/autosave competing with suspension. Its
+  // explicit flush binds the checkpoint to the current saved recovery digest.
+  const migrationRecovery = !isContext && params.get('preserve') === 'migration';
+  const session = useDraftSession(skill.id, initialDraft, migrationRecovery || preparing || discardOpen || Boolean(publishDraft), resourceApi);
   const latestSession = useRef(session);
   const deletionCheckpoint = useRef(null);
   latestSession.current = session;
@@ -159,6 +163,9 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   else if (session.status === 'error') saveLabel = "Couldn't save";
   else if (session.dirty || saving) saveLabel = 'Saving…';
   else if (session.revision === 0) saveLabel = 'Not saved yet';
+
+  if (migrationRecovery) return <J1MigrationDraftRecovery skill={skill} session={session}
+    onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root))} />;
 
   return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
     <PageHeader title={<Box component="span" sx={{ fontFamily: 'monospace' }}>{skill.name}</Box>}

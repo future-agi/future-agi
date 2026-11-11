@@ -56,6 +56,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("skill editor", () => {
+  it('never creates a new draft when migration preservation finds no live draft', async () => {
+    api.draft = { data: null };
+    mount('/dashboard/skills/skill-id/edit?preserve=migration');
+    await screen.findByText('No saved draft to preserve');
+    expect(api.file).not.toHaveBeenCalled();
+    expect(api.save).not.toHaveBeenCalled();
+    expect(api.discard).not.toHaveBeenCalled();
+  });
+
   it("edits description and instructions through the real route's canonical session", async () => {
     const content = '---\nname: sample-skill\ndescription: Use when reviewing a support request.\nlicense: MIT\n---\nOriginal policy.\n';
     api.draft = { data: { ...initial, files: [{ path: 'SKILL.md', content }] } };

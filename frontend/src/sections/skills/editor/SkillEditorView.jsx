@@ -15,15 +15,19 @@ import VersionDraftLoader from "./VersionDraftLoader";
 
 function DraftInitializer({ skill }) {
   const query = useSkillDraft(skill.id);
+  const [params] = useSearchParams();
+  const preservingMigration = params.get('preserve') === 'migration';
   const [source, setSource] = useState(null);
   // Revalidate stale cache before starting; later refetches must not replace local edits.
   useEffect(() => {
     if (source || query.data === undefined || query.isError || query.isFetching || query.isPaused) return;
     if (query.data) setSource({ draft: query.data });
+    else if (preservingMigration) setSource({ missing: true });
     else if (skill.latestVersion) setSource({ number: skill.latestVersion });
     else setSource({ draft: { files: [{ path: "SKILL.md", content: "" }], note: "", baseVersion: null, revision: 0 } });
-  }, [source, query.data, query.isError, query.isFetching, query.isPaused, skill.latestVersion]);
+  }, [source, query.data, query.isError, query.isFetching, query.isPaused, skill.latestVersion, preservingMigration]);
 
+  if (source?.missing) return <EmptyState title="No saved draft to preserve" description="Preview the retained source again. Recovery never creates a replacement draft." />;
   if (source?.draft) return <SkillEditorSession skill={skill} initialDraft={source.draft} refetchDraft={query.refetch} />;
   if (source?.number) return (
     <VersionDraftLoader skillId={skill.id} number={source.number}>

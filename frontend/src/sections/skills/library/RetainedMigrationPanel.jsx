@@ -69,7 +69,7 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
     {plan && <MigrationPlanPanel scopeKey={identity} plan={plan}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
-      onPreserveDraft={(item) => openDraft(item.destinationId)} onBusyChange={setOperationBusy}
+      onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`); }} onBusyChange={setOperationBusy}
       onAccepted={(receipt) => setReceipts((previous) => [...previous, receipt])} />}
     {receipts.map((receipt) => <Alert severity="success" key={receipt.receiptId} action={<Button disabled={busy} onClick={() => openDraft(receipt.resourceId)}>Open destination</Button>}>Decision {receipt.decision} retained. {receipt.published ? 'Published' : 'Not published; review and publish deliberately in the editor.'}</Alert>)}
   </Stack>;
