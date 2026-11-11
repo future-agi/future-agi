@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,11 +55,10 @@ func (h *Handlers) videoIdentity(r *http.Request, rc *models.RequestContext) err
 	rc.EndpointType = "video"
 	rc.Metadata["cache_control"] = "no-store"
 	setAuthMetadataFromRequest(rc, r)
-	host, _, e := net.SplitHostPort(r.RemoteAddr)
-	if e != nil {
-		host = r.RemoteAddr
-	}
-	rc.Metadata["client_ip"] = host
+	// Behind a load balancer the TCP peer is the proxy. Only the configured
+	// number of trusted hops is read from X-Forwarded-For, never its first
+	// (caller-supplied) entry, so org and key IP allowlists see the real client.
+	rc.Metadata["client_ip"] = trustedClientIP(r, h.videoIPACL.TrustedProxies)
 	if h.keyStore == nil {
 		return &models.APIError{Status: 403, Type: models.ErrTypeInvalidRequest, Code: "missing_org", Message: "Video generation requires an organization API key"}
 	}

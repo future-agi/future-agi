@@ -434,7 +434,11 @@ logging:
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   # Proxy hops in front of the gateway that append to X-Forwarded-For. Video
+#   # routes (/v1/videos*) take the client address from the entry this many
+#   # hops from the right, and ignore X-Forwarded-For when 0 (the default).
+#   # Google Cloud external Application Load Balancer: 2. One nginx hop: 1.
+#   trusted_proxies: 1
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
