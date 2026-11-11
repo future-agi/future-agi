@@ -11,6 +11,7 @@ from tracer.services.attachments.references import NONCE, REFS, SCHEMA, SESSION
 from tracer.services.attachments.view_enrichment import (
     enrich_observations,
     enrich_trace_detail,
+    enrich_voice_detail,
     enrich_voice_page,
     trace_observations,
 )
@@ -247,3 +248,150 @@ def test_trace_walk_and_media_batch_are_bounded():
         for _ in range(101)
     ]
     assert len(list(trace_observations({"observation_spans": nodes}))) == 100
+
+
+ROOT = "1234567890abcdef"
+CHILD = "fedcba9876543210"
+RECORDING = {**REF, "purpose": "conversation_recording"}
+
+
+def _voice_request():
+    return SimpleNamespace(
+        organization=SimpleNamespace(id=A), workspace=SimpleNamespace(id=B)
+    )
+
+
+def _status(span_id, reference, state="ready", bound=True, complete=True):
+    return AuthorizedStatus(
+        ReadTarget(Scope(A, B, C), Parent(A, span_id)),
+        reference,
+        state,
+        bound,
+        complete,
+        datetime.now(UTC) + timedelta(hours=1),
+    )
+
+
+def _real_voice_detail(reader):
+    """Drive the REAL ClickHouse Voice detail builder with storage doubles."""
+    from tracer.views.trace import TraceView
+
+    storage = [
+        {
+            "id": ROOT,
+            "trace_id": A,
+            "project_id": C,
+            "name": "conversation",
+            "observation_type": "conversation",
+            "parent_span_id": None,
+            "start_time": datetime.now(UTC),
+            "end_time": datetime.now(UTC),
+            "status": "OK",
+            "provider": "pipecat",
+            "attrs_string": {},
+        },
+        {
+            "id": CHILD,
+            "trace_id": A,
+            "project_id": C,
+            "name": "llm",
+            "observation_type": "llm",
+            "parent_span_id": ROOT,
+            "start_time": datetime.now(UTC),
+            "end_time": datetime.now(UTC),
+            "status": "OK",
+            "provider": "openai",
+        },
+    ]
+    detail = SimpleNamespace(
+        project_id=C,
+        spans=storage,
+        eval_config_ids=(),
+        evals=(),
+        annotations=(),
+        eval_unavailable=False,
+    )
+    view = TraceView()
+    view.attachment_reader = reader
+    with (
+        patch("tracer.views.trace._simulation_context_for_voice_call", return_value={}),
+        patch.object(view._gm, "success_response", side_effect=lambda value: value),
+    ):
+        return view._voice_call_detail_clickhouse(_voice_request(), A, detail, [])
+
+
+def test_real_voice_detail_projects_coarse_authorized_recording():
+    reader = Mock()
+    reader.list_authorized.return_value = [_status(ROOT, RECORDING)]
+    result = _real_voice_detail(reader)
+    reader.list_authorized.assert_called_once()
+    assert result["project_id"] == C
+    # Coarse I04 shape only: no manifest/origin/URL/grant until B06/B11 authorize
+    # a RecordingManifest, so a ready recording is not projected as playable.
+    assert result["recording_attachment"] == {
+        "occurrence_id": B,
+        "parent": {"trace_id": A, "span_id": ROOT},
+        "state": "pending",
+    }
+    assert "recording_attachment" not in result["observation_span"][0]
+
+
+def test_voice_detail_recording_states_are_coarse():
+    for state, bound, complete, expected in (
+        ("ready", True, False, "waiting"),
+        ("ready", False, True, "pending"),
+        ("validating", True, False, "validating"),
+        ("importing", True, False, "importing"),
+        ("failed", True, True, "failed"),
+    ):
+        reader = Mock()
+        reader.list_authorized.return_value = [
+            _status(ROOT, RECORDING, state, bound, complete)
+        ]
+        result = _real_voice_detail(reader)
+        assert result["recording_attachment"]["state"] == expected, state
+
+
+def test_voice_detail_without_authorized_root_recording_keeps_legacy_tier():
+    for statuses in (
+        [],  # denied, foreign, missing and deleted rows are omitted identically
+        [_status(ROOT, REF)],  # an attachment that is not a recording
+        [_status(CHILD, RECORDING)],  # a recording is never inferred from a child
+        [_status(ROOT, RECORDING, "deleted")],
+        [_status(ROOT, RECORDING, "expired")],
+        [_status(ROOT, RECORDING, "rejected")],
+    ):
+        reader = Mock()
+        reader.list_authorized.return_value = statuses
+        result = _real_voice_detail(reader)
+        assert "recording_attachment" not in result
+        assert "recording" in result  # the legacy URL tier is untouched
+    result = _real_voice_detail(None)
+    assert "recording_attachment" not in result
+    assert all("attachments" not in row for row in result["observation_span"])
+
+
+def test_voice_detail_ambiguous_root_recordings_are_not_guessed():
+    other = {**RECORDING, "occurrence_id": C}
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        _status(ROOT, RECORDING),
+        _status(ROOT, other),
+    ]
+    result = _real_voice_detail(reader)
+    assert result["recording_attachment"] == {"state": "rejected"}
+
+
+def test_voice_detail_projection_requires_workspace_scope():
+    reader = Mock()
+    result = {
+        "project_id": C,
+        "observation_span": [{"id": ROOT, "trace_id": A}],
+    }
+    enrich_voice_detail(
+        request=SimpleNamespace(organization=SimpleNamespace(id=A)),
+        result=result,
+        reader=reader,
+    )
+    reader.list_authorized.assert_not_called()
+    assert "recording_attachment" not in result

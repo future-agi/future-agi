@@ -91,6 +91,64 @@ def enrich_observations(*, request, project_id, observations, reader=None):
     )
 
 
+RECORDING_PURPOSE = "conversation_recording"
+# I04 coarse states. No reader supplies an authorized RecordingManifest yet, so
+# nothing is projected as playable: a ready recording reads as not-ready until
+# the manifest/resolver integration (B06/B11) authorizes it.
+_COARSE_RECORDING_STATES = {
+    "pending": "pending",
+    "pending_upload": "pending_upload",
+    "importing": "importing",
+    "validating": "validating",
+    "partial": "waiting",
+    "ready": "pending",
+    "failed": "failed",
+}
+
+
+def enrich_voice_detail(*, request, result, reader=None):
+    """Enrich Voice detail rows, then project I04 `recording_attachment`.
+
+    The projection is derived ONLY from authorized statuses on the explicit
+    conversation root (the first row). Absent, denied or non-recording roots
+    leave the key absent so the legacy URL tier keeps working; when present the
+    UI never falls back to legacy URLs. The shape stays coarse
+    ({occurrence_id, parent, state}) and carries no manifest, origin or URL.
+    """
+    observations = result.get("observation_span") or []
+    enrich_observations(
+        request=request,
+        project_id=result.get("project_id"),
+        observations=observations,
+        reader=reader,
+    )
+    if not observations:
+        return
+    root = observations[0]
+    recordings = [
+        item
+        for item in root.get("attachments") or ()
+        if item["reference"].get("purpose") == RECORDING_PURPOSE
+        and item["reference"]["modality"] == "audio"
+    ]
+    if not recordings:
+        return
+    if len(recordings) != 1:
+        # Ambiguous recording roots are never resolved by guessing one.
+        result["recording_attachment"] = {"state": "rejected"}
+        return
+    try:
+        parent = Parent(str(root.get("trace_id", "")), str(root.get("id", "")))
+    except InvalidReference:
+        return
+    item = recordings[0]
+    result["recording_attachment"] = {
+        "occurrence_id": item["reference"]["occurrence_id"],
+        "parent": {"trace_id": parent.trace_id, "span_id": parent.span_id},
+        "state": _COARSE_RECORDING_STATES[item["status"]],
+    }
+
+
 def enrich_voice_page(*, request, project_id, entries, reader=None):
     """Adapt Voice list identity from its entry, not from its root span stub."""
 

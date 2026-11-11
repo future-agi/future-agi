@@ -4426,13 +4426,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
-        from tracer.services.attachments.view_enrichment import enrich_observations
+        from tracer.services.attachments.view_enrichment import enrich_voice_detail
 
-        enrich_observations(
-            request=request,
-            project_id=project_id,
-            observations=observation_span,
-            reader=self.attachment_reader,
+        enrich_voice_detail(
+            request=request, result=result, reader=self.attachment_reader
         )
         return self._gm.success_response(result)
 
