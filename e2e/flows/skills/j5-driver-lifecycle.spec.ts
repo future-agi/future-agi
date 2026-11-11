@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -21,12 +21,14 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
       'plan every fixed target with one command; review one proven-identical managed group plus every exception individually',
       'freeze exact targets, review plans and authorize every exposed repository with stage-local evidence',
       'create deterministic PRs, reconcile the lost response and verify merge and filesystem installations independently',
+      'open Repository rollouts from Skills navigation and review each rollout\'s fixed forty targets',
       native ? 'observe exact root instructions in the actual pinned Codex request after cold install, second update and reverse' : 'refuse a completed load stage, then exercise second-update and reverse mechanisms as explicitly partial evidence'],
     backendChecks: ['public API and independent Postgres preserve forty exact targets per round',
       'all registered decision stages contain current per-item reviews bound to their stage receipts',
       'driver observes local files and deterministic Git PRs rather than product toasts',
       'installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations',
-      'review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out'],
+      'review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out',
+      'an advanced pin (lock written into a pinned checkout) is counted from the filesystem and fails pins-retained'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   test.setTimeout(2_400_000); // Three 33-target rounds (plus configured setup) and public API/storage probes.
@@ -92,7 +94,19 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
           .sort((a: any, b: any) => a.binding_id.localeCompare(b.binding_id)));
         expect(rows).toHaveLength(40); storage.push({ campaign_id: campaign.id, rows });
         await page.setViewportSize({ width: 1440, height: 900 });
-        await page.goto(`/dashboard/skills/contexts/rollouts/${campaign.id}`);
+        // Reach the rollout the way a user does: Skills navigation, the enabled
+        // Repository rollouts tab, then the newest-first rollout list.
+        expect(campaign.name).toBeTruthy();
+        await page.goto('/dashboard/skills/contexts');
+        const rolloutsTab = page.getByRole('tab', { name: 'Repository rollouts', exact: true });
+        await expect(rolloutsTab).toBeEnabled({ timeout: 60_000 });
+        await rolloutsTab.click();
+        await expect(page).toHaveURL(/\/dashboard\/skills\/contexts\/rollouts\/?$/);
+        await expect(page.getByRole('table', { name: 'Repository rollouts' })).toBeVisible({ timeout: 60_000 });
+        await mkdir(join(evidence, 'shots'), { recursive: true });
+        await page.screenshot({ path: join(evidence, 'shots', `j5-driver-${campaign.label}-list.png`) });
+        await page.getByRole('button', { name: `Review ${campaign.name}`, exact: true }).click();
+        await expect(page).toHaveURL(new RegExp(`/dashboard/skills/contexts/rollouts/${campaign.id}$`));
         const table = page.getByRole('table', { name: 'Fixed rollout targets' });
         await expect(table).toBeVisible({ timeout: 60_000 }); await expect(table.getByRole('row')).toHaveCount(41);
         await mkdir(join(evidence, 'shots'), { recursive: true });
@@ -172,9 +186,22 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
       await expect(driver.observe(policyCheck, { signal })).rejects.toThrow('local_segment_missing_or_duplicated');
     } finally { await writeFile(rootPolicy, preservedPolicy); }
     expect(assertObservation(policyCheck, original, await driver.observe(policyCheck, { signal }))).toBe(true);
+    // A pin that silently advanced (a lock written into the pinned checkout)
+    // must be counted from the filesystem, not assumed; removing it restores the pass.
+    const pinsCheck = job.checks.find((check: any) => check.id === 'pins-retained');
+    const pinnedLock = join(driver.projects.get(driver.repos.find((repo: any) => repo.disposition === 'pin').id), '.futureagi-context.lock.json');
+    let advancedPin: any;
+    try {
+      await writeFile(pinnedLock, '{"schema":1,"advanced":true}\n', { flag: 'wx' });
+      advancedPin = await driver.observe(pinsCheck, { signal });
+      expect(advancedPin.value).toEqual({ deliberate_pins: 4, advanced_pins: 1 });
+      expect(() => assertObservation(pinsCheck, expectedChecks[pinsCheck.id], advancedPin)).toThrow();
+    } finally { await rm(pinnedLock, { force: true }); }
+    expect(assertObservation(pinsCheck, expectedChecks[pinsCheck.id], await driver.observe(pinsCheck, { signal }))).toBe(true);
     await writeFile(join(evidence, 'observation-fallibility.json'), JSON.stringify({ evidence_class: 'synthetic fixture',
       changed_git_head: { rejected: 'unauthorized_parent', restored: 'pass' },
-      changed_local_policy: { rejected: 'local_segment_missing_or_duplicated', restored: 'pass' }, qualified_checks: qualifiedChecks }, null, 2));
+      changed_local_policy: { rejected: 'local_segment_missing_or_duplicated', restored: 'pass' },
+      advanced_pin_lock: { observed: advancedPin?.value, rejected: true, restored: 'pass' }, qualified_checks: qualifiedChecks }, null, 2));
     for (const report of driver.rounds) {
       expect(report.installs).toHaveLength(33);
       const check = () => requireNativeDelivery(report.installs, report.installs.map((row: any) => row.repository_id), report.installs[0].version_id);

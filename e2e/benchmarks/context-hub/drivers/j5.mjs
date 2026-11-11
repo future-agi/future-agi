@@ -822,16 +822,22 @@ class CampaignJourney {
         } else value.push({ path: `${repo.id}/${path}`, content: actual });
       }
     } else if (check.id === 'pins-retained') {
-      source = 'filesystem'; await this.checkExcluded();
-      const targets = await this.targets(); raw = [];
+      // Derive the count from independent API selector, Git PR and filesystem
+      // lock/instruction observations; a pin that received a PR, a lock, a
+      // changed selector or changed local bytes counts as advanced.
+      source = 'filesystem'; const targets = await this.targets(); raw = [];
       for (const repo of this.repos.filter((repo) => repo.disposition === 'pin')) {
+        const project = this.projects.get(repo.id);
         const target = targets.find((row) => row.repository.repository_id === repo.id);
-        assert.equal(target.decision, 'exclude'); assert.deepEqual(target.selector, { version: this.first.number });
-        raw.push({ repository_id: repo.id, selector: target.selector,
-          files: Object.fromEntries(await Promise.all(Object.keys(repo.files).map(async (path) => [path, await readFile(join(this.projects.get(repo.id), path), 'utf8')]))),
-          lock_present: false });
+        let lockPresent = true;
+        try { await lstat(join(project, LOCK)); } catch (error) { if (error.code !== 'ENOENT') throw error; lockPresent = false; }
+        const files = Object.fromEntries(await Promise.all(Object.keys(repo.files).map(async (path) => [path, await readFile(join(project, path), 'utf8')])));
+        const advanced = target.decision !== 'exclude' || canonical(target.selector) !== canonical({ version: this.first.number })
+          || this.git.pulls(repo.id).length > 0 || lockPresent || Object.entries(repo.files).some(([path, text]) => files[path] !== text);
+        raw.push({ repository_id: repo.id, decision: target.decision, selector: target.selector, pulls: this.git.pulls(repo.id).length,
+          files, lock_present: lockPresent, advanced });
       }
-      value = { deliberate_pins: raw.length, advanced_pins: 0 };
+      value = { deliberate_pins: raw.length, advanced_pins: raw.filter((row) => row.advanced).length };
     } else if (check.id === 'stage-accounting') {
       source = 'api'; raw = [];
       const targets = await this.targets(); assert.equal(targets.length, 40);
