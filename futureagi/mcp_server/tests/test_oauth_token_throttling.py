@@ -785,9 +785,235 @@ def test_concurrent_burst_gets_at_most_the_invalid_attempt_limit(monkeypatch):
         responses = list(workers.map(send, range(burst)))
 
     statuses = sorted(r.status_code for r in responses)
-    assert len(verified) <= 2
+    # Exactly the limit: fewer would mean legitimate requests are over-refused.
+    assert len(verified) == 2
     assert statuses.count(401) == len(verified)
     assert all(status in (401, 429) for status in statuses)
     assert all(
         r.data["error"] == "slow_down" for r in responses if r.status_code == 429
+    )
+
+
+class _Clock:
+    """Wall clock the test can move; drives locmem expiry and reservation ages."""
+
+    def __init__(self, now: float = 1_800_000_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _reservation_request(client_id, remote_addr):
+    raw_request = APIRequestFactory().post(
+        TOKEN_URL,
+        _bad_secret_payload(client_id, "refresh_token"),
+        format="json",
+        REMOTE_ADDR=remote_addr,
+    )
+    return MCPOAuthTokenView().initialize_request(raw_request)
+
+
+_RESERVATION_SETTINGS = dict(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+
+
+def _assert_lost_slots_expire_under_refused_traffic(clock, client_id, addr):
+    start = clock.now
+    # Two admitted requests whose worker died before releasing its slot.
+    for _ in range(2):
+        assert throttles.reserve_token_attempt(_reservation_request(client_id, addr))
+
+    # The same client keeps sending requests. Each is refused while the lost
+    # slots are younger than the reservation timeout, and must not keep them
+    # alive.
+    for offset in range(5, 60, 10):
+        clock.now = start + offset
+        retry = _reservation_request(client_id, addr)
+        assert throttles.reserve_token_attempt(retry) is False
+
+    clock.now = start + throttles._RESERVATION_TIMEOUT_SECONDS + 1
+    retry = _reservation_request(client_id, addr)
+    assert throttles.reserve_token_attempt(retry) is True
+    throttles.release_token_attempt_reservation(retry)
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_lost_reservations_expire_while_refused_traffic_continues(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(time, "time", clock)
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+
+    _assert_lost_slots_expire_under_refused_traffic(
+        clock, "lost-slot-client", "203.0.113.70"
+    )
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_lost_reservation_expires_while_admitted_traffic_continues(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(time, "time", clock)
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    start = clock.now
+
+    lost = _reservation_request("lost-slot-client", "203.0.113.71")
+    assert throttles.reserve_token_attempt(lost)
+
+    # Authorized-user control: steady sequential traffic is admitted while
+    # the lost slot still counts.
+    for offset in range(5, 60, 10):
+        clock.now = start + offset
+        request = _reservation_request("lost-slot-client", "203.0.113.71")
+        assert throttles.reserve_token_attempt(request) is True
+        throttles.release_token_attempt_reservation(request)
+
+    # Once the lost slot is older than the timeout, the full limit of
+    # concurrent requests is available again.
+    clock.now = start + throttles._RESERVATION_TIMEOUT_SECONDS + 1
+    concurrent = [
+        _reservation_request("lost-slot-client", "203.0.113.71") for _ in range(2)
+    ]
+    assert [throttles.reserve_token_attempt(r) for r in concurrent] == [True, True]
+    for request in concurrent:
+        throttles.release_token_attempt_reservation(request)
+
+
+class _CounterExpiresMidReservation:
+    """Let the in-flight counter expire between add() and incr().
+
+    When the first incr() on the in-flight key fails because the counter just
+    expired, another request reserves before the caller rewrites the counter.
+    Implementations that never take that path are unaffected.
+    """
+
+    def __init__(self, inner, clock, expire_at, concurrent_reserve) -> None:
+        self._inner = inner
+        self._clock = clock
+        self._expire_at = expire_at
+        self._concurrent_reserve = concurrent_reserve
+        self.injected = False
+        self._armed = False
+
+    def incr(self, key, *args, **kwargs):
+        if "in_flight" in key and not self.injected:
+            self._clock.now = self._expire_at
+            try:
+                return self._inner.incr(key, *args, **kwargs)
+            except ValueError:
+                self._armed = True
+                raise
+        return self._inner.incr(key, *args, **kwargs)
+
+    def set(self, key, *args, **kwargs):
+        if self._armed:
+            self._armed = False
+            self.injected = True
+            self._concurrent_reserve()
+        return self._inner.set(key, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_reservation_racing_a_slot_expiry_is_still_counted(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(time, "time", clock)
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
+    start = clock.now
+    addr, client_id = "203.0.113.72", "race-client"
+
+    lost = _reservation_request(client_id, addr)
+    assert throttles.reserve_token_attempt(lost)
+
+    expire_at = start + throttles._RESERVATION_TIMEOUT_SECONDS + 0.5
+    second = _reservation_request(client_id, addr)
+    admitted = {}
+    racing_cache = _CounterExpiresMidReservation(
+        cache,
+        clock,
+        expire_at,
+        lambda: admitted.setdefault("second", throttles.reserve_token_attempt(second)),
+    )
+    monkeypatch.setattr(throttles, "cache", racing_cache)
+
+    clock.now = start + throttles._RESERVATION_TIMEOUT_SECONDS - 0.5
+    first = _reservation_request(client_id, addr)
+    assert throttles.reserve_token_attempt(first) is True
+    if not racing_cache.injected:
+        clock.now = expire_at
+        admitted["second"] = throttles.reserve_token_attempt(second)
+    assert admitted["second"] is True
+
+    # first and second are both in flight; the limit is 2.
+    third = _reservation_request(client_id, addr)
+    assert throttles.reserve_token_attempt(third) is False
+
+
+@pytest.fixture
+def redis_cache(monkeypatch):
+    if not os.environ.get("REDIS_URL"):
+        pytest.skip("needs Redis")
+    # Scripts registered here are bound to this Redis; drop them afterwards
+    # so later tests keep using their own cache backend.
+    monkeypatch.setattr(rate_limiter, "_scripts", {})
+    with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django_redis.cache.RedisCache",
+                "LOCATION": os.environ["REDIS_URL"],
+            }
+        },
+        MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK=False,
+    ):
+        yield cache
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_redis_lost_reservations_expire_while_refused_traffic_continues(
+    redis_cache, monkeypatch
+):
+    clock = _Clock(time.time())
+    monkeypatch.setattr(time, "time", clock)
+    client_id = f"redis-lost-slot-{uuid.uuid4().hex}"
+    addr = "203.0.113.73"
+    key = throttles._in_flight_key(_reservation_request(client_id, addr))
+    try:
+        _assert_lost_slots_expire_under_refused_traffic(clock, client_id, addr)
+    finally:
+        redis_cache.delete(_invalid_attempt_key(_reservation_request(client_id, addr)))
+        from django_redis import get_redis_connection
+
+        get_redis_connection("default").delete(key)
+
+
+@override_settings(**_RESERVATION_SETTINGS)
+def test_redis_concurrent_reservations_admit_exactly_the_limit(redis_cache):
+    client_id = f"redis-burst-{uuid.uuid4().hex}"
+    callers = 8
+    barrier = Barrier(callers)
+    requests = [_reservation_request(client_id, "203.0.113.74") for _ in range(callers)]
+
+    def reserve(request):
+        barrier.wait(timeout=5)
+        return throttles.reserve_token_attempt(request)
+
+    try:
+        with ThreadPoolExecutor(max_workers=callers) as workers:
+            admitted = list(workers.map(reserve, requests))
+        assert sum(admitted) == 2
+    finally:
+        for request in requests:
+            throttles.release_token_attempt_reservation(request)
+
+    from django_redis import get_redis_connection
+
+    assert (
+        get_redis_connection("default").zcard(throttles._in_flight_key(requests[0]))
+        == 0
     )
