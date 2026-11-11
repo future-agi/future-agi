@@ -1,4 +1,4 @@
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect as strictExpect } from '@playwright/test';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -7,6 +7,9 @@ import { promisify } from 'node:util';
 import pg from 'pg';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
 import { digest, requireValue, canonical } from '../../../lib/skills-r3/canonical.mjs';
+
+// The 17-file diffs take several seconds to render in a headless CPU browser.
+const expect = strictExpect.configure({ timeout: 30_000 });
 
 // Public UI authoring/review + public SDK runtime application. Synthetic provider
 // transport only; no prior reports, SQL writes, hidden admin authoring or toast oracles.
@@ -86,9 +89,12 @@ export async function createDriver({ jobId, runId, registration }) {
         await editor.focus(); await editor.press('Control+a'); await page.evaluate(text => navigator.clipboard.writeText(text), content); await editor.press('Control+v');
       });
       const publishParent = async (parent, index, expected, decision = null) => {
+        // A person sees the editor settle before opening the review; the guard reads
+        // rendered state, so do not race the last acknowledged mutation.
+        await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible();
         await click('Review changes', `parent-${index}-open-review`);
         const reviewed = page.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
-        await expect(reviewed).toBeVisible();
+        await expect(reviewed).toBeVisible({ timeout: 60_000 });
         await operator.review(`parent-${index}-content-review`, ['standing-root', ...input.leaves.map((_, n) => `linked-skill-${n}`), 'compiled-descriptor'], [], () => reviewed.check(), decision);
         const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
         if (await warning.count()) await operator.click(warning, `parent-${index}-warnings`);
@@ -116,7 +122,7 @@ export async function createDriver({ jobId, runId, registration }) {
               await click('Published leaf skill', `cold-parent-${index}-choose-${n}`, 'combobox');
               await click(leaf.name, `cold-parent-${index}-skill-${n}`, 'option');
               if (index === 2 && n <= 1) {
-                await click('Update policy', `cold-parent-${index}-policy-${n}`, 'combobox');
+                await operator.click(page.getByRole('combobox', { name: /^Update policy/ }), `cold-parent-${index}-policy-${n}`);
                 await click(n === 0 ? 'Pin version' : 'Follow label', `cold-parent-${index}-selector-${n}`, 'option');
                 if (n === 0) await fill('Version', '7', 'cold-deliberate-v7-pin');
               }
