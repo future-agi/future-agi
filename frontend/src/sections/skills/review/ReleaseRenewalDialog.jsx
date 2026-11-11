@@ -2,6 +2,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Button,
   Checkbox,
   FormControlLabel,
   Stack,
@@ -16,6 +17,7 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
+  useDecideReleaseRequest,
   useRenewalPreview,
   useRenewReleaseRequest,
 } from "src/api/skills/review-production";
@@ -24,6 +26,10 @@ import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
 // Intent: an assigned reviewer sees exactly what changed after a race and
 // creates the next immutable packet revision. Nothing is refreshed silently;
 // the renewed revision starts pending and needs a new decision.
+// One-step path: "Approve renewed revision" creates the next revision bound to
+// the inspected fingerprint and records this reviewer's approval of exactly
+// that revision. Both writes are server-checked; if anything moved after the
+// inspection, the server refuses and the revision stays pending.
 const show = (value) =>
   value === null || value === undefined ? "None" : JSON.stringify(value);
 
@@ -32,19 +38,33 @@ const REASONS = {
   resource_not_found: "Evidence is no longer available",
 };
 
-export default function ReleaseRenewalDialog({ open, requestId, onClose }) {
+export default function ReleaseRenewalDialog({
+  open,
+  requestId,
+  onClose,
+  onApproved,
+}) {
   const preview = useRenewalPreview(requestId, open);
   const renew = useRenewReleaseRequest();
+  const decide = useDecideReleaseRequest();
   const operation = useReviewedOperation();
+  const renewOnly = useReviewedOperation();
   const [inspected, setInspected] = useState(null);
   const value = preview.data;
   const current =
     preview.isError && preview.error?.code === "review_current";
   const acknowledged = Boolean(value) && inspected === value.fingerprint;
+  const busy = operation.busy || renewOnly.busy;
+  const uncertain = operation.uncertain || renewOnly.uncertain;
   const close = () => {
-    if (operation.busy) return;
+    if (busy) return;
     setInspected(null);
     onClose();
+  };
+  const renewInput = value && {
+    requestId,
+    revision: value.revision,
+    expectedFingerprint: value.fingerprint,
   };
   return (
     <ModalWrapper
@@ -52,19 +72,39 @@ export default function ReleaseRenewalDialog({ open, requestId, onClose }) {
       onClose={close}
       title="Renew release review"
       subTitle="Inspect every change since the reviewed revision. The previous approval does not carry forward."
-      actionBtnTitle="Create renewed revision"
-      isValid={acknowledged && !operation.busy && !operation.uncertain}
+      actionBtnTitle="Approve renewed revision"
+      isValid={acknowledged && !busy && !uncertain && !renewOnly.result}
       isLoading={operation.busy}
       onSubmit={async () => {
+        // The approval key is fixed at click time so a retry of an unknown
+        // outcome replays both writes instead of creating new ones.
         const result = await operation.run(
-          (input) => renew.mutateAsync(input),
-          {
-            requestId,
-            revision: value.revision,
-            expectedFingerprint: value.fingerprint,
+          async ({ decisionKey, idempotencyKey, ...input }) => {
+            const renewed = await renew.mutateAsync({
+              ...input,
+              idempotencyKey,
+            });
+            if (renewed.revision !== input.revision + 1)
+              throw new Error("Renewal created an unexpected revision.");
+            const decided = await decide.mutateAsync({
+              requestId,
+              revision: renewed.revision,
+              expectedFingerprint: input.expectedFingerprint,
+              decision: "approve",
+              comment: "",
+              idempotencyKey: decisionKey,
+            });
+            return { ...decided, fingerprint: input.expectedFingerprint };
           },
+          { ...renewInput, decisionKey: crypto.randomUUID() },
         );
-        if (result) close();
+        if (result) {
+          onApproved?.({
+            revision: result.revision,
+            fingerprint: result.fingerprint,
+          });
+          close();
+        }
       }}
       onCancelBtn={close}
       modalWidth="720px"
@@ -124,11 +164,18 @@ export default function ReleaseRenewalDialog({ open, requestId, onClose }) {
                 is removed from the renewed packet. It is not replaced.
               </Alert>
             ))}
+            <Typography variant="s3">
+              The renewed packet keeps{" "}
+              {value.packet.evidence.length
+                ? value.packet.evidence.map((ref) => ref.sourceId).join(", ")
+                : "no evidence"}{" "}
+              for the same candidate and target.
+            </Typography>
             <FormControlLabel
               control={
                 <Checkbox
                   checked={acknowledged}
-                  disabled={operation.busy}
+                  disabled={busy}
                   onChange={(_, checked) =>
                     setInspected(checked ? value.fingerprint : null)
                   }
@@ -139,6 +186,25 @@ export default function ReleaseRenewalDialog({ open, requestId, onClose }) {
           </>
         )}
         <OperationFeedback operation={operation} />
+        <OperationFeedback operation={renewOnly} />
+        <Stack direction="row">
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={
+                !acknowledged || busy || uncertain || Boolean(operation.result)
+              }
+              onClick={async () => {
+                const result = await renewOnly.run(
+                  (input) => renew.mutateAsync(input),
+                  renewInput,
+                );
+                if (result) close();
+              }}
+            >
+              Create renewed revision
+            </Button>
+          </Stack>
       </Stack>
     </ModalWrapper>
   );
@@ -147,4 +213,5 @@ ReleaseRenewalDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   requestId: PropTypes.string.isRequired,
   onClose: PropTypes.func.isRequired,
+  onApproved: PropTypes.func,
 };

@@ -42,6 +42,23 @@ it('rejects a manifest that is not a JSON object', async () => {
   expect(screen.getByRole('button', { name: 'Register target' })).toBeDisabled();
 });
 
+it('defaults the target name from the manifest entrypoint without overriding a typed name', async () => {
+  render(<ContextTargetRegistration contextId="context" canRegister />);
+  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
+  await screen.findByText('refund_agent.app:invoke');
+  expect(screen.getByLabelText('Target name')).toHaveValue('refund_agent');
+  fireEvent.click(screen.getByRole('button', { name: 'Register target' }));
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ name: 'refund_agent' })));
+  cleanup();
+  render(<ContextTargetRegistration contextId="context" canRegister />);
+  fireEvent.click(screen.getByRole('button', { name: 'Register application target' }));
+  fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
+  choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
+  await screen.findByText('refund_agent.app:invoke');
+  expect(screen.getByLabelText('Target name')).toHaveValue('Refund agent');
+});
+
 it('cannot be opened without writer permission', () => {
   render(<ContextTargetRegistration contextId="context" canRegister={false} />);
   expect(screen.getByRole('button', { name: 'Register application target' })).toBeDisabled();

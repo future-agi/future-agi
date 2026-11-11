@@ -54,6 +54,13 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("not an object");
       setManifest(value);
+      // J4: default the visible name from the build's entrypoint module when
+      // none was typed (e.g. "refund_agent.app:invoke" -> "refund_agent").
+      const derived =
+        typeof value.entrypoint === "string"
+          ? value.entrypoint.split(":")[0].split(".")[0].trim().slice(0, 120)
+          : "";
+      if (derived) setName((current) => (current.trim() ? current : derived));
     } catch {
       setError("The manifest is not a JSON object. Choose the file your build produced.");
     }

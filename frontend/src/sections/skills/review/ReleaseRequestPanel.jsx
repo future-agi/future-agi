@@ -132,18 +132,30 @@ function PacketActions({
   currentTarget,
   review,
   state,
+  reviewedIdentity,
+  onReviewedChange,
 }) {
   const operation = useReviewedOperation();
   const now = useReviewClock();
-  const [recipientId, setRecipientId] = useState("");
+  // J4: one eligible reviewer is preselected; the author still sees the name
+  // and can change it before sending.
+  const [recipientId, setRecipientId] = useState(
+    recipients.length === 1 ? recipients[0].id : "",
+  );
   const [comment, setComment] = useState("");
-  const [acknowledged, setAcknowledged] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const packet = preview.packet;
   const fingerprint = preview.fingerprint;
-  // Acknowledgment is for this exact server packet, never just its content hash.
-  const [ackIdentity, setAckIdentity] = useState(null);
-  const reviewed = acknowledged && ackIdentity === fingerprint;
+  // Acknowledgment is for this exact server packet revision, never just its
+  // content hash. A controller may keep it across the pending -> approved
+  // remount so the same reviewer is not asked to re-attest an unchanged
+  // revision; any renewal changes the revision and clears it.
+  const [localIdentity, setLocalIdentity] = useState(null);
+  const ackKey = `${request?.revision ?? 0}:${fingerprint}`;
+  const ackValue =
+    reviewedIdentity !== undefined ? reviewedIdentity : localIdentity;
+  const setAckValue = onReviewedChange || setLocalIdentity;
+  const reviewed = ackValue === ackKey;
   const reasons = packet.evidence.flatMap((ref) => {
     const live = currentEvidence?.find(
       (item) => evidenceKey(item) === evidenceKey(ref),
@@ -287,10 +299,7 @@ function PacketActions({
                 <Checkbox
                   checked={reviewed}
                   disabled={!current || locked}
-                  onChange={(_, value) => {
-                    setAcknowledged(value);
-                    setAckIdentity(fingerprint);
-                  }}
+                  onChange={(_, value) => setAckValue(value ? ackKey : null)}
                 />
               }
               label="I reviewed this exact candidate, target, evidence and release consequence."
@@ -419,6 +428,8 @@ PacketActions.propTypes = {
   currentTarget: PropTypes.object,
   review: PropTypes.object,
   state: PropTypes.string.isRequired,
+  reviewedIdentity: PropTypes.string,
+  onReviewedChange: PropTypes.func,
 };
 
 export default function ReleaseRequestPanel({

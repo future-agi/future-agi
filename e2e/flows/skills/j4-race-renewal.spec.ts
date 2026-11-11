@@ -26,7 +26,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
       'the workspace owner registers the application target from its manifest file in the context Consumers tab',
       'seed the exact author packet assigned to the reviewer and the owner',
       'discover the request in Skills Reviews and approve it',
-      'after each race, attempt the release, see the refusal, renew the review from the stale page and approve the new revision',
+      'after each race, attempt the release, see the refusal open the exact changes, then either renew and approve separately or approve the renewed revision in one inspected decision',
       'after a transient role loss, attempt the release and see the refusal',
       'release the final renewed packet and reopen the durable receipt',
     ],
@@ -165,13 +165,15 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const decided = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/decisions/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
     expect((await decided).ok()).toBe(true);
-    await expect(ack).not.toBeChecked();
+    // Attestation of an unchanged revision survives the approval refresh.
+    await expect(ack).toBeChecked();
   };
   const renewals: unknown[] = [];
   const renew = async (label: string) => {
     const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
-    await page.getByRole('button', { name: 'Renew review', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
+    // A refusal opens the inspection directly; a reloaded page offers the button.
+    if (!(await dialog.isVisible())) await page.getByRole('button', { name: 'Renew review', exact: true }).click();
     for (const row of before.changes) await expect(dialog.getByRole('cell', { name: row.item, exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/renew-${label}.png` });
     await dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }).check();
@@ -181,6 +183,27 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const observed = { label, revision: after.revision, status: after.status, fingerprint: after.fingerprint, inspected: before.fingerprint, from: before.revision, removed: before.removed_evidence, items: before.changes.map((row: { item: string }) => row.item) };
     if (fallible('renewal')) observed.status = 'approved';
     expect(observed).toMatchObject({ revision: before.revision + 1, status: 'pending', fingerprint: before.fingerprint });
+    renewals.push(observed);
+    return observed;
+  };
+  // One-step path: inspect, acknowledge and approve the renewed revision in a
+  // single decision bound to the inspected fingerprint.
+  const renewAndApprove = async (label: string) => {
+    const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
+    await expect(dialog).toBeVisible();
+    for (const row of before.changes) await expect(dialog.getByRole('cell', { name: row.item, exact: true })).toBeVisible();
+    const approveRenewed = dialog.getByRole('button', { name: 'Approve renewed revision', exact: true });
+    await expect(approveRenewed).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }).check();
+    await approveRenewed.click();
+    await expect(dialog).toHaveCount(0);
+    const after = await api(reviewer, 'GET', `release-requests/${requestId}/`);
+    const decided = await probe.pg<{ actor_id: string; decision: string }>('SELECT d.actor_id::text, d.decision FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=$1 AND p.revision=$2', [requestId, after.revision]);
+    const observed = { label, oneStep: true, revision: after.revision, status: after.status, fingerprint: after.fingerprint, inspected: before.fingerprint, from: before.revision, decisions: decided, items: before.changes.map((row: { item: string }) => row.item) };
+    if (fallible('renewal')) observed.decisions = [];
+    expect(observed).toMatchObject({ revision: before.revision + 1, status: 'approved', fingerprint: before.fingerprint, decisions: [{ actor_id: reviewer.userId, decision: 'approve' }] });
+    await expect(ack).toBeChecked();
     renewals.push(observed);
     return observed;
   };
@@ -215,8 +238,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     races.annotation = { attempt: await attempt(), events: (await events()).length };
     if (fallible('annotation')) races.annotation = { attempt: { status: 200, code: null }, events: 1 };
     expect(races.annotation).toEqual({ attempt: { status: 409, code: 'annotation_conflict' }, events: 0 });
-    await renew('annotation');
-    await approve();
+    await renewAndApprove('annotation');
     // Transient role loss.
     await api(admin, 'POST', 'organization/members/role/', { user_id: reviewer.userId, ws_level: 1, workspace_id: admin.workspaceId }, '/accounts/');
     // No execution receipt may exist for any refused attempt.

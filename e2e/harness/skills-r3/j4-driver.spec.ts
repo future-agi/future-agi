@@ -37,6 +37,7 @@ test('J4 registered driver retains honest cold and configured reports', async ({
     'frontend/src/sections/skills/review/ReleaseRenewalDialog.jsx',
     'frontend/src/sections/skills/review/SkillsReviewControllers.jsx',
     'frontend/src/sections/skills/contexts/ContextTargetRegistration.jsx',
+    'frontend/src/sections/skills/contexts/ContextReleaseReview.jsx',
     'futureagi/model_hub/services/skills_hub/r3/release_requests.py',
     'futureagi/model_hub/services/skills_hub/r3/release_options.py',
     'futureagi/model_hub/services/skills_hub/r3/release_inspection.py',

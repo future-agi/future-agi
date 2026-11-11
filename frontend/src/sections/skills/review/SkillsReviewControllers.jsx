@@ -5,7 +5,7 @@ import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
 import { Alert, Button, Stack } from '@mui/material';
-import { reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
+import { reviewsReady, isStaleReview, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ReleaseRequestPanel from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -21,8 +21,14 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const decide = useDecideReleaseRequest();
   const execute = useExecuteReleaseRequest();
   const [renewing, setRenewing] = useState(false);
+  // J4: the reviewer's attestation for one exact revision/fingerprint survives
+  // the pending -> approved refresh; a renewal approved in the dialog attests
+  // the renewed revision it created. Nothing carries across revisions.
+  const [reviewedIdentity, setReviewedIdentity] = useState(null);
   const state = viewState || (query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
-  const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }} />;
+  const canDecide = Boolean(query.data && query.data.request.authorId !== access.scope.userId);
+  const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }}
+    onApproved={({ revision, fingerprint }) => setReviewedIdentity(`${revision}:${fingerprint}`)} />;
   // Detailed evidence became unavailable: only the assigned reviewer's
   // explicit renewal remains. Expired evidence is removed, never substituted.
   if (state === 'ready' && query.data?.renewalRequired) return <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
@@ -32,8 +38,17 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   </Stack>;
   return <>
     <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
-      permissions={{ canDecide: Boolean(query.data && query.data.request.authorId !== access.scope.userId), canExecute: query.data?.canExecute === true }}
-      onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })} onExecute={(input, options) => execute.mutateAsync({ ...input, ...options })} />
+      permissions={{ canDecide, canExecute: query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
+      onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })}
+      onExecute={async (input, options) => {
+        try { return await execute.mutateAsync({ ...input, ...options }); } catch (error) {
+          // A server refusal for changed preconditions opens the renewal
+          // inspection directly for the assigned reviewer; nothing is renewed
+          // or approved until they inspect and decide.
+          if (canDecide && isStaleReview(error)) setRenewing(true);
+          throw error;
+        }
+      }} />
     {renewal}
   </>;
 }
@@ -48,8 +63,9 @@ export function ReviewInboxController({ scopeKey, viewState, View }) {
   const seen = useMarkReviewSeen();
   const navigate = useNavigate();
   const requestId = params.get('request');
-  if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || 'new'}`} scopeKey={scopeKey}
-    renewal={params.get('renew') ? { id: params.get('renew'), revision: Number(params.get('revision')), subjectId: params.get('subject'), kind: params.get('kind') } : undefined} />;
+  if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || params.get('candidate') || 'new'}`} scopeKey={scopeKey}
+    renewal={params.get('renew') ? { id: params.get('renew'), revision: Number(params.get('revision')), subjectId: params.get('subject'), kind: params.get('kind') } : undefined}
+    prefill={!params.get('renew') && params.get('subject') ? { subjectId: params.get('subject'), kind: params.get('kind') || 'skill', candidateId: params.get('candidate') || '' } : undefined} />;
   if (requestId) return <RequestReviewController key={`${scopeKey}:${requestId}`} scopeKey={scopeKey} requestId={requestId} viewState={viewState} />;
   const state = viewState || (!reviewsReady() ? 'unavailable' : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
   return <View scopeKey={scopeKey} state={state} data={query.data} status={status} authored={authored}
@@ -78,7 +94,25 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
     note: draft.data?.note, productionVersion: data.releaseState.labels.find((label) => label.name === 'production')?.version };
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
     onRetry={refresh} onRefresh={refresh} onAcknowledgeHead={(input, options) => acknowledge.mutateAsync({ ...input, ...options })}
-    onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}`); return receipt; }} />;
+    onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}`); return receipt; }}
+    onPublishAndRequest={async ({ headAcknowledged, idempotencyKey, ...input }, options) => {
+      // J4: acknowledge the reviewed head only when the current draft still
+      // needs it (a retry after an unknown publish outcome reuses the earlier
+      // acknowledgment of the same bytes). The server rechecks digest, head
+      // and fingerprint on both writes.
+      let fields = input;
+      if (!headAcknowledged) {
+        const current = (await draft.refetch()).data;
+        if (current?.headAcknowledged && current.digest === input.expectedDigest) fields = { ...input, revision: current.revision, reviewFingerprint: current.reviewFingerprint };
+        else {
+          const acked = await acknowledge.mutateAsync({ ...input, ...options });
+          fields = { ...input, revision: acked.revision, reviewFingerprint: acked.reviewFingerprint };
+        }
+      }
+      const receipt = await publish.mutateAsync({ ...fields, idempotencyKey, ...options });
+      navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', kind: 'agent_context', subject: contextId, candidate: receipt.version.id })}`);
+      return receipt;
+    }} />;
 }
 DraftReviewController.propTypes = { scopeKey: PropTypes.string.isRequired, contextId: PropTypes.string.isRequired, viewState: PropTypes.string, View: PropTypes.elementType.isRequired };
 export function ContextReviewController(props) {

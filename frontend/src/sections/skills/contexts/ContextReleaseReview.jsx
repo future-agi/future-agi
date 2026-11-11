@@ -29,6 +29,7 @@ function DraftPublication({
   canPublish,
   onAcknowledgeHead,
   onPublish,
+  onPublishAndRequest,
   onRefresh,
 }) {
   const [note, setNote] = useState(draftReview.note ?? "");
@@ -248,6 +249,32 @@ function DraftPublication({
                 Acknowledge reviewed head
               </Button>
             )}
+            {/* J4 one-step path: the same reviewed identity acknowledges the
+                head when needed, publishes the immutable candidate and opens
+                the release-review request with it carried forward. Production
+                is not moved; sharing and submission stay explicit. */}
+            {onPublishAndRequest && (
+              <Button
+                variant={draftReview.headAcknowledged ? "outlined" : "contained"}
+                disabled={
+                  !ready ||
+                  (draftReview.baseVersion !==
+                    draftReview.expectedHeadVersion &&
+                    !draftReview.headChanges)
+                }
+                onClick={() =>
+                  operation.run(onPublishAndRequest, {
+                    ...fields,
+                    headAcknowledged: draftReview.headAcknowledged === true,
+                    baseVersion: draftReview.baseVersion,
+                    note,
+                    acknowledgeWarnings: warnings,
+                  })
+                }
+              >
+                Publish and request review
+              </Button>
+            )}
             {onRefresh && (
               <Button
                 variant="outlined"
@@ -268,6 +295,7 @@ DraftPublication.propTypes = {
   canPublish: PropTypes.bool,
   onAcknowledgeHead: PropTypes.func,
   onPublish: PropTypes.func,
+  onPublishAndRequest: PropTypes.func,
   onRefresh: PropTypes.func,
 };
 

@@ -117,11 +117,15 @@ export async function createDriver({ jobId, runId, registration }) {
       const cancel = () => { void browser?.close().catch(() => {}); };
       signal.addEventListener('abort', cancel, { once: true });
       // Reviewer helpers. Each is a counted operator primitive.
-      const attempt = async (reviewer, operator, name, { acknowledge = true } = {}) => {
-        if (acknowledge) {
-          await expect(ack(reviewer)).not.toBeChecked();
-          await operator.click(ack(reviewer), `${name}-acknowledge`);
-        }
+      // The reviewer's attestation for an unchanged revision persists across
+      // the pending -> approved refresh; it is clicked (and counted) only
+      // when the UI actually requires it.
+      const attestIfRequired = async (reviewer, operator, name) => {
+        if (!(await ack(reviewer).isChecked())) await operator.click(ack(reviewer), name);
+        await expect(ack(reviewer)).toBeChecked();
+      };
+      const attempt = async (reviewer, operator, name) => {
+        await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
         await operator.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), `${name}-open-release`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
         await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
@@ -130,9 +134,11 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(reviewer.getByRole('button', { name: 'Move production', exact: true })).toHaveCount(0);
         return { status: result.status(), code: (await result.json().catch(() => ({}))).code ?? null };
       };
+      // The server refusal opens the renewal inspection directly (no click).
+      // The reviewer inspects every change, acknowledges it and approves the
+      // renewed revision in one decision bound to the inspected fingerprint.
       const renew = async (reviewer, operator, name) => {
-        await operator.click(reviewer.getByRole('button', { name: 'Renew review', exact: true }), `${name}-open-renewal`);
-        const dialog = reviewer.getByRole('dialog');
+        const dialog = reviewer.getByRole('dialog').filter({ hasText: 'Renew release review' });
         await expect(dialog.getByText('Renew release review', { exact: true })).toBeVisible();
         // Independent read of exactly what the dialog shows.
         const preview = await read(`release-requests/${submitted.id}/renewal/`, signal);
@@ -140,30 +146,30 @@ export async function createDriver({ jobId, runId, registration }) {
         const removed = preview.removed_evidence.map((row) => `removed-${row.source_id}`);
         requireValue(items.length + removed.length > 0, 'Renewal must expose at least one changed precondition');
         const decision = decisionFor({ packet: preview.packet, fingerprint: preview.fingerprint, revision: preview.revision + 1 });
-        await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
+        const kept = preview.packet.evidence.map((ref) => ref.source_id);
+        await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`), ...kept.map((_, i) => `kept-evidence-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
+          await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.join(', ')} for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
-        const response = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
-        await operator.click(dialog.getByRole('button', { name: 'Create renewed revision', exact: true }), `${name}-create-revision`);
-        const result = await response;
-        requireValue(result.status() === 200 || result.status() === 201, 'Renewal rejected');
-        await expect(dialog).not.toBeVisible();
-        // The renewed pending revision replaces the stale view (remount).
-        await expect(reviewer.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0, { timeout: 60_000 });
+        const renewed = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
+        const decided = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
+        await operator.approve(`${name}-renewed-approve`, ['release-packet'], () => dialog.getByRole('button', { name: 'Approve renewed revision', exact: true }).click(), decision);
+        requireValue([200, 201].includes((await renewed).status()) && (await decided).ok(), 'Renewal or renewed approval rejected');
+        await expect(dialog).toHaveCount(0);
         detail = await read(`release-requests/${submitted.id}/`, signal);
-        requireValue(detail.status === 'pending' && detail.fingerprint === preview.fingerprint && detail.revision === preview.revision + 1, 'Renewal silently differs from the inspected changes');
+        requireValue(detail.status === 'approved' && detail.fingerprint === preview.fingerprint && detail.revision === preview.revision + 1, 'Renewal silently differs from the inspected changes');
+        await expect(reviewer.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0, { timeout: 60_000 });
         return { preview, decision };
       };
       const approve = async (reviewer, operator, name, decision) => {
         await expect(ack(reviewer)).toBeEnabled();
-        await operator.click(ack(reviewer), `${name}-acknowledge`);
-        await expect(ack(reviewer)).toBeChecked();
+        await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
         await operator.approve(`${name}-approve`, ['release-packet'], () => reviewer.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
         requireValue((await response).ok(), 'Reviewer decision rejected');
-        await expect(ack(reviewer)).not.toBeChecked();
+        await expect(reviewer.getByRole('button', { name: 'Release approved packet', exact: true })).toBeEnabled({ timeout: 60_000 });
       };
       // Each race must be refused for its own reason, never a leftover one.
       const EXPECTED = { 'policy-aba': [409, 'release_conflict'], 'target-config-change': [409, 'impact_changed'],
@@ -195,16 +201,17 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Consumers', exact: true }), 'open-consumers'));
           await op.click(admin.getByRole('button', { name: 'Register application target', exact: true }), 'open-target-registration');
           const dialog = admin.getByRole('dialog');
-          await op.fill(dialog.getByLabel('Target name', { exact: true }), input.targetName, 'name-target');
           const chooser = admin.waitForEvent('filechooser');
           await op.click(dialog.getByRole('button', { name: 'Choose runtime manifest', exact: true }), 'choose-runtime-manifest');
           await (await chooser).setFiles(input.manifestPath);
           await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
+          // The visible name defaults from the build entrypoint; nothing typed.
+          await expect(dialog.getByLabel('Target name', { exact: true })).toHaveValue('refund_agent');
           const created = responseFor(admin, `/contexts/${input.contextId}/bindings/`);
           await op.click(dialog.getByRole('button', { name: 'Register target', exact: true }), 'register-target');
           const binding = (await (await created).json()).result;
           bindingId = binding.id;
-          await expect(admin.getByText(`Registered ${input.targetName} · configuration r1`, { exact: true })).toBeVisible();
+          await expect(admin.getByText('Registered refund_agent · configuration r1', { exact: true })).toBeVisible();
           await expect(dialog).toHaveCount(0);
           const authority = await sql(`SELECT m.level FROM accounts_workspacemembership m WHERE m.user_id=$1 AND m.workspace_id=$2 AND m.is_active`, [input.reviewer.userId, input.reviewer.workspaceId]);
           const target = await sql('SELECT id::text, revision, configuration_digest FROM model_hub_hubskillcontextbinding WHERE id=$1', [bindingId]);
@@ -223,15 +230,11 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(author.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true }), 'acknowledge-candidate');
           const warnings = author.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
           if (await warnings.count()) await op.click(warnings, 'acknowledge-warnings');
-          const acked = responseFor(author, `/contexts/${input.contextId}/draft/acknowledge-head/`);
-          await op.click(author.getByRole('button', { name: 'Acknowledge reviewed head', exact: true }), 'acknowledge-head');
-          requireValue((await acked).ok(), 'Head acknowledgement failed');
-          await expect(author.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
-          const reviewed = author.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
-          if (!(await reviewed.isChecked())) await op.click(reviewed, 'acknowledge-acknowledged-candidate');
-          if (await warnings.count() && !(await warnings.isChecked())) await op.click(warnings, 'acknowledge-acknowledged-warnings');
+          // One step: the same reviewed identity acknowledges the head,
+          // publishes the immutable candidate and opens the review request
+          // with resource and candidate carried forward. Production unchanged.
           const publication = responseFor(author, `/contexts/${input.contextId}/draft/publish/`);
-          await op.click(author.getByRole('button', { name: 'Publish version', exact: true }), 'publish-immutable-candidate');
+          await op.transition('review-request-composer', () => op.click(author.getByRole('button', { name: 'Publish and request review', exact: true }), 'publish-and-request-review'));
           const result = await publication;
           requireValue(result.status() === 201, 'Candidate publication failed');
           published = (await result.json()).result.version;
@@ -244,29 +247,27 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'share-and-submit') {
           const author = await page('author');
-          await navigate(author, 'skills-home', '/dashboard/skills');
-          await op.transition('author-reviews', () => op.click(author.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews'));
-          await op.transition('composer', () => op.click(author.getByRole('button', { name: 'Request review', exact: true }), 'open-composer'));
-          await choose(author, 'Resource kind', 'Agent context', 'kind');
-          await choose(author, 'Release resource', input.contextName, 'subject');
-          await choose(author, 'Published candidate', new RegExp(`^v${published.number}(?: —|$)`), 'candidate');
-          await choose(author, 'Application target', new RegExp(`^${input.targetName} · configuration r\\d+$`), 'target');
-          // Attach every listed exact-candidate result; sharing is a separate
-          // explicit decision per record. No identifier is typed or matched.
+          // Carried forward from publication: kind, resource and candidate.
+          // The only registered target is preselected and visible.
+          await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
+          await expect(author.getByLabel('Release resource', { exact: true })).toHaveText(input.contextName);
+          await expect(author.getByLabel('Published candidate', { exact: true })).toHaveText(new RegExp(`^v${published.number}(?: —|$)`));
+          await expect(author.getByLabel('Application target', { exact: true })).toHaveText(/ · configuration r\d+$/);
+          // One explicit decision shares and attaches every listed
+          // exact-candidate result; the confirmation names each record.
           const attach = author.getByRole('checkbox', { name: /^Attach text evidence / });
           await expect(attach).toHaveCount(input.evidenceIds.length);
-          for (let index = 0; index < input.evidenceIds.length; index += 1) {
-            const share = author.getByRole('button', { name: 'Share evidence', exact: true }).first();
-            await op.click(share, 'share-evidence');
-            await op.click(author.getByRole('dialog').getByRole('button', { name: 'Share with workspace', exact: true }), 'confirm-sharing');
-            await expect(author.getByRole('dialog')).not.toBeVisible();
-          }
-          await expect(author.getByRole('button', { name: 'Share evidence', exact: true })).toHaveCount(0);
-          for (let index = 0; index < input.evidenceIds.length; index += 1) await op.click(attach.nth(index), 'attach-evidence');
+          await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
+          const confirmShare = author.getByRole('dialog');
+          for (const id of input.evidenceIds) await expect(confirmShare.getByText(new RegExp(`${id} · private`))).toBeVisible();
+          await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
+          await expect(author.getByRole('dialog')).toHaveCount(0);
+          for (let index = 0; index < input.evidenceIds.length; index += 1) await expect(attach.nth(index)).toBeChecked();
           const prepared = responseFor(author, '/release-requests/preview/');
           await op.click(author.getByRole('button', { name: 'Prepare exact review', exact: true }), 'prepare-exact-packet');
           const preview = (await (await prepared).json()).result;
-          await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
+          // Preselected only when exactly one authorized reviewer exists.
+          if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
           await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(ack(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));
           await op.click(ack(author), 'acknowledge-author-packet');
           const sent = responseFor(author, '/release-requests/');
@@ -351,8 +352,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const cleared = await environment(input.admin, 'PUT', `version-safety/${published.id}/`, { revision: quarantined.result?.revision, quarantined: false, reason: 'Synthetic safety hold cleared', replacement_version_id: null });
           requireValue(safety.status === 200 && quarantined.status === 200 && cleared.status === 200, `Policy race not applied ${safety.status} ${quarantined.status} ${quarantined.code} ${cleared.status} ${cleared.code}`);
           await refused('policy-aba', 'safety-quarantine-a-b-a', await attempt(reviewer, op, 'policy-aba'));
-          let renewed = await renew(reviewer, op, 'policy-aba');
-          await approve(reviewer, op, 'policy-aba-renewed', renewed.decision);
+          await renew(reviewer, op, 'policy-aba');
           // 2. Application target configuration A -> B -> A (revision moves).
           const binding = await read(`contexts/bindings/${bindingId}/`, signal, input.admin).catch(async () => (await read(`contexts/${input.contextId}/bindings/`, signal, input.admin)).results.find((row) => row.id === bindingId));
           const body = (configuration) => ({ name: binding.name, kind: binding.kind, selector: binding.selector, update_mode: binding.update_mode, profile: binding.profile,
@@ -362,15 +362,13 @@ export async function createDriver({ jobId, runId, registration }) {
           requireValue(toolsChanged.status === 200 && toolsBack.status === 200 && toolsBack.result.configuration_digest === binding.configuration_digest, 'Target race not applied');
           restored.binding = { digest: toolsBack.result.configuration_digest, revision: toolsBack.result.revision };
           await refused('target-config-change', 'target-configuration-a-b-a', await attempt(reviewer, op, 'target-config'));
-          renewed = await renew(reviewer, op, 'target-config');
-          await approve(reviewer, op, 'target-config-renewed', renewed.decision);
+          await renew(reviewer, op, 'target-config');
           // 3. A late human annotation on attached evidence.
           const annotated = detail.packet.evidence[0];
           const late = await environment(input.admin, 'POST', `evidence/skills_text/${annotated.source_id}/annotations/`, { annotation_revision: annotated.annotation_revision, check_id: null, attempt_id: null, verdict: 'agree', cited_text: '', comment: 'Late confirmation from the support lead.' });
           requireValue(late.status === 201 || late.status === 200, 'Annotation race not applied');
           await refused('late-annotation', 'late-agree-annotation', await attempt(reviewer, op, 'late-annotation'));
-          renewed = await renew(reviewer, op, 'late-annotation');
-          await approve(reviewer, op, 'late-annotation-renewed', renewed.decision);
+          await renew(reviewer, op, 'late-annotation');
           // 4. Transient role loss of the approver/releaser.
           const lost = await environment(input.admin, 'POST', 'organization/members/role/', { user_id: input.reviewer.userId, ws_level: 1, workspace_id: input.admin.workspaceId }, '/accounts/');
           requireValue(lost.status === 200, 'Role race not applied');
@@ -387,7 +385,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const expiring = detail.packet.evidence[1];
           const expired = await environment(input.admin, 'POST', 'model-hub/e2e/j4/evidence-clock/', { source: 'skills_text', source_id: expiring.source_id }, '/');
           requireValue(expired.status === 200 && expired.result.payload_purged === true, 'Expiry not applied');
-          await refused('evidence-expiry', 'retention-clock-advance-and-purge', await attempt(reviewer, op, 'evidence-expiry', { acknowledge: false }), { expired: expired.result });
+          await refused('evidence-expiry', 'retention-clock-advance-and-purge', await attempt(reviewer, op, 'evidence-expiry'), { expired: expired.result });
           await shot(reviewer, 'stale-execution-control');
           await stamp('stale-refusals', { authorProbe: { status: authorProbe.status, code: authorProbe.code }, refusals }, undefined, 'pg');
           return;
@@ -395,19 +393,13 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'renewed-review') {
           const renewed = await renew(reviewer, op, 'expiry');
           requireValue(renewed.preview.removed_evidence.length === 1 && detail.packet.evidence.length === 1, 'Expired evidence was not removed explicitly');
-          await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
-            await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
-            await expect(ack(reviewer)).toBeEnabled();
-          }, renewed.decision);
-          await approve(reviewer, op, 'renewed', renewed.decision);
           await shot(reviewer, 'renewed-review');
           await stamp('renewed-review', await read(`release-requests/${submitted.id}/`, signal), renewed.decision);
           return;
         }
         if (stage.id === 'authorized-release') {
           const decision = decisionFor(detail);
-          await expect(ack(reviewer)).not.toBeChecked();
-          await op.click(ack(reviewer), 'acknowledge-final-release');
+          await attestIfRequired(reviewer, op, 'acknowledge-final-release');
           await op.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), 'prepare-authorized-release');
           const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
           await op.approve('authorize-exact-transition', ['release-packet'], () => reviewer.getByRole('button', { name: 'Move production', exact: true }).click(), decision);

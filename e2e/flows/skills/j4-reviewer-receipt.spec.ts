@@ -135,8 +135,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     evidence.decisions = decisions;
     if (process.env.J4_FALLIBILITY === 'decision') decisions[0].packet_fingerprint = 'not-the-reviewed-packet';
     expect(decisions).toEqual([{ reviewer_id: reviewer.userId, packet_fingerprint: preview.fingerprint, request_revision: String(submitted.revision) }]);
-    await expect(acknowledged).not.toBeChecked();
-    await acknowledged.check();
+    // The same reviewer's attestation of this unchanged revision survives the
+    // pending -> approved refresh; it is not re-requested before release.
+    await expect(acknowledged).toBeChecked();
     await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
     // Environmental race: policy A -> B -> A leaves visible protection unchanged
     // but must invalidate approval by monotonically advancing release revision.
@@ -146,6 +147,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     const staleResponse = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     expect((await staleResponse).status()).toBe(409);
+    // The refusal opens the renewal inspection for the assigned reviewer
+    // directly; nothing is renewed or approved until they decide.
+    await expect(page.getByRole('dialog').filter({ hasText: 'Renew release review' })).toBeVisible();
     const beforeRenewal = await probe.pg('SELECT id FROM model_hub_hubskilllabelevent WHERE skill_id = $1 AND to_version = 2', [id]);
     if (process.env.J4_FALLIBILITY === 'policy') beforeRenewal.push({ id: 'unexpected-event' });
     expect(beforeRenewal).toHaveLength(0);
@@ -180,8 +184,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     const renewedDecision = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/decisions/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
     expect((await renewedDecision).ok()).toBe(true);
-    await expect(acknowledged).not.toBeChecked();
-    await acknowledged.check();
+    await expect(acknowledged).toBeChecked();
     await page.getByRole('button', { name: 'Release approved packet', exact: true }).click();
     evidence.policyRace = { restored, beforeRenewal, staleStatus: 409 };
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/execute/`) && res.request().method() === 'POST');
