@@ -119,6 +119,8 @@ export async function createDriver({ jobId, runId, registration }) {
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
         await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
         const result = await response;
+        // The confirmation closes on every outcome; the refusal shows beside the decision.
+        await expect(reviewer.getByRole('button', { name: 'Move production', exact: true })).toHaveCount(0);
         return { status: result.status(), code: (await result.json().catch(() => ({}))).code ?? null };
       };
       const renew = async (reviewer, operator, name) => {
@@ -193,6 +195,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const binding = (await (await created).json()).result;
           bindingId = binding.id;
           await expect(admin.getByText(`Registered ${input.targetName} · configuration r1`, { exact: true })).toBeVisible();
+          await expect(dialog).toHaveCount(0);
           const authority = await sql(`SELECT m.level FROM accounts_workspacemembership m WHERE m.user_id=$1 AND m.workspace_id=$2 AND m.is_active`, [input.reviewer.userId, input.reviewer.workspaceId]);
           const target = await sql('SELECT id::text, revision, configuration_digest FROM model_hub_hubskillcontextbinding WHERE id=$1', [bindingId]);
           requireValue(authority[0]?.level === 8 && target.length === 1 && target[0].configuration_digest === binding.configuration_digest, 'Configured authority/target not observed');
