@@ -171,19 +171,25 @@ def test_delete_chunks_treats_sql_in_ids_as_data(live_kb, tenants, field, suffix
     }
     ids[field] += suffix
 
-    # The call returns normally: a rejected id never surfaces a database
-    # error (or the SQL around it) to the caller.
+    # delete_chunks logs and swallows database errors, so the call itself
+    # always returns None; the row check below is the real assertion.
     assert live_kb.manager.delete_chunks(table_name=TABLE, **ids) is None
 
-    # No stored id carries the suffix, so nothing matches and nothing goes:
-    # not the target file, and above all no other file, KB or organization.
+    # No stored id carries the suffix, so nothing may go: not the target file,
+    # and above all no other file, KB or organization. (A non-UUID ``kb_id`` is
+    # rejected by ClickHouse's UUID conversion as one literal; an unbalanced
+    # backslash-quote is a syntax error on unescaped SQL. Neither may widen the
+    # delete.)
     assert _surviving_ids(live_kb) == tenants.all
 
 
-def test_delete_chunks_matches_quoted_ids_literally(live_kb, tenants):
-    """An id that contains quote characters is matched as that exact string."""
+@pytest.mark.parametrize(
+    "quoted_file",
+    ["report'; DROP TABLE kb_chunks; --.pdf", "dir\\' OR '1'='1"],
+)
+def test_delete_chunks_matches_quoted_ids_literally(live_kb, tenants, quoted_file):
+    """An id with quotes or backslashes is matched as that exact string."""
 
-    quoted_file = "report'; DROP TABLE kb_chunks; --.pdf"
     quoted_row = _insert(
         live_kb,
         eval_id=tenants.kb_a,
