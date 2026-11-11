@@ -110,6 +110,11 @@ def _check(upload):
         or upload.deletion_generation != scope.deletion_generation
         or upload.policy_version != scope.policy_version
         or upload.occurrence.deleted_at
+        or upload.occurrence.expires_at <= timezone.now()
+        or (
+            upload.occurrence.source_expires_at is not None
+            and upload.occurrence.source_expires_at <= timezone.now()
+        )
     ):
         raise AttachmentError("validation_fenced", 409)
     admit_audio(

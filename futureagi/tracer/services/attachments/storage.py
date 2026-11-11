@@ -177,6 +177,80 @@ class PrivateMediaStorage:
         finally:
             body.close()
 
+    def open_range(self, identity, *, start, end, expected_length):
+        """Exact immutable serving version; caller closes the bounded body."""
+        body = None
+        try:
+            self.verify_readiness()
+            if (
+                not identity.version
+                or identity.version == "null"
+                or not 0 <= start <= end < expected_length
+            ):
+                raise ValueError
+            result = self.serving.get_object(
+                Bucket=self.serving_bucket,
+                Key=identity.key,
+                VersionId=identity.version,
+                Range=f"bytes={start}-{end}",
+            )
+            body = result["Body"]
+            if (
+                result.get("VersionId") != identity.version
+                or result.get("ContentLength") != end - start + 1
+                or result.get("ContentRange")
+                != f"bytes {start}-{end}/{expected_length}"
+            ):
+                raise ValueError
+            return body
+        except Exception:
+            if body is not None:
+                try:
+                    body.close()
+                except Exception:
+                    pass
+            raise AttachmentError("media_unavailable", 503) from None
+
+    def erase_upload(self, upload_id):
+        """Remove exact server-owned keys, every version and incomplete part.
+
+        No prefix-wide deletion, source URLs, or user-provided storage identities.
+        Repeated sweeps through capability expiry handle writes racing enumeration.
+        Future derivative namespaces must extend this before they can be enabled.
+        """
+        upload_id = UUID(str(upload_id))
+        try:
+            for client, bucket, key in (
+                (self.quarantine, self.quarantine_bucket, f"quarantine/{upload_id}"),
+                (self.serving, self.serving_bucket, f"original/{upload_id}"),
+            ):
+                pages = client.get_paginator("list_object_versions").paginate(
+                    Bucket=bucket, Prefix=key, PaginationConfig={"PageSize": 100}
+                )
+                for index, page in enumerate(pages):
+                    if index >= 100:
+                        raise ValueError
+                    for item in page.get("Versions", []) + page.get(
+                        "DeleteMarkers", []
+                    ):
+                        if item["Key"] == key:
+                            client.delete_object(
+                                Bucket=bucket, Key=key, VersionId=item["VersionId"]
+                            )
+                pages = client.get_paginator("list_multipart_uploads").paginate(
+                    Bucket=bucket, Prefix=key, PaginationConfig={"PageSize": 100}
+                )
+                for index, page in enumerate(pages):
+                    if index >= 100:
+                        raise ValueError
+                    for item in page.get("Uploads", []):
+                        if item["Key"] == key:
+                            client.abort_multipart_upload(
+                                Bucket=bucket, Key=key, UploadId=item["UploadId"]
+                            )
+        except Exception:
+            raise AttachmentError("cleanup_unavailable", 503) from None
+
     def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):
         self.verify_readiness()
         snapshot.seek(0)

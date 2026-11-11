@@ -217,6 +217,52 @@ class AttachmentBudget(models.Model):
     initialization_attempts = models.PositiveIntegerField(default=0)
 
 
+class AttachmentMediaSession(ScopedAttachmentRecord):
+    """Opaque cookie exchange; application-session validity is checked live."""
+
+    user = models.ForeignKey("accounts.User", on_delete=models.PROTECT)
+    application_session_id = models.UUIDField()
+    token_digest = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True)
+
+
+class AttachmentPlaybackGrant(ScopedAttachmentRecord):
+    media_session = models.ForeignKey(AttachmentMediaSession, on_delete=models.PROTECT)
+    occurrence = models.ForeignKey(AttachmentOccurrence, on_delete=models.PROTECT)
+    token_digest = models.CharField(max_length=64, unique=True)
+    representation = models.CharField(max_length=16, default="original")
+    policy_version = models.PositiveBigIntegerField()
+    deletion_generation = models.PositiveBigIntegerField()
+    source_generation = models.PositiveBigIntegerField()
+    expires_at = models.DateTimeField()
+
+
+class AttachmentUsageReceipt(ScopedAttachmentRecord):
+    """One terminal receipt per upload, not an invoice or edition entitlement."""
+
+    upload = models.OneToOneField(AttachmentUpload, on_delete=models.PROTECT)
+    stored_bytes = models.PositiveBigIntegerField()
+    outcome = models.CharField(max_length=24, choices=AttachmentState.choices)
+
+
+class AttachmentAuditEvent(ScopedAttachmentRecord):
+    """No arbitrary payload/labels: content and capability secrets do not fit."""
+
+    event_id = models.UUIDField()
+    actor_id = models.UUIDField(null=True)
+    entity_id = models.UUIDField()
+    event = models.CharField(max_length=24)
+    reason = models.CharField(max_length=32)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scope", "event_id"], name="attachment_audit_event_unique"
+            )
+        ]
+
+
 class AttachmentOutbox(ScopedAttachmentRecord):
     upload = models.ForeignKey(AttachmentUpload, null=True, on_delete=models.PROTECT)
     event = models.CharField(

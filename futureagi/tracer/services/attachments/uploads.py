@@ -204,6 +204,12 @@ def _live_upload(token, scope_id, upload_id, operation):
     if (
         upload.expires_at <= timezone.now()
         or upload.deletion_generation != session.deletion_generation
+        or upload.occurrence.deleted_at
+        or upload.occurrence.expires_at <= timezone.now()
+        or (
+            upload.occurrence.source_expires_at is not None
+            and upload.occurrence.source_expires_at <= timezone.now()
+        )
     ):
         raise AttachmentError("capability_expired", 403)
     admit_audio(
