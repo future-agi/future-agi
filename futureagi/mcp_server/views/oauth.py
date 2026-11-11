@@ -23,7 +23,11 @@ from mcp_server.oauth_utils import (
     generate_oauth_token,
     verify_client_secret,
 )
-from mcp_server.refresh_tokens import issue_refresh_token, rotate_refresh_token
+from mcp_server.refresh_tokens import (
+    issue_refresh_token,
+    refreshed_scope,
+    rotate_refresh_token,
+)
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
     MCPOAuthAuthorizeResponseSerializer,
@@ -455,6 +459,7 @@ class MCPOAuthTokenView(APIView):
             client_id=client_id,
             user_id=auth_code.user.id,
             org_id=auth_code.organization.id,
+            scope=auth_code.scope,
         )
         connection.oauth_token_encrypted = access_token
         connection.oauth_refresh_token_encrypted = refresh_token
@@ -544,12 +549,10 @@ class MCPOAuthTokenView(APIView):
 
         clear_invalid_token_attempts(request)
 
-        # Get current scope from tool config
-        try:
-            config = connection.tool_config
-            scope = config.enabled_groups
-        except MCPToolGroupConfig.DoesNotExist:
-            scope = []
+        # The consented scope, narrowed to the groups still enabled on the
+        # connection. Enabling more groups later (or another client's wider
+        # consent) never widens a refreshed token (RFC 6749 section 6).
+        scope = refreshed_scope(rotation.consented_scope, connection)
 
         # Generate new access token
         access_token, expires_at = generate_oauth_token(

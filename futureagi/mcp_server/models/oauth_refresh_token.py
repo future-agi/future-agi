@@ -18,6 +18,10 @@ class MCPOAuthRefreshFamily(models.Model):
         related_name="oauth_refresh_families",
     )
     client_id = models.CharField(max_length=100)
+    # Tool groups the user consented to for this authorization. A refreshed
+    # access token never carries more than this. None for families created
+    # before it was recorded; filled in on their next refresh.
+    scope = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_reason = models.CharField(max_length=64, blank=True, default="")
