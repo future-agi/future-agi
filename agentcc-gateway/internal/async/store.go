@@ -41,14 +41,14 @@ type Job struct {
 
 // JobResponse is the serialized form returned to clients.
 type JobResponse struct {
-	ID           string          `json:"id"`
-	Status       JobStatus       `json:"status"`
-	EndpointType string          `json:"endpoint_type"`
-	CreatedAt    time.Time       `json:"created_at"`
-	StartedAt    *time.Time      `json:"started_at,omitempty"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-	ExpiresAt    time.Time       `json:"expires_at"`
-	Response     json.RawMessage `json:"response,omitempty"`
+	ID           string           `json:"id"`
+	Status       JobStatus        `json:"status"`
+	EndpointType string           `json:"endpoint_type"`
+	CreatedAt    time.Time        `json:"created_at"`
+	StartedAt    *time.Time       `json:"started_at,omitempty"`
+	CompletedAt  *time.Time       `json:"completed_at,omitempty"`
+	ExpiresAt    time.Time        `json:"expires_at"`
+	Response     json.RawMessage  `json:"response,omitempty"`
 	Error        *models.APIError `json:"error,omitempty"`
 }
 
@@ -104,17 +104,14 @@ func (s *Store) Get(id string) *Job {
 	return job.snapshot()
 }
 
-// GetForOrg retrieves a job by ID, verifying org ownership.
-// Returns a snapshot copy (nil if not found or if the org doesn't match).
+// GetForOrg retrieves a job by ID only when the stored owner equals orgID.
+// An empty stored owner does not match any caller, including an empty caller.
+// Returns a snapshot copy, or nil when the job is missing or the owner differs.
 func (s *Store) GetForOrg(id, orgID string) *Job {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	job := s.jobs[id]
-	if job == nil {
-		return nil
-	}
-	// If orgID is set on the job, verify it matches.
-	if job.OrgID != "" && orgID != "" && job.OrgID != orgID {
+	if job == nil || job.OrgID == "" || job.OrgID != orgID {
 		return nil
 	}
 	return job.snapshot()
@@ -137,6 +134,50 @@ func (s *Store) Update(id string, fn func(job *Job)) bool {
 		return false
 	}
 	fn(job)
+	return true
+}
+
+// CancelForOrg invokes the live job's CancelFn when the stored owner equals
+// orgID, marks a queued or processing job cancelled, and removes it.
+// The cancel function runs after the lock is released. A missing job and a
+// job owned by someone else both return false, and neither is modified.
+func (s *Store) CancelForOrg(id, orgID string) bool {
+	s.mu.Lock()
+	job := s.jobs[id]
+	if job == nil || job.OrgID == "" || job.OrgID != orgID {
+		s.mu.Unlock()
+		return false
+	}
+	return s.cancelLocked(job)
+}
+
+// CancelUnscoped cancels and removes a job without an owner check.
+// Used only when authentication is disabled (single-tenant). A missing job
+// returns false. The live CancelFn runs after the lock is released.
+func (s *Store) CancelUnscoped(id string) bool {
+	s.mu.Lock()
+	job := s.jobs[id]
+	if job == nil {
+		s.mu.Unlock()
+		return false
+	}
+	return s.cancelLocked(job)
+}
+
+func (s *Store) cancelLocked(job *Job) bool {
+	cancel := job.CancelFn
+	if job.Status == StatusQueued || job.Status == StatusProcessing {
+		now := time.Now()
+		job.Status = StatusCancelled
+		job.CompletedAt = &now
+	}
+	job.CancelFn = nil
+	delete(s.jobs, job.ID)
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 	return true
 }
 
