@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import Mock, patch
 
 import pytest
@@ -117,15 +118,34 @@ def test_cors_preflight_still_answers_without_checking_schema(deployed_client):
 
 
 @override_settings(STARTUP_SCHEMA_GUARD_ENABLED=True)
-def test_options_without_cors_headers_are_also_exempt():
+def test_options_that_is_not_a_preflight_waits_for_the_schema():
+    # DRF authenticates OPTIONS too, which reads tables that may not exist yet.
     downstream = Mock(return_value=HttpResponse("options response"))
-    request = RequestFactory().options("/agentcc/api-keys/bulk/")
-    with patch(CHECK, return_value=SchemaState.PENDING) as check:
+    request = RequestFactory().options(
+        "/agentcc/api-keys/bulk/", HTTP_X_API_KEY="org-api-key"
+    )
+    with patch(CHECK, return_value=SchemaState.PENDING):
         response = SchemaReadinessMiddleware(downstream)(request)
 
-    assert response is downstream.return_value
-    downstream.assert_called_once_with(request)
-    check.assert_not_called()
+    assert response.status_code == 503
+    assert response["Retry-After"] == "5"
+    downstream.assert_not_called()
+
+
+def test_pending_responses_are_not_logged_as_errors(deployed_client):
+    request_logger = logging.getLogger("django.request")
+    with (
+        patch(CHECK, return_value=SchemaState.PENDING),
+        patch.object(request_logger, "error") as error,
+        patch.object(request_logger, "warning") as warning,
+        patch.object(request_logger, "debug") as debug,
+    ):
+        response = deployed_client.get("/agentcc/api-keys/bulk/")
+
+    assert response.status_code == 503
+    error.assert_not_called()
+    warning.assert_not_called()
+    debug.assert_called_once()
 
 
 @pytest.mark.django_db
