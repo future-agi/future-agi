@@ -29,6 +29,8 @@ import axios, { endpoints } from "src/utils/axios";
 import EvalUsageTab from "../EvalUsageTab";
 
 const h = vi.hoisted(() => ({
+  org: "org-1",
+  ws: "ws-1",
   logs: {},
   trace: vi.fn(),
   voice: vi.fn(),
@@ -46,10 +48,10 @@ vi.mock("../../hooks/useEvalUsage", () => ({
   useEvalUsageLogs: () => h.logs,
 }));
 vi.mock("src/contexts/OrganizationContext", () => ({
-  useOrganization: () => ({ currentOrganizationId: "org-1" }),
+  useOrganization: () => ({ currentOrganizationId: h.org }),
 }));
 vi.mock("src/contexts/WorkspaceContext", () => ({
-  useWorkspace: () => ({ currentWorkspaceId: "ws-1" }),
+  useWorkspace: () => ({ currentWorkspaceId: h.ws }),
 }));
 vi.mock("src/utils/axios", async () => {
   const actual = await vi.importActual("src/utils/axios");
@@ -298,6 +300,8 @@ describe("Usage tab: View trace / View call on an opened eval log", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     user = userEvent.setup();
+    h.org = "org-1";
+    h.ws = "ws-1";
     h.logs = logsState();
     axios.get.mockImplementation(async (url, config) => {
       if (url === endpoints.develop.eval.getEvalLogs)
@@ -479,5 +483,51 @@ describe("Usage tab: View trace / View call on an opened eval log", () => {
     expect(body.isConnected).toBe(true);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(enrichmentCalls()).toHaveLength(2);
+  });
+
+  it.each(["org", "ws"])(
+    "an %s switch with a trace open hands j/k and Escape back to the panel",
+    async (field) => {
+      const view = mount();
+      await openLog("root");
+      await user.click(
+        await screen.findByRole("button", { name: "View trace" }),
+      );
+      await screen.findByTestId("trace-body");
+      h[field] = `${field}-2`;
+      await act(async () => view.rerender());
+      // The host remounted for the new scope; its trace is gone.
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await screen.findByRole("button", { name: "View trace" });
+      await user.keyboard("j");
+      expect(position(2)).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByText(/ \/ 6$/)).not.toBeInTheDocument(),
+      );
+    },
+  );
+
+  it("a trace dropped by a list change leaves the log's shortcuts working when it returns", async () => {
+    const view = mount();
+    await openLog("root");
+    await user.click(await screen.findByRole("button", { name: "View trace" }));
+    await screen.findByTestId("trace-body");
+    // A refresh puts another log at the opened position: the host remounts
+    // for that log and the root's trace closes without a Close click.
+    const [root, child, ...rest] = table();
+    h.logs = logsState([child, root, ...rest]);
+    await act(async () => view.rerender());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("judged the child span", { selector: "p" }));
+    // The next refresh brings the root log back to that position.
+    h.logs = logsState();
+    await act(async () => view.rerender());
+    expect(screen.getByText("judged the root span", { selector: "p" }));
+    await screen.findByRole("button", { name: "View trace" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.keyboard("j");
+    expect(position(2)).toBeInTheDocument();
+    expect(screen.getByText("judged the child span", { selector: "p" }));
   });
 });

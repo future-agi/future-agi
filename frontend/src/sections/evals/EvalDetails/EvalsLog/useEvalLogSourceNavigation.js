@@ -11,6 +11,11 @@ export const sourceNavigationKey = (orgId, wsId, logId) => [
   logId,
 ];
 
+// One opened log in one org and workspace. The source host remounts when it
+// changes, and reports it while that log's trace or call is open.
+export const sourceScopeKey = (orgId, wsId, logId) =>
+  JSON.stringify([orgId, wsId, logId]);
+
 export function useEvalLogSourceNavigation(logId, { enabled = true } = {}) {
   const { currentOrganizationId } = useOrganization();
   const { currentWorkspaceId } = useWorkspace();

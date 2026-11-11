@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Drawer } from "@mui/material";
+import { SnackbarProvider } from "notistack";
 import {
   act,
   cleanup,
@@ -27,6 +28,7 @@ import {
 import { render } from "src/utils/test-utils";
 import axios, { endpoints } from "src/utils/axios";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { useBulkCreateScores } from "src/api/scores/scores";
 import DrawerHeader from "src/components/traceDetail/DrawerHeader";
 import EvalLogSourceHost from "../EvalLogSourceHost";
 
@@ -35,6 +37,8 @@ const mocks = vi.hoisted(() => ({
   ws: "ws-1",
   trace: vi.fn(),
   voice: vi.fn(),
+  // A save the test renders inside the opened viewer.
+  ViewerAction: null,
 }));
 vi.mock("src/contexts/OrganizationContext", () => ({
   useOrganization: () => ({ currentOrganizationId: mocks.org }),
@@ -44,7 +48,10 @@ vi.mock("src/contexts/WorkspaceContext", () => ({
 }));
 vi.mock("src/utils/axios", async () => {
   const actual = await vi.importActual("src/utils/axios");
-  return { ...actual, default: { ...actual.default, get: vi.fn() } };
+  return {
+    ...actual,
+    default: { ...actual.default, get: vi.fn(), post: vi.fn() },
+  };
 });
 vi.mock("src/components/iconify", () => ({ default: () => <span /> }));
 vi.mock("src/utils/Mixpanel", () => ({
@@ -70,6 +77,7 @@ vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
           onOpenNewTab={props.hideOpenInNewTab ? undefined : vi.fn()}
         />
         <div data-testid="trace-body">{query.data?.trace?.id}</div>
+        {mocks.ViewerAction && <mocks.ViewerAction />}
       </Drawer>
     );
   },
@@ -77,7 +85,12 @@ vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
 vi.mock("src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2", () => ({
   default: function VoiceStub(props) {
     mocks.voice(props, useQueryClient());
-    return <div data-testid="voice-body">Call content</div>;
+    return (
+      <div data-testid="voice-body">
+        Call content
+        {mocks.ViewerAction && <mocks.ViewerAction />}
+      </div>
+    );
   },
 }));
 const LOG = "11111111-1111-4111-8111-111111111111";
@@ -108,6 +121,8 @@ const voiceData = {
   provider_call_id: "different-provider-id",
 };
 const unavailable = "The source is unavailable or you do not have access.";
+// What the host reports while this log's trace or call is open.
+const SCOPE = JSON.stringify(["org-1", "ws-1", LOG]);
 let client;
 let nav;
 let destination;
@@ -128,18 +143,43 @@ function mount(props = {}) {
   const content = (nextProps) => (
     <EvalLogSourceHost logId={LOG} {...nextProps} />
   );
-  const view = render(
-    <QueryClientProvider client={client}>{content(props)}</QueryClientProvider>,
+  // The app shows toasts through notistack's provider.
+  const tree = (nextProps) => (
+    <SnackbarProvider>
+      <QueryClientProvider client={client}>
+        {content(nextProps)}
+      </QueryClientProvider>
+    </SnackbarProvider>
   );
+  const view = render(tree(props));
   return {
     ...view,
-    rerender: (nextProps = props) =>
-      view.rerender(
-        <QueryClientProvider client={client}>
-          {content(nextProps)}
-        </QueryClientProvider>,
-      ),
+    rerender: (nextProps = props) => view.rerender(tree(nextProps)),
   };
+}
+// Annotate's save inside the viewer (AnnotationSidebarContent): the real
+// useBulkCreateScores with onSuccess only, so a failure relies on the
+// client's toast.
+function SaveScore() {
+  const { mutate } = useBulkCreateScores();
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        mutate(
+          {
+            sourceType: "observation_span",
+            sourceId: SPAN,
+            scores: [{ label_id: "label-1", value: 1 }],
+            projectId: PROJECT,
+          },
+          { onSuccess: () => {} },
+        )
+      }
+    >
+      Save score
+    </button>
+  );
 }
 async function activate(kind = "trace") {
   const button = await screen.findByRole("button", {
@@ -157,6 +197,7 @@ describe("eval-owned source host", () => {
     vi.clearAllMocks();
     mocks.org = "org-1";
     mocks.ws = "ws-1";
+    mocks.ViewerAction = null;
     nav = ready;
     destination = traceData;
     user = userEvent.setup();
@@ -402,13 +443,13 @@ describe("eval-owned source host", () => {
       expect(screen.getByRole("dialog")).toContainElement(
         document.activeElement,
       );
-      expect(onSourceOpenChange).toHaveBeenLastCalledWith(true);
+      expect(onSourceOpenChange).toHaveBeenLastCalledWith(SCOPE);
       await user.keyboard("{Escape}");
       await waitFor(() =>
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(trigger).toHaveFocus();
-      expect(onSourceOpenChange).toHaveBeenLastCalledWith(false);
+      expect(onSourceOpenChange).toHaveBeenLastCalledWith(null);
       expect(enrichmentCalls()).toHaveLength(2);
     },
   );
@@ -623,4 +664,83 @@ describe("eval-owned source host", () => {
     expect(destinationCalls()).toHaveLength(0);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+
+  it.each(["org", "ws", "log"])(
+    "B1 reports the opened scope from opening and closing, and nothing when a %s change remounts it",
+    async (field) => {
+      const onSourceOpenChange = vi.fn();
+      const view = mount({ onSourceOpenChange });
+      await screen.findByRole("button", { name: "View trace" });
+      expect(onSourceOpenChange).not.toHaveBeenCalled();
+      await activate();
+      await screen.findByTestId("trace-body");
+      expect(onSourceOpenChange.mock.calls).toEqual([[SCOPE]]);
+      await user.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Close",
+          exact: true,
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      expect(onSourceOpenChange.mock.calls).toEqual([[SCOPE], [null]]);
+      await activate();
+      await screen.findByTestId("trace-body");
+      // The page compares this scope with its opened log, so a remount that
+      // drops the open trace needs no report.
+      if (field !== "log") mocks[field] = "new-scope";
+      view.rerender({
+        onSourceOpenChange,
+        logId: field === "log" ? "new-log" : LOG,
+      });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await screen.findByRole("button", { name: "View trace" });
+      expect(onSourceOpenChange.mock.calls).toEqual([[SCOPE], [null], [SCOPE]]);
+    },
+  );
+
+  it.each(["trace", "voice_call"])(
+    "S3 a failed save inside the opened %s shows the app's error toast",
+    async (kind) => {
+      nav = { ...ready, kind };
+      destination = kind === "trace" ? traceData : voiceData;
+      mocks.ViewerAction = SaveScore;
+      axios.post.mockRejectedValueOnce({
+        statusCode: 400,
+        result: "This label is archived.",
+      });
+      mount();
+      await activate(kind);
+      await screen.findByTestId(kind === "trace" ? "trace-body" : "voice-body");
+      await user.click(screen.getByRole("button", { name: "Save score" }));
+      expect(
+        await screen.findByText("This label is archived."),
+      ).toBeInTheDocument();
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(axios.post.mock.calls[0][0]).toMatch(
+        /\/model-hub\/scores\/bulk\/$/,
+      );
+      // The viewer stays open behind the toast.
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    },
+  );
+
+  it.each(["trace", "voice_call"])(
+    "S3 keeps the host's own failed %s read in its row, with no toast",
+    async (kind) => {
+      nav = { ...ready, kind };
+      destination = { statusCode: 404, result: "Trace not found." };
+      mount();
+      await activate(kind);
+      expect(await screen.findByText(unavailable)).toBeInTheDocument();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(screen.queryByText("Trace not found.")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Something went wrong"),
+      ).not.toBeInTheDocument();
+    },
+  );
 });

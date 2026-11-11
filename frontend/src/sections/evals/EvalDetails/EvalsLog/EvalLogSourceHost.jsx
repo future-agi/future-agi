@@ -7,8 +7,14 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Modal, Portal, Typography } from "@mui/material";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { flattenArray } from "src/utils/flatten-array";
+import { handleError } from "src/utils/queryErrorHandler";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
@@ -16,7 +22,10 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import SourceNavigationRow from "./SourceNavigationRow";
-import { useEvalLogSourceNavigation } from "./useEvalLogSourceNavigation";
+import {
+  sourceScopeKey,
+  useEvalLogSourceNavigation,
+} from "./useEvalLogSourceNavigation";
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 const temporary = { status: "temporarily_unavailable" };
@@ -240,9 +249,14 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
 function SourceDialog({ pinned, onClose, revalidate, onState }) {
   // Reused hooks omit org/workspace in their keys. A new client for each open
   // prevents even a single paint from another scope's cached destination.
+  // Like the app's client, it toasts a failed viewer read or save (Annotate,
+  // Add to dataset) that does not report its own error. This host reports its
+  // destination reads itself, so queries default to errorHandled.
   const [client] = useState(
     () =>
       new QueryClient({
+        queryCache: new QueryCache({ onError: handleError }),
+        mutationCache: new MutationCache({ onError: handleError }),
         defaultOptions: {
           queries: {
             retry: false,
@@ -358,7 +372,7 @@ function SourceDialog({ pinned, onClose, revalidate, onState }) {
   );
 }
 
-function ScopedSourceHost({ logId, onSourceOpenChange }) {
+function ScopedSourceHost({ logId, scopeKey, onSourceOpenChange }) {
   const query = useEvalLogSourceNavigation(logId);
   const [pinned, setPinned] = useState(null);
   const [rowResult, setRowResult] = useState(null);
@@ -378,15 +392,6 @@ function ScopedSourceHost({ logId, onSourceOpenChange }) {
       active.current = false;
     };
   }, []);
-  useEffect(() => {
-    // Tells the page that owns the log while the source covers it, so its own
-    // shortcuts (next/previous log, Escape) leave the open trace or call alone.
-    // Unmounting with the source open (another log, another scope) reports it
-    // closed.
-    if (!pinned) return undefined;
-    onSourceOpenChange?.(true);
-    return () => onSourceOpenChange?.(false);
-  }, [pinned, onSourceOpenChange]);
   useEffect(() => {
     if (!pinned && restoreFocus.current) {
       restoreFocus.current = false;
@@ -413,6 +418,9 @@ function ScopedSourceHost({ logId, onSourceOpenChange }) {
       if (openViewer && isReady(nav)) {
         destinationResult.current = null;
         setPinned({ ...nav });
+        // The page that owns the log leaves the open trace or call its
+        // shortcuts (next/previous log, Escape) while this scope is reported.
+        onSourceOpenChange?.(scopeKey);
       } else restoreFocus.current = true;
     } catch (error) {
       if (!active.current) return;
@@ -427,6 +435,7 @@ function ScopedSourceHost({ logId, onSourceOpenChange }) {
     restoreFocus.current = true;
     if (destinationResult.current) setRowResult(destinationResult.current);
     setPinned(null);
+    onSourceOpenChange?.(null);
   };
   return (
     <>
@@ -457,17 +466,13 @@ function ScopedSourceHost({ logId, onSourceOpenChange }) {
 export default function EvalLogSourceHost(props) {
   const { currentOrganizationId } = useOrganization();
   const { currentWorkspaceId } = useWorkspace();
-  // Remount before paint on every entry/scope change, including pending activation.
-  return (
-    <ScopedSourceHost
-      key={JSON.stringify([
-        currentOrganizationId,
-        currentWorkspaceId,
-        props.logId,
-      ])}
-      {...props}
-    />
+  const scopeKey = sourceScopeKey(
+    currentOrganizationId,
+    currentWorkspaceId,
+    props.logId,
   );
+  // Remount before paint on every entry/scope change, including pending activation.
+  return <ScopedSourceHost key={scopeKey} {...props} scopeKey={scopeKey} />;
 }
 
 const bodyPropTypes = {
@@ -488,8 +493,14 @@ SourceDialog.propTypes = {
   ...bodyPropTypes,
   revalidate: PropTypes.func.isRequired,
 };
-ScopedSourceHost.propTypes = {
+EvalLogSourceHost.propTypes = {
   logId: PropTypes.string.isRequired,
+  // Called with this log's sourceScopeKey when its trace or call opens, and
+  // with null when it closes. Unmounting reports nothing; the page compares
+  // the key with its opened log instead.
   onSourceOpenChange: PropTypes.func,
 };
-EvalLogSourceHost.propTypes = ScopedSourceHost.propTypes;
+ScopedSourceHost.propTypes = {
+  ...EvalLogSourceHost.propTypes,
+  scopeKey: PropTypes.string.isRequired,
+};

@@ -24,6 +24,9 @@ import { useDebounce } from "src/hooks/use-debounce";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSourceHost";
+import { sourceScopeKey } from "src/sections/evals/EvalDetails/EvalsLog/useEvalLogSourceNavigation";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
@@ -70,8 +73,11 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
-  // True while the opened log's trace or call covers the page.
-  const [sourceOpen, setSourceOpen] = useState(false);
+  // The scope (org, workspace, log) whose trace or call the source host
+  // reported open; null once it closes.
+  const [openSourceScope, setOpenSourceScope] = useState(null);
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
   const columnConfigureRef = useRef(null);
 
@@ -292,6 +298,20 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailSourceScope = sourceScopeKey(
+    currentOrganizationId,
+    currentWorkspaceId,
+    detailRow?.id,
+  );
+  // Another log, org or workspace remounts the source host, so a reported
+  // scope that no longer matches belongs to a host that is gone. Forget it
+  // now, so the same log opened again later does not start out "open".
+  if (openSourceScope !== null && openSourceScope !== detailSourceScope) {
+    setOpenSourceScope(null);
+  }
+  // True while the opened log's trace or call covers the page.
+  const sourceOpen =
+    openSourceScope !== null && openSourceScope === detailSourceScope;
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -737,7 +757,7 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
-              onSourceOpenChange={setSourceOpen}
+              onSourceOpenChange={setOpenSourceScope}
             />
           )}
         </Box>
