@@ -66,3 +66,50 @@ func TestRunPostPluginsExposesRequestContextWhenCalledDirectly(t *testing.T) {
 		t.Fatalf("post-plugin request context = %p, want %p", plugin.postContext, rc)
 	}
 }
+
+// parallelContextObserver is a read-only post-plugin, the kind the engine runs
+// concurrently with other observers.
+type parallelContextObserver struct {
+	name string
+	seen *models.RequestContext
+}
+
+func (p *parallelContextObserver) Name() string         { return p.name }
+func (p *parallelContextObserver) Priority() int        { return 900 }
+func (p *parallelContextObserver) IsPostParallel() bool { return true }
+func (p *parallelContextObserver) ProcessRequest(context.Context, *models.RequestContext) PluginResult {
+	return ResultContinue()
+}
+
+func (p *parallelContextObserver) ProcessResponse(ctx context.Context, _ *models.RequestContext) PluginResult {
+	// Read the way a correlation helper does; writing here would be a
+	// concurrent map write.
+	if rc := models.GetRequestContext(ctx); rc != nil {
+		_ = rc.Metadata["gen_ai.conversation.id"]
+		_ = rc.SessionID
+		p.seen = rc
+	}
+	return ResultContinue()
+}
+
+// Parallel observers get the request context too. Run with -race: they read
+// it concurrently and none of them writes.
+func TestParallelPostPluginsSeeRequestContext(t *testing.T) {
+	a := &parallelContextObserver{name: "observer-a"}
+	b := &parallelContextObserver{name: "observer-b"}
+	engine := NewEngine(a, b)
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.Metadata["gen_ai.conversation.id"] = "conversation-1"
+
+	if err := engine.Process(context.Background(), rc, func(context.Context, *models.RequestContext) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	for _, p := range []*parallelContextObserver{a, b} {
+		if p.seen != rc {
+			t.Errorf("%s request context = %p, want %p", p.name, p.seen, rc)
+		}
+	}
+}

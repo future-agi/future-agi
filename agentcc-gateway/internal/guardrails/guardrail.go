@@ -31,19 +31,50 @@ const (
 // TrajectoryContext is the request-scoped correlation snapshot available to
 // stateful guardrails. It intentionally contains identity/correlation data only;
 // policy, risk, and accumulated trajectory state belong in separate layers.
+//
+// Every field is a plain string copied out of the RequestContext, so the
+// snapshot stays valid after the request ends and the RequestContext goes back
+// to its pool. A guardrail that needs these values later must keep this
+// snapshot, never the RequestContext itself.
+//
+// Most fields are asserted by the caller and none of them is authenticated:
+// they say which activity belongs together, not who may do what. An empty
+// field means the request did not carry that identifier.
 type TrajectoryContext struct {
-	RequestID    string
-	TraceID      string
-	SessionID    string
-	UserID       string
+	// RequestID is the gateway's ID for this one request.
+	RequestID string
+	// TraceID is the caller's x-agentcc-trace-id header, or one the gateway
+	// generated. Routes that do not read it leave it empty.
+	TraceID string
+	// SessionID is the caller's x-agentcc-session-id header, or the
+	// session_id in the body's metadata.
+	SessionID string
+	// UserID is the body's user field, or the API key's owner.
+	UserID string
+	// ConversationID is the caller's conversation or chat thread: metadata
+	// key gen_ai.conversation.id, falling back to conversation_id. It is
+	// narrower than SessionID, which can span unrelated tasks. The gateway
+	// never derives it from SessionID or A2AContextID.
+	ConversationID string
+	// A2ATaskID and A2AContextID are the A2A task and its context: metadata
+	// keys a2a_task_id and a2a_context_id, which the gateway's A2A server
+	// sets. On other routes a caller's metadata can carry the same keys.
 	A2ATaskID    string
 	A2AContextID string
-	AgentID      string
+	// AgentID is the caller's agent: metadata key gen_ai.agent.id, falling
+	// back to agent_id.
+	AgentID string
 }
 
 // TrajectoryContextFromContext returns the normalized correlation context for a
-// guardrail invocation. AgentID is correlation-only metadata and must never be
-// treated as an authorization identity.
+// guardrail invocation, or nil when ctx carries no RequestContext. The
+// pipeline attaches one for plugins' ProcessRequest and ProcessResponse
+// calls; guardrails that the engine runs asynchronously get nil.
+//
+// Call it at the start of Check, on Check's own goroutine, and keep the
+// result: a check that times out goes on running after the request may have
+// ended. AgentID is correlation-only metadata and must never be treated as an
+// authorization identity.
 func TrajectoryContextFromContext(ctx context.Context) *TrajectoryContext {
 	rc := models.GetRequestContext(ctx)
 	if rc == nil {
@@ -51,13 +82,14 @@ func TrajectoryContextFromContext(ctx context.Context) *TrajectoryContext {
 	}
 
 	return &TrajectoryContext{
-		RequestID:    rc.RequestID,
-		TraceID:      rc.TraceID,
-		SessionID:    rc.SessionID,
-		UserID:       rc.UserID,
-		A2ATaskID:    rc.Metadata["a2a_task_id"],
-		A2AContextID: rc.Metadata["a2a_context_id"],
-		AgentID:      firstNonEmpty(rc.Metadata["gen_ai.agent.id"], rc.Metadata["agent_id"]),
+		RequestID:      rc.RequestID,
+		TraceID:        rc.TraceID,
+		SessionID:      rc.SessionID,
+		UserID:         rc.UserID,
+		ConversationID: firstNonEmpty(rc.Metadata["gen_ai.conversation.id"], rc.Metadata["conversation_id"]),
+		A2ATaskID:      rc.Metadata["a2a_task_id"],
+		A2AContextID:   rc.Metadata["a2a_context_id"],
+		AgentID:        firstNonEmpty(rc.Metadata["gen_ai.agent.id"], rc.Metadata["agent_id"]),
 	}
 }
 
