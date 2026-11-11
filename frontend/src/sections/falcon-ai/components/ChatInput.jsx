@@ -95,7 +95,7 @@ export default function ChatInput({ onSend, onStop }) {
 
   const placeholder = currentConversationId
     ? "Ask a follow-up..."
-    : "Message Falcon AI...";
+    : "Ask anything...";
 
   const MAX_LENGTH = 10000;
 
@@ -374,7 +374,7 @@ export default function ChatInput({ onSend, onStop }) {
             pt: 1.5,
             pb: 0.5,
             "& .MuiInputBase-input": {
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: 1.6,
               color: "text.primary",
               "&::placeholder": {
@@ -469,7 +469,7 @@ export default function ChatInput({ onSend, onStop }) {
                 />
                 <ListItemText
                   primary={isUploading ? "Uploading..." : "Attach files"}
-                  primaryTypographyProps={{ fontSize: 13 }}
+                  primaryTypographyProps={{ fontSize: 12 }}
                 />
               </MenuItem>
 
@@ -483,7 +483,7 @@ export default function ChatInput({ onSend, onStop }) {
                     width={16}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography sx={{ fontSize: 13 }}>Connectors</Typography>
+                  <Typography sx={{ fontSize: 12 }}>Connectors</Typography>
                 </Box>
                 <Iconify
                   icon="solar:alt-arrow-right-linear"
@@ -527,7 +527,7 @@ export default function ChatInput({ onSend, onStop }) {
                             : "text.disabled",
                         }}
                       />
-                      <Typography sx={{ fontSize: 13 }}>{c.name}</Typography>
+                      <Typography sx={{ fontSize: 12 }}>{c.name}</Typography>
                     </Box>
                     <Switch size="small" checked={c.is_active !== false} />
                   </MenuItem>
@@ -536,7 +536,7 @@ export default function ChatInput({ onSend, onStop }) {
                 <MenuItem disabled sx={{ py: 1 }}>
                   <Typography
                     sx={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontStyle: "italic",
                       color: "text.disabled",
                     }}
@@ -549,7 +549,7 @@ export default function ChatInput({ onSend, onStop }) {
               <MenuItem
                 onClick={() => {
                   handlePlusClose();
-                  router.push("/dashboard/settings/falcon-ai-connectors");
+                  router.push("/dashboard/settings/connectors");
                 }}
                 sx={{ gap: 1.5, py: 1 }}
               >
@@ -558,7 +558,7 @@ export default function ChatInput({ onSend, onStop }) {
                   width={16}
                   sx={{ color: "text.secondary" }}
                 />
-                <Typography sx={{ fontSize: 13 }}>Manage connectors</Typography>
+                <Typography sx={{ fontSize: 12 }}>Manage connectors</Typography>
               </MenuItem>
             </Menu>
           </Box>
@@ -623,7 +623,7 @@ export default function ChatInput({ onSend, onStop }) {
           userSelect: "none",
         }}
       >
-        Falcon AI can make mistakes. Check important info.
+        AI can make mistakes. Check important info.
       </Typography>
     </Box>
   );

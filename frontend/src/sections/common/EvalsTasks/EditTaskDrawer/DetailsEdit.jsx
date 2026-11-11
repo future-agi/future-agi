@@ -571,7 +571,7 @@ const DetailsEdit = ({
                           <AccordionSummary>
                             <Typography
                               sx={{
-                                fontSize: "13px",
+                                fontSize: "12px",
                                 color: "text.primary",
                                 fontWeight: 500,
                               }}
@@ -602,7 +602,7 @@ const DetailsEdit = ({
                         <AccordionSummary>
                           <Typography
                             sx={{
-                              fontSize: "13px",
+                              fontSize: "12px",
                               color: "text.primary",
                               fontWeight: 500,
                             }}
@@ -622,7 +622,7 @@ const DetailsEdit = ({
                         <AccordionSummary>
                           <Typography
                             sx={{
-                              fontSize: "13px",
+                              fontSize: "12px",
                               color: "text.primary",
                               fontWeight: 500,
                             }}

@@ -96,7 +96,7 @@ export default function AskCrossTab({
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13 }}
+          sx={{ fontSize: 12 }}
         >
           Both questions need answers before they can be compared.
         </Typography>

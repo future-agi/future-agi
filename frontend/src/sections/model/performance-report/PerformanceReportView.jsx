@@ -2,7 +2,6 @@ import {
   Box,
   IconButton,
   InputAdornment,
-  LinearProgress,
   Table,
   TableBody,
   TableCell,
@@ -26,6 +25,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const PerformanceReportView = () => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -93,7 +93,7 @@ const PerformanceReportView = () => {
         />
       </Box>
       <Box sx={{ overflow: "auto" }}>
-        {isLoading ? <LinearProgress /> : null}
+        {isLoading ? <LoadingScreen /> : null}
         <TableContainer
           ref={tableRef}
           sx={{ overflow: "auto", height: "calc(100vh - 210px)" }}

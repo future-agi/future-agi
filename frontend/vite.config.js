@@ -15,6 +15,26 @@ import checker from "vite-plugin-checker";
 export const shouldUploadSentrySourceMaps = (env = process.env) =>
   env.SENTRY_UPLOAD_SOURCEMAPS === "true";
 
+// Package -> vendor chunk. recharts + victory are only used on 2-3 niche pages,
+// so Vite splits them on its own instead of loading them for everyone.
+const VENDOR_CHUNKS = {
+  vendor: ['react', 'react-dom'],
+  mui: ['@mui/material', '@mui/lab', '@mui/x-data-grid', '@mui/x-date-pickers'],
+  utils: ['lodash', 'lodash-es', 'date-fns', 'numeral'],
+  charts: ['apexcharts', 'react-apexcharts'],
+  editor: ['quill', 'react-quill', 'quill-mention'],
+  grid: ['ag-grid-enterprise', 'ag-grid-community', 'ag-grid-react'],
+  threejs: ['three', 'scatter-gl'],
+  flow: ['@xyflow/react', '@dagrejs/dagre'],
+  sentry: ['@sentry/react'],
+  media: ['swiper', 'wavesurfer.js', 'wavesurfer-multitrack', 'react-player'],
+  pdf: ['pdfjs-dist', '@react-pdf-viewer/core', '@react-pdf-viewer/default-layout'],
+  markdown: ['react-markdown', 'react-syntax-highlighter', 'rehype-raw', 'rehype-sanitize', 'remark-gfm'],
+};
+const VENDOR_CHUNK_BY_PACKAGE = Object.fromEntries(
+  Object.entries(VENDOR_CHUNKS).flatMap(([chunk, pkgs]) => pkgs.map((pkg) => [pkg, chunk])),
+);
+
 export default defineConfig({
   base: "/",
   plugins: [react(), checker({
@@ -52,23 +72,20 @@ export default defineConfig({
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]',
-        // Split vendor chunks to reduce memory usage
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          mui: ['@mui/material', '@mui/lab', '@mui/x-data-grid', '@mui/x-date-pickers'],
-          utils: ['lodash', 'date-fns', 'numeral'],
-          charts: ['apexcharts', 'react-apexcharts'],
-          // recharts + victory only used on 2-3 niche pages — let Vite split them
-          // into separate chunks so they don't load for everyone
-          editor: ['quill', 'react-quill', 'quill-mention'],
-          grid: ['ag-grid-enterprise', 'ag-grid-react'],
-          threejs: ['three', 'scatter-gl'],
-          flow: ['@xyflow/react', '@dagrejs/dagre'],
-          sentry: ['@sentry/react'],
-          media: ['swiper', 'wavesurfer.js', 'wavesurfer-multitrack', 'react-player'],
-          pdf: ['pdfjs-dist', '@react-pdf-viewer/core', '@react-pdf-viewer/default-layout'],
-          markdown: ['react-markdown', 'react-syntax-highlighter', 'rehype-raw', 'rehype-sanitize', 'remark-gfm']
-        }
+        // Split vendor chunks to reduce memory usage.
+        // A function that matches each package's own folder only: the object
+        // form also pulls every dependency of a listed package into its chunk,
+        // and that dragged Vite's lazy-import helper into `markdown` and shared
+        // helpers into `editor`, so every page loaded both before first paint.
+        manualChunks(id) {
+          // Vite's lazy-import helper is needed by every page: keep it with React.
+          if (id.includes('vite/preload-helper')) return 'vendor';
+          // Last node_modules segment, so a copy nested inside a package
+          // (quill/node_modules/lodash-es) isn't counted as that package.
+          const match = id.match(/.*node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+          if (!match) return undefined;
+          return VENDOR_CHUNK_BY_PACKAGE[match[1]];
+        },
       },
       // Reduce memory usage during build
       maxParallelFileOps: 2

@@ -6,7 +6,6 @@ import PageHeader from "src/components/page-header";
 import CreateAgentsButton from "./components/CreateAgentsButton";
 import useCanEditAgent from "./hooks/useCanEditAgent";
 import { agentsTabPath, resolveAgentsTab } from "./agentsTabs";
-import ContentSkeleton from "src/components/content-skeleton";
 
 /**
  * Agents — the ones built here in the Playground, and the ones that live
@@ -66,13 +65,9 @@ export default function AgentsLanding() {
             px: 3,
           }}
         >
-          <Suspense
-            fallback={
-              <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
-                <ContentSkeleton variant="panel" />
-              </Box>
-            }
-          >
+          {/* No fallback: the tab's code is preloaded on link hover, and its
+              table shows the one loader while data loads. */}
+          <Suspense fallback={null}>
             <Outlet />
           </Suspense>
         </Box>

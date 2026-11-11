@@ -84,6 +84,29 @@
 
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <!-- Boot splash: the same mark, name and line as <SplashScreen>, drawn on
+         the first frame so the page is never blank while the bundle loads.
+         SplashScreen keeps it up through the auth and deployment checks and
+         removes it once the app has something else to show. -->
+    <style>
+      #boot-splash { position: fixed; inset: 0; z-index: 9998; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #FAFAFA; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; opacity: 0; animation: boot-in 0.2s ease-out 0.3s forwards; }
+      #boot-splash .mark { width: 32px; height: 32px; background: #7857FC; -webkit-mask: url(/favicon/logo.svg) center / contain no-repeat; mask: url(/favicon/logo.svg) center / contain no-repeat; }
+      #boot-splash .name { font-size: 15px; line-height: 22px; font-weight: 600; color: #18181B; }
+      #boot-splash .track { width: 96px; height: 2px; margin-top: 4px; border-radius: 2px; overflow: hidden; background: #E4E4E7; }
+      #boot-splash .track i { display: block; width: 40%; height: 100%; background: #7857FC; animation: boot-line 1.4s ease-in-out infinite; }
+      body[data-theme="dark"] #boot-splash { background: #0A0A0B; }
+      body[data-theme="dark"] #boot-splash .mark, body[data-theme="dark"] #boot-splash .track i { background: #EFEFF1; }
+      body[data-theme="dark"] #boot-splash .name { color: #EFEFF1; }
+      body[data-theme="dark"] #boot-splash .track { background: #232326; }
+      @keyframes boot-in { to { opacity: 1; } }
+      @keyframes boot-line { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+      @media (prefers-reduced-motion: reduce) { #boot-splash .track i { animation: none; transform: translateX(75%); } }
+    </style>
+    <div id="boot-splash" role="status" aria-live="polite" aria-label="Loading">
+      <div class="mark"></div>
+      <div class="name">Future AGI</div>
+      <div class="track"><i></i></div>
+    </div>
     <!-- Runtime config — see frontend/docker-entrypoint.sh -->
     <script src="/config.js"></script>
     <script>

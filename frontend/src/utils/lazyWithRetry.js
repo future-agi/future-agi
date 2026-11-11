@@ -118,7 +118,16 @@ export default function lazyWithRetry(
   importFn,
   maxRetries = CHUNK_IMPORT_MAX_RETRIES,
 ) {
-  return lazy(() => retryImport(importFn, maxRetries));
+  const Component = lazy(() => retryImport(importFn, maxRetries));
+  // Warm the chunk ahead of render (link hover, see routes/preload.js). The
+  // browser caches the module, so the later lazy() import resolves at once;
+  // a failed preload is ignored and the real import retries as usual.
+  Component.preload = () => {
+    Promise.resolve()
+      .then(importFn)
+      .catch(() => {});
+  };
+  return Component;
 }
 
 // Exported for unit testing the post-deploy recovery logic directly.
