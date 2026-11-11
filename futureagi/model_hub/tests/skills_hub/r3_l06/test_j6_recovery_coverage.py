@@ -6,10 +6,16 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
-from model_hub.models.skills_hub_v12 import HubSkillContextSession
+from model_hub.models.skills_hub_v12 import (
+    HubSkillContextCredential,
+    HubSkillContextOperation,
+    HubSkillContextResolution,
+    HubSkillContextSession,
+)
 from model_hub.services.skills_hub.v12.consumers import (
     adoption_summary,
     append_receipt,
+    check_session_access,
     open_context_session,
 )
 from model_hub.tests.skills_hub.r3_l06.test_consumers import (
@@ -147,6 +153,168 @@ def test_new_heartbeat_cannot_refresh_old_delivery(
         ),
     )
     assert_unrecovered(summary(principal, context), "stale_observation")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["expired_credential", "revoked_credential", "expired_mapping", "lost_origin"],
+)
+def test_historical_delivery_is_not_recovery_of_an_unresumable_thread(
+    principal, context, context_version, binding, credential, fault
+):
+    version = context_version(context)
+    point(context, version)
+    consumer = credential(version)
+    request = session_request()
+    opened = open_context_session(
+        principal=consumer,
+        binding_id=binding["id"],
+        request=request,
+        idempotency_key=uuid4(),
+    )
+    report(
+        principal,
+        binding,
+        receipt_for(
+            version,
+            stage="instructions_delivered",
+            session=opened["session_id"],
+            instance=request["incarnation_id"],
+        ),
+    )
+    assert "matches_target" in summary(principal, context)["states"]
+    expired = timezone.now() - timedelta(seconds=1)
+    if fault == "expired_credential":
+        HubSkillContextCredential.objects.filter(pk=consumer.credential_id).update(
+            expires_at=expired
+        )
+    elif fault == "revoked_credential":
+        HubSkillContextCredential.objects.filter(pk=consumer.credential_id).update(
+            revoked_at=expired
+        )
+    elif fault == "expired_mapping":
+        HubSkillContextSession.objects.filter(pk=opened["session_id"]).update(
+            expires_at=expired
+        )
+    else:
+        HubSkillContextOperation.objects.filter(
+            operation="open_session", result_resource_id=opened["session_id"]
+        ).delete()
+    row = summary(principal, context)
+    # Preserve what was observed, without claiming the retained thread can run.
+    assert row["loaded"]["version_id"] == str(version.pk)
+    assert_unrecovered(row)
+    assert row["next_action_code"] == "observe_runtime"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "lost_resolution",
+        "wrong_resolution",
+        "malformed_resolution",
+        "missing_resolution",
+        "removed_grant",
+        "expanded_grant",
+    ],
+)
+def test_original_grant_mapping_loss_suppresses_historical_target_match(
+    principal, context, context_version, binding, credential, fault
+):
+    from model_hub.services.skills_hub.errors import SkillsHubError
+
+    version = context_version(context)
+    point(context, version)
+    consumer = credential(version)
+    request = session_request()
+    opened = open_context_session(
+        principal=consumer,
+        binding_id=binding["id"],
+        request=request,
+        idempotency_key=uuid4(),
+    )
+    report(
+        principal,
+        binding,
+        receipt_for(
+            version,
+            stage="instructions_delivered",
+            session=opened["session_id"],
+            instance=request["incarnation_id"],
+        ),
+    )
+    assert "matches_target" in summary(principal, context)["states"]
+    if fault == "lost_resolution":
+        HubSkillContextResolution.objects.filter(pk=opened["resolution_id"]).delete()
+    elif fault in {"wrong_resolution", "malformed_resolution", "missing_resolution"}:
+        origin = HubSkillContextOperation.objects.get(
+            operation="open_session", result_resource_id=opened["session_id"]
+        )
+        if fault == "missing_resolution":
+            del origin.response["resolution_id"]
+        else:
+            origin.response["resolution_id"] = (
+                str(uuid4()) if fault == "wrong_resolution" else "not-a-uuid"
+            )
+        origin.save(update_fields=["response"])
+    else:
+        grants = []
+        if fault == "expanded_grant":
+            # JSONB containment accepts a superset. Session authority instead
+            # requires the exact original grant still to be a member.
+            original = HubSkillContextResolution.objects.get(pk=opened["resolution_id"])
+            grants = [
+                {
+                    **original.grant,
+                    "version_ids": [*original.grant["version_ids"], str(uuid4())],
+                }
+            ]
+        HubSkillContextCredential.objects.filter(pk=consumer.credential_id).update(
+            grants=grants
+        )
+    # The same retained session is unusable at the real managed boundary.
+    with pytest.raises(SkillsHubError):
+        check_session_access(
+            principal=consumer,
+            session_id=opened["session_id"],
+            binding_id=binding["id"],
+        )
+    row = summary(principal, context)
+    assert row["loaded"]["version_id"] == str(version.pk)
+    assert_unrecovered(row)
+
+
+def test_expired_resolution_lease_does_not_expire_an_eligible_retained_thread(
+    principal, context, context_version, binding, credential
+):
+    version = context_version(context)
+    point(context, version)
+    consumer = credential(version)
+    request = session_request()
+    opened = open_context_session(
+        principal=consumer,
+        binding_id=binding["id"],
+        request=request,
+        idempotency_key=uuid4(),
+    )
+    report(
+        principal,
+        binding,
+        receipt_for(
+            version,
+            stage="instructions_delivered",
+            session=opened["session_id"],
+            instance=request["incarnation_id"],
+        ),
+    )
+    HubSkillContextResolution.objects.filter(pk=opened["resolution_id"]).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    # Resolution lease expiry requires a new lease, not a new context/thread.
+    check_session_access(
+        principal=consumer, session_id=opened["session_id"], binding_id=binding["id"]
+    )
+    assert "matches_target" in summary(principal, context)["states"]
 
 
 def test_closed_unobserved_thread_does_not_block_other_delivery(

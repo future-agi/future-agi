@@ -49,7 +49,14 @@ def reset(request):
         or request["reconstruction_reviewed"] is not True
     ):
         raise ValueError("clean_thread_requires_reconstruction_review")
-    return {"schema": 1, "thread": str(uuid4()), "case": request["case"]}
+    case = request["case"]
+    if (
+        not isinstance(case, dict)
+        or set(case) != {"case_id", "order_id", "request"}
+        or not all(isinstance(value, str) and value.strip() for value in case.values())
+    ):
+        raise ValueError("invalid_reconstructed_case")
+    return {"schema": 1, "thread": str(uuid4()), "case": dict(case)}
 
 
 def fixture_url(value):

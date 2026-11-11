@@ -10,8 +10,20 @@ from typing import NoReturn
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
-from django.db.models import F, QuerySet
-from django.db.models.functions import Greatest
+from django.db.models import (
+    BooleanField,
+    CharField,
+    Exists,
+    F,
+    Func,
+    OuterRef,
+    Q,
+    QuerySet,
+    Subquery,
+    Value,
+)
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Cast, Concat, Greatest
 from django.utils import timezone
 
 from model_hub.models.skills_hub import HubSkill, HubSkillVersion
@@ -385,12 +397,16 @@ def _session_origin(
         .order_by("created_at")
         .first()
     )
-    if operation is None:
+    try:
+        if operation is None:
+            raise ValueError("missing_origin")
+        UUID(str(operation.response["resolution_id"]))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise SkillsHubError(
             "thread_context_unknown",
             "The original thread mapping is unavailable. Do not re-resolve it.",
             status=409,
-        )
+        ) from exc
     return dict(operation.response)
 
 
@@ -864,6 +880,21 @@ def _fact(row: HubSkillContextReceipt) -> dict:
     }
 
 
+class _ExactJSONMember(Func):
+    """PostgreSQL JSON array membership, not JSONB subset containment."""
+
+    arity = 2
+    output_field = BooleanField()
+
+    def as_sql(self, compiler, connection, **extra_context):
+        member, member_params = compiler.compile(self.source_expressions[0])
+        array, array_params = compiler.compile(self.source_expressions[1])
+        return (
+            f"({member} = ANY(ARRAY(SELECT jsonb_array_elements({array}))))",
+            [*member_params, *array_params],
+        )
+
+
 def _observation(
     binding: HubSkillContextBinding, now: datetime, since: datetime
 ) -> dict:
@@ -952,12 +983,63 @@ def _observation(
     unobserved_sessions = binding.hub_skill_sessions.exclude(
         pk__in=delivered_sessions | closed_sessions
     ).exists()
+    # A historical delivery is not a usable retained thread after authority or
+    # its original mapping is lost. Keep the loaded fact, but suppress a current
+    # target match for these known blockers. This is not an authorization lease:
+    # the application must still check access immediately before each boundary.
+    origins = HubSkillContextOperation.objects.filter(
+        organization_id=binding.organization_id,
+        workspace_id=binding.workspace_id,
+        operation="open_session",
+        result_resource_id=OuterRef("pk"),
+        principal_key=Concat(
+            Value("credential:"), Cast(OuterRef("credential_id"), CharField())
+        ),
+        response__history_mode="fresh",
+    ).order_by("created_at")
+    # Match the earliest original grant, just as _check_session does. A surviving
+    # operation row alone is insufficient after its resolution/grant is lost.
+    # Compare UUIDs as text: malformed retained metadata must yield unknown, not
+    # a PostgreSQL cast error. Lease expiry alone does not invalidate a session.
+    original_grants = HubSkillContextResolution.objects.annotate(
+        resolution_key=Cast("pk", CharField()),
+        grant_present=_ExactJSONMember(F("grant"), F("credential__grants")),
+    ).filter(
+        resolution_key=OuterRef("original_resolution"),
+        credential_id=OuterRef("credential_id"),
+        version_id=OuterRef("version_id"),
+        organization_id=binding.organization_id,
+        workspace_id=binding.workspace_id,
+        grant_present=True,
+    )
+    unusable_sessions = (
+        binding.hub_skill_sessions.exclude(pk__in=closed_sessions)
+        .annotate(
+            original_resolution=Subquery(
+                origins.annotate(
+                    resolution_key=KeyTextTransform("resolution_id", "response")
+                ).values("resolution_key")[:1]
+            )
+        )
+        .annotate(has_original_grant=Exists(original_grants))
+        .filter(
+            Q(expires_at__lte=now)
+            | Q(credential__isnull=True)
+            | Q(credential__expires_at__lte=now)
+            | Q(credential__revoked_at__isnull=False)
+            | ~Q(credential__purpose="consume")
+            | ~Q(digest=F("version__digest"))
+            | Q(has_original_grant=False)
+        )
+        .exists()
+    )
     failed_sequences = {
         row.instance_id: row.sequence for row in active if row.stage == "failed"
     }
     if (
         active_instances - delivered_instances
         or unobserved_sessions
+        or unusable_sessions
         or any(
             failed_sequences.get(row.instance_id, -1) > row.sequence
             for row in delivered
@@ -1013,7 +1095,9 @@ def _observation(
                 else (
                     "observe_runtime"
                     if "unknown" in states
-                    else "check_reporter" if "stale_observation" in states else "none"
+                    else "check_reporter"
+                    if "stale_observation" in states
+                    else "none"
                 )
             )
         )

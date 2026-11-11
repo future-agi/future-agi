@@ -144,7 +144,7 @@ const integrations = {
   J3: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-030', flow: 'j3-accepted-dependency.spec.ts' },
   J4: { status: 'incomplete', module: './drivers/j4.mjs', flow_id: 'SKILLS-E2E-040', flow: 'j4-reviewer-receipt.spec.ts' },
   J5: { status: 'incomplete', module: './drivers/j5.mjs', flow_id: 'SKILLS-E2E-050', flow: 'j5-inventory-gate.spec.ts' },
-  J6: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-060', flow: 'j6-recovery-coverage.spec.ts' },
+  J6: { status: 'incomplete', module: './drivers/j6.mjs', flow_id: 'SKILLS-E2E-060', flow: 'j6-recovery-coverage.spec.ts' },
 };
 export const JOBS = Object.freeze(jobs.map((job) => Object.freeze({ ...job,
   integration: Object.freeze({ ...integrations[job.id], complete_job_qualified: false }),
