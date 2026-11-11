@@ -25,6 +25,7 @@ import {
   useContextRecovery,
   useIssueRecoveryCredential,
   usePreviewRecoveryRelease,
+  useRecoveryClosure,
   useRecoveryReviewers,
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
@@ -246,7 +247,99 @@ Candidates.propTypes = {
   onChoose: PropTypes.func.isRequired,
 };
 
-function RollbackRequest({ contextId, candidate, production, canPromote }) {
+const changeNames = {
+  added: "Added",
+  changed: "Changed",
+  removed: "Removed",
+  unchanged: "Unchanged",
+};
+const changeStatus = { added: "current_only", changed: "current_only", removed: "failed", unchanged: "completed" };
+const shortDigest = (value) => String(value).slice(0, 12);
+
+function ClosureReview({ candidate, production, closure }) {
+  if (closure.isLoading) return <ContentSkeleton />;
+  if (closure.error || !closure.data) {
+    return (
+      <ErrorState
+        title="Closure review unavailable"
+        detail="The complete release could not be read. No rollback can be requested from a partial review."
+        onRetry={closure.refetch}
+      />
+    );
+  }
+  const { rows, changes } = closure.data;
+  const counts = rows.reduce((total, row) => ({ ...total, [row.status]: (total[row.status] ?? 0) + 1 }), {});
+  return (
+    <Section title={`Closure review: v${candidate.number} against production v${production?.number ?? "?"}`}>
+      <Stack spacing={1.5}>
+        <Typography variant="s1" role="status">
+          {rows.length} files in the complete closure: {counts.changed ?? 0} changed, {counts.added ?? 0} added,{" "}
+          {counts.removed ?? 0} removed, {counts.unchanged ?? 0} unchanged. {candidate.children.length} linked skills keep their pinned versions;{" "}
+          {candidate.unavailableChildren.length} source{candidate.unavailableChildren.length === 1 ? "" : "s"} retired.
+        </Typography>
+        <TableContainer sx={{ maxWidth: 1 }}>
+          <Table size="small" aria-label="Recovery closure files">
+            <TableHead>
+              <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+                <TableCell>File</TableCell>
+                <TableCell>Against production</TableCell>
+                <TableCell>Size</TableCell>
+                <TableCell>SHA-256</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={`${row.status}:${row.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
+                  <TableCell sx={{ overflowWrap: "anywhere" }}>{row.path}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={changeStatus[row.status]} label={changeNames[row.status]} />
+                  </TableCell>
+                  <TableCell>{row.sizeBytes} B</TableCell>
+                  <TableCell>{shortDigest(row.sha256)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {changes.map((change) => (
+          <Stack key={change.path} spacing={0.5}>
+            <Typography variant="m3">
+              {changeNames[change.status]}: {change.path}
+            </Typography>
+            <Typography
+              component="pre"
+              variant="s1"
+              aria-label={`${change.path} change from production`}
+              tabIndex={0}
+              sx={{ m: 0, p: 1.5, border: 1, borderColor: "divider", borderRadius: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+            >
+              {change.lines.map((line, index) => (
+                // The sign is text, not color, so the change reads in both themes.
+                <Typography
+                  // eslint-disable-next-line react/no-array-index-key
+                  key={index}
+                  component="span"
+                  variant="s1"
+                  sx={{ display: "block", bgcolor: line.kind === "same" ? "transparent" : "action.selected" }}
+                >
+                  {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}
+                  {line.text}
+                </Typography>
+              ))}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Section>
+  );
+}
+ClosureReview.propTypes = {
+  candidate: PropTypes.object.isRequired,
+  production: PropTypes.object,
+  closure: PropTypes.object.isRequired,
+};
+
+function RollbackRequest({ contextId, candidate, production, canPromote, closureReady }) {
   const reviewers = useRecoveryReviewers();
   const preview = usePreviewRecoveryRelease();
   const submit = useSubmitRecoveryRequest(contextId);
@@ -265,7 +358,7 @@ function RollbackRequest({ contextId, candidate, production, canPromote }) {
           control={
             <Checkbox
               checked={reviewed}
-              disabled={Boolean(packet)}
+              disabled={Boolean(packet) || !closureReady}
               onChange={(_, checked) => setReviewed(checked)}
             />
           }
@@ -345,6 +438,7 @@ RollbackRequest.propTypes = {
   candidate: PropTypes.object.isRequired,
   production: PropTypes.object,
   canPromote: PropTypes.bool,
+  closureReady: PropTypes.bool,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
@@ -459,6 +553,12 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const query = useContextRecovery(contextId);
   const [chosen, setChosen] = useState(null);
   const data = query.data;
+  const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
+  const closure = useRecoveryClosure(
+    contextId,
+    chosenCandidate,
+    data?.candidates.find((row) => row.isProduction),
+  );
   const numbers = useMemo(
     () =>
       Object.fromEntries(
@@ -486,12 +586,16 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         onChoose={setChosen}
       />
       {candidate && (
+        <ClosureReview candidate={candidate} production={production} closure={closure} />
+      )}
+      {candidate && (
         <RollbackRequest
           key={candidate.id}
           contextId={contextId}
           candidate={candidate}
           production={production}
           canPromote={data.canPromote}
+          closureReady={Boolean(closure.data)}
         />
       )}
       {candidate && (

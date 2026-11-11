@@ -2,6 +2,8 @@ import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { useSkillV11Query, useSkillV11Mutation, skillV11Result, idempotencyHeaders } from './testing';
 import { mapContextBinding } from './context-consumers';
+import { readContextText } from './context-production';
+import { lineDiff } from 'src/sections/skills/contexts/closureDiff';
 
 // J6 recovery: one read model over existing contracted endpoints. Eligibility is
 // derived from server facts (labels, quarantine, distribution blocks); the page
@@ -127,5 +129,57 @@ export function useIssueRecoveryCredential(contextId) {
       purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: [label], version_ids: versionIds }],
       binding_ids: [], expires_at: expiresAt,
     }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } })),
+  });
+}
+
+// Complete closure review: every file of the candidate against the release that
+// is in production now. Unchanged files are listed by exact digest; every
+// changed, added or removed file is read in full from its immutable release.
+const REVIEW_CHANGED_LIMIT = 20;
+
+async function readManifest(contextId, number, config) {
+  let first;
+  const files = [];
+  for (let page = 0; page < 400; page += 1) {
+    const value = skillV11Result(await axios.get(paths.inspection(contextId, number), { ...config, params: { file_offset: files.length, file_limit: 25 } }));
+    if (value.distribution_blocked === true) throw new Error('This release is blocked from distribution.');
+    first ??= value;
+    if (value.manifest.version_id !== first.manifest.version_id || value.manifest.digest !== first.manifest.digest || value.manifest.file_offset !== files.length) throw new Error('The manifest changed during review.');
+    files.push(...value.manifest.files);
+    if (value.manifest.next_file_offset === null) break;
+    if (value.manifest.next_file_offset !== files.length || !value.manifest.files.length) throw new Error('The complete manifest is unavailable.');
+  }
+  if (files.length !== first.manifest.file_count) throw new Error('The complete manifest is unavailable.');
+  return { versionId: first.manifest.version_id, digest: first.manifest.digest, files: files.map((file) => ({ path: file.path, sha256: file.sha256, sizeBytes: file.size_bytes })) };
+}
+
+export async function loadClosureReview({ contextId, candidate, production }, config) {
+  const [target, current] = await Promise.all([
+    readManifest(contextId, candidate.number, config),
+    production && production.id !== candidate.id ? readManifest(contextId, production.number, config) : null,
+  ]);
+  const now = new Map((current?.files ?? []).map((file) => [file.path, file]));
+  const rows = target.files.map((file) => {
+    const old = now.get(file.path);
+    return { ...file, status: !old ? 'added' : old.sha256 === file.sha256 ? 'unchanged' : 'changed' };
+  });
+  const kept = new Set(target.files.map((file) => file.path));
+  (current?.files ?? []).filter((file) => !kept.has(file.path)).forEach((file) => rows.push({ ...file, status: 'removed' }));
+  const changed = rows.filter((row) => row.status !== 'unchanged');
+  if (changed.length > REVIEW_CHANGED_LIMIT) throw new Error('Too many changed files for an inline review. Compare these releases in the Versions tab.');
+  const changes = await Promise.all(changed.map(async (row) => {
+    const [after, before] = await Promise.all([
+      row.status === 'removed' ? null : readContextText({ contextId, number: candidate.number, path: row.path, config, expectedDigest: target.digest, expectedSha256: row.sha256 }),
+      row.status === 'added' ? null : readContextText({ contextId, number: production.number, path: row.path, config, expectedDigest: current.digest }),
+    ]);
+    return { path: row.path, status: row.status, lines: lineDiff(before?.text ?? null, after?.text ?? null) };
+  }));
+  return { targetDigest: target.digest, currentDigest: current?.digest ?? null, rows, changes };
+}
+
+export function useRecoveryClosure(contextId, candidate, production) {
+  return useSkillV11Query({
+    parts: ['agent_context', contextId, 'j6-closure', candidate?.id, production?.id],
+    enabled: Boolean(contextId && candidate), load: (config) => loadClosureReview({ contextId, candidate, production }, config),
   });
 }
