@@ -37,6 +37,13 @@ func (adaptiveOutputPolicy) ProcessResponse(context.Context, *models.RequestCont
 
 func adaptiveHTTP(t *testing.T, gateway *httptest.Server, model, authorization string, stream bool, headers ...http.Header) (int, string) {
 	t.Helper()
+	status, body, _ := adaptiveHTTPResponse(t, gateway, model, authorization, stream, headers...)
+	return status, body
+}
+
+// adaptiveHTTPResponse is adaptiveHTTP for tests that also check response headers.
+func adaptiveHTTPResponse(t *testing.T, gateway *httptest.Server, model, authorization string, stream bool, headers ...http.Header) (int, string, http.Header) {
+	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"model": model, "stream": stream,
 		"messages": []map[string]string{{"role": "user", "content": "synthetic probe"}},
@@ -67,7 +74,7 @@ func adaptiveHTTP(t *testing.T, gateway *httptest.Server, model, authorization s
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode, string(data)
+	return resp.StatusCode, string(data), resp.Header
 }
 
 func TestAdaptiveHealthExcludesPipelineOutcomes(t *testing.T) {

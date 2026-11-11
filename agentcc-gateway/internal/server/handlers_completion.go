@@ -323,6 +323,11 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		upstreamStart = time.Now()
 		chunks, errCh = provider.StreamChatCompletion(ctx, rc.Request)
+		// Sample here: after Process, a nil stream can also mean a pre-plugin
+		// short-circuited and the provider was never called.
+		if chunks == nil {
+			h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), models.ErrInternal("no stream from provider"))
+		}
 		return nil
 	}
 
@@ -341,7 +346,6 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	}
 
 	if chunks == nil {
-		h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), models.ErrInternal("no stream from provider"))
 		models.WriteError(w, models.ErrInternal("no stream from provider"))
 		return
 	}

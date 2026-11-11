@@ -13,7 +13,9 @@ import (
 
 // executeProviderFailover keeps operator breakers active only for operator
 // instances. Resolve once so admission and retries use the same actual provider.
-func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig, call func(context.Context, providers.Provider, string) error) (*routing.FailoverResult, error) {
+// call gets the routing ID as well as the instance: an org override instance has
+// its own registry ID, but responses, logs, metrics and prices name the target.
+func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig, call func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error) (*routing.FailoverResult, error) {
 	resolved := make(map[string]providers.Provider)
 	resolve := func(id string) providers.Provider {
 		if p, ok := resolved[id]; ok {
@@ -36,6 +38,6 @@ func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.Reque
 		if p == nil {
 			return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", id))
 		}
-		return call(callCtx, p, model)
+		return call(callCtx, id, p, model)
 	})
 }

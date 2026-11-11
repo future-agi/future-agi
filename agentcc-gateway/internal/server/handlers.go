@@ -1470,9 +1470,9 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, p providers.Provider, modelOverride string) error {
+		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
-			rc.Provider = p.ID()
+			rc.Provider = providerID
 			rc.Response = nil
 			rc.ResolvedModel = ""
 			if modelOverride != "" {
@@ -1654,7 +1654,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, p providers.Provider, modelOverride string) error {
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, _ string, p providers.Provider, modelOverride string) error {
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {

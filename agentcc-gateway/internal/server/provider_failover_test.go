@@ -125,3 +125,72 @@ func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
 		}
 	}
 }
+
+// An org override instance has its own registry ID (<provider>_org_<org>).
+// The response header, request logs, metrics and price lookups must still
+// name the routing target, in streaming and non-streaming alike.
+func TestAdaptiveOrgFailoverReportsRoutingProvider(t *testing.T) {
+	for _, strategy := range []string{"adaptive", "round-robin"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", strategy, stream), func(t *testing.T) {
+				var globalFastCalls, globalSlowCalls, orgCalls atomic.Int64
+				fast := adaptiveUpstream(t, false, time.Millisecond, &globalFastCalls)
+				slow := adaptiveUpstream(t, true, time.Millisecond, &globalSlowCalls)
+				org := adaptiveUpstream(t, false, time.Millisecond, &orgCalls)
+				cfg := config.DefaultConfig()
+				cfg.Providers = map[string]config.ProviderConfig{
+					"fast": {BaseURL: fast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+					"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+				}
+				cfg.Auth.Keys = []config.AuthKeyConfig{
+					{Name: "synthetic-org", Key: "synthetic-org-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}},
+					{Name: "synthetic-global", Key: "synthetic-global-probe", KeyType: "internal"},
+				}
+				cfg.Routing = adaptiveRoutingConfig()
+				cfg.Routing.DefaultStrategy = strategy
+				cfg.Routing.Adaptive.UpdateInterval = time.Hour
+				cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
+				cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
+				cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
+				srv, gateway := adaptiveServer(t, cfg)
+				store := tenant.NewStore()
+				store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+					"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: []string{"different-model"}},
+				}})
+				orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
+					"fast": {BaseURL: org.URL, APIFormat: "openai", Models: []string{"different-model"}},
+				}, false)
+				t.Cleanup(orgCache.EvictAll)
+				srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
+				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+				// One operator sample on fast, so "unchanged" has something to compare.
+				if status, _ := adaptiveHTTP(t, gateway, "fast/adaptive-sample", "synthetic-global-probe", false); status != http.StatusOK {
+					t.Fatalf("operator priming: status=%d", status)
+				}
+				before := srv.handlers.healthMonitor.GetHealth("fast")
+				if globalFastCalls.Load() != 1 || before.RequestCount != 1 || before.ErrorCount != 0 {
+					t.Fatalf("operator priming: calls=%d samples=%d errors=%d", globalFastCalls.Load(), before.RequestCount, before.ErrorCount)
+				}
+				slowBefore := globalSlowCalls.Load()
+				for i := 0; i < 4; i++ {
+					status, body, header := adaptiveHTTPResponse(t, gateway, "adaptive-sample", "synthetic-org-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"fast"}})
+					if status != http.StatusOK || !strings.Contains(body, "synthetic response") {
+						t.Fatalf("org failover response: status=%d missing_content=%t", status, !strings.Contains(body, "synthetic response"))
+					}
+					if got := header.Get("x-agentcc-provider"); got != "fast" {
+						t.Fatalf("org instance reported as x-agentcc-provider=%q, want routing ID %q", got, "fast")
+					}
+				}
+				after := srv.handlers.healthMonitor.GetHealth("fast")
+				if orgCalls.Load() != 4 || globalFastCalls.Load() != 1 || after.RequestCount != before.RequestCount || after.ErrorCount != before.ErrorCount || after.LatencyEWMAMs != before.LatencyEWMAMs || after.CircuitState != before.CircuitState || after.Healthy != before.Healthy {
+					t.Fatalf("org successes changed operator fast: org_calls=%d global_calls=%d samples=%d->%d errors=%d->%d latency=%d->%d circuit=%s->%s", orgCalls.Load(), globalFastCalls.Load(), before.RequestCount, after.RequestCount, before.ErrorCount, after.ErrorCount, before.LatencyEWMAMs, after.LatencyEWMAMs, before.CircuitState, after.CircuitState)
+				}
+				// Operator slow may be tried once; that failure opens its own breaker.
+				slowCalls, slowHealth := globalSlowCalls.Load(), srv.handlers.healthMonitor.GetHealth("slow")
+				if slowCalls > 1 || slowHealth.ErrorCount != slowCalls || (slowCalls == 1 && slowHealth.CircuitState != "open") {
+					t.Fatalf("operator slow breaker: calls=%d (before org requests %d) errors=%d circuit=%s", slowCalls, slowBefore, slowHealth.ErrorCount, slowHealth.CircuitState)
+				}
+			})
+		}
+	}
+}

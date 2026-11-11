@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -178,6 +179,36 @@ func TestAdaptiveLegacyCompletionAttemptHealth(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// adaptiveEmptyShortCircuit stops the pipeline without a response, so the
+// provider is never called.
+type adaptiveEmptyShortCircuit struct{}
+
+func (adaptiveEmptyShortCircuit) Name() string  { return "synthetic-empty-short-circuit" }
+func (adaptiveEmptyShortCircuit) Priority() int { return 50 }
+func (adaptiveEmptyShortCircuit) ProcessRequest(context.Context, *models.RequestContext) pipeline.PluginResult {
+	return pipeline.ResultShortCircuit(nil)
+}
+func (adaptiveEmptyShortCircuit) ProcessResponse(context.Context, *models.RequestContext) pipeline.PluginResult {
+	return pipeline.ResultContinue()
+}
+
+func TestAdaptiveLegacyCompletionStreamShortCircuitNotSampled(t *testing.T) {
+	var calls atomic.Int64
+	upstream := completionHealthUpstream(t, "stream", false, &calls)
+	cfg := config.DefaultConfig()
+	cfg.Providers = map[string]config.ProviderConfig{"fast": completionHealthConfig(upstream.URL, "stream")}
+	cfg.Routing = config.RoutingConfig{DefaultStrategy: "adaptive"}
+	srv, gateway := adaptiveServer(t, cfg, adaptiveEmptyShortCircuit{})
+	// The existing local response for a short-circuit with no response is a 500.
+	if status, _ := completionHealthHTTP(t, gateway, "stream", ""); status != http.StatusInternalServerError {
+		t.Fatalf("status=%d want=%d", status, http.StatusInternalServerError)
+	}
+	health := srv.handlers.healthMonitor.GetHealth("fast")
+	if calls.Load() != 0 || health.RequestCount != 0 || health.ErrorCount != 0 || health.LatencyEWMAMs != 0 {
+		t.Fatalf("provider sampled without being called: calls=%d samples=%d errors=%d latency_ms=%d", calls.Load(), health.RequestCount, health.ErrorCount, health.LatencyEWMAMs)
 	}
 }
 
