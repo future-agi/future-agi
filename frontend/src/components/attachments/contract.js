@@ -110,7 +110,9 @@ export const resolveItemSchema = z
   .object({
     occurrence_id: uuid,
     parent: parentSchema,
-    representation: z.enum(["playable", "channel"]),
+    // F01 also defines peaks/thumbnail; the backend serves only original and
+    // playable, so the UI never requests a derivative that cannot exist.
+    representation: z.enum(["original", "playable", "channel"]),
     channel: z.number().int().min(0).max(31).optional(),
   })
   .strict()
@@ -272,6 +274,56 @@ export const manifestSchema = z
         ctx.addIssue({ code: "custom", message: "Incomplete timeline" });
     }
   });
+
+// Per-span read projection added by tracer view_enrichment to an observation
+// span's `attachments`. Statuses are coarse: `pending` = not yet bound to the
+// span, `partial` = ready but capture incomplete. Never a URL or grant.
+export const spanAttachmentSchema = z
+  .object({
+    reference: referenceSchema,
+    status: z.enum([
+      "pending",
+      "pending_upload",
+      "importing",
+      "validating",
+      "ready",
+      "partial",
+      "failed",
+    ]),
+    capture_complete: z.boolean(),
+    recording_id: uuid.optional(),
+  })
+  .strict();
+export const spanAttachmentsSchema = z.array(spanAttachmentSchema).max(64);
+
+// I04 Voice projection (`data.recording_attachment`). `manifest` exists only
+// when the server proved the recording playable as-is; two recordings on one
+// root are projected as a bare rejected state rather than guessed between.
+export const recordingProjectionSchema = z.union([
+  z.object({ state: z.literal("rejected") }).strict(),
+  z
+    .object({
+      occurrence_id: uuid,
+      parent: parentSchema,
+      state: z.enum([
+        "pending",
+        "pending_upload",
+        "importing",
+        "validating",
+        "waiting",
+        "failed",
+      ]),
+    })
+    .strict(),
+  z
+    .object({
+      occurrence_id: uuid,
+      parent: parentSchema,
+      state: z.literal("ready"),
+      manifest: manifestSchema,
+    })
+    .strict(),
+]);
 
 /** @typedef {import('zod').infer<typeof manifestSchema>} RecordingManifest */
 /** @typedef {import('zod').infer<typeof resolveItemSchema>} ResolveItem */

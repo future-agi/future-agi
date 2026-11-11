@@ -87,10 +87,36 @@ export const grant = {
   // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
   expires_at: "2099-01-01T00:00:00+00:00",
 };
+// I04 as shipped by tracer view_enrichment: no origin, manifest only if ready.
 export const projection = {
   occurrence_id: occurrenceId,
   parent,
   state: "ready",
-  origin: "pipecat",
   manifest: mixedManifest,
 };
+/** A ready per-span attachment status as projected on observation spans. */
+export function spanImage(index, { reference = {}, ...rest } = {}) {
+  const id = String(index + 1).padStart(12, "0");
+  return {
+    reference: {
+      attachment_id: `c0000000-0000-0000-0000-${id}`,
+      occurrence_id: `d0000000-0000-0000-0000-${id}`,
+      direction: "input",
+      modality: "image",
+      mime_type: "image/png",
+      purpose: "model_input",
+      message_index: 0,
+      part_index: index,
+      ...reference,
+    },
+    status: "ready",
+    capture_complete: true,
+    ...rest,
+  };
+}
+export const readyGrant = (occurrence_id) => ({
+  occurrence_id,
+  status: "ready",
+  gateway_path: `/tracer/v1/attachment-media/${occurrence_id}/grant-${occurrence_id.slice(-4)}`,
+  expires_at: "2099-01-01T00:00:00+00:00",
+});

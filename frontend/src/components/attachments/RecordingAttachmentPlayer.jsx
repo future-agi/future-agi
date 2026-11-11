@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Slider, Stack, Typography } from "@mui/material";
 import {
-  manifestSchema,
-  parentSchema,
+  recordingProjectionSchema,
   recordingRequests,
   uuid,
 } from "./contract";
@@ -19,7 +18,6 @@ const trackLabels = {
   mixed: "Mixed recording",
   unknown: "Unassigned track",
 };
-const origins = { pipecat: "Pipecat", livekit: "LiveKit" };
 
 // data.recording_attachment is an authorized read projection, NOT an SDK span
 // attribute. Its presence always takes precedence over the legacy URL renderer.
@@ -28,28 +26,26 @@ export default function RecordingAttachmentPlayer({
   attachment,
   onInstance,
 }) {
+  // I04 shape: {occurrence_id, parent, state} plus manifest only when ready,
+  // or a bare {state: "rejected"}. Anything else is shown as a coarse state.
   const parsed = useMemo(() => {
-    if (
-      attachment?.state !== "ready" ||
-      !uuid.safeParse(projectId).success ||
-      !uuid.safeParse(attachment?.occurrence_id).success ||
-      !parentSchema.safeParse(attachment?.parent).success
-    )
-      return null;
-    const manifest = manifestSchema.safeParse(attachment?.manifest);
-    return manifest.success ? manifest.data : null;
+    if (!uuid.safeParse(projectId).success) return null;
+    const result = recordingProjectionSchema.safeParse(attachment);
+    return result.success ? result.data : null;
   }, [projectId, attachment]);
-  const identity = `${projectId}/${attachment?.occurrence_id}/${attachment?.parent?.trace_id}/${attachment?.parent?.span_id}`;
-  if (!parsed)
-    return <AttachmentStatus status={attachment?.state || "not_found"} />;
-  if (attachment.state !== "ready")
-    return <AttachmentStatus status={attachment.state} />;
+  if (!parsed || parsed.state !== "ready")
+    return (
+      <AttachmentStatus
+        status={parsed?.state || attachment?.state || "not_found"}
+      />
+    );
+  const identity = `${projectId}/${parsed.occurrence_id}/${parsed.parent.trace_id}/${parsed.parent.span_id}`;
   return (
     <ReadyRecording
       key={identity}
       projectId={projectId}
-      attachment={attachment}
-      manifest={parsed}
+      attachment={parsed}
+      manifest={parsed.manifest}
       onInstance={onInstance}
     />
   );
@@ -204,9 +200,6 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
               {manifest.layout === "mixed"
                 ? "Mixed recording"
                 : "Separate recording tracks"}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {origins[attachment.origin] || "Framework recording"}
             </Typography>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={2}>

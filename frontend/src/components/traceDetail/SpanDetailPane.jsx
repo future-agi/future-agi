@@ -41,6 +41,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import SmartPreview from "./SmartPreview";
+import SpanAttachments from "src/components/attachments/SpanAttachments";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
@@ -2088,6 +2089,18 @@ const SpanDetailPane = ({
                 JsonPreviewBlock={JsonPreviewBlock}
                 drawerOpen={drawerOpen}
               />
+              {/* Authorized attachment projection only; absent when the
+                  feature is off, so nothing renders for existing traces. */}
+              {!readOnly && (
+                <SpanAttachments
+                  projectId={projectId}
+                  span={span}
+                  allSpans={allSpans}
+                  isRootSpan={isRootSpan}
+                  traceStartTime={traceStartTime}
+                  onSelectSpan={onSelectSpan}
+                />
+              )}
             </Box>
           </Box>
         )}

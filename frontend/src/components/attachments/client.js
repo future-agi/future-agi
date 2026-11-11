@@ -1,4 +1,5 @@
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import {
   occurrencePageSchema,
   parentSchema,
@@ -38,13 +39,15 @@ export async function resolveAttachments(projectId, items, signal) {
     // Separate narrow exchange: an application session plus a playback grant,
     // never a bearer URL alone. Reauthorize on every renewal; do not cache it.
     const session = await axios.post(
-      "/tracer/v1/attachment-media-sessions",
+      apiPath("/tracer/v1/attachment-media-sessions"),
       undefined,
       config,
     );
     if (session.status !== 204) throw new AttachmentUnavailable();
     const response = await axios.post(
-      `/tracer/v1/projects/${projectId}/attachments/resolve`,
+      apiPath("/tracer/v1/projects/{project_id}/attachments/resolve", {
+        project_id: projectId,
+      }),
       body,
       config,
     );
@@ -76,7 +79,9 @@ export async function listAttachments(projectId, parent, cursor, signal) {
     if (window.location.pathname.startsWith("/shared/"))
       throw new AttachmentUnavailable();
     const response = await axios.get(
-      `/tracer/v1/projects/${projectId}/attachments/occurrences`,
+      apiPath("/tracer/v1/projects/{project_id}/attachments/occurrences", {
+        project_id: projectId,
+      }),
       {
         ...requestConfig(signal),
         params: { ...parent, ...(cursor ? { cursor } : {}), limit: 25 },
