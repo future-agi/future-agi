@@ -20,7 +20,11 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
-from accounts.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
+from accounts.models.blocked_email_domain import (
+    BlockedEmailDomain,
+    BlockedEmailDomainSource,
+    normalize_email_domain,
+)
 from accounts.models.organization import Organization
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
@@ -196,36 +200,58 @@ class WorkEmailRequired(Exception):
         super().__init__(message)
 
 
+SIGNUP_DOMAIN_BLOCKED_MESSAGE = "Sign-ups from this email domain are not allowed."
+
+
+class EmailDomainBlocked(Exception):
+    """Raised when the signup's email domain is in BlockedEmailDomain."""
+
+    def __init__(self, message=SIGNUP_DOMAIN_BLOCKED_MESSAGE):
+        super().__init__(message)
+
+
+def _domain_suffixes(domain):
+    """`a.b.example.com` -> ["a.b.example.com", "b.example.com", "example.com"].
+
+    The bare TLD is left out so no single entry can match a whole namespace.
+    """
+    parts = domain.split(".")
+    return [".".join(parts[i:]) for i in range(len(parts) - 1)]
+
+
 # Throwaway providers we have seen at signup but upstream has not picked up.
 # accounts/disposable_domains.py is regenerated wholesale every Thursday, so an
 # entry added there by hand disappears at the next refresh -- this set is the
-# durable place for them. Drop one once upstream ships it; keeping it is
-# harmless, just noise.
+# durable place for them. sync_disposable_domains loads both into
+# BlockedEmailDomain. Drop one once upstream ships it; keeping it is harmless.
 EXTRA_DISPOSABLE_EMAIL_DOMAINS = frozenset(
     {
         "insight-travel.my.id",
         "uberip.com",
+        "hackermail.com",
+        "hackermail.net",
+        "hackermail.org",
+        "passbox.pw",
+        "spamgourmet.com",
+        "strixsecuritytest.com",
     }
 )
 
 
-def is_disposable_email_domain(domain):
-    """True if the domain, or any parent of it, is a known throwaway provider.
+def is_blocked_email_domain(domain, *, include_disposable=True):
+    """True if this domain, or a parent of it, is in BlockedEmailDomain.
 
-    Walks the suffixes so a single blocklist entry also covers a provider's
-    subdomains -- Mailinator hands out `anything.mailinator.com`, and an exact
-    match on `mailinator.com` would miss every one of them. The bare TLD is
-    never tested, so a stray entry there can't take out a whole namespace.
+    Rows the team added in admin always count. Rows loaded from the
+    disposable-email list count only with ``include_disposable``: a self-hosted
+    install accepts any address, throwaway ones included, and keeps doing so.
     """
-    domain_parts = domain.split(".")
-    for i in range(len(domain_parts) - 1):
-        suffix = ".".join(domain_parts[i:])
-        if (
-            suffix in DISPOSABLE_EMAIL_DOMAINS
-            or suffix in EXTRA_DISPOSABLE_EMAIL_DOMAINS
-        ):
-            return True
-    return False
+    suffixes = _domain_suffixes(normalize_email_domain(domain))
+    if not suffixes:
+        return False
+    rows = BlockedEmailDomain.objects.filter(domain__in=suffixes)
+    if not include_disposable:
+        rows = rows.filter(source=BlockedEmailDomainSource.MANUAL)
+    return rows.exists()
 
 
 def is_work_email(email):
@@ -285,10 +311,7 @@ def is_work_email(email):
     # Extract the domain part from the email
     domain = email.split("@")[-1]
 
-    if domain in free_domains:
-        return False
-
-    return not is_disposable_email_domain(domain)
+    return domain not in free_domains
 
 
 @transaction.atomic
@@ -324,6 +347,11 @@ def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True
     allow_any_email = (
         os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )
+    # A domain the team blocked in admin is refused on every deployment,
+    # ALLOW_ANY_EMAIL or not. The disposable-email list only applies where a
+    # work email is required, as it always has.
+    if is_blocked_email_domain(domain, include_disposable=not allow_any_email):
+        raise EmailDomainBlocked()
     if not allow_any_email and not is_work_email(data.get("email")):
         raise WorkEmailRequired()
 

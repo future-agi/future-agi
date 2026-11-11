@@ -56,6 +56,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "sync_disposable_domains",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:

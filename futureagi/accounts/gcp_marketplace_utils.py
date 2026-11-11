@@ -37,8 +37,9 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.services.gcp_procurement import gcp_procurement
 from accounts.utils import (
+    SIGNUP_DOMAIN_BLOCKED_MESSAGE,
     generate_password,
-    is_disposable_email_domain,
+    is_blocked_email_domain,
     process_post_registration,
 )
 from tfc.constants.levels import Level
@@ -500,8 +501,8 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
     # check below misses case variants and two users differ only in casing.
     email = (email or "").strip().lower()
 
-    if is_disposable_email_domain(email.split("@")[-1]):
-        raise ValueError("Disposable email addresses are not accepted")
+    if is_blocked_email_domain(email.split("@")[-1]):
+        raise ValueError(SIGNUP_DOMAIN_BLOCKED_MESSAGE)
 
     gcp_account = GCPMarketplaceAccount.objects.filter(
         procurement_account_id=session["procurement_account_id"]
