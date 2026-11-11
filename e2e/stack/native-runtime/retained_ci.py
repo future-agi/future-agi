@@ -49,7 +49,12 @@ def main() -> int:
         "passed": all(r["passed"] for r in rows), "configuration_identity": DATASET["pipeline"] + "@" + hashlib.sha256(json.dumps(DATASET, sort_keys=True).encode()).hexdigest()[:12]}
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / f"{args.label}.json").write_text(json.dumps(report))
-    print(json.dumps({"label": args.label, "passed": report["passed"], "url": f"https://ci.native-runtime.internal/runs/{args.label}"}))  # a recorded reference of a synthetic CI run, never fetched
+    # The pipeline prints its own result, as CI does: the run reference, the configuration identity, the decision and
+    # each case, so the person reading its output has everything to record without opening the report file.
+    print(json.dumps({"label": args.label, "passed": report["passed"], "decision": "passed" if report["passed"] else "failed",
+        "configuration_identity": report["configuration_identity"], "version_ids": report["version_ids"],
+        "cases": [{"case": r["case"], "status": r["status"], "passed": r["passed"]} for r in rows],
+        "url": f"https://ci.native-runtime.internal/runs/{args.label}"}))  # a recorded reference of a synthetic CI run, never fetched
     return 0 if report["passed"] else 1
 
 

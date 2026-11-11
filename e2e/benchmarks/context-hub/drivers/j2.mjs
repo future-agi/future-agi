@@ -83,10 +83,6 @@ export async function createDriver({ jobId, runId, registration }) {
       const op = new MeasuredOperator({ ledger, actor: 'incident-responder', step: stage.id, phase: stage.phase, signal });
       const go = (target, url) => op.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'incident-responder', step: stage.id, phase: stage.phase, target }, () => page.goto(url)));
       const edit = (target, effect) => ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-responder', step: stage.id, phase: stage.phase, target }, effect);
-      const choose = async (label, option, target) => {
-        await op.click(page.getByLabel(label, { exact: true }), `open-${target}`);
-        await op.click(page.getByRole('option', { name: option, exact: typeof option === 'string' }), `choose-${target}`);
-      };
       const receipt = (source, hash, decision = null) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: hash, actionSequences: [], ...(decision ? { decision } : {}) });
       const RUN_BUTTON = { name: 'Run on the application', exact: true };
       const CEILING = /I accept up to/;
@@ -127,8 +123,8 @@ export async function createDriver({ jobId, runId, registration }) {
               '-v', `${laneRoot}/e2e/fixtures/skills-r3/support-application:/fi_app:ro`, '--entrypoint', 'python', image, '/opt/ctxhub/measure.py', 'config']);
             state.provisioned = JSON.parse(fresh.stdout.trim().split('\n').at(-1));
           });
-          await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}`);
-          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
+          // The context link opens on its application Tests tab (the tab is part of the link).
+          await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}&tab=tests`);
           // The application's production binding already exists; a deployment without one registers it here.
           if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
           await op.click(page.getByRole('button', { name: 'Review runtime configuration', exact: true }), 'review-runtime-configuration');
@@ -243,10 +239,12 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(page.getByRole('checkbox', { name: /I reviewed the saved candidate/ }), 'review-candidate-against-head');
           await op.click(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ }), 'acknowledge-warnings');
           await op.click(page.getByRole('button', { name: 'Acknowledge reviewed head', exact: true }), 'acknowledge-head');
-          // The acknowledged head is a new exact candidate review; it is confirmed again for publication.
-          await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
-          await op.click(page.getByRole('checkbox', { name: /I reviewed the saved candidate/ }), 'review-acknowledged-candidate');
-          await op.click(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ }), 'acknowledge-warnings-for-publication');
+          // The acknowledged head reloads the review for the same candidate bytes. The reviewer's two acknowledgements
+          // and version note carry across that step (asserted, not assumed); any change would start the review over.
+          await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeEnabled();
+          await expect(page.getByRole('checkbox', { name: /I reviewed the saved candidate/ })).toBeChecked();
+          await expect(page.getByRole('checkbox', { name: /I acknowledge the static warnings/ })).toBeChecked();
+          await expect(page.getByLabel('Version note')).toHaveValue('Cap refunds at the order total');
           const published = page.waitForResponse((res) => res.url().endsWith(`${root}draft/publish/`) && res.request().method() === 'POST');
           published.catch(() => {});
           await op.click(page.getByRole('button', { name: 'Publish version', exact: true }), 'publish-repair');
@@ -263,11 +261,9 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'matched-native-comparison') {
-          // Publishing carries the responder to the repaired release; the Tests tab holds the plan.
-          await expect(page).toHaveURL(new RegExp(`version=${state.repaired.number}`));
-          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          // The application's current production is the baseline for the neighboring cases.
-          await choose('Production version', `v${input.versions.head}`, 'matched-production');
+          // Publishing a repair carries the responder to the repaired release on its Tests tab; the application's
+          // current production (its one live runtime binding) is already the baseline for the neighboring cases.
+          await expect(page).toHaveURL(new RegExp(`version=${state.repaired.number}&tab=tests`));
           await expectPlan({ candidate: state.repaired.number, reference: input.versions.recorded, titles: Object.values(TITLE) });
           await expect(page.getByRole('combobox', { name: /^Production version/ })).toContainText(`v${input.versions.head}`);
           await shot('05a-matched-plan');
@@ -345,9 +341,13 @@ export async function createDriver({ jobId, runId, registration }) {
           // Handing the exact candidate identity and its credential to the separate CI system is a counted handoff.
           const ci = await op.handoff('retained-ci', () => op.command('run-retained-ci', 'docker', ['exec', '-e', `CTXHUB_CONTEXT_CREDENTIAL=${access.secret}`, '-e', 'CTXHUB_REGISTRY_URL=http://app:8000',
             input.runtimeContainer, 'python', '/opt/ctxhub/retained_ci.py', '--binding-id', access.bindingId, '--context-id', input.contextId, '--label', label], { timeoutMs: 280_000 }));
+          // The pipeline prints its decision, configuration identity and per-case results; reading its output is
+          // part of running it. The report file is read independently below, outside the operator ledger.
           const summary = JSON.parse(ci.stdout.trim().split('\n').at(-1));
-          const read = await op.command('read-retained-ci-result', 'docker', ['exec', input.runtimeContainer, 'cat', `/fi_output/ci/${label}.json`]);
-          state.ci = { label, summary, report: JSON.parse(read.stdout) };
+          const report = JSON.parse(execFileSync('docker', ['exec', input.runtimeContainer, 'cat', `/fi_output/ci/${label}.json`], { encoding: 'utf8' }));
+          requireValue(summary.passed === report.passed && summary.configuration_identity === report.configuration_identity && summary.decision === (report.passed ? 'passed' : 'failed')
+            && digest(summary.cases) === digest(report.cases.map((row) => ({ case: row.case, status: row.status, passed: row.passed }))), 'The pipeline output differs from its independent report');
+          state.ci = { label, summary, report };
           requireValue(state.ci.report.passed === true, 'The retained pipeline did not pass');
           receipt('external_pipeline', await record('retained-ci-report', { evidenceClass: 'synthetic fixture', report: state.ci.report }));
           return;

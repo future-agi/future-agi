@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Stack } from '@mui/material';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { useContextDetail } from 'src/api/skills/context-authoring';
+import { useContextBindings } from 'src/api/skills/context-consumers';
 import { useContextVersions, useContextInspection, useContextInspectionFile, useContextConsumers } from 'src/api/skills/context-production';
 import { paths } from 'src/routes/paths';
 import ContextDetailView from './ContextDetailView';
@@ -10,6 +11,7 @@ import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
 import ContextTestsPanel from './ContextTestsPanel';
 import { contextSkillChoices } from './context-skill-choices';
+import { productionBaseline } from './production-baseline';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -41,6 +43,9 @@ function Detail() {
   const reproduce = params.get('reproduce');
   const reference = Number(params.get('reference'));
   const testSeed = reproduce ? { caseId: reproduce, ...(Number.isSafeInteger(reference) && reference > 0 ? { reference } : {}) } : undefined;
+  // The application's production baseline: the production label, else its one live runtime binding.
+  const bindings = useContextBindings(contextId);
+  const productionVersion = productionBaseline(query.data?.context.labels, bindings.data?.results);
   const consumers = useContextConsumers(contextId, { page: consumerPage, windowDays });
   const scopeKey = `${access.identity}:agent_context:${contextId}`;
   const scoped = (result) => ({ ...result, scopeKey });
@@ -56,7 +61,7 @@ function Detail() {
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
       initialTab={params.get('tab') === 'tests' ? 'tests' : undefined} onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
       sections={{
-        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={query.data?.context.labels?.find((label) => label.name === 'production')?.version} seed={testSeed} canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} />,
+        tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={productionVersion} seed={testSeed} canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} />,
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
         use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
