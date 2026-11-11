@@ -291,9 +291,11 @@ async def _cancel_workflow_async(
 async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -> bool:
     """Cancel a workflow with retries on transient errors.
 
-    Transient errors (h2 protocol, timeout, connection reset) should be retried
-    because failing to cancel means workflows keep running and overwrite the
-    CANCELLED status in DB.
+    Transient RPC failures (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED,
+    ABORTED) are retried, because failing to cancel means workflows keep
+    running and overwrite the CANCELLED status in DB. Retry decisions use the
+    Temporal RPC status, never the exception message; any other error returns
+    False at once.
     """
     from temporalio.service import RPCError, RPCStatusCode
 
