@@ -2,8 +2,6 @@ import React from "react";
 import {
   QueryClient,
   QueryClientProvider,
-  focusManager,
-  onlineManager,
   useQueryClient,
 } from "@tanstack/react-query";
 import { Drawer } from "@mui/material";
@@ -31,17 +29,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import DrawerHeader from "src/components/traceDetail/DrawerHeader";
 import EvalLogSourceHost from "../EvalLogSourceHost";
-import LogsDrawer from "../LogsDrawer";
 
 const mocks = vi.hoisted(() => ({
   org: "org-1",
   ws: "ws-1",
   trace: vi.fn(),
   voice: vi.fn(),
-  feedback: vi.fn(),
-  feedbackMutation: vi.fn(),
-  refreshGrid: vi.fn(),
-  closeLog: vi.fn(),
 }));
 vi.mock("src/contexts/OrganizationContext", () => ({
   useOrganization: () => ({ currentOrganizationId: mocks.org }),
@@ -87,26 +80,6 @@ vi.mock("src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2", () => ({
     return <div data-testid="voice-body">Call content</div>;
   },
 }));
-vi.mock("../LogDrawerRight", () => ({
-  default: ({ output, addFeedbackClick }) => (
-    <div>
-      <span data-testid="eval-output">{JSON.stringify(output)}</span>
-      <button onClick={addFeedbackClick}>Add feedback</button>
-    </div>
-  ),
-}));
-vi.mock("src/sections/common/DatapointCard", () => ({
-  default: ({ value }) => <div>{value.cellValue}</div>,
-}));
-vi.mock("../../EvalsFeedback/AddEvalsFeedbackDrawer", () => ({
-  default: (props) => {
-    mocks.feedback(props);
-    return props.open ? (
-      <button onClick={mocks.feedbackMutation}>Submit feedback</button>
-    ) : null;
-  },
-}));
-
 const LOG = "11111111-1111-4111-8111-111111111111";
 const TRACE = "22222222-2222-4222-8222-222222222222";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
@@ -134,16 +107,6 @@ const voiceData = {
   id: "provider-is-not-trace",
   provider_call_id: "different-provider-id",
 };
-const baseLog = {
-  log_id: LOG,
-  evaluation_id: LOG,
-  trace_id: "copy-only-trace",
-  span_id: "copy-only-span",
-  source: "Trace",
-  output: { score: 0.3, reason: "Stored reason" },
-  required_keys: ["prompt"],
-  values: { prompt: "Stored input" },
-};
 const unavailable = "The source is unavailable or you do not have access.";
 let client;
 let nav;
@@ -160,21 +123,11 @@ const enrichmentCalls = () =>
   axios.get.mock.calls.filter(
     ([, config]) => config?.params?.include_source_navigation === "true",
   );
-function mount(logs = false, props = {}) {
+function mount(props = {}) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const content = (nextProps) =>
-    logs ? (
-      <LogsDrawer
-        open
-        selectedRow={{ logId: LOG, order: "desc" }}
-        evalsId="eval-1"
-        onClose={mocks.closeLog}
-        refreshGrid={mocks.refreshGrid}
-        {...nextProps}
-      />
-    ) : (
-      <EvalLogSourceHost logId={LOG} {...nextProps} />
-    );
+  const content = (nextProps) => (
+    <EvalLogSourceHost logId={LOG} {...nextProps} />
+  );
   const view = render(
     <QueryClientProvider client={client}>{content(props)}</QueryClientProvider>,
   );
@@ -210,11 +163,9 @@ describe("eval-owned source host", () => {
     openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     pushSpy = vi.spyOn(window.history, "pushState");
     replaceSpy = vi.spyOn(window.history, "replaceState");
-    axios.get.mockImplementation(async (url, config) => {
-      if (url === endpoints.develop.eval.getEvalLogs)
-        return config.params.include_source_navigation
-          ? enriched(nav)
-          : envelope(baseLog);
+    axios.get.mockImplementation(async (url) => {
+      // The host only ever asks for the opt-in enrichment.
+      if (url === endpoints.develop.eval.getEvalLogs) return enriched(nav);
       if (destination instanceof Error || destination?.statusCode)
         throw destination;
       return envelope(destination);
@@ -224,8 +175,6 @@ describe("eval-owned source host", () => {
     cleanup();
     client?.clear();
     vi.restoreAllMocks();
-    focusManager.setFocused(undefined);
-    onlineManager.setOnline(true);
   });
 
   it("S01 revalidates before opening and pins the fresh trace/project/span instead of chips", async () => {
@@ -446,28 +395,21 @@ describe("eval-owned source host", () => {
     async (kind) => {
       nav = { ...ready, kind };
       destination = kind === "trace" ? traceData : voiceData;
-      mount(true);
+      const onSourceOpenChange = vi.fn();
+      mount({ onSourceOpenChange });
       const trigger = await activate(kind);
       await screen.findByTestId(kind === "trace" ? "trace-body" : "voice-body");
       expect(screen.getByRole("dialog")).toContainElement(
         document.activeElement,
       );
-      expect(
-        screen.queryByRole("button", { name: "Add feedback" }),
-      ).not.toBeInTheDocument();
+      expect(onSourceOpenChange).toHaveBeenLastCalledWith(true);
       await user.keyboard("{Escape}");
       await waitFor(() =>
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
       expect(trigger).toHaveFocus();
-      expect(mocks.closeLog).not.toHaveBeenCalled();
-      expect(mocks.refreshGrid).not.toHaveBeenCalled();
+      expect(onSourceOpenChange).toHaveBeenLastCalledWith(false);
       expect(enrichmentCalls()).toHaveLength(2);
-      expect(screen.getByTestId("eval-output")).toHaveTextContent(
-        JSON.stringify(baseLog.output),
-      );
-      await user.keyboard("{Escape}");
-      expect(mocks.closeLog).toHaveBeenCalledOnce();
     },
   );
 
@@ -525,39 +467,6 @@ describe("eval-owned source host", () => {
       expect(window.location.href).toBe(location);
     },
   );
-
-  it("S09 preserves base output, input and feedback props throughout source retry/open/close", async () => {
-    nav = { ...ready, kind: "voice_call" };
-    destination = { statusCode: 503 };
-    mount(true);
-    await screen.findByRole("button", { name: "View call" });
-    const feedbackProps = mocks.feedback.mock.lastCall[0];
-    await activate("voice_call");
-    destination = voiceData;
-    await user.click(await screen.findByRole("button", { name: "Retry" }));
-    await screen.findByTestId("voice-body");
-    await user.click(
-      screen.getByRole("button", { name: "Back to evaluation" }),
-    );
-    expect(screen.getByTestId("eval-output")).toHaveTextContent(
-      JSON.stringify(baseLog.output),
-    );
-    expect(screen.getByText("Stored input")).toBeInTheDocument();
-    expect(mocks.feedback.mock.lastCall[0]).toEqual(feedbackProps);
-    expect(feedbackProps.selectedAddFeedback).toEqual({
-      id: LOG,
-      ...baseLog.output,
-    });
-    expect(mocks.feedbackMutation).not.toHaveBeenCalled();
-    expect(mocks.refreshGrid).not.toHaveBeenCalled();
-    expect(
-      axios.get.mock.calls.filter(
-        ([, config]) => config?.params?.source === "logs",
-      ),
-    ).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Add feedback" }));
-    expect(mocks.feedback.mock.lastCall[0].open).toBe(true);
-  });
 
   it.each(["trace", "voice_call"])(
     "S10 keeps host Close focusable at 360px for %s",
@@ -685,18 +594,14 @@ describe("eval-owned source host", () => {
     },
   );
 
-  it("S09 keeps the evaluation when only the enrichment request is denied", async () => {
-    axios.get.mockImplementation(async (_url, config) => {
-      if (config?.params?.include_source_navigation) throw { statusCode: 403 };
-      return envelope(baseLog);
+  it("S09 shows a denied enrichment request as unavailable, with no link", async () => {
+    axios.get.mockImplementation(async () => {
+      throw { statusCode: 403 };
     });
-    mount(true);
+    mount();
     await screen.findByText(unavailable);
-    expect(screen.getByTestId("eval-output")).toBeInTheDocument();
-    expect(screen.getByText("Stored input")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Evaluation log is unavailable."),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(destinationCalls()).toHaveLength(0);
   });
 
@@ -717,124 +622,5 @@ describe("eval-owned source host", () => {
     await act(async () => resolve(enriched(ready)));
     expect(destinationCalls()).toHaveLength(0);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("S09 waits for the base log and does not enrich CE empty results or closed rows", async () => {
-    const view = mount(true, { open: false });
-    expect(axios.get).not.toHaveBeenCalled();
-    axios.get.mockResolvedValue(envelope([]));
-    view.rerender({ open: true });
-    await waitFor(() => expect(axios.get).toHaveBeenCalledOnce());
-    expect(enrichmentCalls()).toHaveLength(0);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("S07 partitions base evaluation content and cancels its old request on scope change", async () => {
-    let resolve;
-    axios.get.mockImplementationOnce(
-      () =>
-        new Promise((r) => {
-          resolve = r;
-        }),
-    );
-    const view = mount(true);
-    const signal = axios.get.mock.calls[0][1].signal;
-    mocks.ws = "ws-2";
-    axios.get.mockResolvedValue(envelope([]));
-    view.rerender();
-    expect(signal.aborted).toBe(true);
-    await act(async () => resolve(envelope(baseLog)));
-    expect(screen.queryByTestId("eval-output")).not.toBeInTheDocument();
-    expect(enrichmentCalls()).toHaveLength(0);
-    expect(
-      client.getQueryCache().find({
-        queryKey: ["evalslogsData", "org-1", "ws-2", LOG],
-        exact: true,
-      }),
-    ).toBeDefined();
-  });
-
-  const baseCalls = () =>
-    axios.get.mock.calls.filter(
-      ([url, config]) =>
-        url === endpoints.develop.eval.getEvalLogs &&
-        !config?.params?.include_source_navigation,
-    );
-  // Later base-log reads wait for the test, so the in-flight state renders.
-  // An instant mock settles inside one batched notify and hides the loader.
-  function holdBaseRefetches() {
-    const pending = [];
-    const passThrough = axios.get.getMockImplementation();
-    axios.get.mockImplementation((url, config) =>
-      url === endpoints.develop.eval.getEvalLogs &&
-      !config?.params?.include_source_navigation
-        ? new Promise((resolve) => pending.push(resolve))
-        : passThrough(url, config),
-    );
-    return pending;
-  }
-  const tabRefocus = () => {
-    focusManager.setFocused(false);
-    focusManager.setFocused(true);
-  };
-  const reconnect = () => {
-    onlineManager.setOnline(false);
-    onlineManager.setOnline(true);
-  };
-  async function openSource(kind) {
-    if (kind === "voice_call") {
-      nav = { ...ready, kind: "voice_call" };
-      destination = voiceData;
-    }
-    mount(true);
-    await activate(kind);
-    return screen.findByTestId(kind === "trace" ? "trace-body" : "voice-body");
-  }
-
-  it.each([
-    { kind: "trace", via: "tab refocus", trigger: tabRefocus },
-    { kind: "trace", via: "reconnect", trigger: reconnect },
-    { kind: "voice_call", via: "tab refocus", trigger: tabRefocus },
-    { kind: "voice_call", via: "reconnect", trigger: reconnect },
-  ])(
-    "R2C-02 keeps an open $kind viewer while a $via refetch revalidates the log",
-    async ({ kind, trigger }) => {
-      const body = await openSource(kind);
-      const dialog = screen.getByRole("dialog");
-      const destinations = destinationCalls().length;
-      expect(baseCalls()).toHaveLength(1);
-      const pending = holdBaseRefetches();
-
-      await act(async () => trigger());
-      // The log is still revalidated (a revoked log must stop showing)...
-      await waitFor(() => expect(baseCalls()).toHaveLength(2));
-      // ...but the log, the source host and its viewer stay mounted meanwhile.
-      expect(body.isConnected).toBe(true);
-      expect(dialog.isConnected).toBe(true);
-      expect(screen.getByTestId("eval-output")).toBeInTheDocument();
-
-      await act(async () => pending[0](envelope(baseLog)));
-      expect(body.isConnected).toBe(true);
-      expect(dialog.isConnected).toBe(true);
-      expect(
-        screen.getByRole("button", { name: "Back to evaluation" }),
-      ).toBeInTheDocument();
-      expect(destinationCalls()).toHaveLength(destinations);
-      expect(screen.queryByText("Checking source...")).not.toBeInTheDocument();
-    },
-  );
-
-  it("R2C-02 still drops the log and its viewer when a background refetch returns no log", async () => {
-    const body = await openSource("trace");
-    const pending = holdBaseRefetches();
-    await act(async () => tabRefocus());
-    await waitFor(() => expect(baseCalls()).toHaveLength(2));
-    expect(body.isConnected).toBe(true);
-
-    await act(async () => pending[0](envelope([])));
-    await screen.findByText("Evaluation log is unavailable.");
-    expect(body.isConnected).toBe(false);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("eval-output")).not.toBeInTheDocument();
   });
 });

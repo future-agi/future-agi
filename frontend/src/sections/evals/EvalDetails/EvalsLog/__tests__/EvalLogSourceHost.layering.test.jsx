@@ -1,7 +1,8 @@
 // Panels the reused viewers open (Annotate, Add to dataset) must paint above
 // the eval-owned source host, as they do above the trace drawer in Observe.
-// The real LogsDrawer, host, drawer stack and AddDataset run here; only the
-// trace and call viewers are reduced to the layering code they use.
+// The real host, drawer stack and AddDataset run here, mounted in a plain page
+// box as in the Usage tab's log panel; only the trace and call viewers are
+// reduced to the layering code they use.
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { Drawer, Portal } from "@mui/material";
@@ -21,7 +22,7 @@ import { render } from "src/utils/test-utils";
 import axios, { endpoints } from "src/utils/axios";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
-import LogsDrawer from "../LogsDrawer";
+import EvalLogSourceHost from "../EvalLogSourceHost";
 
 vi.mock("src/contexts/OrganizationContext", () => ({
   useOrganization: () => ({ currentOrganizationId: "org-1" }),
@@ -39,16 +40,6 @@ vi.mock("src/utils/Mixpanel", () => ({
   PropertyName: {},
   trackEvent: vi.fn(),
 }));
-vi.mock("../LogDrawerRight", () => ({
-  default: () => <span data-testid="eval-output" />,
-}));
-vi.mock("src/sections/common/DatapointCard", () => ({
-  default: ({ value }) => <div>{value.cellValue}</div>,
-}));
-vi.mock("../../EvalsFeedback/AddEvalsFeedbackDrawer", () => ({
-  default: () => null,
-}));
-
 // Mirrors TraceDetailDrawerV2's layering: an in-place persistent drawer on the
 // drawer stack, the Annotate temporary drawer kept off the stack (overlay),
 // and the real AddDataset, which joins the stack.
@@ -141,16 +132,6 @@ const TRACE = "22222222-2222-4222-8222-222222222222";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
 const SPAN = "abcdef0123456789";
 const envelope = (result) => ({ data: { result } });
-const baseLog = {
-  log_id: LOG,
-  evaluation_id: LOG,
-  trace_id: TRACE,
-  span_id: SPAN,
-  source: "Tracer",
-  output: { score: 0.3 },
-  required_keys: ["prompt"],
-  values: { prompt: "Stored input" },
-};
 let sourceKind = "trace";
 const traceData = {
   trace: { id: TRACE, project: PROJECT },
@@ -198,20 +179,19 @@ describe("eval-log source host layering", () => {
   let client;
   beforeEach(() => {
     user = userEvent.setup();
-    axios.get.mockImplementation(async (url, config) => {
+    axios.get.mockImplementation(async (url) => {
+      // The host only ever asks for the opt-in enrichment.
       if (url === endpoints.develop.eval.getEvalLogs) {
-        return config.params.include_source_navigation
-          ? envelope({
-              source_navigation: {
-                status: "ready",
-                kind: sourceKind,
-                project_id: PROJECT,
-                trace_id: TRACE,
-                span_id: SPAN,
-                retryable: false,
-              },
-            })
-          : envelope(baseLog);
+        return envelope({
+          source_navigation: {
+            status: "ready",
+            kind: sourceKind,
+            project_id: PROJECT,
+            trace_id: TRACE,
+            span_id: SPAN,
+            retryable: false,
+          },
+        });
       }
       if (url === endpoints.project.getTrace(TRACE)) return envelope(traceData);
       if (url === endpoints.project.getVoiceCallDetail)
@@ -230,13 +210,9 @@ describe("eval-log source host layering", () => {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <LogsDrawer
-          open
-          selectedRow={{ logId: LOG, order: "desc" }}
-          evalsId="eval-1"
-          onClose={vi.fn()}
-          refreshGrid={vi.fn()}
-        />
+        <div data-testid="usage-log-panel">
+          <EvalLogSourceHost logId={LOG} />
+        </div>
       </QueryClientProvider>,
     );
     await user.click(

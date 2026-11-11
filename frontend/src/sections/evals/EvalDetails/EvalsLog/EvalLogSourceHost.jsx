@@ -358,7 +358,7 @@ function SourceDialog({ pinned, onClose, revalidate, onState }) {
   );
 }
 
-function ScopedSourceHost({ logId, onLogUnavailable }) {
+function ScopedSourceHost({ logId, onSourceOpenChange }) {
   const query = useEvalLogSourceNavigation(logId);
   const [pinned, setPinned] = useState(null);
   const [rowResult, setRowResult] = useState(null);
@@ -379,13 +379,14 @@ function ScopedSourceHost({ logId, onLogUnavailable }) {
     };
   }, []);
   useEffect(() => {
-    // 401 is the session-expiry path. A 403/404 on the enrichment request is a
-    // source outcome, not proof the evaluation log is gone: the view never
-    // returns those codes for a source failure, and a source failure must not
-    // discard an evaluation the base query already loaded (PRD preserve-the-
-    // evaluation rule). The row renders the source-unavailable state itself.
-    if (query.isError && errorStatus(query.error) === 401) onLogUnavailable?.();
-  }, [query.isError, query.error, onLogUnavailable]);
+    // Tells the page that owns the log while the source covers it, so its own
+    // shortcuts (next/previous log, Escape) leave the open trace or call alone.
+    // Unmounting with the source open (another log, another scope) reports it
+    // closed.
+    if (!pinned) return undefined;
+    onSourceOpenChange?.(true);
+    return () => onSourceOpenChange?.(false);
+  }, [pinned, onSourceOpenChange]);
   useEffect(() => {
     if (!pinned && restoreFocus.current) {
       restoreFocus.current = false;
@@ -489,6 +490,6 @@ SourceDialog.propTypes = {
 };
 ScopedSourceHost.propTypes = {
   logId: PropTypes.string.isRequired,
-  onLogUnavailable: PropTypes.func,
+  onSourceOpenChange: PropTypes.func,
 };
 EvalLogSourceHost.propTypes = ScopedSourceHost.propTypes;

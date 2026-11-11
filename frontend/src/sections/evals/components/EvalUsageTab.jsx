@@ -23,6 +23,7 @@ import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSourceHost";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
@@ -69,6 +70,8 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  // True while the opened log's trace or call covers the page.
+  const [sourceOpen, setSourceOpen] = useState(false);
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
   const columnConfigureRef = useRef(null);
 
@@ -302,6 +305,8 @@ const EvalUsageTab = ({
     const handler = (e) => {
       if (e.repeat) return;
       if (isEditableElement(e)) return;
+      // The open trace or call owns the keyboard; its own Escape closes it.
+      if (sourceOpen) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -314,7 +319,7 @@ const EvalUsageTab = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length]);
+  }, [detailIndex, filteredLogs.length, sourceOpen]);
 
   return (
     <Box
@@ -715,7 +720,11 @@ const EvalUsageTab = ({
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
+              <IconButton
+                size="small"
+                aria-label="Close log"
+                onClick={() => setDetailIndex(null)}
+              >
                 <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
@@ -728,6 +737,7 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
+              onSourceOpenChange={setSourceOpen}
             />
           )}
         </Box>
@@ -745,6 +755,10 @@ const EvalUsageTab = ({
   );
 };
 
+// Observe evaluations store source "tracer"; only those can lead back to a
+// trace or call, and the server decides whether this one does.
+const isObserveLog = (row) => !row.composite && row.source === "tracer";
+
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -752,6 +766,7 @@ const DetailPanelContent = ({
   templateId,
   evalType = "llm",
   onFeedbackSubmitted,
+  onSourceOpenChange,
 }) => {
   const { role } = useAuthContext();
   const canEditEvals = Boolean(
@@ -804,6 +819,24 @@ const DetailPanelContent = ({
           </ButtonBase>
         ))}
       </Box>
+
+      {/* View trace / View call for an Observe evaluation, in both views */}
+      {isObserveLog(row) && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <EvalLogSourceHost
+            logId={row.id}
+            onSourceOpenChange={onSourceOpenChange}
+          />
+        </Box>
+      )}
 
       {/* Scrollable content area */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -1177,6 +1210,7 @@ DetailPanelContent.propTypes = {
   templateId: PropTypes.string.isRequired,
   evalType: PropTypes.string,
   onFeedbackSubmitted: PropTypes.func,
+  onSourceOpenChange: PropTypes.func,
 };
 
 // ── Composite children section in detail panel ──

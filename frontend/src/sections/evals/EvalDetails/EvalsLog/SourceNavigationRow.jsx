@@ -44,7 +44,7 @@ const SourceNavigationRow = forwardRef(function SourceNavigationRow(
       sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 1 }}
     >
       {state === "loading" && <CircularProgress size={14} aria-hidden="true" />}
-      <Typography variant="body2" color="text.secondary">
+      <Typography variant="s1" color="text.secondary">
         {ready ? "Source:" : COPY[state] || COPY.invalid_reference}
       </Typography>
       {(ready || retryable) && (
