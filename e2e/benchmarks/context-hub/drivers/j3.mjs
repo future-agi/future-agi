@@ -25,7 +25,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const observations = { accepted: [], saved: [], jobs: [], releases: [], initial: [], runtime: [] };
   const contexts = new Map();
   const pool = new pg.Pool({ connectionString: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi', max: 2 });
-  let browser, providerId;
+  let browser, providerId, credentialsExported = false;
   const ownedRuntimes = [];
   const namespace = `e2e-skills-${randomUUID()}`;
   const fakeRoot = 'http://localhost:28082';
@@ -88,23 +88,38 @@ export async function createDriver({ jobId, runId, registration }) {
         const editor = page.getByRole('textbox', { name: /Editor content/ });
         await editor.focus(); await editor.press('Control+a'); await page.evaluate(text => navigator.clipboard.writeText(text), content); await editor.press('Control+v');
       });
-      const publishParent = async (parent, index, expected, decision = null) => {
-        // A person sees the editor settle before opening the review; the guard reads
-        // rendered state, so do not race the last acknowledged mutation.
-        await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible();
-        await click('Review changes', `parent-${index}-open-review`);
-        const reviewed = page.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
-        await expect(reviewed).toBeVisible({ timeout: 60_000 });
-        await operator.review(`parent-${index}-content-review`, ['standing-root', ...input.leaves.map((_, n) => `linked-skill-${n}`), 'compiled-descriptor'], [], () => reviewed.check(), decision);
-        const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
-        if (await warning.count()) await operator.click(warning, `parent-${index}-warnings`);
-        await snapshot(`parent-${index}-publication-review`, page);
-        await click('Acknowledge reviewed head', `parent-${index}-acknowledge-head`);
-        await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
-        await operator.review(`parent-${index}-confirmed-head`, ['standing-root', 'accepted-lock', 'publication-head'], [], () => reviewed.check(), decision);
-        if (await warning.count()) await operator.click(warning, `parent-${index}-confirmed-warnings`);
-        await click('Publish version', `parent-${index}-publish`);
-        await expect.poll(async () => (await read(`contexts/${parent.id}/`, signal)).context.latest_version, { timeout: 60_000 }).toBe(expected);
+      // One-command public SDK equivalents for work that is the same across a set of contexts. Each command
+      // keeps every context's own review identity; the operator's decisions stay explicit flags and reviews.
+      const authorEnv = () => ({ ...process.env, FI_API_KEY: input.authorSdk.apiKey, FI_SECRET_KEY: input.authorSdk.secretKey,
+        FI_BASE_URL: input.apiUrl, FI_ORGANIZATION_ID: input.authorSdk.organizationId, FI_WORKSPACE_ID: input.authorSdk.workspaceId });
+      const cli = async (target, module, args) => {
+        if (!credentialsExported) {
+          credentialsExported = true;
+          // The person exports their own API credentials once before any SDK command; it is work, so it is counted.
+          await operator.configurationEdit('export-author-api-credentials', async () => {});
+        }
+        const result = await operator.command(target, process.env.J3_PYTHON, ['-m', module, ...args], { cwd: process.cwd(), env: authorEnv(), timeoutMs: 280_000 });
+        return JSON.parse(result.stdout);
+      };
+      const planPath = (name) => resolve(inputPath, '..', `${runId}-${name}.json`);
+      const parentItems = (index) => [`parent-${index}-standing-root`, ...input.leaves.map((_, n) => `parent-${index}-linked-skill-${n}`),
+        `parent-${index}-compiled-descriptor`, `parent-${index}-accepted-lock`, `parent-${index}-publication-head`];
+      // One reviewed decision over the printed comparison of every listed draft; each is acknowledged and published separately.
+      const publishSet = async (tag, list, expected, decision = null) => {
+        const file = planPath(`${tag}-publish-plan`);
+        const plan = await cli(`${tag}-plan-publish`, 'fi.context.release', ['plan-publish', ...list.map((parent) => parent.id), '--out', file]);
+        const drafts = await Promise.all(list.map((parent) => read(`contexts/${parent.id}/draft/`, signal)));
+        const warned = plan.contexts.map((row, position) => (row.warnings > 0 ? list[position] : null)).filter(Boolean);
+        const items = list.flatMap((parent) => [...parentItems(input.parents.indexOf(parent)), ...(warned.includes(parent) ? [`parent-${input.parents.indexOf(parent)}-static-warnings`] : [])]);
+        const exceptions = [...(tag === 'cold' ? ['parent-2-linked-skill-0'] : []), ...warned.map((parent) => `parent-${input.parents.indexOf(parent)}-static-warnings`)];
+        await operator.review(`${tag}-publish-set-review`, items, exceptions, async () => {
+          requireValue(plan.contexts.length === list.length && plan.contexts.every((row, position) => row.context_id === list[position].id && row.errors === 0
+            && row.candidate_digest === drafts[position].digest && row.revision === drafts[position].revision
+            && row.accepted_lock.length === input.leaves.length && row.changed_from_origin.length > 0), 'The printed plan does not describe the saved drafts');
+        }, decision);
+        await cli(`${tag}-publish-set`, 'fi.context.release', ['publish-set', '--plan', file, '--reviewed-plan', plan.plan_digest, '--reviewed-changes',
+          ...(warned.length ? ['--acknowledge-warnings'] : []), '--note', 'Reviewed set publication']);
+        for (const parent of list) await expect.poll(async () => (await read(`contexts/${parent.id}/`, signal)).context.latest_version, { timeout: 60_000 }).toBe(expected);
       };
       try {
         if (stage.id === 'configure-three-contexts') {
@@ -134,8 +149,8 @@ export async function createDriver({ jobId, runId, registration }) {
             await click('Accept these exact resolved versions and selector policies.', `cold-parent-${index}-accept`, 'checkbox');
             await click('Apply selected updates to draft', `cold-parent-${index}-apply`);
             await expect.poll(async () => compiled(await read(`contexts/${parent.id}/draft/`, signal))).toBe(7);
-            await publishParent(parent, index, 1);
           }
+          await publishSet('cold', input.parents, 1);
           await writeFile(inputPath, JSON.stringify(input), { mode: 0o600 });
           await receipt(stage, ledger, input.parents); return;
         }
@@ -272,73 +287,50 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'test-complete-contexts') {
           providerId = (await command('configure-synthetic-provider', operationsArgs('provider', namespace))).id;
+          const prompt = `${runId}: explain a purchasing request`;
+          // Synthetic provider transport only: the model asks for the shared policy skill by name, so one rule serves every context.
+          await fake(`/scenarios/${namespace}`, 'DELETE');
+          await fake('/scenarios', 'POST', { namespace, rules: [
+            { match: { request: prompt, turn: 0 }, response: { message: { role: 'assistant', content: null, tool_calls: [{ id: 'synthetic-turn-0', type: 'function', function: { name: 'load_skill', arguments: { skill_id: { $skill_named: child.name } } } }] }, finish_reason: 'tool_calls' } },
+            { match: { request: prompt, turn: 1 }, response: { message: { role: 'assistant', content: 'approved-response' }, finish_reason: 'stop' } },
+          ], github: [] });
+          // The request and expected answer are typed once; the set is previewed in one command against each saved draft.
+          const file = planPath('test-plan');
+          const plan = await cli('plan-whole-context-tests', 'fi.context.testing', ['plan-set', ...followers.map(parent => parent.id), '--request', prompt,
+            '--expect', 'approved-response', '--reviewed-case', '--reference', '1', '--limit', '2', '--out', file]);
+          requireValue(plan.contexts.length === followers.length && plan.contexts.every(row => row.flagged.length > 0), 'Fixture produced no flagged files to classify');
+          // Fixture names contain 'benchmark': every flagged file of every context is shown as an exception and classified with one reviewed reason.
+          const flagged = plan.contexts.flatMap((row, index) => row.flagged.map((_, file) => `parent-${index}-outbound-file-${file}`));
+          const reason = 'Synthetic purchase-policy reference. The benchmark name is not an answer key; no expected-answer text is bundled.';
+          await operator.review('whole-context-plan-review', ['request', 'expected-answer', ...followers.flatMap((_, index) => [`parent-${index}-candidate`, `parent-${index}-outbound-inventory`]), ...flagged], flagged, async () => {
+            requireValue(plan.contexts.every((row, index) => row.context_id === followers[index].id && row.files > 0), 'The printed plan does not describe the followers');
+          });
+          const outcome = await cli('run-whole-context-tests', 'fi.context.testing', ['run-set', '--plan', file, '--reviewed-plan', plan.plan_digest, '--reviewed-inventory',
+            '--no-known-answer-keys', '--classify-flagged', 'reference_material', '--reason', reason, '--acknowledge-provider-processing', '--wait-seconds', '240']);
+          const ledgerRows = (await fake(`/scenarios/${namespace}`)).ledger;
+          requireValue(outcome.runs.length === followers.length, 'Context jobs were not admitted');
           for (const [index, parent] of followers.entries()) {
-            const prompt = `${runId}: explain a purchasing request`;
-            await navigate(`/dashboard/skills/contexts/${parent.id}?tab=tests&draft=1`, `parent-${index}-whole-context-tests`);
-            // The panel keeps the last-used request, model, ceiling and reference visible. A person
-            // edits only what differs from what they see; nothing is pre-attested.
-            const settle = async (name, value, target) => { if (await page.getByRole('textbox', { name, exact: true }).inputValue() !== value) await fill(name, value, target); };
-            await settle('Test request', prompt, `parent-${index}-test-request`);
-            await settle('Expected answer contains', 'approved-response', `parent-${index}-expected-answer`);
-            await operator.review(`parent-${index}-case-review`, ['request', 'expected-answer'], [], () => page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check());
-            const modelField = page.getByRole('combobox', { name: /^Task model/ });
-            if (!(await modelField.innerText()).includes('gpt-4o-mini')) { await operator.click(modelField, `parent-${index}-model`); await click('gpt-4o-mini', `parent-${index}-model-choice`, 'option'); }
-            await settle('Maximum estimated cost (USD)', '2', `parent-${index}-budget`);
-            await settle('Historical reference version (optional)', '1', `parent-${index}-reference`);
-            const previewing = watch(res => res.url().endsWith('/test-runs/preview/') && res.request().method() === 'POST');
-            await click('Preview whole-context test', `parent-${index}-test-preview`);
-            const preview = (await (await previewing).json()).result;
-            const handle = `s-${createHash('sha256').update(JSON.stringify([preview.fingerprint, child.id])).digest('hex').slice(0, 16)}`;
-            await fake(`/scenarios/${namespace}`, 'DELETE');
-            await fake('/scenarios', 'POST', { namespace, rules: [
-              { match: { request: prompt, turn: 0 }, response: { message: { role: 'assistant', content: null, tool_calls: [{ id: 'synthetic-turn-0', type: 'function', function: { name: 'load_skill', arguments: { skill_id: handle } } }] }, finish_reason: 'tool_calls' } },
-              { match: { request: prompt, turn: 1 }, response: { message: { role: 'assistant', content: 'approved-response' }, finish_reason: 'stop' } },
-            ], github: [] });
-            // Fixture names contain 'benchmark': keep detector findings and
-            // classify every flagged file. One reviewed reason is applied to the
-            // listed files in a single action; each file keeps its own record.
-            const flaggedCount = await page.getByRole('combobox', { name: /^Classify (?!all )/ }).count();
-            requireValue(flaggedCount > 0, 'Fixture produced no flagged files to classify');
-            const flaggedItems = Array.from({ length: flaggedCount }, (_, file) => `outbound-file-${file}`);
-            const reason = 'Synthetic purchase-policy reference. The benchmark name is not an answer key; no expected-answer text is bundled.';
-            await operator.review(`parent-${index}-flagged-files`, flaggedItems, flaggedItems, () => expect(page.getByRole('combobox', { name: new RegExp(`^Classify all ${flaggedCount} flagged files`) })).toBeVisible());
-            await click(`Classify all ${flaggedCount} flagged files`, `parent-${index}-classify-all`, 'combobox');
-            await click('Reference material', `parent-${index}-classify-all-reference`, 'option');
-            await fill(`Reason for all ${flaggedCount} flagged files`, reason, `parent-${index}-classify-all-reason`);
-            await click(`Apply to all ${flaggedCount} flagged files`, `parent-${index}-classify-all-apply`);
-            for (let file = 0; file < flaggedCount; file++) {
-              await expect(page.getByRole('textbox', { name: /^Classification reason for / }).nth(file)).toHaveValue(reason);
-            }
-            await click('I know of no bundled answer keys or evaluation material', `parent-${index}-no-answer-keys`, 'checkbox');
-            await operator.review(`parent-${index}-outbound-inventory`, ['standing-root', ...input.leaves.map((_, n) => `linked-skill-${n}`), 'case', 'reference'], [], () => page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check());
-            await click('I acknowledge provider processing of this reviewed context and test request.', `parent-${index}-provider-consent`, 'checkbox');
-            // Retain the button's real state beside the picture so a grey frame is never ambiguous.
-            await record(`parent-${index}-run-button-state`, { enabled: await page.getByRole('button', { name: 'Run whole-context test', exact: true }).isEnabled() });
-            await snapshot(`parent-${index}-test-preview`, page);
-            const started = watch(res => res.url().endsWith('/test-runs/') && res.request().method() === 'POST');
-            await click('Run whole-context test', `parent-${index}-run`);
-            const response = await started;
-            const admission = await response.json();
-            if (response.status() !== 202) await record('admission-rejected', { status: response.status(), body: admission });
-            requireValue(response.status() === 202, 'Context job was not admitted');
-            const job = { parent: parent.id, id: admission.result.id }; observations.jobs.push(job);
-            await expect.poll(async () => (await read(`contexts/${parent.id}/test-runs/${job.id}/`, signal)).status, { timeout: 180_000 }).toBe('completed');
+            const run = outcome.runs[index];
+            requireValue(run.context_id === parent.id && run.status === 'completed', 'Context job did not complete');
+            const job = { parent: parent.id, id: run.run_id };
+            observations.jobs.push(job);
             job.summary = await read(`contexts/${parent.id}/test-runs/${job.id}/`, signal);
-            job.boundary = (await fake(`/scenarios/${namespace}`)).ledger;
+            // Each run's model-boundary rows are the ones whose skill inventory carries this context's own opaque handles.
+            const handle = `s-${createHash('sha256').update(JSON.stringify([plan.contexts[index].fingerprint, child.id])).digest('hex').slice(0, 16)}`;
+            job.boundary = ledgerRows.filter(row => row.messages.some(message => message.role === 'system' && typeof message.content === 'string' && message.content.includes(`"id":"${handle}"`)));
             requireValue(job.summary.candidate.digest === observations.saved[index].digest, 'Test substituted the saved compiled context');
             const delivered = job.boundary.filter(row => row.turn === 1).flatMap(row => row.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content).text));
             requireValue(delivered.some(text => text.includes('policy revision 8.')) && delivered.some(text => text.includes('policy revision 7.')) && !delivered.some(text => text.includes('policy revision 9.')), 'Whole-context model boundary substituted a child');
-            await expect(page.getByText('Answer: pass', { exact: true })).toHaveCount(2);
-            await snapshot(`parent-${index}-test-result`, page);
+            requireValue(run.verdicts.length === 2 && run.verdicts.every(item => item.answer === 'pass'), 'Whole-context answers did not pass');
           }
+          await operator.review('whole-context-result-review', followers.map((_, index) => `parent-${index}-answer-verdicts`), [], async () => {});
           await receipt(stage, ledger, observations.jobs, null, 'model_boundary'); return;
         }
         if (stage.id === 'review-publish-parents') {
           const candidates = await Promise.all(followers.map(parent => read(`contexts/${parent.id}/draft/`, signal)));
           const decision = { packet_sha256: digest(candidates), preconditions_sha256: digest(await Promise.all(followers.map(parent => read(`contexts/${parent.id}/`, signal)))) };
+          await publishSet('recurring', followers, 2, decision);
           for (const [index, parent] of followers.entries()) {
-            await navigate(`/dashboard/skills/contexts/${parent.id}/edit`, `parent-${index}-publication-editor`);
-            await publishParent(parent, index, 2, decision);
             const detail = await read(`contexts/${parent.id}/`, signal);
             requireValue(detail.context.labels.length === 0, 'Publication silently moved a parent label');
             const inspection = await read(`contexts/${parent.id}/versions/2/inspection/`, signal);
@@ -347,23 +339,19 @@ export async function createDriver({ jobId, runId, registration }) {
           await receipt(stage, ledger, await Promise.all(followers.map(parent => read(`contexts/${parent.id}/versions/2/inspection/`, signal))), decision); return;
         }
         if (stage.id === 'authorize-label-moves') {
-          // Submit and review separately for each parent; no batch authority or
-          // repeated early approval can satisfy this stage's decision receipt.
-          const packets = [];
-          for (const [index, parent] of followers.entries()) {
-            await navigate(`/dashboard/skills/contexts/${parent.id}?version=2&tab=versions`, `parent-${index}-label-request`);
-            // The panel keeps the last reviewer visible; the person looks the identity up only when it differs.
-            if (await page.getByRole('textbox', { name: 'Independent reviewer user ID', exact: true }).inputValue() !== input.owner.userId) {
-              await operator.reconcile(`parent-${index}-reviewer-identity`, () => Promise.resolve(input.owner.userId));
-              await fill('Independent reviewer user ID', input.owner.userId, `parent-${index}-reviewer`);
-            }
-            await click('Preview parent label move', `parent-${index}-label-preview`);
-            await click('Request independent review of this exact parent transition. Do not move its label yet.', `parent-${index}-request-confirmation`, 'checkbox');
-            const submitted = watch(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
-            await operator.handoff('owner', () => click('Send parent release request', `parent-${index}-send-request`));
-            const response = await submitted; requireValue(response.status() === 201, 'Independent release request missing');
-            packets.push((await response.json()).result);
-          }
+          // One reviewed request over the exact transitions; each parent still gets its own signed packet,
+          // its own independent reviewer decision and its own release. No batch authority exists.
+          await operator.reconcile('reviewer-identity', () => Promise.resolve(input.owner.userId));
+          const file = planPath('release-plan');
+          const plan = await cli('plan-release-set', 'fi.context.release', ['plan-release', ...followers.map(parent => parent.id), '--version', '2', '--out', file]);
+          await operator.review('release-request-review', followers.flatMap((_, index) => [`parent-${index}-transition`, `parent-${index}-candidate`]), [], async () => {
+            requireValue(plan.contexts.length === followers.length && plan.contexts.every((row, position) => row.context_id === followers[position].id
+              && row.to_version === 2 && row.from_version === null && row.label === 'production'), 'The printed transitions do not match the published parents');
+          });
+          const sent = await operator.handoff('owner', () => cli('request-release-set', 'fi.context.release', ['request-set', '--plan', file, '--reviewed-plan', plan.plan_digest,
+            '--reviewer', input.owner.userId, '--confirm-request-only']));
+          requireValue(sent.requests.length === followers.length, 'Independent release request missing');
+          const packets = sent.requests.map(row => ({ id: row.request_id, status: row.status }));
           const decision = { packet_sha256: digest(packets), preconditions_sha256: digest(await Promise.all(followers.map(parent => read(`contexts/${parent.id}/`, signal)))) };
           const reviewerPage = await open('owner');
           const reviewer = new MeasuredOperator({ ledger, actor: 'owner', step: stage.id, phase: stage.phase, signal });

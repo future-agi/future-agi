@@ -49,7 +49,11 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const issued = await owner.api.post<{ result: { api_key: string; secret_key: string } }>('/accounts/key/generate_secret_key/', { key_name: `${prefix}-sdk` });
   const { api_key: apiKey, secret_key: secretKey } = issued.result;
-  await writeFile(`${directory}/input.json`, JSON.stringify({ appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, owner: actor(owner), author: actor(author), sdkActor: { apiKey, secretKey, organizationId: owner.organizationId, workspaceId: owner.workspaceId }, leaves, parents, provenance, outputDir: `${directory}/artifacts` }), { mode: 0o600 });
+  // The author's own user-bound key: private paid jobs and publication are not available to consumption credentials.
+  const authoredResponse = await request.fetch(`${E2E.apiUrl}/accounts/key/generate_secret_key/`, { method: 'POST', headers: scopeActors.headers(author), data: { key_name: `${prefix}-author-sdk` } });
+  expect(authoredResponse.ok()).toBe(true);
+  const authored = (await authoredResponse.json()) as { result: { api_key: string; secret_key: string } };
+  await writeFile(`${directory}/input.json`, JSON.stringify({ appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, owner: actor(owner), author: actor(author), sdkActor: { apiKey, secretKey, organizationId: owner.organizationId, workspaceId: owner.workspaceId }, authorSdk: { apiKey: authored.result.api_key, secretKey: authored.result.secret_key, organizationId: author.organizationId, workspaceId: author.workspaceId }, leaves, parents, provenance, outputDir: `${directory}/artifacts` }), { mode: 0o600 });
   for (const cohort of [process.env.J3_COHORT || 'configured']) {
     await writeFile(`${directory}/${cohort}.json`, JSON.stringify({ schema: 1, job: 'J3', cohort, evidence_scope: 'synthetic', population: { contexts: 3, catalog_members: 15, intentional_pins: 1 }, fault_ids: ['upstream-advances-during-review', 'unrelated-heartbeat', 'source-aba'],
       customer_input_hash: provenance.fixture_hash, initial_conditions_hash: sha({ leaves, parents, version: 7, cohort }), safety_requirements_hash: sha(['exact-v8', 'pin-v7', 'separate-parent-review', 'independent-label-authorization', 'fresh-resumed-boundaries']), complete_job_boundary_hash: sha('J3 full ROUND3-PLAN target flow; no narrowed boundary'),

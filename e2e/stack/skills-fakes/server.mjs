@@ -57,14 +57,21 @@ function expandResponse(response, messages) {
   const system = messages.find(message => message.role === 'system')?.content;
   const marker = 'Available skills:\n';
   let target;
+  let inventory = [];
   if (typeof system === 'string' && system.includes(marker)) {
-    const inventory = JSON.parse(system.slice(system.indexOf(marker) + marker.length));
+    inventory = JSON.parse(system.slice(system.indexOf(marker) + marker.length));
     if (inventory.length === 1) target = inventory[0].id;
   }
   const expand = value => {
     if (value === '$skill_id') {
       if (!target) throw new Error('template requires exactly one available skill');
       return target;
+    }
+    // Whole-context tests offer many skills whose opaque ids differ per context; the rule names the one to load.
+    if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.$skill_named === 'string') {
+      const named = inventory.filter(item => item.name === value.$skill_named);
+      if (named.length !== 1) throw new Error('template requires exactly one skill with that name');
+      return named[0].id;
     }
     if (Array.isArray(value)) return value.map(expand);
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)]));
