@@ -3,6 +3,16 @@
 Rollback: disable attachment admission, drain/abort transfers, erase private
 objects via the deletion outbox, then reverse 0132 and 0131. Reversing 0131 drops
 control records, not object storage; never use it as a physical-erasure shortcut.
+
+Why this is RunSQL and not Django schema operations: every fence here compares a
+row's OLD and NEW values (identity, tombstone, snapshot and blob immutability,
+monotonic policy/deletion generations, the allowed state transitions) or reads
+another table (project/workspace scope, parent-record scope, a verified blob
+before ``ready``). CheckConstraint, UniqueConstraint and Index see one row
+version of one table, so none of them can express these rules, and Django has
+no trigger operation. The tables are new and empty when this runs. The
+update-safety gate therefore needs a human UPDATE_SAFETY review for this file;
+none is declared here, because only a real reviewer can supply one.
 """
 
 from django.db import migrations
