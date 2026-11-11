@@ -24,7 +24,8 @@ import {
   storedAgentRows,
 } from "./definitionRows";
 import CodeCard from "./code/CodeCard";
-import { ConnectTracesDrawer, observeProjectPath } from "./AgentNextSteps";
+import { ConnectTracesDrawer } from "./AgentNextSteps";
+import { observeProjectPath } from "./observeProject";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
 } from "./ObservabilityToggle";

@@ -18,7 +18,7 @@ import BuildEnvironmentButton from "./BuildEnvironmentButton";
 import { isBehind, policyLabel } from "./environmentPolicy";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
-import { isRunning, pairLabel } from "./runCells";
+import { isRunning, pairLabel } from "./runModel";
 import useAgentRoute from "./useAgentRoute";
 
 const COLUMNS = ["Environment", "Testing", "Last result", "Status", ""];

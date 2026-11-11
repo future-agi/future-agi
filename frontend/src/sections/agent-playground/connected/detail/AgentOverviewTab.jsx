@@ -23,7 +23,8 @@ import FitDataTable from "./FitDataTable";
 import { LineSkeleton, QuietTag } from "./bits";
 import { agentDetailPath } from "./agentDetailTabs";
 import { MONO, ago } from "./format";
-import { PassRateCell, isRunning, pairLabel, runPath } from "./runCells";
+import { PassRateCell } from "./runCells";
+import { isRunning, pairLabel, runPath } from "./runModel";
 import useAgentRoute from "./useAgentRoute";
 
 const RECENT_RUNS = 5;

@@ -7,7 +7,7 @@ import {
   SIMULATE_RUN,
 } from "src/api/agents/_fixtures/agentDetail";
 import AgentOverviewTab from "../AgentOverviewTab";
-import { pairLabel } from "../runCells";
+import { pairLabel } from "../runModel";
 
 const runsState = { current: {} };
 const authState = { user: {} };

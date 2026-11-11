@@ -1,13 +1,7 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Radio, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { PANEL_SX } from "./connectStyles";
-
-export const focusRing = (theme) => ({
-  outline: `2px solid ${alpha(theme.palette.text.primary, 0.5)}`,
-  outlineOffset: 2,
-});
+import { PANEL_SX, focusRing } from "./connectStyles";
 
 export function LogoTile({ icon, name, muted = false, size = 28 }) {
   return (

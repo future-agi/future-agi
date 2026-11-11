@@ -16,7 +16,8 @@ import {
   CODE_AGENT_DETAIL,
   HOSTED_AGENT_DETAIL,
 } from "src/api/agents/_fixtures/agentDetail";
-import AgentNextSteps, { observeProjectPath } from "../AgentNextSteps";
+import AgentNextSteps from "../AgentNextSteps";
+import { observeProjectPath } from "../observeProject";
 
 const auth = { role: "Owner" };
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));

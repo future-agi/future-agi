@@ -6,7 +6,8 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
 import { CONNECT_GROUPS, groupItems, searchGroups } from "./connectSources";
-import { LogoTile, Panel, focusRing } from "./connectBits";
+import { LogoTile, Panel } from "./connectBits";
+import { focusRing } from "./connectStyles";
 import { PANEL_SX } from "./connectStyles";
 
 function CatalogRow({ item, selected, onPick, single }) {
