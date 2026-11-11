@@ -147,7 +147,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(items.length + removed.length > 0, 'Renewal must expose at least one changed precondition');
         const decision = decisionFor({ packet: preview.packet, fingerprint: preview.fingerprint, revision: preview.revision + 1 });
         const kept = preview.packet.evidence.map((ref) => ref.source_id);
-        await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`), ...kept.map((_, i) => `kept-evidence-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
+        await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
           await expect(dialog.getByText(kept.length ? new RegExp(`renewed packet keeps ${kept.join(', ')} for the same candidate`) : /renewed packet keeps no evidence/)).toBeVisible();
@@ -393,6 +393,15 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'renewed-review') {
           const renewed = await renew(reviewer, op, 'expiry');
           requireValue(renewed.preview.removed_evidence.length === 1 && detail.packet.evidence.length === 1, 'Expired evidence was not removed explicitly');
+          // The renewed packet lost evidence: the reviewer re-reads what
+          // remains (candidate, remaining outcome, target) on the page.
+          const remaining = detail.packet.evidence[0];
+          await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
+            await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
+            await expect(reviewer.getByText(remaining.source_id, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByText(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
+            await expect(ack(reviewer)).toBeEnabled();
+          }, renewed.decision);
           await shot(reviewer, 'renewed-review');
           await stamp('renewed-review', await read(`release-requests/${submitted.id}/`, signal), renewed.decision);
           return;

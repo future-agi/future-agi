@@ -30,6 +30,7 @@ function DraftPublication({
   onAcknowledgeHead,
   onPublish,
   onPublishAndRequest,
+  oneStepOperation,
   onRefresh,
 }) {
   const [note, setNote] = useState(draftReview.note ?? "");
@@ -38,8 +39,14 @@ function DraftPublication({
   const [ackFingerprint, setAckFingerprint] = useState(null);
   const operation = useReviewedOperation();
   const reviewed = ackFingerprint === draftReview.reviewFingerprint;
+  const oneStep = oneStepOperation || operation;
   const locked =
-    operation.busy || operation.uncertain || Boolean(operation.result);
+    operation.busy ||
+    operation.uncertain ||
+    Boolean(operation.result) ||
+    oneStep.busy ||
+    oneStep.uncertain ||
+    Boolean(oneStep.result);
   const fullDiff =
     draftReview.complete === true &&
     draftReview.changes.every(
@@ -211,6 +218,7 @@ function DraftPublication({
             after publication.
           </Typography>
           <OperationFeedback operation={operation} />
+          {oneStep !== operation && <OperationFeedback operation={oneStep} />}
           {operation.result && (
             <Alert severity="info">
               Operation recorded. Reload the acknowledged draft or immutable
@@ -263,7 +271,7 @@ function DraftPublication({
                     !draftReview.headChanges)
                 }
                 onClick={() =>
-                  operation.run(onPublishAndRequest, {
+                  oneStep.run(onPublishAndRequest, {
                     ...fields,
                     headAcknowledged: draftReview.headAcknowledged === true,
                     baseVersion: draftReview.baseVersion,
@@ -296,6 +304,7 @@ DraftPublication.propTypes = {
   onAcknowledgeHead: PropTypes.func,
   onPublish: PropTypes.func,
   onPublishAndRequest: PropTypes.func,
+  oneStepOperation: PropTypes.object,
   onRefresh: PropTypes.func,
 };
 

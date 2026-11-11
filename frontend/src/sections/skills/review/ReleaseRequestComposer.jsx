@@ -66,7 +66,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
   // A just-published candidate carries its identities forward; nothing is typed.
   const [kind, setKind] = useState(renewal?.kind || prefill?.kind || 'skill');
   const [resourceId, setResourceId] = useState(renewal?.subjectId || prefill?.subjectId || '');
-  const [candidateId, setCandidateId] = useState(renewal ? '' : prefill?.candidateId || '');
+  const [candidateId, setCandidateId] = useState(renewal ? '' : prefill?.candidate.id || '');
   const targetTouched = useRef(false);
   const [subjectPage, setSubjectPage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
@@ -84,7 +84,9 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
   const prepare = usePrepareReleaseReview();
   const submit = useSubmitReleaseReview();
   const share = useShareReleaseEvidence(resourceId, kind);
-  const candidate = versions.data?.results.find((item) => item.id === candidateId);
+  // The carried-forward candidate does not depend on which version page loaded.
+  const carried = prefill && !renewal && candidateId === prefill.candidate.id && resourceId === prefill.subjectId;
+  const candidate = carried ? prefill.candidate : versions.data?.results.find((item) => item.id === candidateId);
   const target = options.data?.targets.find((item) => item.target.bindingId === targetId)?.target || null;
   const changeResource = (value) => { setResourceId(value); setCandidateId(''); setVersionPage(1); setSelected([]); setTargetId(''); setError(''); };
   const changeCandidate = (value) => { setCandidateId(value); setSelected([]); setTargetId(''); targetTouched.current = false; setError(''); };
@@ -120,14 +122,18 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
         <TextField select size="small" label="Resource kind" value={kind} disabled={busy || Boolean(renewal)} onChange={(event) => { setKind(event.target.value); changeResource(''); setSubjectPage(1); }}>
           <MenuItem value="skill">Skill</MenuItem><MenuItem value="agent_context">Agent context</MenuItem>
         </TextField>
-        {renewal ? <Typography variant="s1">Renewing the same resource. Choose its immutable candidate below.</Typography> : <>
+        {carried ? <>
+          <TextField size="small" label="Release resource" value={prefill.name || prefill.subjectId} InputProps={{ readOnly: true }} />
+          <TextField size="small" label="Published candidate" value={`v${prefill.candidate.number}`} InputProps={{ readOnly: true }} helperText="Carried forward from the publication you just reviewed." />
+          <Stack direction="row"><Button size="small" disabled={busy} onClick={() => changeCandidate('')}>Choose another version</Button></Stack>
+        </> : renewal ? <Typography variant="s1">Renewing the same resource. Choose its immutable candidate below.</Typography> : <>
           <TextField select size="small" label="Release resource" value={resourceId} disabled={busy || subjects.isFetching} onChange={(event) => changeResource(event.target.value)}>
             <MenuItem value="">Choose a resource</MenuItem>
             {subjects.data?.results.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
           </TextField>
           <PageButtons query={subjects} page={subjectPage} setPage={(value) => { setSubjectPage(value); changeResource(''); }} label="resources" />
         </>}
-        {resourceId && <>
+        {resourceId && !carried && <>
           <TextField select size="small" label="Published candidate" value={candidateId} disabled={busy || versions.isFetching} onChange={(event) => changeCandidate(event.target.value)}>
             <MenuItem value="">Choose an immutable version</MenuItem>
             {versions.data?.results.map((item) => <MenuItem key={item.id} value={item.id}>v{item.number}{item.note ? ` — ${item.note}` : ''}</MenuItem>)}

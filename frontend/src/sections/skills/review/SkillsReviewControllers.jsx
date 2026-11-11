@@ -7,7 +7,7 @@ import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePu
 import { Alert, Button, Stack } from '@mui/material';
 import { reviewsReady, isStaleReview, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
-import ReleaseRequestPanel from './ReleaseRequestPanel';
+import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
 import ReleaseRenewalDialog from './ReleaseRenewalDialog';
 
@@ -27,15 +27,19 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const [reviewedIdentity, setReviewedIdentity] = useState(null);
   const state = viewState || (query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
   const canDecide = Boolean(query.data && query.data.request.authorId !== access.scope.userId);
-  const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }}
-    onApproved={({ revision, fingerprint }) => setReviewedIdentity(`${revision}:${fingerprint}`)} />;
+  // The dialog approval attests only the changes it showed; the renewed packet
+  // itself is attested on the page before release. One stable parent keeps
+  // the dialog mounted while the page switches between stale and renewed.
+  const renewal = <ReleaseRenewalDialog open={renewing} requestId={requestId} onClose={() => { setRenewing(false); query.refetch(); }} />;
   // Detailed evidence became unavailable: only the assigned reviewer's
   // explicit renewal remains. Expired evidence is removed, never substituted.
-  if (state === 'ready' && query.data?.renewalRequired) return <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
-    <Alert severity="warning">Detailed evidence for revision {query.data.request.revision} is no longer available ({query.data.renewalRequired}). No approval of that revision can release it.</Alert>
-    <Stack direction="row"><Button variant="contained" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+  if (state === 'ready' && query.data?.renewalRequired) return <>
+    <Stack spacing={1.5} sx={{ px: { xs: 2, sm: 3 }, py: 2 }}>
+      <Alert severity="warning">Detailed evidence for revision {query.data.request.revision} is no longer available ({query.data.renewalRequired}). No approval of that revision can release it.</Alert>
+      <Stack direction="row"><Button variant="contained" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+    </Stack>
     {renewal}
-  </Stack>;
+  </>;
   return <>
     <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
       permissions={{ canDecide, canExecute: query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
@@ -65,7 +69,8 @@ export function ReviewInboxController({ scopeKey, viewState, View }) {
   const requestId = params.get('request');
   if (params.get('compose') === '1') return <ReleaseRequestComposer key={`${scopeKey}:${params.get('renew') || params.get('candidate') || 'new'}`} scopeKey={scopeKey}
     renewal={params.get('renew') ? { id: params.get('renew'), revision: Number(params.get('revision')), subjectId: params.get('subject'), kind: params.get('kind') } : undefined}
-    prefill={!params.get('renew') && params.get('subject') ? { subjectId: params.get('subject'), kind: params.get('kind') || 'skill', candidateId: params.get('candidate') || '' } : undefined} />;
+    prefill={!params.get('renew') && params.get('subject') && params.get('candidate') ? { subjectId: params.get('subject'), kind: params.get('kind') || 'skill', name: params.get('name') || '',
+      candidate: { id: params.get('candidate'), number: Number(params.get('number')), digest: params.get('digest') } } : undefined} />;
   if (requestId) return <RequestReviewController key={`${scopeKey}:${requestId}`} scopeKey={scopeKey} requestId={requestId} viewState={viewState} />;
   const state = viewState || (!reviewsReady() ? 'unavailable' : query.isLoading ? 'loading' : query.isError ? 'error' : query.data ? 'ready' : 'unavailable');
   return <View scopeKey={scopeKey} state={state} data={query.data} status={status} authored={authored}
@@ -84,6 +89,10 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
   const query = useSkillV11Query({ parts: ['agent_context', contextId, 'publication-review', draft.data?.revision, draft.data?.reviewFingerprint], enabled: contextReviewReady() && Boolean(draft.data) && !draft.isError, load: (config) => loadContextReview(contextId, draft.data.revision, config) });
   const acknowledge = useAcknowledgeContextHead(contextId);
   const publish = usePublishContext(contextId);
+  // Held here, not in the form: the head acknowledgment advances the draft
+  // revision and remounts the review, and an unknown publish outcome must stay
+  // retryable with its original idempotency key.
+  const oneStep = useReviewedOperation();
   const data = query.data;
   const head = data?.review;
   const state = viewState || (!contextReviewReady() ? 'unavailable' : detail.isError || draft.isError || query.isError ? 'error' : detail.isLoading || draft.isLoading || query.isLoading ? 'loading' : data ? 'ready' : 'unavailable');
@@ -95,6 +104,7 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
     onRetry={refresh} onRefresh={refresh} onAcknowledgeHead={(input, options) => acknowledge.mutateAsync({ ...input, ...options })}
     onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}`); return receipt; }}
+    oneStepOperation={oneStep}
     onPublishAndRequest={async ({ headAcknowledged, idempotencyKey, ...input }, options) => {
       // J4: acknowledge the reviewed head only when the current draft still
       // needs it (a retry after an unknown publish outcome reuses the earlier
@@ -110,7 +120,8 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
         }
       }
       const receipt = await publish.mutateAsync({ ...fields, idempotencyKey, ...options });
-      navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', kind: 'agent_context', subject: contextId, candidate: receipt.version.id })}`);
+      navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', kind: 'agent_context', subject: contextId, name: detail.data?.context.name || '',
+        candidate: receipt.version.id, number: String(receipt.version.number), digest: receipt.version.digest })}`);
       return receipt;
     }} />;
 }

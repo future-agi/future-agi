@@ -169,11 +169,12 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await expect(ack).toBeChecked();
   };
   const renewals: unknown[] = [];
-  const renew = async (label: string) => {
+  const renew = async (label: string, { reloaded = false } = {}) => {
     const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
     const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
     // A refusal opens the inspection directly; a reloaded page offers the button.
-    if (!(await dialog.isVisible())) await page.getByRole('button', { name: 'Renew review', exact: true }).click();
+    if (reloaded) await page.getByRole('button', { name: 'Renew review', exact: true }).click();
+    await expect(dialog).toBeVisible();
     for (const row of before.changes) await expect(dialog.getByRole('cell', { name: row.item, exact: true })).toBeVisible();
     await page.screenshot({ path: `${output}/shots/renew-${label}.png` });
     await dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }).check();
@@ -203,7 +204,8 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const observed = { label, oneStep: true, revision: after.revision, status: after.status, fingerprint: after.fingerprint, inspected: before.fingerprint, from: before.revision, decisions: decided, items: before.changes.map((row: { item: string }) => row.item) };
     if (fallible('renewal')) observed.decisions = [];
     expect(observed).toMatchObject({ revision: before.revision + 1, status: 'approved', fingerprint: before.fingerprint, decisions: [{ actor_id: reviewer.userId, decision: 'approve' }] });
-    await expect(ack).toBeChecked();
+    // The renewed packet itself is attested on the page before release.
+    await expect(ack).not.toBeChecked();
     renewals.push(observed);
     return observed;
   };
@@ -262,7 +264,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await expect(page.getByText(/is no longer available \(evidence_expired\)/)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/03-renewal-required-dark.png` });
     diagnostics.push('--- renew expiry');
-    const expiryRenewal = await renew('expiry-dark');
+    const expiryRenewal = await renew('expiry-dark', { reloaded: true });
     diagnostics.push('--- renewed expiry');
     expect(expiryRenewal.removed).toEqual([{ source: 'skills_text', source_id: runs[1], reason: 'evidence_expired' }]);
     const remaining = await api(reviewer, 'GET', `release-requests/${requestId}/`);
