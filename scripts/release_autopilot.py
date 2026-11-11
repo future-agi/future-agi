@@ -242,7 +242,12 @@ def release_gates(pr, config, now):
     """Live evidence beyond the PR itself: the callout workflow and main's position."""
     sha = pr["head"]["sha"]
     runs = pages(f"actions/runs?head_sha={sha}&event=pull_request", "workflow_runs")
+    # Keep only runs of the release PR itself (its same-repository branch) before
+    # choosing the newest: a PR from a fork or another branch at the same commit
+    # can then neither pass nor block this gate.
     callout = [run for run in runs if run.get("path") == CALLOUT_WORKFLOW and run.get("head_sha") == sha
+               and run.get("head_branch") == BRANCH
+               and (run.get("head_repository") or {}).get("full_name") == REPOSITORY
                and type(run.get("id")) is int]
     latest = max(callout, key=lambda run: run["id"], default=None)
     # Identified by workflow path: its job is named "check", like other checks on release heads.

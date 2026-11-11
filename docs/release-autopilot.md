@@ -205,7 +205,12 @@ pending-migration check remains mandatory; migrations are never run by this bot.
 - The merge also requires the `migrations-callout` workflow to have passed on the
   release head (identified by its workflow file, because its job is named
   `check` like other checks), and the release PR to be current with main or main
-  to have been quiet for the cooldown.
+  to have been quiet for the cooldown. Only runs from the release PR itself
+  count: the run's head branch must be `release-please--branches--main` in
+  `future-agi/future-agi`. Runs from a fork or another branch at the same commit
+  are ignored before the newest run is chosen, so another PR can neither pass
+  nor block this gate. GitHub allows one open PR per head branch and base, and
+  the callout workflow runs only for PRs to `main`.
 - First merge with both variables unset. Verify labels, App permissions,
   environment protections, default-branch/main availability, required check
   names, and immutable-tag rules. Then enable PR merging during an explicit

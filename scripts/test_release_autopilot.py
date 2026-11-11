@@ -832,7 +832,24 @@ class ReleaseGateTests(unittest.TestCase):
 
     def callout_run(self, **fields):
         return {"id": 5, "path": policy.CALLOUT_WORKFLOW, "head_sha": SHA, "status": "completed",
-                "conclusion": "success", **fields}
+                "conclusion": "success", "head_branch": policy.BRANCH,
+                "head_repository": {"full_name": policy.REPOSITORY}, **fields}
+
+    FOREIGN = ({"head_repository": {"full_name": "outsider/future-agi"}},
+               {"head_branch": "release-please--x"}, {"head_repository": None}, {"head_branch": None})
+
+    def test_runs_from_other_prs_at_the_same_commit_neither_pass_nor_block(self):
+        for foreign in self.FOREIGN:
+            with self.subTest(foreign=foreign):
+                # A newer foreign success does not override the release PR's own failure.
+                self.assertFalse(self.gates([self.callout_run(conclusion="failure"),
+                                             self.callout_run(id=6, **foreign)])[0])
+                self.assertFalse(self.gates([self.callout_run(**foreign)])[0])
+                # A newer foreign skipped, held or failed run does not stall a passed release PR.
+                for outcome in ({"conclusion": "skipped"}, {"conclusion": "action_required"},
+                                {"conclusion": "failure"}, {"status": "in_progress", "conclusion": None}):
+                    self.assertTrue(self.gates([self.callout_run(),
+                                                self.callout_run(id=6, **foreign, **outcome)])[0])
 
     def test_callout_workflow_must_pass_on_this_head(self):
         self.assertTrue(self.gates([self.callout_run()])[0])
