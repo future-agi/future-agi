@@ -180,9 +180,12 @@ describe("AgentDetailLayout", () => {
       ),
     );
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith("v2 is already up to date", {
-        variant: "info",
-      }),
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "v2 is already at the latest commit",
+        {
+          variant: "info",
+        },
+      ),
     );
   });
 
@@ -210,7 +213,7 @@ describe("AgentDetailLayout", () => {
     expect(upload).toBeEnabled();
     fireEvent.click(upload);
     expect(
-      await screen.findByText(`Upload v${CODE.version_count + 1}`),
+      await screen.findByText(`Add version v${CODE.version_count + 1}`),
     ).toBeInTheDocument();
   });
 

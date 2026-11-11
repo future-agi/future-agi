@@ -111,7 +111,7 @@ export default function FolderUploadField({
       {uploading && <LinearProgress variant="determinate" value={progress} />}
       {error && (
         <Typography
-          sx={{ typography: "s3", color: "error.main" }}
+          sx={{ typography: "s3", color: "status.danger.fg" }}
           data-testid={`${testId}-error`}
         >
           {error}

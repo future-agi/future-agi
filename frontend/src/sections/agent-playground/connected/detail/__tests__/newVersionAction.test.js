@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { newVersionAction } from "../newVersionAction";
 
 describe("newVersionAction", () => {
-  it.each(["phone", "livekit"])("syncs a %s agent by editing it", (source) => {
-    expect(newVersionAction({ source })).toMatchObject({
-      label: "Sync",
-      kind: "edit",
-    });
-  });
+  it.each(["phone", "livekit"])(
+    "adds a %s agent's version by hand",
+    (source) => {
+      expect(newVersionAction({ source })).toMatchObject({
+        label: "Add version",
+        kind: "edit",
+      });
+    },
+  );
 
   it.each(["vapi", "retell", "github"])(
     "syncs a %s agent from where it lives",

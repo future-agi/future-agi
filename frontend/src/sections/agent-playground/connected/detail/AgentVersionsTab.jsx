@@ -5,7 +5,7 @@ import { useSnackbar } from "notistack";
 import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
-import EmptyState from "src/sections/simulate/environments/components/EmptyState";
+import ErrorState from "src/components/error-state";
 import {
   useDiscardVersion,
   useRetryVersion,
@@ -30,14 +30,11 @@ import {
   failureText,
 } from "./versionLabels";
 
-const VERSION_ACTION = { typography: "s2", minWidth: 0, height: 24, px: 1 };
-
 // The row is a button too; keys pressed on an action stay with the action.
 const actionProps = (onClick) => ({
   size: "small",
   variant: "outlined",
   color: "inherit",
-  sx: VERSION_ACTION,
   onClick: (e) => {
     e.stopPropagation();
     onClick();
@@ -207,10 +204,11 @@ export default function AgentVersionsTab() {
       sx={{
         display: "grid",
         gap: 2,
-        gridTemplateColumns: "minmax(300px, 1fr) 1fr",
+        gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 420px) 1fr" },
         alignItems: "start",
-        // The timeline fills the tab's height and scrolls inside, at any width.
-        height: "100%",
+        // Side by side, the timeline fills the tab's height and scrolls
+        // inside; stacked, the page scrolls.
+        height: { lg: "100%" },
       }}
     >
       <Card
@@ -221,7 +219,7 @@ export default function AgentVersionsTab() {
             <LineSkeleton width={72} />
           )
         }
-        sx={{ height: "100%" }}
+        sx={{ height: { lg: "100%" } }}
       >
         <Box
           ref={scrollRef}
@@ -235,20 +233,11 @@ export default function AgentVersionsTab() {
           }}
         >
           {isError && (
-            <EmptyState
-              icon="solar:danger-triangle-linear"
+            <ErrorState
               title="Couldn't load versions"
-              body={error?.message}
-              action={
-                <Button
-                  variant="outlined"
-                  color="inherit"
-                  size="small"
-                  onClick={() => refetch()}
-                >
-                  Retry
-                </Button>
-              }
+              detail={error?.message}
+              onRetry={() => refetch()}
+              sx={{ height: "auto", py: 4 }}
             />
           )}
           {isLoading && skeletons(3)}
@@ -323,15 +312,12 @@ export default function AgentVersionsTab() {
                     >
                       {v.label}
                     </Typography>
-                    {v.isLatest && <Pill tone="primary">Latest</Pill>}
+                    {v.isLatest && <Pill>Latest</Pill>}
                     {v.isActive && <Pill>In production</Pill>}
                     {v.isDraft && !v.isActive && !checkLabel(v) && (
                       <Pill>Draft</Pill>
                     )}
                     {checkLabel(v) && <Pill>{checkLabel(v)}</Pill>}
-                    {ORIGIN_LABEL[v.origin] && (
-                      <Pill>{ORIGIN_LABEL[v.origin]}</Pill>
-                    )}
                     {environmentsLabel(v.environmentsCount) && (
                       <Pill>{environmentsLabel(v.environmentsCount)}</Pill>
                     )}
@@ -352,14 +338,14 @@ export default function AgentVersionsTab() {
                       data-testid="version-check-failure"
                       sx={{
                         typography: "s2",
-                        color: "warning.dark",
+                        color: "status.warning.fg",
                         mt: 0.375,
                       }}
                     >
                       {failureText(v.checkFailure)}
                     </Typography>
                   )}
-                  {v.createdAt && (
+                  {(v.createdAt || ORIGIN_LABEL[v.origin]) && (
                     <Typography
                       sx={{
                         typography: "s2",
@@ -367,7 +353,13 @@ export default function AgentVersionsTab() {
                         mt: 0.25,
                       }}
                     >
-                      {format(new Date(v.createdAt), "dd-MM-yyyy, h:mm a")}
+                      {[
+                        ORIGIN_LABEL[v.origin],
+                        v.createdAt &&
+                          format(new Date(v.createdAt), "dd-MM-yyyy, h:mm a"),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </Typography>
                   )}
                   <Stack

@@ -268,19 +268,18 @@ export default function UploadConnectFlow() {
       >
         {stage !== "source" && (
           <Button
-            variant="outlined"
             color="inherit"
             onClick={() => setStage(stage === "details" ? "agents" : "source")}
             startIcon={
               <Iconify icon="solar:alt-arrow-left-linear" width={14} />
             }
-            sx={{ flexShrink: 0 }}
+            sx={{ flexShrink: 0, color: "text.secondary" }}
           >
             Back
           </Button>
         )}
         <Box flex={1} />
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {hint}
         </Typography>
         {action}

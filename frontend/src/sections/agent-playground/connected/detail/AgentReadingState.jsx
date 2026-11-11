@@ -1,13 +1,7 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
 import { useSnackbar } from "notistack";
-import {
-  Alert,
-  Button,
-  CircularProgress,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Alert, Button, CircularProgress } from "@mui/material";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import {
   pollWhileChecking,
@@ -44,27 +38,17 @@ export default function AgentReadingState({ agent }) {
 
   if (newest.check === "pending") {
     return (
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.25}
+      <Alert
+        severity="info"
+        icon={<CircularProgress size={14} />}
         data-testid="agent-reading-state"
-        sx={{
-          mb: 1.5,
-          px: 1.5,
-          py: 1,
-          borderRadius: 1,
-          bgcolor: "action.hover",
-        }}
+        sx={{ mb: 1.5 }}
       >
-        <CircularProgress size={14} />
-        <Typography sx={{ typography: "s2" }}>
-          {`${STEP_LABEL[newest.checkStep] || "Checking"} ${newest.label}`}
-          {newest.checkStep === "reading"
-            ? ": its tools, prompt and model are read from the code."
-            : "."}
-        </Typography>
-      </Stack>
+        {`${STEP_LABEL[newest.checkStep] || "Checking"} ${newest.label}`}
+        {newest.checkStep === "reading"
+          ? ": its tools, prompt and model are read from the code."
+          : "."}
+      </Alert>
     );
   }
 
@@ -133,8 +117,8 @@ export default function AgentReadingState({ agent }) {
           </Button>
         }
       >
-        Check what we found on the Definition tab: the entry, prompt, tools and
-        model. Confirm it before building an environment from this agent.
+        Check the entry, prompt, tools and model on the Definition tab, then
+        confirm them to build an environment from this agent.
       </Alert>
     );
   }

@@ -1,13 +1,8 @@
 import React, { Suspense } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
-import {
-  Box,
-  IconButton,
-  Stack,
-  Tab,
-  Typography,
-} from "@mui/material";
+import { Box, IconButton, Stack, Tab } from "@mui/material";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
@@ -26,7 +21,7 @@ import useAgentRoute from "./useAgentRoute";
 import ContentSkeleton from "src/components/content-skeleton";
 
 const errorText = (error) =>
-  error?.message || error?.detail || "Couldn't load this agent";
+  error?.message || error?.detail || "The request failed. Try again.";
 
 /**
  * A connected agent: header and tabs. Each tab is its own route rendered into
@@ -47,14 +42,17 @@ export default function AgentDetailLayout() {
   // that fails shows the error.
   if (query.isError && !agent) {
     return (
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: 2 }}>
+      <Box sx={{ p: 2 }}>
         <IconButton size="small" onClick={back} aria-label="Back">
-          <Iconify icon="solar:alt-arrow-left-linear" width={18} />
+          <Iconify icon="solar:alt-arrow-left-linear" width={20} />
         </IconButton>
-        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          {errorText(query.error)}
-        </Typography>
-      </Stack>
+        <ErrorState
+          title="Couldn't load this agent"
+          detail={errorText(query.error)}
+          onRetry={() => query.refetch()}
+          sx={{ height: "auto", py: 8 }}
+        />
+      </Box>
     );
   }
 

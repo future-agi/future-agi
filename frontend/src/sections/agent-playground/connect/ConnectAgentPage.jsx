@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import SideDrawer from "src/sections/simulate/environments/components/SideDrawer";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import ConnectCatalog from "./ConnectCatalog";
@@ -39,24 +40,19 @@ export default function ConnectAgentPage() {
       <Helmet>
         <title>New agent · Agents</title>
       </Helmet>
-      <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ mb: 3 }}>
-        <IconButton
-          size="small"
-          aria-label="Back to agents"
-          onClick={() => navigate(CONNECTED_AGENTS_PATH)}
-          sx={{ mt: 0.25 }}
-        >
-          <Iconify icon="solar:alt-arrow-left-linear" width={20} />
-        </IconButton>
-        <Box>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            New agent
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            Connect it from where it runs today.
-          </Typography>
-        </Box>
-      </Stack>
+      <PageHeader
+        back={
+          <IconButton
+            size="small"
+            aria-label="Back to agents"
+            onClick={() => navigate(CONNECTED_AGENTS_PATH)}
+          >
+            <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+          </IconButton>
+        }
+        title="New agent"
+        description="Connect it from where it runs today."
+      />
       <ConnectCatalog
         pickedId={source}
         onPick={(item) => setParams({ source: item.id })}

@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useSnackbar } from "notistack";
-import { Button, TextField, Typography } from "@mui/material";
-import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
+import { Stack, TextField, Typography } from "@mui/material";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useChangeVersion } from "src/api/agents/agentDetail";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { LabeledField } from "./bits";
 
 /**
  * A new version of a built-in agent from an edited prompt. The same prompt
@@ -37,42 +38,36 @@ export default function AddVersionDialog({ agent, open, onClose }) {
   };
 
   return (
-    <ConfirmDialog
+    <ModalWrapper
       open={open}
-      onClose={() => (change.isPending ? null : onClose())}
-      closeDisabled={change.isPending}
+      onClose={onClose}
+      isLoading={change.isPending}
       title={`Add version ${next}`}
-      content={
-        <>
-          <Typography
-            sx={{ typography: "s2_1", color: "text.secondary", mb: 1.5 }}
-          >
-            Edit the prompt; the new version is checked, and then you can set it
-            as production.
-          </Typography>
+      actionBtnTitle={`Save as ${next}`}
+      isValid={!!prompt.trim()}
+      onSubmit={submit}
+      modalWidth="720px"
+    >
+      <Stack spacing={1.5}>
+        <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+          Edit the prompt as it now stands. The new version is checked, and then
+          you can set it as production.
+        </Typography>
+        <LabeledField id="add-version-prompt" label="Prompt" required>
           <TextField
+            id="add-version-prompt"
+            size="small"
             fullWidth
             multiline
             minRows={6}
-            label="Prompt"
+            maxRows={14}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             inputProps={{ "data-testid": "add-version-prompt" }}
           />
-        </>
-      }
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={change.isPending || !prompt.trim()}
-          onClick={submit}
-        >
-          {`Save as ${next}`}
-        </Button>
-      }
-    />
+        </LabeledField>
+      </Stack>
+    </ModalWrapper>
   );
 }
 

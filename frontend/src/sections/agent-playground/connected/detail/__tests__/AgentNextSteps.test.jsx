@@ -154,7 +154,7 @@ describe("AgentNextSteps", () => {
   it("shows the two ways forward, side by side", () => {
     renderCard(codeAgent({ environment_count: 0 }));
     expect(screen.getByText("Next steps")).toBeInTheDocument();
-    expect(traces()).toHaveTextContent("In production");
+    expect(traces()).toHaveTextContent("From real calls");
     expect(traces()).toHaveTextContent("Get its traces");
     expect(traces()).toHaveTextContent(
       "Choose the Observe project its production calls land in.",

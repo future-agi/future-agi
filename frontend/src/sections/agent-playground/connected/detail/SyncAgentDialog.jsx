@@ -3,16 +3,17 @@ import React, { useState } from "react";
 import { useSnackbar } from "notistack";
 import {
   Box,
-  Button,
   CircularProgress,
   Stack,
   Switch,
   TextField,
   Typography,
 } from "@mui/material";
-import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
+import ClosableDialog from "src/components/custom-dialog/closable-dialog";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useAgentVersion, useChangeVersion } from "src/api/agents/agentDetail";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { LabeledField } from "./bits";
 import {
   PROMPT_HELP,
   PROMPT_MAX,
@@ -22,6 +23,8 @@ import {
   phoneProblem,
   promptProblem,
 } from "./syncAgentValues";
+
+const nextLabel = (agent) => `v${(agent.versionCount || 0) + 1}`;
 
 function SpeaksFirst({ checked, onChange }) {
   return (
@@ -38,7 +41,7 @@ function SpeaksFirst({ checked, onChange }) {
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 500 }}>
           Agent speaks first
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
@@ -77,7 +80,7 @@ function SyncForm({ agent, kind, start, onClose }) {
   const body = changeBody(kind, start, values);
   const changed = Boolean(body.prompt !== undefined || body.settings);
   const valid = !Object.values(problems).some(Boolean);
-  const next = `v${(agent.versionCount || 0) + 1}`;
+  const next = nextLabel(agent);
   const shown = (name) => (touched[name] ? problems[name] : null);
 
   const submit = () => {
@@ -99,86 +102,90 @@ function SyncForm({ agent, kind, start, onClose }) {
   };
 
   return (
-    <ConfirmDialog
+    <ModalWrapper
       open
-      onClose={() => (change.isPending ? null : onClose())}
-      closeDisabled={change.isPending}
-      title="Sync your agent"
-      content={
-        <Stack spacing={2}>
-          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
-            We can&apos;t read this agent from where it runs. Change these to
-            match your live agent, and saving makes {next}.
-          </Typography>
+      onClose={onClose}
+      isLoading={change.isPending}
+      title={`Add version ${next}`}
+      actionBtnTitle={`Save as ${next}`}
+      isValid={changed && valid}
+      onSubmit={submit}
+      modalWidth="560px"
+    >
+      <Stack spacing={2}>
+        <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+          We can&apos;t read this agent from where it runs. Change these to
+          match your live agent, and saving makes {next}.
+        </Typography>
+        <LabeledField
+          id="sync-agent-prompt"
+          label="System prompt"
+          required
+          error={shown("prompt")}
+          helper={`${PROMPT_HELP[kind]} ${values.prompt.length.toLocaleString()} / ${PROMPT_MAX.toLocaleString()}`}
+        >
           <TextField
+            id="sync-agent-prompt"
+            size="small"
             fullWidth
             multiline
             minRows={6}
             maxRows={14}
-            label="System prompt"
-            required
             value={values.prompt}
             onChange={(e) => set("prompt")(e.target.value)}
             onBlur={touch("prompt")}
             error={Boolean(shown("prompt"))}
-            helperText={
-              shown("prompt") ||
-              `${PROMPT_HELP[kind]} ${values.prompt.length.toLocaleString()} / ${PROMPT_MAX.toLocaleString()}`
-            }
             inputProps={{ "data-testid": "sync-agent-prompt" }}
           />
-          {kind === "phone" && (
+        </LabeledField>
+        {kind === "phone" && (
+          <LabeledField
+            id="sync-agent-phone"
+            label="Phone number"
+            required
+            error={shown("phoneNumber")}
+            helper="The platform calls this number, so calls are always inbound."
+          >
             <TextField
+              id="sync-agent-phone"
+              size="small"
               fullWidth
-              label="Phone number"
-              required
               placeholder="+14155550100"
               value={values.phoneNumber}
               onChange={(e) => set("phoneNumber")(e.target.value)}
               onBlur={touch("phoneNumber")}
               error={Boolean(shown("phoneNumber"))}
-              helperText={
-                shown("phoneNumber") ||
-                "The platform calls this number, so calls are always inbound."
-              }
               inputProps={{ "data-testid": "sync-agent-phone" }}
             />
-          )}
-          {kind === "livekit" && (
+          </LabeledField>
+        )}
+        {kind === "livekit" && (
+          <LabeledField
+            id="sync-agent-name"
+            label="LiveKit agent name"
+            required
+            error={shown("agentName")}
+            helper="The name your worker registers with; each call dispatches it into the room."
+          >
             <TextField
+              id="sync-agent-name"
+              size="small"
               fullWidth
-              label="LiveKit agent name"
-              required
               placeholder="returns-line-agent"
               value={values.agentName}
               onChange={(e) => set("agentName")(e.target.value)}
               onBlur={touch("agentName")}
               error={Boolean(shown("agentName"))}
-              helperText={
-                shown("agentName") ||
-                "The name your worker registers with; each call dispatches it into the room."
-              }
               inputProps={{ "data-testid": "sync-agent-name" }}
             />
-          )}
-          <SpeaksFirst
-            checked={values.speaksFirst}
-            onChange={set("speaksFirst")}
-          />
-        </Stack>
-      }
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={change.isPending || !changed || !valid}
-          onClick={submit}
-        >
-          {`Save as ${next}`}
-        </Button>
-      }
-    />
+          </LabeledField>
+        )}
+        <SpeaksFirst
+          checked={values.speaksFirst}
+          onChange={set("speaksFirst")}
+        />
+      </Stack>
+    </ModalWrapper>
   );
 }
 
@@ -193,13 +200,21 @@ export default function SyncAgentDialog({ agent, onClose }) {
   const version = useAgentVersion(agent.id, agent.activeVersionId);
   if (version.isLoading || version.isError) {
     return (
-      <ConfirmDialog
+      <ClosableDialog
         open
         onClose={onClose}
-        title="Sync your agent"
-        content={
-          version.isError ? (
-            <Typography sx={{ typography: "s2_1", color: "error.main" }}>
+        fullWidth
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 400 } }}
+      >
+        <Box sx={{ p: 2 }}>
+          <Typography sx={{ typography: "m2", fontWeight: 600, pr: 4 }}>
+            {`Add version ${nextLabel(agent)}`}
+          </Typography>
+          {version.isError ? (
+            <Typography
+              sx={{ typography: "s2_1", color: "status.danger.fg", mt: 1 }}
+            >
               Couldn&apos;t load this agent&apos;s current version. Close and
               try again.
             </Typography>
@@ -207,9 +222,9 @@ export default function SyncAgentDialog({ agent, onClose }) {
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
               <CircularProgress size={24} />
             </Box>
-          )
-        }
-      />
+          )}
+        </Box>
+      </ClosableDialog>
     );
   }
   return (

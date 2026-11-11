@@ -87,7 +87,7 @@ export default function AgentMoreMenu({ agent }) {
           <ListItemText
             primary="Delete"
             secondary={blocked}
-            primaryTypographyProps={{ typography: "s2" }}
+            primaryTypographyProps={{ typography: "s1" }}
             secondaryTypographyProps={{
               typography: "s2",
               sx: { whiteSpace: "normal" },

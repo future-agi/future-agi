@@ -29,8 +29,12 @@ export function LogoTile({ icon, name, muted = false, size = 28 }) {
       {icon ? (
         <Iconify icon={icon} width={Math.round(size * 0.5)} />
       ) : (
-        <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
-          {String(name || "?").charAt(0).toUpperCase()}
+        <Typography
+          sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+        >
+          {String(name || "?")
+            .charAt(0)
+            .toUpperCase()}
         </Typography>
       )}
     </Box>
@@ -61,7 +65,11 @@ export function TextLink({ onClick, children, sx }) {
     </ButtonBase>
   );
 }
-TextLink.propTypes = { onClick: PropTypes.func, children: PropTypes.node, sx: PropTypes.object };
+TextLink.propTypes = {
+  onClick: PropTypes.func,
+  children: PropTypes.node,
+  sx: PropTypes.object,
+};
 
 export function OptionCard({ icon, label, short, selected, onSelect }) {
   return (
@@ -81,12 +89,27 @@ export function OptionCard({ icon, label, short, selected, onSelect }) {
         "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
       }}
     >
-      <Iconify icon={icon} width={16} sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }} />
+      <Iconify
+        icon={icon}
+        width={16}
+        sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s1", fontWeight: 500 }}>{label}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>{short}</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+          {label}
+        </Typography>
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+        >
+          {short}
+        </Typography>
       </Box>
-      <Radio size="small" checked={selected} onChange={onSelect} sx={{ p: 0, flexShrink: 0 }} />
+      <Radio
+        size="small"
+        checked={selected}
+        onChange={onSelect}
+        sx={{ p: 0, flexShrink: 0 }}
+      />
     </Stack>
   );
 }
@@ -106,15 +129,25 @@ export function Panel({ title, reach, children }) {
           direction={{ xs: "column", sm: "row" }}
           alignItems={{ sm: "baseline" }}
           spacing={{ xs: 0.25, sm: 1.25 }}
-          sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{
+            px: 2,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
         >
           {title && (
-            <Typography component="h3" sx={{ typography: "m3", fontWeight: 600, flexShrink: 0 }}>
+            <Typography
+              component="h3"
+              sx={{ typography: "m3", fontWeight: 500, flexShrink: 0 }}
+            >
               {title}
             </Typography>
           )}
           {reach && (
-            <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}
+            >
               {reach}
             </Typography>
           )}
@@ -124,4 +157,8 @@ export function Panel({ title, reach, children }) {
     </Box>
   );
 }
-Panel.propTypes = { title: PropTypes.node, reach: PropTypes.string, children: PropTypes.node };
+Panel.propTypes = {
+  title: PropTypes.node,
+  reach: PropTypes.string,
+  children: PropTypes.node,
+};

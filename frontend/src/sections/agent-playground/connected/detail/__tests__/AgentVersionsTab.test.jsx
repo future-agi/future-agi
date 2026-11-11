@@ -400,6 +400,7 @@ describe("AgentVersionsTab", () => {
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(
         `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/v1-id/production/`,
+        {},
       ),
     );
     await waitFor(() =>
@@ -503,7 +504,7 @@ describe("AgentVersionsTab", () => {
       const [, oldest] = await screen.findAllByTestId("version-entry");
       fireEvent.click(within(oldest).getByRole("button", { name: "Retry" }));
       await waitFor(() =>
-        expect(axios.post).toHaveBeenCalledWith(`${base}/retry/`),
+        expect(axios.post).toHaveBeenCalledWith(`${base}/retry/`, {}),
       );
       await waitFor(() =>
         expect(enqueueSnackbar).toHaveBeenCalledWith(
@@ -522,7 +523,7 @@ describe("AgentVersionsTab", () => {
       const dialog = await screen.findByRole("dialog");
       fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
       await waitFor(() =>
-        expect(axios.post).toHaveBeenCalledWith(`${base}/discard/`),
+        expect(axios.post).toHaveBeenCalledWith(`${base}/discard/`, {}),
       );
       await waitFor(() =>
         expect(enqueueSnackbar).toHaveBeenCalledWith("v1 discarded", {

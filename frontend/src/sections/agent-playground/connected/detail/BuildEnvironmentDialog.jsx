@@ -8,10 +8,12 @@ import {
   MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import {
   toVersion,
@@ -27,10 +29,12 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { MAX_SCENARIO_COUNT } from "src/pages/dashboard/harness/requestMapper";
 import ParallelismField from "src/sections/simulate/environments/panels/ParallelismField";
 import { clampParallelism } from "src/sections/simulate/environments/parallelism.constants";
+import { LabeledField } from "./bits";
 import { MONO } from "./format";
 import { buildFromAgentPayload, readyToBuild } from "./buildPayload";
 
 const DEFAULT_SCENARIO_COUNT = 10;
+const QUICK_COUNTS = [10, 25, 50, 100].filter((n) => n <= MAX_SCENARIO_COUNT);
 
 const scenarioCountOf = (text) => {
   const count = Number(text);
@@ -46,7 +50,10 @@ function Check({ check }) {
       <Iconify
         icon={ok ? "solar:check-circle-linear" : "solar:danger-triangle-linear"}
         width={16}
-        sx={{ color: ok ? "success.main" : "warning.main", mt: 0.25 }}
+        sx={{
+          color: ok ? "status.success.fg" : "status.warning.fg",
+          mt: 0.25,
+        }}
       />
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         {check.message}
@@ -137,113 +144,159 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   };
 
   return (
-    <ConfirmDialog
+    <ModalWrapper
       open={open}
-      onClose={() => (building ? null : onClose())}
-      closeDisabled={building}
+      onClose={onClose}
+      isLoading={building}
       title="Build environment"
-      content={
-        <Stack spacing={1.5}>
-          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
-            The environment runs the version you pick and stays on it until you
-            change it or set it to follow production.
-          </Typography>
+      subTitle={`We read ${agent.name} and build its environment: simulated tools, seeded data, rules and scenarios.`}
+      actionBtnTitle="Build environment"
+      isValid={!!version && !!name.trim() && !!scenarioCount && !blocked}
+      onSubmit={build}
+      modalWidth="560px"
+    >
+      <Stack spacing={2}>
+        <LabeledField id="build-env-name" label="Name">
           <TextField
+            id="build-env-name"
+            size="small"
             fullWidth
-            label="Name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             inputProps={{ "data-testid": "build-env-name" }}
           />
-          <TextField
-            select
-            fullWidth
-            label="Built from"
-            value={chosen}
-            onChange={(e) => setVersionId(e.target.value)}
-            inputProps={{ "data-testid": "build-env-version" }}
+        </LabeledField>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+          <LabeledField
+            id="build-env-version"
+            label="Built from version"
+            sx={{ flex: 1, minWidth: 0 }}
           >
-            {options.map((v) => (
-              <MenuItem key={v.id} value={v.id} sx={{ fontFamily: MONO }}>
-                {v.label}
-                {v.isActive ? " · in production" : ""}
-              </MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            fullWidth
-            type="number"
-            label="Scenarios"
-            value={scenarioText}
-            onChange={(e) => setScenarioText(e.target.value)}
-            error={!scenarioCount}
-            helperText={
+            <TextField
+              id="build-env-version"
+              select
+              size="small"
+              fullWidth
+              value={chosen}
+              onChange={(e) => setVersionId(e.target.value)}
+              inputProps={{ "data-testid": "build-env-version" }}
+            >
+              {options.map((v) => (
+                <MenuItem key={v.id} value={v.id} sx={{ fontFamily: MONO }}>
+                  {v.label}
+                  {v.isActive ? " · in production" : ""}
+                </MenuItem>
+              ))}
+            </TextField>
+          </LabeledField>
+          <LabeledField
+            id="build-env-scenarios"
+            label="Scenarios to start with"
+            error={
               scenarioCount ? undefined : `Between 1 and ${MAX_SCENARIO_COUNT}`
             }
-            inputProps={{
-              min: 1,
-              max: MAX_SCENARIO_COUNT,
-              step: 1,
-              "data-testid": "build-env-scenarios",
-            }}
-          />
-          <ParallelismField
-            value={parallelism}
-            input={parallelismInput}
-            onChange={setParallelismInput}
-          />
-          {preflight.isLoading && (
+            sx={{ flex: 1, minWidth: 0 }}
+          >
+            <TextField
+              id="build-env-scenarios"
+              size="small"
+              fullWidth
+              type="number"
+              value={scenarioText}
+              onChange={(e) => setScenarioText(e.target.value)}
+              error={!scenarioCount}
+              inputProps={{
+                min: 1,
+                max: MAX_SCENARIO_COUNT,
+                step: 1,
+                "data-testid": "build-env-scenarios",
+              }}
+            />
+          </LabeledField>
+        </Stack>
+        <Stack direction="row" alignItems="center" spacing={1.5}>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={QUICK_COUNTS.includes(scenarioCount) ? scenarioCount : null}
+            onChange={(_, n) => n != null && setScenarioText(String(n))}
+            aria-label="Scenarios to start with"
+          >
+            {QUICK_COUNTS.map((n) => (
+              <ToggleButton key={n} value={n}>
+                {n}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            The environment tests this version first. You can add scenarios and
+            switch versions afterwards.
+          </Typography>
+        </Stack>
+        <ParallelismField
+          value={parallelism}
+          input={parallelismInput}
+          onChange={setParallelismInput}
+        />
+        {preflight.isLoading && (
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary" }}
+            data-testid="build-env-preflight-loading"
+          >
+            Checking the version…
+          </Typography>
+        )}
+        {preflight.data && (
+          <Box data-testid="build-env-preflight">
+            <Stack spacing={0.75}>
+              {preflight.data.checks.map((check) => (
+                <Check key={check.name} check={check} />
+              ))}
+            </Stack>
+          </Box>
+        )}
+        {reason && (
+          <Stack direction="row" alignItems="center" spacing={1}>
             <Typography
               sx={{ typography: "s2", color: "text.secondary" }}
-              data-testid="build-env-preflight-loading"
+              data-testid="build-env-reason"
             >
-              Checking the version…
+              {reason}
             </Typography>
-          )}
-          {preflight.data && (
-            <Box data-testid="build-env-preflight">
-              <Stack spacing={0.75}>
-                {preflight.data.checks.map((check) => (
-                  <Check key={check.name} check={check} />
-                ))}
-              </Stack>
-            </Box>
-          )}
-          {reason && (
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography
-                sx={{ typography: "s2", color: "text.secondary" }}
-                data-testid="build-env-reason"
+            {preflight.isError && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => preflight.refetch()}
               >
-                {reason}
-              </Typography>
-              {preflight.isError && (
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() => preflight.refetch()}
-                >
-                  Retry
-                </Button>
-              )}
-            </Stack>
-          )}
-        </Stack>
-      }
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={
-            building || !version || !name.trim() || !scenarioCount || blocked
-          }
-          onClick={build}
+                Retry
+              </Button>
+            )}
+          </Stack>
+        )}
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="flex-start"
+          sx={{
+            px: 1.25,
+            py: 1,
+            borderRadius: 1,
+            bgcolor: "background.muted",
+          }}
         >
-          Build environment
-        </Button>
-      }
-    />
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={14}
+            sx={{ color: "text.subtitle", flexShrink: 0, mt: 0.125 }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            One environment per materially different setup: data or systems,
+            channel, market, language or product line. Not one per version.
+          </Typography>
+        </Stack>
+      </Stack>
+    </ModalWrapper>
   );
 }
 

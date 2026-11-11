@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useSnackbar } from "notistack";
-import { Button, Stack, Typography } from "@mui/material";
-import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
+import { Stack, Typography } from "@mui/material";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useChangeVersion } from "src/api/agents/agentDetail";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import FolderUploadField from "src/sections/agent-playground/connect/FolderUploadField";
@@ -40,44 +40,37 @@ export default function UploadVersionDialog({ agent, open, onClose }) {
 
   const busy = uploading || change.isPending;
   return (
-    <ConfirmDialog
+    <ModalWrapper
       open={open}
-      onClose={() => (busy ? null : onClose())}
-      closeDisabled={busy}
-      title={`Upload ${next}`}
-      content={
-        <Stack spacing={1.5}>
-          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
-            Choose the folder with the new code. It is read, and then you can
-            set the version as production.
-          </Typography>
-          <FolderUploadField
-            folder={folder}
-            onUploaded={(uploaded) => {
-              setFolder(uploaded);
-              setArchiveId(uploaded.sourceId);
-            }}
-            onUploading={(on) => {
-              setUploading(on);
-              if (on) setArchiveId(null);
-            }}
-            disabled={change.isPending}
-            testId="upload-version-dropzone"
-          />
-        </Stack>
-      }
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={busy || !archiveId}
-          onClick={submit}
-        >
-          {`Save as ${next}`}
-        </Button>
-      }
-    />
+      onClose={onClose}
+      isLoading={busy}
+      title={`Add version ${next}`}
+      actionBtnTitle={`Save as ${next}`}
+      isValid={!!archiveId}
+      onSubmit={submit}
+      modalWidth="560px"
+    >
+      <Stack spacing={1.5}>
+        <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+          Choose the folder with the new code. It is read once, like the first,
+          and saves an agent version only; environments following production
+          test it on their next run.
+        </Typography>
+        <FolderUploadField
+          folder={folder}
+          onUploaded={(uploaded) => {
+            setFolder(uploaded);
+            setArchiveId(uploaded.sourceId);
+          }}
+          onUploading={(on) => {
+            setUploading(on);
+            if (on) setArchiveId(null);
+          }}
+          disabled={change.isPending}
+          testId="upload-version-dropzone"
+        />
+      </Stack>
+    </ModalWrapper>
   );
 }
 

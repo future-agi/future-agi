@@ -178,3 +178,52 @@ export function LineSkeleton({ sx, ...rest }) {
   return <Skeleton sx={{ height: "1lh", ...sx }} {...rest} />;
 }
 LineSkeleton.propTypes = { sx: PropTypes.object };
+
+export function LabeledField({
+  id,
+  label,
+  required,
+  helper,
+  error,
+  sx,
+  children,
+}) {
+  const caption = error || helper;
+  return (
+    <Box sx={sx}>
+      <Typography
+        component="label"
+        htmlFor={id}
+        sx={{ display: "block", typography: "s1", fontWeight: 500, mb: 0.5 }}
+      >
+        {label}
+        {required && (
+          <Box component="span" sx={{ color: "status.danger.fg", ml: 0.5 }}>
+            *
+          </Box>
+        )}
+      </Typography>
+      {children}
+      {caption && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: error ? "status.danger.fg" : "text.subtitle",
+            mt: 0.5,
+          }}
+        >
+          {caption}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+LabeledField.propTypes = {
+  id: PropTypes.string.isRequired,
+  label: PropTypes.node.isRequired,
+  required: PropTypes.bool,
+  helper: PropTypes.node,
+  error: PropTypes.node,
+  sx: PropTypes.object,
+  children: PropTypes.node,
+};

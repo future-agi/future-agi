@@ -2,15 +2,9 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
-import {
-  Box,
-  Button,
-  IconButton,
-  Skeleton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Skeleton, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import CustomTooltip from "src/components/tooltip";
 import { useChangeVersion } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
@@ -61,7 +55,7 @@ function NewVersionButton({ agent }) {
     ? "Coming soon"
     : !canEdit
       ? "You don't have permission to add versions."
-      : "";
+      : next.hint;
   const button = (
     <Button
       variant="outlined"
@@ -76,13 +70,9 @@ function NewVersionButton({ agent }) {
   );
   return (
     <>
-      {reason ? (
-        <CustomTooltip show title={reason} size="small" arrow>
-          <span>{button}</span>
-        </CustomTooltip>
-      ) : (
-        button
-      )}
+      <CustomTooltip show={!!reason} title={reason} size="small" arrow>
+        <span>{button}</span>
+      </CustomTooltip>
       {adding && next.kind === "upload" && (
         <UploadVersionDialog
           agent={agent}
@@ -174,26 +164,16 @@ export default function AgentDetailHeader({
   ].filter(Boolean);
 
   return (
-    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
-      <IconButton size="small" onClick={onBack} aria-label="Back">
-        <Iconify icon="solar:alt-arrow-left-linear" width={18} />
-      </IconButton>
-      <Box flex={1} minWidth={0}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography
-            component="h1"
-            noWrap
-            sx={{ typography: "m3", fontWeight: 600 }}
-          >
-            {agent.name}
-          </Typography>
-          {source && <Pill>{sourceLabel(source)}</Pill>}
-        </Stack>
-        <Typography
-          data-testid="agent-detail-subline"
-          noWrap
-          sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
-        >
+    <PageHeader
+      back={
+        <IconButton size="small" onClick={onBack} aria-label="Back">
+          <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+        </IconButton>
+      }
+      title={agent.name}
+      badge={source ? <Pill>{sourceLabel(source)}</Pill> : null}
+      description={
+        <Box component="span" data-testid="agent-detail-subline">
           {pieces.map((p, i) => (
             // eslint-disable-next-line react/no-array-index-key
             <React.Fragment key={i}>
@@ -201,12 +181,16 @@ export default function AgentDetailHeader({
               {p}
             </React.Fragment>
           ))}
-        </Typography>
-      </Box>
-      {action}
-      <NewVersionButton agent={agent} />
-      <AgentMoreMenu agent={agent} />
-    </Stack>
+        </Box>
+      }
+      actions={
+        <>
+          {action}
+          <NewVersionButton agent={agent} />
+          <AgentMoreMenu agent={agent} />
+        </>
+      }
+    />
   );
 }
 
@@ -220,31 +204,29 @@ AgentDetailHeader.propTypes = {
 /** The header while the agent loads: Back works, the rest holds its place. */
 export function AgentDetailHeaderSkeleton({ onBack }) {
   return (
-    <Stack
-      data-testid="agent-header-skeleton"
-      direction="row"
-      alignItems="center"
-      spacing={1.5}
-      sx={{ mb: 1.5 }}
-    >
-      <IconButton size="small" onClick={onBack} aria-label="Back">
-        <Iconify icon="solar:alt-arrow-left-linear" width={18} />
-      </IconButton>
-      <Box flex={1} minWidth={0}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography sx={{ typography: "s1_2" }}>
+    <Box data-testid="agent-header-skeleton">
+      <PageHeader
+        back={
+          <IconButton size="small" onClick={onBack} aria-label="Back">
+            <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+          </IconButton>
+        }
+        title={
+          <Typography component="span" sx={{ typography: "m1" }}>
             <LineSkeleton width={240} />
           </Typography>
-          <Skeleton variant="rounded" width={48} height={20} />
-        </Stack>
-        <Typography sx={{ typography: "s2", mt: 0.25 }}>
-          <LineSkeleton width={220} />
-        </Typography>
-      </Box>
-      <Skeleton variant="rounded" width={140} height={32} />
-      <Skeleton variant="rounded" width={88} height={32} />
-      <Skeleton variant="circular" width={28} height={28} />
-    </Stack>
+        }
+        badge={<Skeleton variant="rounded" width={48} height={20} />}
+        description={<LineSkeleton width={220} />}
+        actions={
+          <>
+            <Skeleton variant="rounded" width={140} height={32} />
+            <Skeleton variant="rounded" width={88} height={32} />
+            <Skeleton variant="circular" width={28} height={28} />
+          </>
+        }
+      />
+    </Box>
   );
 }
 

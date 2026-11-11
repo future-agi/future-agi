@@ -8,7 +8,9 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import EmptyState from "src/sections/simulate/environments/components/EmptyState";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
+import Section from "src/components/section";
 import StatusChip from "src/sections/simulate/environments/workspace/runs/StatusChip";
 import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { useAgentRuns } from "src/api/agents/agentDetail";
@@ -186,20 +188,11 @@ export default function AgentOverviewTab() {
   let body;
   if (isError && !runs) {
     body = (
-      <EmptyState
-        icon="solar:danger-triangle-linear"
+      <ErrorState
         title="Couldn't load recent runs"
-        body={error?.message}
-        action={
-          <Button
-            variant="outlined"
-            color="inherit"
-            size="small"
-            onClick={() => refetch()}
-          >
-            Retry
-          </Button>
-        }
+        detail={error?.message}
+        onRetry={() => refetch()}
+        sx={{ height: "auto", py: 4 }}
       />
     );
   } else if (!isLoading && !runs?.length) {
@@ -207,7 +200,8 @@ export default function AgentOverviewTab() {
       <EmptyState
         icon="solar:play-circle-linear"
         title="No runs yet"
-        body="Runs of this agent from any environment will show up here."
+        description="Runs of this agent from any environment will show up here."
+        sx={{ pt: 4, pb: 4 }}
         action={
           <Button
             variant="outlined"
@@ -251,23 +245,22 @@ export default function AgentOverviewTab() {
           data-testid="next-steps-skeleton"
         />
       )}
-      <Stack spacing={1}>
-        <Typography sx={{ typography: "m3", fontWeight: 500 }}>
-          Recent runs
-        </Typography>
-        {body}
-        {canShowMore && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            onClick={() => setLimit(MORE_RUNS)}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            Show more runs
-          </Button>
-        )}
-      </Stack>
+      <Section title="Recent runs">
+        <Stack spacing={1}>
+          {body}
+          {canShowMore && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() => setLimit(MORE_RUNS)}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              Show more runs
+            </Button>
+          )}
+        </Stack>
+      </Section>
     </Stack>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
 import EmptyContent from "src/components/empty-content";
+import ErrorState from "src/components/error-state";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
@@ -103,11 +104,11 @@ export default function AgentEnvironmentsTab() {
   let body;
   if (isError && !envs) {
     body = (
-      <Typography
-        sx={{ px: 1.5, py: 1.5, typography: "s1", color: "text.secondary" }}
-      >
-        {error?.message || "Couldn't load environments"}
-      </Typography>
+      <ErrorState
+        title="Couldn't load environments"
+        detail={error?.message}
+        sx={{ height: "auto", py: 4 }}
+      />
     );
   } else if (isLoading) {
     body = (

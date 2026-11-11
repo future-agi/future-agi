@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -10,11 +10,20 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import Field from "src/sections/simulate/environments/components/Field";
 import { TextLink } from "./connectBits";
 import { frameworkLabel } from "./frameworkLabels";
 import { MONO } from "./connectStyles";
+
+const SEARCH_FROM = 6;
+
+const searchText = (agent) =>
+  [agent.name, frameworkLabel(agent.framework), agent.subfolder, agent.entry]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
 const estimateLine = (agent) => {
   const parts = [];
@@ -34,6 +43,16 @@ const estimateLine = (agent) => {
 
 /** The agents a scan found: pick one, or name a folder the scan missed. */
 export function FoundAgents({ scan, picked, onPick, onManual }) {
+  const [query, setQuery] = useState("");
+  const agents = useMemo(() => scan?.agents || [], [scan?.agents]);
+  const needle = query.trim().toLowerCase();
+  const shown = useMemo(
+    () =>
+      needle
+        ? agents.filter((agent) => searchText(agent).includes(needle))
+        : agents,
+    [agents, needle],
+  );
   if (!scan || scan.status === "pending" || scan.status === "running") {
     return (
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ py: 1 }}>
@@ -60,15 +79,31 @@ export function FoundAgents({ scan, picked, onPick, onManual }) {
       </Stack>
     );
   }
-  const agents = scan.agents || [];
   return (
     <Stack spacing={1}>
       <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-        {agents.length
-          ? `We found ${agents.length} agent${agents.length === 1 ? "" : "s"}`
-          : "We found no agent in this source"}
+        {agents.length > 1
+          ? `We found ${agents.length} agents. Which one do you mean?`
+          : agents.length === 1
+            ? "We found 1 agent"
+            : "We found no agent in this source"}
       </Typography>
-      {agents.map((agent) => {
+      {agents.length >= SEARCH_FROM && (
+        <FormSearchField
+          fullWidth
+          size="small"
+          searchQuery={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`Search ${agents.length} agents by name, framework or folder`}
+          inputProps={{ "aria-label": "Search the agents found" }}
+        />
+      )}
+      {needle && !shown.length && (
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {`No agent here matches "${query.trim()}".`}
+        </Typography>
+      )}
+      {shown.map((agent) => {
         const selected =
           picked?.subfolder === agent.subfolder && picked?.name === agent.name;
         return (
@@ -123,6 +158,11 @@ export function FoundAgents({ scan, picked, onPick, onManual }) {
           </Stack>
         );
       })}
+      {needle && shown.length > 0 && (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {`${shown.length} of ${agents.length}`}
+        </Typography>
+      )}
       {scan.truncated && (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {agents.length >= 50
@@ -180,7 +220,7 @@ export function AgentDetails({ name, onName, envNames, values, onValue }) {
   return (
     <Stack spacing={1.5}>
       <Field
-        label="Agent name"
+        label="Name"
         required
         value={name}
         onChange={onName}

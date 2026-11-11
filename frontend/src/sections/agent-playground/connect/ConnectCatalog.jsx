@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Stack, Tab, Typography } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
@@ -25,7 +25,7 @@ function CatalogRow({ item, selected, onPick, single }) {
         minHeight: single ? 36 : 48,
         borderRadius: "6px",
         bgcolor: selected ? "action.selected" : "transparent",
-        "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, 0.045) },
+        "&:hover": { bgcolor: "action.hover" },
         "&:hover .catalog-connect, &.Mui-focusVisible .catalog-connect": {
           borderColor: "text.secondary",
         },
@@ -168,13 +168,13 @@ export default function ConnectCatalog({ pickedId, onPick }) {
   let list;
   if (searching && !results.length) {
     list = (
-      <Box sx={{ ...PANEL_SX, py: 5, px: 2, textAlign: "center" }}>
-        <Typography
-          sx={{ typography: "m3", fontWeight: 600 }}
-        >{`Nothing matches "${query.trim()}"`}</Typography>
-        <Typography sx={{ typography: "s1", color: "text.secondary", mt: 0.5 }}>
-          Try a platform, a framework or where the code lives.
-        </Typography>
+      <Box sx={PANEL_SX}>
+        <EmptyState
+          variant="no-results"
+          icon="solar:magnifer-linear"
+          title={`Nothing matches "${query.trim()}"`}
+          description="Try a platform, a framework or where the code lives."
+        />
       </Box>
     );
   } else if (searching) {

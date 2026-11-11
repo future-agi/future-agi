@@ -39,7 +39,7 @@ function DefinitionRow({ row }) {
       spacing={2}
       sx={{
         px: 1.5,
-        py: 1,
+        py: 0.75,
         borderTop: "1px solid",
         borderColor: "divider",
         "&:first-of-type": { borderTop: "none" },
@@ -137,7 +137,7 @@ function DefinitionRowSkeleton({ value }) {
       spacing={2}
       sx={{
         px: 1.5,
-        py: 1,
+        py: 0.75,
         borderTop: "1px solid",
         borderColor: "divider",
         "&:first-of-type": { borderTop: "none" },
@@ -383,6 +383,9 @@ export default function AgentDefinitionTab() {
   return (
     <Stack spacing={3}>
       <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          Definition of
+        </Typography>
         {loading ? (
           <LineSkeleton width={28} />
         ) : (

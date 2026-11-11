@@ -571,12 +571,12 @@ export default function AgentNextSteps({ agent }) {
         spacing={1}
         sx={{
           px: 2,
-          py: 1.5,
+          minHeight: 36,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
       >
-        <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
+        <Typography sx={{ typography: "m3", fontWeight: 500 }}>
           Next steps
         </Typography>
         {!(tracesDone && envDone) && (
@@ -601,7 +601,7 @@ export default function AgentNextSteps({ agent }) {
         }}
       >
         <PathCell
-          eyebrow="In production"
+          eyebrow="From real calls"
           done={tracesDone}
           testId="next-step-traces"
           {...traces}
