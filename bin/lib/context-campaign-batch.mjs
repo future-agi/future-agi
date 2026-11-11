@@ -205,8 +205,12 @@ export class CampaignBatch {
    * each is open and unmerged, its head is exactly the commit the authorized
    * attempt recorded, its only parent is the authorized base and its tree is the
    * base tree plus exactly the reviewed bytes. Any mismatch refuses the unit.
+   * With acceptMerged (merge-reviewed only), a PR that is already merged with
+   * exactly the verified head, and whose merge commit has that head as a parent,
+   * is reconciled as merged instead of refusing the unit: a rerun after an
+   * interrupted or unknown merge keeps earlier results rather than re-deciding.
    */
-  async verifyPulls({ targets }) {
+  async verifyPulls({ targets, acceptMerged = false }) {
     requireValue(Array.isArray(targets) && targets.length > 0 && targets.length <= 100, 'invalid_targets');
     requireValue(new Set(targets.map((row) => row.repository_id)).size === targets.length, 'duplicate_repository');
     const verified = [];
@@ -217,7 +221,8 @@ export class CampaignBatch {
         && /^[0-9a-f]{40}$/.test(commit) && /^[0-9a-f]{40}$/.test(plan?.base_commit) && Array.isArray(plan.changes), 'invalid_merge_target');
       const git = (suffix) => this.executor.request(`https://api.github.com/repos/${repository}${suffix}`, { github: true, signal: this.signal });
       const pr = await git(`/pulls/${number}`);
-      requireValue(pr.number === number && pr.state === 'open' && pr.merged === false, 'pull_request_not_open');
+      const alreadyMerged = acceptMerged && pr.number === number && pr.merged === true && /^[0-9a-f]{40}$/.test(pr.merge_commit_sha ?? '');
+      requireValue(alreadyMerged || (pr.number === number && pr.state === 'open' && pr.merged === false), 'pull_request_not_open');
       requireValue(pr.head?.sha === commit, 'pull_request_head_changed');
       const patch = plan.changes.map((change) => {
         if (change.action === 'remove') return { path: change.path, content: null };
@@ -230,7 +235,14 @@ export class CampaignBatch {
       const baseTree = await git(`/git/trees/${base.tree.sha}?recursive=1`);
       requireValue(baseTree.truncated === false && Array.isArray(baseTree.tree), 'incomplete_base_tree');
       await this.executor.verifyCommit(git, commit, plan.base_commit, baseTree, patch);
-      verified.push({ repository_id: target.repository_id, repository, pull_request_number: number, head: commit, base: plan.base_commit });
+      const row = { repository_id: target.repository_id, repository, pull_request_number: number, head: commit, base: plan.base_commit };
+      if (alreadyMerged) {
+        const merge = await git(`/git/commits/${pr.merge_commit_sha}`);
+        requireValue(merge.sha === pr.merge_commit_sha && pr.merge_commit_sha !== commit
+          && Array.isArray(merge.parents) && merge.parents.some((parent) => parent.sha === commit), 'merge_commit_unverified');
+        Object.assign(row, { already_merged: true, merge_commit: pr.merge_commit_sha });
+      }
+      verified.push(row);
     }
     return verified;
   }
@@ -239,18 +251,40 @@ export class CampaignBatch {
    * One explicit merge decision for one verified review unit. The whole unit is
    * verified again first; each merge is guarded by its verified head SHA, so a
    * PR that changes after review is refused by the Git host, never merged.
+   * Every target gets its own receipt: merged (newly, or reconciled because it
+   * was already merged at the verified head), refused by the host, or unknown.
+   * A failed or unconfirmed merge never stops the remaining verified targets and
+   * is never reported as merged; rerunning the same unit reconciles it.
    */
   async mergeAll({ targets }) {
-    const verified = await this.verifyPulls({ targets });
-    const merged = [];
+    const verified = await this.verifyPulls({ targets, acceptMerged: true });
+    const receipts = [];
     for (const row of verified) {
       this.signal?.throwIfAborted();
-      const result = await this.executor.request(`https://api.github.com/repos/${row.repository}/pulls/${row.pull_request_number}/merge`,
-        { method: 'PUT', body: { sha: row.head, merge_method: 'merge' }, github: true, signal: this.signal });
-      requireValue(result?.merged === true && /^[0-9a-f]{40}$/.test(result.sha) && result.sha !== row.head, 'merge_not_confirmed');
-      merged.push({ ...row, merged: true, merge_commit: result.sha });
+      if (row.already_merged) {
+        receipts.push({ ...row, state: 'merged', merged: true, reconciled: true });
+        continue;
+      }
+      let result;
+      try {
+        result = await this.executor.request(`https://api.github.com/repos/${row.repository}/pulls/${row.pull_request_number}/merge`,
+          { method: 'PUT', body: { sha: row.head, merge_method: 'merge' }, github: true, signal: this.signal });
+      } catch (error) {
+        if (this.signal?.aborted) throw error;
+        const refused = [405, 409, 422].includes(error.status);
+        receipts.push({ ...row, state: refused ? 'refused' : 'unknown', merged: false,
+          reason: refused ? 'The Git host refused the head-guarded merge; review the pull request again before any new decision.'
+            : 'The merge response was not received; rerun merge-reviewed for this unit to reconcile from the Git host before any other action.' });
+        continue;
+      }
+      if (result?.merged === true && /^[0-9a-f]{40}$/.test(result.sha ?? '') && result.sha !== row.head) {
+        receipts.push({ ...row, state: 'merged', merged: true, merge_commit: result.sha });
+      } else {
+        receipts.push({ ...row, state: 'unknown', merged: false,
+          reason: 'The merge was not confirmed; rerun merge-reviewed for this unit to reconcile from the Git host before any other action.' });
+      }
     }
-    return merged;
+    return receipts;
   }
 
   /** Apply reviewed merged plans to selected checkouts and verify each lock. */

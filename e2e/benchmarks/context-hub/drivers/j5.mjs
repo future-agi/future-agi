@@ -625,6 +625,8 @@ class CampaignJourney {
       }, { repos: members });
       const merged = await this.action('approve', () => this.batch().mergeAll({ targets: members.map(toTarget) }), { repos: members });
       assert.deepEqual(merged.map((row) => row.repository_id), members.map((repo) => repo.id), 'merged_unit_membership');
+      // Per-target receipts: a refused or unknown merge is retained, never counted as merged.
+      assert.ok(merged.every((row) => row.state === 'merged' && row.merged === true), 'merge_receipt_not_merged');
       for (const row of merged) {
         const index = byRepo.get(row.repository_id); const repo = this.repos[index];
         const observed = this.git.pulls(repo.id).find((pr) => pr.number === row.pull_request_number);

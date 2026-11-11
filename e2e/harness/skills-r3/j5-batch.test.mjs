@@ -91,7 +91,7 @@ test('a deliberate pin is adopted at its own release once, then held without a w
   await assert.rejects(batch.planAll({ campaignId, selected, name: 'n', version: 2, client: 'codex', outDir: python.dir }), /invalid_local_lock/);
 });
 
-function pullFakes({ head = 'c'.repeat(40) } = {}) {
+function pullFakes({ head = 'c'.repeat(40), merged = null, mergeParents = null, mergeFailure = null } = {}) {
   const bytes = 'Managed v2\n';
   const blob = (text) => createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
   const plan = { base_commit: 'b'.repeat(40), changes: [{ path: 'AGENTS.md', action: 'replace', before_sha256: 'e'.repeat(64),
@@ -100,10 +100,16 @@ function pullFakes({ head = 'c'.repeat(40) } = {}) {
   const executor = {
     request: async (url, options = {}) => {
       const suffix = url.split('/repos/synthetic/r1')[1];
-      if (suffix === '/pulls/7') return { number: 7, state: 'open', merged: false, head: { sha: head } };
+      if (suffix === '/pulls/7') return merged ? { number: 7, state: 'closed', merged: true, merge_commit_sha: merged, head: { sha: head } }
+        : { number: 7, state: 'open', merged: false, head: { sha: head } };
       if (suffix === `/git/commits/${'b'.repeat(40)}`) return { sha: 'b'.repeat(40), tree: { sha: 't'.repeat(40) } };
+      if (merged && suffix === `/git/commits/${merged}`) return { sha: merged, parents: mergeParents ?? [{ sha: 'b'.repeat(40) }, { sha: head }] };
       if (suffix.startsWith('/git/trees/')) return { truncated: false, tree: [{ path: 'AGENTS.md', type: 'blob', mode: '100644', sha: blob('old') }] };
-      if (suffix === '/pulls/7/merge' && options.method === 'PUT') { merges.push(options.body); return { merged: true, sha: 'd'.repeat(40) }; }
+      if (suffix === '/pulls/7/merge' && options.method === 'PUT') {
+        merges.push(options.body);
+        if (mergeFailure) { const error = new Error(`git_http_${mergeFailure}`); if (mergeFailure !== 'network') error.status = mergeFailure; throw error; }
+        return { merged: true, sha: 'd'.repeat(40) };
+      }
       throw new Error(`unexpected ${suffix}`);
     },
     verifyCommit: async (_git, commit, base, baseTree, patch) => {
@@ -120,8 +126,35 @@ test('mergeAll merges a verified unit, each guarded by its verified head', async
   const { executor, targets, merges } = pullFakes();
   const batch = new CampaignBatch({ hub: async () => null, executor });
   const merged = await batch.mergeAll({ targets });
-  assert.deepEqual(merged.map((row) => [row.repository_id, row.merge_commit]), [['1001', 'd'.repeat(40)]]);
+  assert.deepEqual(merged.map((row) => [row.repository_id, row.state, row.merge_commit]), [['1001', 'merged', 'd'.repeat(40)]]);
   assert.deepEqual(merges, [{ sha: 'c'.repeat(40), merge_method: 'merge' }]);
+});
+
+test('mergeAll returns a retained per-target receipt when the host refuses or the response is lost', async () => {
+  for (const [failure, state] of [[409, 'refused'], ['network', 'unknown']]) {
+    const { executor, targets, merges } = pullFakes({ mergeFailure: failure });
+    const receipts = await new CampaignBatch({ hub: async () => null, executor }).mergeAll({ targets });
+    assert.deepEqual(receipts.map((row) => [row.repository_id, row.state, row.merged, row.merge_commit]), [['1001', state, false, undefined]]);
+    assert.match(receipts[0].reason, state === 'refused' ? /review the pull request again/ : /rerun merge-reviewed/);
+    assert.equal(merges.length, 1, 'exactly one guarded attempt, never a blind retry');
+  }
+});
+
+test('a rerun reconciles a PR already merged at the verified head without another merge write', async () => {
+  const { executor, targets, merges } = pullFakes({ merged: 'd'.repeat(40) });
+  const receipts = await new CampaignBatch({ hub: async () => null, executor }).mergeAll({ targets });
+  assert.deepEqual(receipts.map((row) => [row.state, row.reconciled, row.merge_commit]), [['merged', true, 'd'.repeat(40)]]);
+  assert.equal(merges.length, 0);
+  // verify-prs alone (no merge decision) still requires an open PR.
+  await assert.rejects(new CampaignBatch({ hub: async () => null, executor }).verifyPulls({ targets }), /pull_request_not_open/);
+});
+
+test('an already-merged PR at a different head, or whose merge commit lacks the head, refuses the unit', async () => {
+  const moved = pullFakes({ merged: 'd'.repeat(40), head: 'f'.repeat(40) });
+  await assert.rejects(new CampaignBatch({ hub: async () => null, executor: moved.executor }).mergeAll({ targets: moved.targets }), /pull_request_head_changed/);
+  const orphan = pullFakes({ merged: 'd'.repeat(40), mergeParents: [{ sha: 'b'.repeat(40) }] });
+  await assert.rejects(new CampaignBatch({ hub: async () => null, executor: orphan.executor }).mergeAll({ targets: orphan.targets }), /merge_commit_unverified/);
+  assert.equal(moved.merges.length + orphan.merges.length, 0);
 });
 
 test('mergeAll refuses a unit whose PR head or reviewed bytes changed before any merge', async () => {

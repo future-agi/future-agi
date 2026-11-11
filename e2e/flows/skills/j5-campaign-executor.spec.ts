@@ -23,7 +23,8 @@ test('SKILLS-E2E-051: execute forty fixed campaign targets and reconcile an unkn
     backendChecks: ['Postgres and the public API retain exactly forty targets and all seven explicit exclusions',
       'the independent Git fixture contains exactly one PR for each of thirty-three included targets with exact authorized trees',
       'the unknown target reconciles without another Git write; installed and delivered remain unobserved',
-      'one-sided mutations of membership, local policy and PR multiplicity are rejected'],
+      'one-sided mutations of membership, local policy and PR multiplicity are rejected',
+      'a PR head moved or reviewed bytes changed before merge-reviewed is refused with no merge write; a rerun reconciles the merged PR without another write'],
   }),
 }, async ({ page, actor, request, probe }, testInfo) => {
   test.setTimeout(600_000); // 40 binding/plan reviews + 33 executions (360s), UI and independent probes (240s).
@@ -68,7 +69,7 @@ test('SKILLS-E2E-051: execute forty fixed campaign targets and reconcile an unkn
   const campaign = await api('POST', `${root}campaigns/`, { name, parent_campaign_id: null,
     targets: bindings.map((binding) => ({ binding_id: binding.id, version: published.version.number })) });
   const campaignRoot = `${root}campaigns/${campaign.id}/`;
-  const plans = [];
+  const plans: any[] = [];
   const decisions = [];
   let revision = campaign.revision;
   for (let index = 0; index < repos.length; index++) {
@@ -142,6 +143,42 @@ test('SKILLS-E2E-051: execute forty fixed campaign targets and reconcile an unkn
     const observations = await api('GET', `${campaignRoot}targets/${bindings[index].id}/observations/`);
     expect(observations.installed).toBeNull(); expect(observations.instructions_delivered).toBeNull();
   }
+  // Full-stack merge controls through the public merge-reviewed library on two
+  // reviewed single-repository units: a PR head moved after review, or changed
+  // reviewed bytes, refuses the unit before any merge write; the restored unit
+  // merges with a per-target receipt; a rerun reconciles it without another write.
+  const batchModule = '../../../bin/lib/context-campaign-batch.mjs';
+  const { CampaignBatch } = await import(batchModule) as { CampaignBatch: new (options: unknown) => { mergeAll: (input: unknown) => Promise<any[]> } };
+  const mergeBatch = new CampaignBatch({ hub: async () => null, executor });
+  const followers = repos.map((repo, index) => ({ repo, index })).filter(({ repo }) => repo.disposition === 'follower').slice(0, 2);
+  const unitFor = (index: number) => {
+    const receipt = receipts.find((row) => row.repository === repos[index].id)!.receipt;
+    return { targets: [{ repository_id: repos[index].id, repository: `synthetic/${repos[index].name}`, pull_request_number: receipt.pull_request_number,
+      commit: receipt.repository_commit, plan: plans[index], contents: { 'AGENTS.md': Buffer.from(repos[index].files['AGENTS.md'] + '\n' + text).toString('base64') } }] };
+  };
+  const mergeWrites = () => git.requests.filter((row) => row.method === 'PUT' && /\/merge$/.test((row as any).suffix)).length;
+  const [moved, tampered] = followers;
+  const movedPr = git.pulls(moved.repo.id)[0] as any; const refs = (git as any).refs as Map<string, string>;
+  const refKey = `${moved.repo.id}/${movedPr.head.ref}`; const reviewedHead = refs.get(refKey)!;
+  refs.set(refKey, moved.repo.base); // A collaborator force-pushes the PR branch after review.
+  await expect(mergeBatch.mergeAll(unitFor(moved.index))).rejects.toThrow(/pull_request_head_changed/);
+  const tamperedUnit = unitFor(tampered.index);
+  tamperedUnit.targets[0].contents['AGENTS.md'] = Buffer.from('Unreviewed bytes\n').toString('base64');
+  await expect(mergeBatch.mergeAll(tamperedUnit)).rejects.toThrow(/patch_hash_mismatch/);
+  expect(mergeWrites()).toBe(0);
+  expect((git.pulls(moved.repo.id)[0] as any).merged).toBeFalsy(); expect((git.pulls(tampered.repo.id)[0] as any).merged).toBeFalsy();
+  refs.set(refKey, reviewedHead);
+  const [mergedReceipt] = await mergeBatch.mergeAll(unitFor(moved.index));
+  expect(mergedReceipt).toMatchObject({ repository_id: moved.repo.id, state: 'merged', merged: true });
+  const observedMerge = git.pulls(moved.repo.id)[0] as any;
+  expect(observedMerge.merged).toBe(true); expect(observedMerge.merge_commit_sha).toBe(mergedReceipt.merge_commit);
+  expect(mergeWrites()).toBe(1);
+  const [reconciledReceipt] = await mergeBatch.mergeAll(unitFor(moved.index));
+  expect(reconciledReceipt).toMatchObject({ state: 'merged', reconciled: true, merge_commit: mergedReceipt.merge_commit });
+  expect(mergeWrites()).toBe(1);
+  expect(git.pulls(moved.repo.id)).toHaveLength(1);
+  const mergeControls = { head_moved_after_review: 'refused_before_write', changed_reviewed_bytes: 'refused_before_write',
+    restored_unit: mergedReceipt.state, rerun: reconciledReceipt.reconciled ? 'reconciled_without_write' : 'unexpected', merge_writes: mergeWrites() };
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/dashboard/skills/contexts/rollouts/${campaign.id}`);
   await expect(page.getByRole('table', { name: 'Fixed rollout targets' })).toBeVisible({ timeout: 60_000 });
@@ -165,6 +202,6 @@ test('SKILLS-E2E-051: execute forty fixed campaign targets and reconcile an unkn
   await api('POST', `${campaignRoot}cancel/`, { revision: paused.revision, reason: 'Synthetic fixture complete; retain PR observations, no further writes.' });
   await writeFile(`${evidence}/campaign-executor.json`, JSON.stringify({ evidence_class: 'synthetic fixture', complete_job: false,
     limitations: ['No SDK materialization/install or model-boundary delivery', 'Reverse preview only; second update and applied reverse plan not qualified', 'No real GitHub conformance or competitive comparison'],
-    campaign_id: campaign.id, target_count: targets.length, decisions, persisted, receipts, trees, reverse,
+    campaign_id: campaign.id, target_count: targets.length, decisions, persisted, receipts, trees, reverse, merge_controls: mergeControls,
     fallibility: { omitted_target: 'rejected', extra_pr: 'rejected', lost_local_policy: 'rejected', restored: 'pass' } }, null, 2));
 });

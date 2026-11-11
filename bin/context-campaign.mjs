@@ -19,7 +19,8 @@ export async function main(args, env = process.env) {
     console.log('       node bin/context-campaign.mjs apply-all PLANS.json');
     console.log('       node bin/context-campaign.mjs verify-prs|merge-reviewed UNIT.json');
     console.log('verify-prs/merge-reviewed input: {targets:[{repository_id,repository,pull_request_number,commit,plan,contents}]} for one reviewed unit;');
-    console.log('merge-reviewed re-verifies every PR head, parent and tree, then merges each guarded by its verified head SHA.');
+    console.log('merge-reviewed re-verifies every PR head, parent and tree, then merges each guarded by its verified head SHA;');
+    console.log('it prints one receipt per target (merged, reconciled already-merged at the verified head, refused or unknown) and exits 6 unless all merged.');
     console.log('Execute input: {targets:[{campaignId,bindingId,repository,idempotencyKey,contents:{path:base64}}]}');
     console.log('plan-all input: {campaignId,selected:[{repository_id,repository,project}],exclusions,mode,name,version,client,restoreLocks,outDir}');
     console.log('plan-all prints review groups (identical managed delta, local bytes proven preserved) and individual exceptions.');
@@ -75,7 +76,8 @@ export async function main(args, env = process.env) {
     const { targets } = JSON.parse(await readFile(args[1], 'utf8'));
     const results = args[0] === 'verify-prs' ? await batch().verifyPulls({ targets }) : await batch().mergeAll({ targets });
     console.log(JSON.stringify({ results, installed: false, delivered: false }));
-    return 0;
+    // Per-target merge receipts: anything not merged (refused or unknown) is a non-zero, retained result.
+    return args[0] === 'verify-prs' || results.every((row) => row.state === 'merged') ? 0 : 6;
   }
   if (args.length !== 2 || args[0] !== 'execute') throw new Error('invalid_arguments');
   const bytes = await readFile(args[1]);
