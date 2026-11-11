@@ -28,10 +28,14 @@ class _Storage(_RealisticStorage):
         self.removed = []
         self.fail_put = False
 
-    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
         if self.fail_put:
             raise S3Error(None, "InternalError", "down", object_name, "req", "host")
-        super().put_object(bucket_name, object_name, data, length, content_type)
+        super().put_object(
+            bucket_name, object_name, data, length, content_type, metadata=metadata
+        )
 
     def remove_object(self, _bucket, object_name):
         self.removed.append(object_name)

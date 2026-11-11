@@ -5395,7 +5395,9 @@ class _MemoryStorage:
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
-    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
         self.objects[object_name] = data.read(length)
 
     def get_object(self, _bucket, object_name):
