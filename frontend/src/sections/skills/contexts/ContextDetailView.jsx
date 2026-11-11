@@ -14,7 +14,7 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Hierarchy: selected/latest/production strip, AGENTS root, read-only provenance.
 // Palette/depth/surfaces: neutral source paper and divider, no delivery inference.
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
-function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state }) {
+function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, sections = {}, state }) {
   const [tab, setTab] = useState("context");
   const [fileMode, setFileMode] = useState('source');
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
@@ -34,6 +34,8 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
     <ContextIdentityStrip viewed={viewed} latestVersion={context.latestVersion} productionVersion={context.labels?.find((label) => label.name === "production")?.version} draft={query.data.ownDraft} />
     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
       {query.data.ownDraft && <Button variant="contained" disabled={!onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
+      {/* J4: a saved draft can go straight to its publication review. */}
+      {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
       <Button variant={query.data.ownDraft ? "outlined" : "contained"} disabled={!viewed || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error)} onClick={() => query.data.ownDraft ? onPreserveDraft?.(viewed) : onEditViewed(viewed)}>Edit viewed {viewed ? `v${viewed.number}` : "version"}</Button>
       <TextField select size="small" label="Viewed release" value={viewed?.number || ""} disabled={!onSelectVersion} onChange={(event) => onSelectVersion(Number(event.target.value))}>
         {!viewed && <MenuItem value="">Not published</MenuItem>}{versions.map((version) => <MenuItem key={version.id} value={version.number}>v{version.number}</MenuItem>)}
@@ -59,6 +61,6 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
     </>}
   </Stack>;
 }
-Detail.propTypes = { scopeKey: PropTypes.string.isRequired, query: PropTypes.object.isRequired, versionQuery: PropTypes.object.isRequired, fileQuery: PropTypes.object.isRequired, selectedPath: PropTypes.string, onSelectPath: PropTypes.func, onSelectVersion: PropTypes.func, versions: PropTypes.array, onEditViewed: PropTypes.func, onResumeDraft: PropTypes.func, onPreserveDraft: PropTypes.func, sections: PropTypes.object, state: PropTypes.string };
+Detail.propTypes = { scopeKey: PropTypes.string.isRequired, query: PropTypes.object.isRequired, versionQuery: PropTypes.object.isRequired, fileQuery: PropTypes.object.isRequired, selectedPath: PropTypes.string, onSelectPath: PropTypes.func, onSelectVersion: PropTypes.func, versions: PropTypes.array, onEditViewed: PropTypes.func, onResumeDraft: PropTypes.func, onReviewDraft: PropTypes.func, onPreserveDraft: PropTypes.func, sections: PropTypes.object, state: PropTypes.string };
 export default function ContextDetailView(props) { return <Detail key={props.scopeKey} {...props} />; }
 ContextDetailView.propTypes = Detail.propTypes;

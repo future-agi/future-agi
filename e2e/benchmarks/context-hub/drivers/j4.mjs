@@ -223,8 +223,8 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'publish-candidate') {
           const author = await page('author');
           await openContext(author, 'own-context');
-          await op.transition('draft-editor', () => op.click(author.getByRole('button', { name: 'Resume your draft', exact: true }), 'resume-draft'));
-          await op.transition('publication-review', () => op.click(author.getByRole('button', { name: 'Review changes', exact: true }), 'open-publication-review'));
+          // The saved draft opens straight into its publication review.
+          await op.transition('publication-review', () => op.click(author.getByRole('button', { name: 'Review saved draft', exact: true }), 'open-publication-review'));
           const draft = await read(`contexts/${input.contextId}/draft/`, signal, input.author);
           await op.review('candidate-against-origin', ['AGENTS.md'], [], () => expect(author.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible());
           await op.click(author.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true }), 'acknowledge-candidate');
