@@ -87,7 +87,7 @@ export const mapAgentDetail = (raw) => ({
   activeVersionNumber: raw.active_version?.version_number ?? null,
   versionCount: raw.version_count,
   agentKind: raw.agent_kind ?? null,
-  source: raw.source ?? raw.active_version?.source?.kind ?? null,
+  source: raw.source ?? null,
   environmentCount: raw.environment_count,
   observabilityEnabled: raw.observability_enabled,
   observeProject: raw.observe_project

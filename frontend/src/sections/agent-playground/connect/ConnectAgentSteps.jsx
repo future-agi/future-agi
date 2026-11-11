@@ -28,12 +28,7 @@ const searchText = (agent) =>
 const estimateLine = (agent) => {
   const parts = [];
   if (agent.estimates) {
-    const {
-      tools,
-      prompt_files: promptFiles,
-      promptFiles: alt,
-    } = agent.estimates;
-    const prompts = promptFiles ?? alt;
+    const { tools, prompt_files: prompts } = agent.estimates;
     parts.push(`about ${tools} tool${tools === 1 ? "" : "s"}`);
     if (prompts != null)
       parts.push(`${prompts} prompt file${prompts === 1 ? "" : "s"}`);
