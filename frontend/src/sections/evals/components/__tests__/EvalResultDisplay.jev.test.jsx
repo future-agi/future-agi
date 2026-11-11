@@ -40,6 +40,42 @@ function result(jev, output, extra = {}) {
 }
 
 describe("Jev result display", () => {
+  it("renders non-Jev decision metadata and its actual connection without a Jev label", () => {
+    render(
+      <EvalResultDisplay
+        result={{
+          output: "Pass",
+          metadata: {
+            decision: {
+              ...base,
+              requested_model:
+                "decision/openrouter/openai/gpt-6-luna-decisions",
+              actual_model: "openai/gpt-6-luna-decisions-20261006",
+              connection: "openrouter",
+              question_type: "noul",
+              probability: 0.9,
+              verdict: "pass",
+              threshold: 0.5,
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Pass")).toBeInTheDocument();
+    expect(screen.getByText("Connection: OpenRouter")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Requested: decision/openrouter/openai/gpt-6-luna-decisions",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Returned: openai/gpt-6-luna-decisions-20261006"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Jev does not provide written reasoning."),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the verdict and raw probability without inventing confidence or reasoning", () => {
     const value = result(
       {
