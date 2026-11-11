@@ -75,7 +75,7 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
 
 it('keeps the recorded review attestation visible at the publish step instead of asking for it again', async () => {
   const { default: ContextReleaseReview } = await import('./ContextReleaseReview');
-  const draftReview = { subjectId: 'ctx', revision: 3, candidateDigest: 'sha256:c', baseVersion: 1, expectedHeadVersion: 1, headDigest: 'sha256:h', reviewFingerprint: 'fp', headAcknowledged: true, complete: true, current: true, changes: [], headChanges: [], acceptedLock: { links: [] }, capabilities: [], checks: { items: [], summary: { errors: 0, warnings: 1 } } };
+  const draftReview = { subjectId: 'ctx', revision: 3, candidateDigest: 'sha256:c', baseVersion: 1, expectedHeadVersion: 1, headDigest: 'sha256:h', reviewFingerprint: 'fp', headAcknowledged: true, complete: true, current: true, changes: [], headChanges: [], acceptedLock: { links: [] }, capabilities: { beforeDigest: 'sha256:b', afterDigest: 'sha256:c', changes: [] }, checks: { items: [], summary: { errors: 0, warnings: 1 } } };
   const onPublish = vi.fn(async () => ({}));
   render(<MemoryRouter><ContextReleaseReview scopeKey="scope" state="ready" name="parent" draftReview={draftReview} canPublish onPublish={onPublish} /></MemoryRouter>);
   expect(screen.getByRole('checkbox', { name: /I reviewed the saved candidate/ })).toBeChecked();
