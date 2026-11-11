@@ -114,6 +114,7 @@ export async function createDriver({ jobId, runId, registration }) {
           if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
           await op.click(page.getByRole('button', { name: 'Review runtime configuration', exact: true }), 'review-runtime-configuration');
           await expect(page.getByText('Pin the application configuration')).toBeVisible();
+          await expect(page.getByText('Source commit')).toBeVisible();
           await shot('01-pin-configuration');
           await op.click(page.getByRole('button', { name: 'Pin this configuration', exact: true }), 'pin-application-configuration');
           await expect(page.getByText('Configuration pinned')).toBeVisible();
@@ -252,6 +253,7 @@ export async function createDriver({ jobId, runId, registration }) {
           state.runs.matched = run;
           state.matchedId = evidenceId;
           await op.transition('matched-result', () => expect(page.getByText(/Release-ready on the application|Hold this release/).first()).toBeVisible({ timeout: 120_000 }));
+          await expect(page.getByLabel('Verification', { exact: true })).toContainText('completed');
           await shot('05-matched-result');
           // Acceptance-matrix controls through the public API (not operator work).
           const targets = await api('GET', `${root}native/targets/`);
@@ -374,6 +376,9 @@ export async function createDriver({ jobId, runId, registration }) {
           await go('retained-tracing', '/dashboard/observe');
           await op.click(page.getByText(input.projectName, { exact: true }), 'open-incident-project');
           await op.transition('production-trace', () => op.click(page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Production refund request' }).first(), 'open-production-trace'));
+          await page.waitForLoadState('networkidle');
+          // The drawer is shown with whatever identity the tracing UI exposes; the exact identity is read from the API below.
+          await expect(page.getByText(/fi\.context\.version_id|Production refund request/).nth(1)).toBeVisible({ timeout: 30_000 }).catch(() => {});
           await shot('09-production-trace');
           const trace = await api('GET', `../../tracer/trace/${produced.trace_id}/?project_id=${input.projectId}`);
           state.trace = JSON.stringify(trace);
