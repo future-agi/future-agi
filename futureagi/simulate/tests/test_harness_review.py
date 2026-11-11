@@ -360,6 +360,11 @@ def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_cha
     assert change["rows"] == [
         {"table": "orders", "added": 1, "removed": 1, "changed": 1}
     ]
+    # The summary names the rows, so a saved version reads as what changed in the world.
+    assert (
+        change["summary"]
+        == "Change world state store.json: orders 1 row added, 1 removed, 1 changed"
+    )
     assert (
         compose_accepted(default, draft, [change], {change["id"]: "accepted"})[
             "store.json"

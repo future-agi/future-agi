@@ -275,6 +275,22 @@ def _summary(action: str, item: Item, fields: list[str]) -> str:
     return f"{verb} {noun} {name}"
 
 
+def _rows_said(rows: list[dict[str, Any]] | None) -> str:
+    """Each table's row counts, e.g. "orders 1 row added, 2 changed"; empty when they could not be read."""
+    said = []
+    for table in rows or []:
+        counts = [
+            (table.get(what) or 0, what) for what in ("added", "removed", "changed")
+        ]
+        counts = [(count, what) for count, what in counts if count]
+        if counts:
+            noun = "row" if counts[0][0] == 1 else "rows"
+            words = [f"{count} {what}" for count, what in counts]
+            words[0] = f"{counts[0][0]} {noun} {counts[0][1]}"
+            said.append(f"{table['table']} {', '.join(words)}")
+    return "; ".join(said)
+
+
 def compute_changes(
     default: Mapping[str, bytes], draft: Mapping[str, bytes]
 ) -> list[dict[str, Any]]:
@@ -296,6 +312,14 @@ def compute_changes(
         else:
             patch = _tested(old.value, jsonpatch.make_patch(old.value, new.value).patch)
         fields = _fields(old.value if old else None, new.value if new else None)
+        rows = (
+            world_rows(item.key, old.raw if old else None, new.raw if new else None)
+            if item.kind == "world_state"
+            else None
+        )
+        summary = _summary(action, item, fields)
+        if _rows_said(rows):
+            summary = f"{summary}: {_rows_said(rows)}"
         changes.append(
             {
                 "id": item_id,
@@ -307,16 +331,8 @@ def compute_changes(
                 "patch": patch,
                 "base_digest": old.digest if old else None,
                 "draft_digest": new.digest if new else None,
-                "summary": _summary(action, item, fields),
-                **(
-                    {
-                        "rows": world_rows(
-                            item.key, old.raw if old else None, new.raw if new else None
-                        )
-                    }
-                    if item.kind == "world_state"
-                    else {}
-                ),
+                "summary": summary,
+                **({"rows": rows} if item.kind == "world_state" else {}),
             }
         )
     changes.sort(key=lambda one: (KINDS.index(one["kind"]), one["key"]))
