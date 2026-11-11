@@ -95,7 +95,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 					Index: s.toolCallIdx,
 					ID:    toolCallID,
 					Type:  "function",
-					Function: &models.FunctionCall{
+					Function: &models.FunctionCallDelta{
 						Name:      part.FunctionCall.Name,
 						Arguments: string(part.FunctionCall.Args),
 					},
