@@ -27,7 +27,8 @@ func init() {
 	if err != nil {
 		log.Fatalf("failed to parse embedded price schedule: %v", err)
 	}
-	if err := attachPriceSchedule(BundledModels, schedule); err != nil {
-		log.Fatalf("failed to attach embedded price schedule: %v", err)
+	if err := checkPriceSchedule(BundledModels, schedule); err != nil {
+		log.Fatalf("failed to check embedded price schedule: %v", err)
 	}
+	priceSchedule = schedule
 }

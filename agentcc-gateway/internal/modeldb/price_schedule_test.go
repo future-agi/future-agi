@@ -96,10 +96,29 @@ func mustParse(t *testing.T, text string) map[string][]scheduleRow {
 func syntheticDB(t *testing.T, table PricingInfo, text string) *ModelDB {
 	t.Helper()
 	bundled := map[string]*ModelInfo{"m": {ID: "m", Mode: ModeChat, Pricing: table}}
-	if err := attachPriceSchedule(bundled, mustParse(t, text)); err != nil {
-		t.Fatalf("attachPriceSchedule: %v", err)
+	schedule := mustParse(t, text)
+	if err := checkPriceSchedule(bundled, schedule); err != nil {
+		t.Fatalf("checkPriceSchedule: %v", err)
 	}
+	addScheduleForTest(t, schedule)
 	return New(bundled, nil)
+}
+
+// addScheduleForTest adds schedule's keys to the embedded schedule until the
+// test ends. Production never changes it; no test in this package runs in
+// parallel.
+func addScheduleForTest(t *testing.T, schedule map[string][]scheduleRow) {
+	t.Helper()
+	saved := priceSchedule
+	merged := make(map[string][]scheduleRow, len(saved)+len(schedule))
+	for key, rows := range saved {
+		merged[key] = rows
+	}
+	for key, rows := range schedule {
+		merged[key] = rows
+	}
+	priceSchedule = merged
+	t.Cleanup(func() { priceSchedule = saved })
 }
 
 func mustGet(t *testing.T, db *ModelDB, id string) *ModelInfo {
@@ -264,8 +283,11 @@ func TestOverriddenRowsAreNotShared(t *testing.T) {
 	if got := mustGet(t, b, "gemini-3.7-flash").PricingAt(t27).InputPerToken; !near(got, 1.5e-6) {
 		t.Errorf("a table built after an overridden one: 1 Jan input %g, want 1.5e-6", got)
 	}
-	if got := BundledModels["gemini-3.7-flash"].dated[1].pricing.InputPerToken; !near(got, 1.5e-6) {
-		t.Errorf("bundled 2027 row: input %g, want 1.5e-6", got)
+	if got := BundledModels["gemini-3.7-flash"].PricingAt(t27).InputPerToken; !near(got, 1.5e-6) {
+		t.Errorf("bundled entry on 1 Jan: input %g, want 1.5e-6", got)
+	}
+	if got := *priceSchedule["gemini-3.7-flash"][1].InputCostPerToken; !near(got, 1.5e-6) {
+		t.Errorf("the schedule's 2027 row: input %g, want 1.5e-6", got)
 	}
 }
 
@@ -426,7 +448,7 @@ func TestParsePriceScheduleRejects(t *testing.T) {
 
 func TestAttachPriceScheduleRejectsAKeyTheTableLacks(t *testing.T) {
 	schedule := mustParse(t, scheduleText(t, "vertex_ai/gemini-3.7-flash-001", rowFields("2027-01-01", 1.5e-6)))
-	err := attachPriceSchedule(map[string]*ModelInfo{}, schedule)
+	err := checkPriceSchedule(map[string]*ModelInfo{}, schedule)
 	want := `price schedule names "vertex_ai/gemini-3.7-flash-001", which the bundled price table does not list`
 	if err == nil || err.Error() != want {
 		t.Fatalf("error %v, want %q", err, want)
@@ -469,5 +491,101 @@ func TestScheduleRowsStartAtMidnightUTC(t *testing.T) {
 	rows := schedule["gemini-3.7-flash"]
 	if len(rows) != 2 || !rows[0].start.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || !rows[1].start.Equal(t27) {
 		t.Errorf("gemini-3.7-flash rows start at %v, want 2026-01-01 and 2027-01-01 at 00:00:00 UTC", rows)
+	}
+}
+
+// A day into 2027, and the last millisecond of 2026, both UTC.
+var (
+	jan2       = time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
+	lastMs2026 = time.Date(2026, 12, 31, 23, 59, 59, 999_000_000, time.UTC)
+)
+
+// A table built with New from entries that never went through the bundled
+// loader still bills the dated rows: they are found by the entry's key, not
+// carried on the entry.
+func TestDatedPriceNeedsNoLoadedEntries(t *testing.T) {
+	table := PricingInfo{
+		InputPerToken: 7.5e-7, OutputPerToken: 3.75e-6, CachedInputPerToken: 7.5e-8,
+		BatchInputPerToken: 3.75e-7, BatchOutputPerToken: 1.875e-6,
+	}
+	db := New(map[string]*ModelInfo{
+		"gemini-3.7-flash":           {Provider: "gemini", Mode: ModeChat, Pricing: table},
+		"vertex_ai/gemini-3.7-flash": {Provider: "vertex_ai", Mode: ModeChat, Pricing: table},
+	}, nil)
+	for _, key := range []string{"gemini-3.7-flash", "vertex_ai/gemini-3.7-flash"} {
+		m := mustGet(t, db, key)
+		assertRates(t, key+" on 2 Jan", m.PricingAt(jan2), rates2027)
+		assertRates(t, key+" on 31 Dec", m.PricingAt(lastMs2026), rates2026)
+		assertCost(t, db, key, CostOptions{At: jan2}, cost2027)
+		assertCost(t, db, key, CostOptions{At: lastMs2026}, cost2026)
+	}
+	// Another name for the model is priced by the entry it resolves to.
+	assertCost(t, db, "google/gemini-3.7-flash", CostOptions{At: jan2}, cost2027)
+}
+
+// freshEntry parses key's litellm.json entry again on its own, as a catalogue
+// sync would, giving an entry that init never saw.
+func freshEntry(t *testing.T, key string) *ModelInfo {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(liteLLMData, &raw); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := raw[key]
+	if !ok {
+		t.Fatalf("litellm.json does not list %q", key)
+	}
+	snippet, err := json.Marshal(map[string]json.RawMessage{key: entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := parseLiteLLM(snippet)
+	if err != nil {
+		t.Fatalf("parseLiteLLM: %v", err)
+	}
+	m, ok := fresh[key]
+	if !ok {
+		t.Fatalf("parseLiteLLM skipped %q", key)
+	}
+	if m == BundledModels[key] {
+		t.Fatalf("the fresh %q entry is the bundled one", key)
+	}
+	return m
+}
+
+// swappedTable is the bundled table with key's entry replaced by a fresh parse.
+func swappedTable(t *testing.T, key string) map[string]*ModelInfo {
+	t.Helper()
+	table := make(map[string]*ModelInfo, len(BundledModels))
+	for id, m := range BundledModels {
+		table[id] = m
+	}
+	table[key] = freshEntry(t, key)
+	return table
+}
+
+func TestDatedPriceSurvivesAnEntrySwap(t *testing.T) {
+	for _, key := range []string{"gemini-3.7-flash", "vertex_ai/gemini-3.8-flash"} {
+		db := New(swappedTable(t, key), nil)
+		assertRates(t, key+" on 2 Jan after a swap", mustGet(t, db, key).PricingAt(jan2), rates2027)
+		assertCost(t, db, key, CostOptions{At: jan2}, cost2027)
+		assertCost(t, db, key, CostOptions{At: lastMs2026}, cost2026)
+	}
+}
+
+func TestPriceOverrideSurvivesAnEntrySwap(t *testing.T) {
+	const key = "gemini-3.7-flash"
+	db := New(swappedTable(t, key), map[string]ModelOverride{
+		key: {Pricing: &PricingOverride{CachedInputPerToken: ptr(1e-8)}},
+	})
+	p := mustGet(t, db, key).PricingAt(jan2)
+	if !near(p.InputPerToken, 1.5e-6) || !near(p.OutputPerToken, 7.5e-6) || !near(p.CachedInputPerToken, 1e-8) {
+		t.Errorf("2 Jan after a swap: input %g output %g cached %g, want 1.5e-6, 7.5e-6, 1e-8", p.InputPerToken, p.OutputPerToken, p.CachedInputPerToken)
+	}
+	// The 2026 row, not the big table, sets the price before midnight, so this
+	// holds whatever litellm.json says for the key.
+	p = mustGet(t, db, key).PricingAt(lastMs2026)
+	if !near(p.InputPerToken, 7.5e-7) || !near(p.OutputPerToken, 3.75e-6) || !near(p.CachedInputPerToken, 1e-8) {
+		t.Errorf("31 Dec after a swap: input %g output %g cached %g, want 7.5e-7, 3.75e-6, 1e-8", p.InputPerToken, p.OutputPerToken, p.CachedInputPerToken)
 	}
 }

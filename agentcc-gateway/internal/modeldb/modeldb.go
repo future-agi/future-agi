@@ -37,8 +37,9 @@ type ModelInfo struct {
 	DeprecationDate string          `json:"deprecation_date,omitempty"`
 	Regions         []string        `json:"regions,omitempty"`
 
-	// dated is the price schedule's rows, oldest first; never modified once built.
-	dated []datedPricing
+	// priceOverride is the config price override New merged into Pricing. A
+	// dated row in force replaces token prices, so PricingAt merges it again.
+	priceOverride *PricingOverride
 }
 
 // ModelDB is an immutable, thread-safe model metadata database.
@@ -56,6 +57,9 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 	for id, m := range bundled {
 		cpy := *m
 		cpy.ID = id
+		// Only this New's overrides apply to the entry, never one an input
+		// entry carries from an earlier New.
+		cpy.priceOverride = nil
 		if len(m.Regions) > 0 {
 			cpy.Regions = make([]string, len(m.Regions))
 			copy(cpy.Regions, m.Regions)
@@ -72,15 +76,11 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			models[id] = existing
 		}
 		mergeOverride(existing, ov)
-		if ov.Pricing != nil && len(existing.dated) > 0 {
-			// An operator's price wins field by field over a dated one too. The
-			// rows are copied: bundled ones are shared by every ModelDB.
-			dated := make([]datedPricing, len(existing.dated))
-			copy(dated, existing.dated)
-			for i := range dated {
-				mergePricing(&dated[i].pricing, ov.Pricing)
-			}
-			existing.dated = dated
+		if ov.Pricing != nil {
+			// An operator's price wins field by field over a dated one too;
+			// PricingAt applies it after the row.
+			po := *ov.Pricing
+			existing.priceOverride = &po
 		}
 	}
 

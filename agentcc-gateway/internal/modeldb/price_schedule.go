@@ -23,11 +23,11 @@ type scheduleRow struct {
 	start time.Time // From as an instant; set by parsePriceSchedule
 }
 
-// datedPricing is a model's full pricing from `from` until the next row.
-type datedPricing struct {
-	from    time.Time
-	pricing PricingInfo
-}
+// priceSchedule is the parsed embedded schedule, keyed by exact table key.
+// It is set once in init and never changed. It lives here rather than on
+// the model entries so that rebuilding the table from fresh entries cannot
+// drop it.
+var priceSchedule map[string][]scheduleRow
 
 // parsePriceSchedule reads and checks the dated price file. Any fault is an
 // error: billing the undated price quietly is what the file exists to stop.
@@ -92,9 +92,9 @@ func parsePriceSchedule(data []byte) (map[string][]scheduleRow, error) {
 	return schedule, nil
 }
 
-// attachPriceSchedule gives each dated key's entry its rows. A key the table
-// lacks is an error: its dated price would never be billed.
-func attachPriceSchedule(models map[string]*ModelInfo, schedule map[string][]scheduleRow) error {
+// checkPriceSchedule makes sure the table lists every dated key. A key the
+// table lacks is an error: its dated price would never be billed.
+func checkPriceSchedule(models map[string]*ModelInfo, schedule map[string][]scheduleRow) error {
 	keys := make([]string, 0, len(schedule))
 	for key := range schedule {
 		keys = append(keys, key)
@@ -102,35 +102,38 @@ func attachPriceSchedule(models map[string]*ModelInfo, schedule map[string][]sch
 	sort.Strings(keys)
 
 	for _, key := range keys {
-		m, ok := models[key]
-		if !ok {
+		if _, ok := models[key]; !ok {
 			return fmt.Errorf("price schedule names %q, which the bundled price table does not list", key)
 		}
-		rows := schedule[key]
-		dated := make([]datedPricing, 0, len(rows))
-		for _, row := range rows {
-			p := m.Pricing
-			p.InputPerToken = *row.InputCostPerToken
-			p.OutputPerToken = *row.OutputCostPerToken
-			p.CachedInputPerToken = *row.CacheReadInputTokenCost
-			p.BatchInputPerToken = *row.InputCostPerTokenBatches
-			p.BatchOutputPerToken = *row.OutputCostPerTokenBatches
-			dated = append(dated, datedPricing{from: row.start, pricing: p})
-		}
-		m.dated = dated
 	}
 	return nil
 }
 
-// PricingAt returns the pricing in force at the instant at: the latest dated
-// row that starts at or before it, else the table's own pricing.
+// PricingAt returns the pricing in force at the instant at. The schedule's
+// rows are looked up by the entry's own key: the latest row that starts at
+// or before at replaces the five token prices, and a config price override
+// then wins field by field. With no such row it is the table's own pricing,
+// override included.
 func (m *ModelInfo) PricingAt(at time.Time) PricingInfo {
-	p := m.Pricing
-	for _, d := range m.dated {
-		if d.from.After(at) {
+	var row *scheduleRow
+	rows := priceSchedule[m.ID]
+	for i := range rows {
+		if rows[i].start.After(at) {
 			break
 		}
-		p = d.pricing
+		row = &rows[i]
+	}
+	p := m.Pricing
+	if row == nil {
+		return p
+	}
+	p.InputPerToken = *row.InputCostPerToken
+	p.OutputPerToken = *row.OutputCostPerToken
+	p.CachedInputPerToken = *row.CacheReadInputTokenCost
+	p.BatchInputPerToken = *row.InputCostPerTokenBatches
+	p.BatchOutputPerToken = *row.OutputCostPerTokenBatches
+	if m.priceOverride != nil {
+		mergePricing(&p, m.priceOverride)
 	}
 	return p
 }
