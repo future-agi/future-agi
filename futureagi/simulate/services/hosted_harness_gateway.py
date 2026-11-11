@@ -5202,9 +5202,20 @@ def authored_contract(body: bytes) -> dict[str, Any]:
     """The ``contract.json`` inside a frozen authoring archive, or ``{}`` when unreadable."""
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            member = archive.extractfile("contract.json")
-            contract = json.load(member) if member is not None else {}
-    except (KeyError, tarfile.TarError, json.JSONDecodeError, OSError, TypeError):
+            member = next(
+                (
+                    entry
+                    for entry in archive.getmembers()
+                    if entry.isfile()
+                    and Path(entry.name).name == "contract.json"
+                    and len([part for part in Path(entry.name).parts if part != "."])
+                    == 1
+                ),
+                None,
+            )
+            handle = archive.extractfile(member) if member is not None else None
+            contract = json.load(handle) if handle is not None else {}
+    except (tarfile.TarError, json.JSONDecodeError, OSError, TypeError):
         return {}
     return contract if isinstance(contract, dict) else {}
 

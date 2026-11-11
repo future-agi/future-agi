@@ -17,6 +17,7 @@ from simulate.services.agent_contracts import (
     stored_version_contract,
 )
 from simulate.services.agent_setup import stored_agent
+from simulate.services.hosted_harness_gateway import authored_contract
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_hosted_harness_authored_agent import _sent
 
@@ -57,10 +58,38 @@ def _archive(contract):
     body = io.BytesIO()
     with tarfile.open(fileobj=body, mode="w:gz") as tar:
         data = json.dumps(contract).encode()
-        member = tarfile.TarInfo("contract.json")
+        member = tarfile.TarInfo("./contract.json")
         member.size = len(data)
         tar.addfile(member, io.BytesIO(data))
     return body.getvalue()
+
+
+def _archive_with(entries: dict[str, bytes]) -> bytes:
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as tar:
+        for name, data in entries.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+    return body.getvalue()
+
+
+@pytest.mark.parametrize("name", ["./contract.json", "contract.json"])
+def test_the_authored_contract_is_read_however_the_sandbox_named_it(name):
+    body = _archive_with({name: json.dumps({"modality": "voice"}).encode()})
+
+    assert authored_contract(body) == {"modality": "voice"}
+
+
+def test_a_nested_or_missing_contract_reads_as_empty():
+    nested = _archive_with(
+        {"./scenarios/one/contract.json": json.dumps({"modality": "voice"}).encode()}
+    )
+    other = _archive_with({"./environment.json": b"{}"})
+
+    assert authored_contract(nested) == {}
+    assert authored_contract(other) == {}
+    assert authored_contract(b"not a tar") == {}
 
 
 def _job(organization, *, frozen=False, seeded=False):
