@@ -50,7 +50,7 @@ describe("RuntimePreflight", () => {
     expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
     expect(screen.getByText("Agent service-account credential file · Credential file")).toBeInTheDocument();
     expect(screen.getByText("Credential rejected")).toBeInTheDocument();
-    expect(screen.getByText("7 source files scanned · Detected: livekit")).toBeInTheDocument();
+    expect(screen.getByText("7 code files scanned · Detected: livekit")).toBeInTheDocument();
     expect(screen.queryByText("RETELL_API_KEY")).toBeNull();
   });
 
