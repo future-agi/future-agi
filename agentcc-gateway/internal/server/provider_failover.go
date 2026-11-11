@@ -1,0 +1,41 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/routing"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
+)
+
+// executeProviderFailover keeps operator breakers active only for operator
+// instances. Resolve once so admission and retries use the same actual provider.
+func (h *Handlers) executeProviderFailover(ctx context.Context, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig, call func(context.Context, providers.Provider, string) error) (*routing.FailoverResult, error) {
+	resolved := make(map[string]providers.Provider)
+	resolve := func(id string) providers.Provider {
+		if p, ok := resolved[id]; ok {
+			return p
+		}
+		p, ok := h.registry.GetProvider(id)
+		if ok && shouldApplyOrgProviderOverride(rc) {
+			p = h.applyOrgProviderOverride(rc.Metadata["org_id"], orgCfg, id, p)
+		}
+		resolved[id] = p
+		return p
+	}
+	scoped := fo.WithCircuitBreakerFilter(func(id string) bool {
+		p := resolve(id)
+		base, ok := h.registry.GetProvider(id)
+		return ok && p == base
+	})
+	return scoped.Execute(ctx, rc.Model, func(callCtx context.Context, id, model string) error {
+		p := resolve(id)
+		if p == nil {
+			return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", id))
+		}
+		return call(callCtx, p, model)
+	})
+}

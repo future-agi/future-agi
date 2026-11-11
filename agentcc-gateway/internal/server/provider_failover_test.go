@@ -1,0 +1,127 @@
+package server
+
+import (
+	"fmt"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
+)
+
+func TestAdaptiveOperatorBreakerWithTenantProviders(t *testing.T) {
+	for _, strategy := range []string{"adaptive", "round-robin"} {
+		for _, stream := range []bool{false, true} {
+			for _, entry := range []string{"unrelated-disabled", "unrelated-enabled", "same-disabled", "same-no-credentials", "internal-ignores-override"} {
+				t.Run(fmt.Sprintf("%s/stream=%t/%s", strategy, stream, entry), func(t *testing.T) {
+					var fastCalls, slowCalls atomic.Int64
+					fast := adaptiveUpstream(t, false, time.Millisecond, &fastCalls)
+					slow := adaptiveUpstream(t, true, time.Millisecond, &slowCalls)
+					cfg := config.DefaultConfig()
+					cfg.Providers = map[string]config.ProviderConfig{
+						"fast": {BaseURL: fast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+						"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+					}
+					cfg.Routing = adaptiveRoutingConfig()
+					cfg.Routing.DefaultStrategy = strategy
+					cfg.Routing.Adaptive.UpdateInterval = time.Hour
+					cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
+					cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
+					cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
+					keyType := "byok"
+					if entry == "internal-ignores-override" {
+						keyType = "internal"
+					}
+					cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-breaker", Key: "synthetic-breaker-probe", KeyType: keyType, Metadata: map[string]string{"org_id": "synthetic-org"}}}
+					srv, gateway := adaptiveServer(t, cfg)
+					id := "unrelated"
+					pcfg := &tenant.ProviderConfig{Enabled: false, APIKey: "synthetic-provider-key", Models: []string{"different-model"}}
+					switch entry {
+					case "unrelated-enabled":
+						pcfg.Enabled = true
+					case "same-disabled":
+						id = "slow"
+					case "same-no-credentials":
+						id, pcfg.Enabled, pcfg.APIKey = "slow", true, ""
+					case "internal-ignores-override":
+						id, pcfg.Enabled = "slow", true
+					}
+					store := tenant.NewStore()
+					store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{id: pcfg}})
+					orgCache := providers.NewOrgProviderCache(cfg.Providers, false)
+					t.Cleanup(orgCache.EvictAll)
+					srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
+					srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+					for i := 0; i < 4; i++ {
+						status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-breaker-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"fast"}})
+						if status != http.StatusOK || !strings.Contains(body, "synthetic response") {
+							t.Fatalf("operator failover response: status=%d missing_content=%t", status, !strings.Contains(body, "synthetic response"))
+						}
+					}
+					health := srv.handlers.healthMonitor.GetHealth("slow")
+					if slowCalls.Load() != 1 || health.ErrorCount != 1 || health.CircuitState != "open" || health.Healthy {
+						t.Fatalf("operator breaker bypassed by tenant config: calls=%d errors=%d circuit=%s healthy=%t", slowCalls.Load(), health.ErrorCount, health.CircuitState, health.Healthy)
+					}
+					if fastCalls.Load() != 4 {
+						t.Fatalf("successful operator attempts=%d want=4", fastCalls.Load())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
+	for _, strategy := range []string{"adaptive", "round-robin"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", strategy, stream), func(t *testing.T) {
+				var globalFastCalls, globalSlowCalls, orgCalls atomic.Int64
+				fast := adaptiveUpstream(t, false, time.Millisecond, &globalFastCalls)
+				slow := adaptiveUpstream(t, true, time.Millisecond, &globalSlowCalls)
+				org := adaptiveUpstream(t, true, time.Millisecond, &orgCalls)
+				cfg := config.DefaultConfig()
+				cfg.Providers = map[string]config.ProviderConfig{
+					"fast": {BaseURL: fast.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+					"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
+				}
+				cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-mixed", Key: "synthetic-mixed-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "synthetic-org"}}}
+				cfg.Routing = adaptiveRoutingConfig()
+				cfg.Routing.DefaultStrategy = strategy
+				cfg.Routing.Adaptive.UpdateInterval = time.Hour
+				cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
+				cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
+				cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
+				srv, gateway := adaptiveServer(t, cfg)
+				store := tenant.NewStore()
+				store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+					"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: []string{"different-model"}},
+				}})
+				orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
+					"fast": {BaseURL: org.URL, APIFormat: "openai", Models: []string{"different-model"}},
+				}, false)
+				t.Cleanup(orgCache.EvictAll)
+				srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
+				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+				for i := 0; i < 3; i++ {
+					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-mixed-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"fast"}})
+					if status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable") {
+						t.Fatalf("mixed failover response: status=%d missing_error=%t", status, !strings.Contains(body, "synthetic upstream unavailable"))
+					}
+				}
+				globalHealth := srv.handlers.healthMonitor.GetHealth("slow")
+				if globalSlowCalls.Load() != 1 || globalHealth.ErrorCount != 1 || globalHealth.CircuitState != "open" {
+					t.Fatalf("mixed attempt lost operator breaker: calls=%d errors=%d circuit=%s", globalSlowCalls.Load(), globalHealth.ErrorCount, globalHealth.CircuitState)
+				}
+				orgHealth := srv.handlers.healthMonitor.GetHealth("fast")
+				if orgCalls.Load() != 3 || globalFastCalls.Load() != 0 || orgHealth.RequestCount != 0 || orgHealth.CircuitState != "closed" {
+					t.Fatalf("org attempt contaminated operator state: org_calls=%d global_calls=%d samples=%d circuit=%s", orgCalls.Load(), globalFastCalls.Load(), orgHealth.RequestCount, orgHealth.CircuitState)
+				}
+			})
+		}
+	}
+}

@@ -475,11 +475,7 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		}
 		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
 	}
-	fo := h.failover.Load()
-	if orgCfg != nil && len(orgCfg.Providers) > 0 {
-		return fo.WithoutCircuitBreaker()
-	}
-	return fo
+	return h.failover.Load()
 }
 
 func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
@@ -1474,18 +1470,9 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		foResult, err := fo.Execute(ctx, rc.Model, func(ctx context.Context, providerID string, modelOverride string) error {
-			p, ok := h.registry.GetProvider(providerID)
-			if !ok {
-				return fmt.Errorf("provider %q not found", providerID)
-			}
-
-			if shouldApplyOrgProviderOverride(rc) {
-				p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-			}
-
+		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
-			rc.Provider = providerID
+			rc.Provider = p.ID()
 			rc.Response = nil
 			rc.ResolvedModel = ""
 			if modelOverride != "" {
@@ -1667,14 +1654,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 
 		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
-				p, ok := h.registry.GetProvider(providerID)
-				if !ok {
-					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
-				}
-				if shouldApplyOrgProviderOverride(rc) {
-					p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
-				}
+			result, err := h.executeProviderFailover(ctx, rc, effectiveFailover, orgCfg, func(callCtx context.Context, p providers.Provider, modelOverride string) error {
 				if modelOverride != "" {
 					rc.Request.Model = modelOverride
 				} else {

@@ -15,11 +15,12 @@ var DefaultFailoverStatusCodes = []int{429, 500, 502, 503, 504}
 
 // Failover handles automatic provider failover on errors.
 type Failover struct {
-	cfg     config.FailoverConfig
-	router  *Router
-	retryer *Retryer
-	cbReg   *CircuitBreakerRegistry
-	codes   map[int]bool
+	cfg               config.FailoverConfig
+	router            *Router
+	retryer           *Retryer
+	cbReg             *CircuitBreakerRegistry
+	codes             map[int]bool
+	useCircuitBreaker func(string) bool
 }
 
 // FailoverCallFunc is called for each failover attempt.
@@ -59,15 +60,11 @@ func NewFailover(cfg config.FailoverConfig, router *Router, retryer *Retryer, cb
 	}
 }
 
-// WithoutCircuitBreaker retains routing/retries for requests that may replace
-// operator providers with org instances. Those outcomes must not update the
-// operator's breakers or its adaptive health view.
-func (f *Failover) WithoutCircuitBreaker() *Failover {
-	if f == nil {
-		return nil
-	}
+// WithCircuitBreakerFilter scopes admission and outcome recording per attempt.
+// The request-local filter must identify the actual instance used by the call.
+func (f *Failover) WithCircuitBreakerFilter(filter func(string) bool) *Failover {
 	scoped := *f
-	scoped.cbReg = nil
+	scoped.useCircuitBreaker = filter
 	return &scoped
 }
 
@@ -128,8 +125,9 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Check circuit breaker before calling.
-		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
+		var cb *CircuitBreaker
+		if f.cbReg.IsEnabled() && (f.useCircuitBreaker == nil || f.useCircuitBreaker(result.Target.ProviderID)) {
+			cb = f.cbReg.Get(result.Target.ProviderID)
 			if !cb.Allow() {
 				excluded[result.Target.ProviderID] = true
 				continue
@@ -158,8 +156,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Record result in circuit breaker.
-		if f.cbReg.IsEnabled() {
-			cb := f.cbReg.Get(result.Target.ProviderID)
+		if cb != nil {
 			if callErr == nil {
 				cb.RecordSuccess()
 			} else {

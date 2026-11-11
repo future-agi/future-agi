@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Synthetic OpenAI-compatible upstreams exercise the real adapter and HTTP path.
@@ -30,6 +32,19 @@ func adaptiveUpstream(t *testing.T, fail bool, delay time.Duration, calls *atomi
 		if fail {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			io.WriteString(w, `{"error":{"message":"synthetic upstream unavailable","type":"server_error"}}`)
+			return
+		}
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "data: {\"id\":\"synthetic\",\"model\":\"adaptive-sample\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"synthetic response\"}}]}\n\ndata: [DONE]\n\n")
 			return
 		}
 		io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"adaptive-sample","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
@@ -191,13 +206,21 @@ func TestAdaptiveReloadSharesLiveCircuitBreaker(t *testing.T) {
 	cfg.Routing.Adaptive.UpdateInterval = time.Hour
 	cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
+	cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-reload", Key: "synthetic-reload-probe", KeyType: "internal", Metadata: map[string]string{"org_id": "synthetic-org"}}}
 	srv, gateway := adaptiveServer(t, cfg)
+	store := tenant.NewStore()
+	store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+		"unrelated": {Enabled: false},
+		"slow":      {Enabled: false, APIKey: "synthetic-provider-key"},
+	}})
+	srv.handlers.tenantStore = store
+	srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
 	if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
 		t.Fatal(err)
 	}
 	// Resolution picks fast; failover's next selection tries slow, opens its
 	// breaker and succeeds on fast. The monitor must see that same open breaker.
-	if adaptiveRequest(t, gateway, "adaptive-sample") != http.StatusOK || slowCalls.Load() == 0 {
+	if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-reload-probe", false); status != http.StatusOK || slowCalls.Load() == 0 {
 		t.Fatal("expected successful failover after a synthetic upstream failure")
 	}
 	health := srv.handlers.healthMonitor.GetHealth("slow")
