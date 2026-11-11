@@ -9,34 +9,43 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // Exercise the registered implementation, not a duplicate successful lifecycle.
 // This is explicitly a partial-driver qualification: the protected runner still
 // requires Checkpoint P, and installed bytes are never promoted to native load.
-for (const native of [false, true]) {
-const id = native ? 'SKILLS-E2E-054' : 'SKILLS-E2E-053';
-test(`${id}: registered campaign driver ${native ? 'observes actual pinned native load' : 'refuses installation-only delivery'} without losing local policy`, {
+for (const { native, cohort, id } of [{ native: false, cohort: 'cold', id: 'SKILLS-E2E-053' }, { native: true, cohort: 'cold', id: 'SKILLS-E2E-054' },
+  { native: true, cohort: 'configured', id: 'SKILLS-E2E-055' }]) {
+const configured = cohort === 'configured';
+test(`${id}: registered campaign driver ${configured ? 'reaches the configured precondition separately, then rolls out and recovers' : native ? 'observes actual pinned native load' : 'refuses installation-only delivery'} without losing local policy`, {
   tag: ['@flow'],
   annotation: flowAnnotation({ id, area: 'skills',
     userGoal: 'Use the actual registered driver for real SDK campaign plans and distinguish verified installations from unobserved native load',
-    steps: ['inventory forty no-lock repositories and measure explicit ownership, pin and exception reviews',
+    steps: [configured ? 'reach the configured precondition through public interfaces on a separate setup ledger and verify it before measuring'
+      : 'inventory forty no-lock repositories and measure explicit ownership, pin and exception reviews',
+      'plan every fixed target with one command; review one proven-identical managed group plus every exception individually',
       'freeze exact targets, review plans and authorize every exposed repository with stage-local evidence',
       'create deterministic PRs, reconcile the lost response and verify merge and filesystem installations independently',
       native ? 'observe exact root instructions in the actual pinned Codex request after cold install, second update and reverse' : 'refuse a completed load stage, then exercise second-update and reverse mechanisms as explicitly partial evidence'],
     backendChecks: ['public API and independent Postgres preserve forty exact targets per round',
       'all registered decision stages contain current per-item reviews bound to their stage receipts',
       'driver observes local files and deterministic Git PRs rather than product toasts',
-      'installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations'],
+      'installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations',
+      'review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  test.setTimeout(1_800_000); // Three 33-target plan/export/apply/verify rounds plus public API and storage probes.
+  test.setTimeout(2_400_000); // Three 33-target rounds (plus configured setup) and public API/storage probes.
   const python = process.env.CTXHUB_J5_PYTHON;
   if (!python) throw new Error('Select the installed SDK on the approved VM');
   const driverModule = '../../benchmarks/context-hub/drivers/j5.mjs';
   const jobsModule = '../../benchmarks/context-hub/jobs.mjs';
   const ledgerModule = '../../lib/skills-r3/ledger.mjs';
   const oracleModule = '../../lib/skills-r3/oracles.mjs';
-  const { createDriver, requireNativeDelivery } = await import(driverModule) as any;
+  const { createDriver, requireNativeDelivery, j5Registration } = await import(driverModule) as any;
+  // Grouping fallibility runs against the installed SDK before any measured stage.
+  const grouping = await promisify(execFile)(python, ['-I', resolve('harness/skills-r3/j5_review_group_check.py')], { timeout: 120_000 });
+  const groupingResult = JSON.parse(grouping.stdout.trim().split('\n').at(-1) as string);
+  expect(Object.values(groupingResult).every((value) => value === true)).toBe(true);
+  expect(groupingResult).toMatchObject({ positive_same_group: true, dropped_local_byte_excluded: true, stale_preimage_excluded: true });
   const { getJob } = await import(jobsModule) as any;
   const { ActionLedger, summarizeLedger } = await import(ledgerModule) as any;
   const { assertObservation } = await import(oracleModule) as any;
-  const evidence = join(process.env.J5_EVIDENCE_DIR || testInfo.outputDir, native ? 'native' : 'installation-only');
+  const evidence = join(process.env.J5_EVIDENCE_DIR || testInfo.outputDir, configured ? 'configured-native' : native ? 'native' : 'installation-only');
   const nativeConfig = native ? { executable: process.env.J5_CODEX_BINARY, sha256: process.env.J5_CODEX_SHA256 } : undefined;
   if (native && (!nativeConfig?.executable || !nativeConfig.sha256)) throw new Error('Select the pinned native Codex executable and digest on the approved VM');
   await mkdir(evidence, { recursive: true });
@@ -45,14 +54,17 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
   process.env.J5_HUB_URL = E2E.apiUrl;
   process.env.J5_HUB_HEADERS_JSON = JSON.stringify({ Authorization: `Bearer ${actor.tokens.access}`,
     'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId });
-  const driver = await createDriver({ jobId: 'J5', runId, registration: { cohort: 'cold', evidence_scope: 'synthetic',
-    driver_config: { campaign_fixture: true, python, evidence_dir: evidence, native: nativeConfig } } });
+  const flowRegistration = j5Registration({ label: configured ? 'recurring_rollout' : 'cold_adoption', provenance: null,
+    python, evidenceDir: evidence, native: nativeConfig });
+  const driver = await createDriver({ jobId: 'J5', runId, registration: flowRegistration });
   const ledger = new ActionLedger({ runId, job: 'J5', mode: 'product', path: join(evidence, `${runId}-partial.jsonl`) });
   const signal = AbortSignal.timeout(1_750_000); const job = getJob('J5');
   const missingLoad: string[] = []; const storage: unknown[] = []; const qualifiedChecks: string[] = [];
   let cleanup;
   try {
     for (const stage of job.steps) {
+      // The configured cohort skips cold stages exactly as the runner does.
+      if (configured && stage.phase === 'cold') continue;
       const boundary = ledger.events().at(-1)?.sequence ?? 0;
       if (['review-merge-install-load', 'second-update', 'reverse-plan'].includes(stage.id)) {
         if (native) {
@@ -61,9 +73,12 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
           const receipt = events.find((event: any) => event.type === 'stage' && event.step === stage.id);
           expect(receipt.source).toBe('model_boundary');
           for (const primitive of stage.human_actions) {
-            expect(events.filter((event: any) => event.type === 'start' && event.step === stage.id && event.primitive === primitive
+            const reviews = events.filter((event: any) => event.type === 'start' && event.step === stage.id && event.primitive === primitive
               && event.sequence > boundary && event.sequence < receipt.sequence
-              && JSON.stringify(event.decision) === JSON.stringify(receipt.decision))).toHaveLength(40);
+              && JSON.stringify(event.decision) === JSON.stringify(receipt.decision));
+            // Grouped review units still expose all forty repositories exactly once.
+            expect(reviews.flatMap((event: any) => event.items)).toHaveLength(40);
+            expect(new Set(reviews.flatMap((event: any) => event.items)).size).toBe(40);
           }
         } else {
           await expect(driver.perform(stage, { ledger, signal })).rejects.toThrow('native_discovery_unobserved');
@@ -91,8 +106,16 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
           const reviews = events.filter((event: any) => event.type === 'start' && event.step === stage.id
             && event.primitive === primitive && event.sequence > boundary && event.sequence < receipt.sequence
             && JSON.stringify(event.decision) === JSON.stringify(receipt.decision));
-          expect(reviews).toHaveLength(40);
+          expect(reviews.flatMap((event: any) => event.items)).toHaveLength(40);
           expect(new Set(reviews.flatMap((event: any) => event.items)).size).toBe(40);
+          if (stage.id === 'review-plans') {
+            // One proven-identical group for the 33 followers plus seven individual exceptions.
+            const review = driver.campaign.review;
+            expect(review.groups.map((group: any) => group.members.length)).toEqual([33]);
+            expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion',
+              'pinned_selector', 'pinned_selector', 'pinned_selector', 'pinned_selector', 'unavailable']);
+            expect(reviews).toHaveLength(8);
+          }
         }
       }
     }
@@ -177,7 +200,15 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
       .toEqual([...job.fault_ids].sort());
     expect(driver.baseMovement.recovered).toBe(true);
     expect(driver.baseMovement.after).not.toBe(driver.baseMovement.before);
-    expect(driver.campaigns).toHaveLength(4);
+    expect(driver.campaigns).toHaveLength(configured ? 5 : 4);
+    if (configured) {
+      const precondition = JSON.parse(await readFile(join(evidence, `${runId}-configured-precondition.json`), 'utf8'));
+      expect(precondition.realised.installed_repositories).toBe(33);
+      expect(precondition.setup_ledger.integrity.complete).toBe(true);
+      // Setup actions live only on the separate setup ledger.
+      expect(ledger.events().filter((event: any) => event.type === 'start' && event.phase === 'cold')).toHaveLength(0);
+      expect(driver.setupRounds).toHaveLength(1);
+    }
     const abandoned = await probe.pg<{ status: string; targets: string }>(
       'SELECT c.status, COUNT(t.id)::text AS targets FROM model_hub_hubskillcontextcampaign c JOIN model_hub_hubskillcontextcampaigntarget t ON t.campaign_id = c.id WHERE c.id = $1 GROUP BY c.status',
       [driver.baseMovement.campaign_id]);
@@ -190,37 +221,6 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
     }
     await expect(driver.observe(job.checks.find((check: any) => check.id === 'real-github-conformance'), { signal }))
       .rejects.toThrow('external_real_github_conformance_not_supplied');
-    if (native) {
-      const templatePath = process.env.J5_REGISTRATION_TEMPLATE;
-      if (!templatePath) throw new Error('Select the retained preregistration for protected-runner gate attempts');
-      const template = JSON.parse(await readFile(templatePath, 'utf8'));
-      const output = join(evidence, 'registered'); await mkdir(output, { recursive: true });
-      const attempts = [];
-      for (const label of ['cold_adoption', 'recurring_rollout', 'recovery']) {
-        const registration = structuredClone(template);
-        registration.cohort = label === 'cold_adoption' ? 'cold' : 'configured';
-        registration.driver_config = { campaign_fixture: true, python, evidence_dir: join(output, label), native: nativeConfig };
-        registration.driver_provenance.dirty = true;
-        registration.driver_provenance.fixture_hash = createHash('sha256').update(JSON.stringify(driver.repos)).digest('hex');
-        registration.driver_provenance.runtime_digest = createHash('sha256').update(JSON.stringify({
-          stack: template.driver_provenance.runtime_digest, native: nativeConfig?.sha256 })).digest('hex');
-        registration.attempt_scope = 'Retained preregistration; protected gate attempt only, not a replacement complete-job registration.';
-        expect(registration.checkpoint_P_receipt).toBeUndefined();
-        const registrationPath = join(output, `${label}-registration.json`);
-        await writeFile(registrationPath, JSON.stringify(registration, null, 2), { flag: 'wx', mode: 0o600 });
-        const attemptId = `${runId}-${label}`;
-        const args = [resolve('benchmarks/context-hub/cli.mjs'), 'run', 'J5', attemptId, registrationPath, 'registered', output];
-        let exitCode = 0;
-        try { await promisify(execFile)(process.execPath, args, { env: process.env, timeout: 60_000, maxBuffer: 1024 * 1024 }); }
-        catch (error: any) { if (typeof error.code !== 'number') throw new Error('registered_driver_process_did_not_complete'); exitCode = error.code; }
-        const result = JSON.parse(await readFile(join(output, `${attemptId}.json`), 'utf8'));
-        expect(exitCode).toBe(1); expect(result.status).toBe('not_measured');
-        expect(result.reason).toBe('Campaign execution is deferred until Checkpoint P');
-        expect(result.operator_actions).toBeNull(); expect(result.action_ratio).toBeNull();
-        attempts.push({ label, exit_code: exitCode, command: [process.execPath, ...args], result });
-      }
-      await writeFile(join(output, 'driver-attempts.json'), JSON.stringify(attempts, null, 2), { flag: 'wx', mode: 0o600 });
-    }
   } finally {
     cleanup = await driver.teardown(); ledger.close();
     if (before.url === undefined) delete process.env.J5_HUB_URL; else process.env.J5_HUB_URL = before.url;
@@ -230,10 +230,11 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
       missing_load_stages: missingLoad, storage, cleanup, qualified_checks: qualifiedChecks,
       exercised_faults: ledger.events().filter((event: any) => event.type === 'fault').map((event: any) => event.id),
       base_movement: driver.baseMovement, reverse_conflicts: driver.reverseConflicts,
-      partial_ledger_integrity: summarizeLedger(ledger.events()).integrity,
-      limitations: ['No complete-job measurements: protected Checkpoint P gate is unchanged.',
+      partial_ledger_integrity: summarizeLedger(ledger.events()).integrity, cohort,
+      flow_counts_not_harness_measurement: summarizeLedger(ledger.events()).phases,
+      limitations: ['Flow ledger only: harness-produced complete-job runs remain gated by the protected Checkpoint P check.',
         native ? 'Native evidence is bounded to the pinned Linux root-AGENTS fixture, not universal client compatibility or model behavior.' : 'Native discovery and actual model-boundary load remain unobserved.',
-        'Configured cohort requires retained state; it must not silently replay cold setup.',
+        configured ? 'Configured precondition was reached on a separate setup ledger and verified before measured stages.' : 'Cold adoption from lockless repositories with real local instructions.',
         'No real GitHub conformance, customer comparison or human-time qualification.'] }, null, 2));
   }
   expect(missingLoad).toEqual(native ? [] : ['review-merge-install-load', 'second-update', 'reverse-plan']);

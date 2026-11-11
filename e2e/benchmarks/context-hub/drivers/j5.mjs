@@ -2,16 +2,17 @@ import { execFile } from 'node:child_process';
 import { readFile, writeFile, lstat, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { CampaignExecutor } from '../../../../bin/lib/context-campaign.mjs';
+import { CampaignBatch } from '../../../../bin/lib/context-campaign-batch.mjs';
+import { ActionLedger, summarizeLedger } from '../../../lib/skills-r3/ledger.mjs';
 import { repositoryFixture } from '../../../fixtures/skills-r3/library.mjs';
 import { J5GitFixture } from '../../../lib/skills-r3/j5-git-fixture.mjs';
 import { observeCodexLoad, assertCodexBoundary } from '../../../lib/skills-r3/j5-native-fixture.mjs';
 import { canonical } from '../../../lib/skills-r3/canonical.mjs';
+import { getJob } from '../jobs.mjs';
 import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
 
 const execute = promisify(execFile);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -144,8 +145,59 @@ export async function createDriver({ jobId, runId, registration }) {
 }
 
 const ROOT = '/model-hub/skills/contexts/';
-const exporter = fileURLToPath(new URL('../../../../bin/context-campaign.mjs', import.meta.url));
 const included = (repo) => ['follower', 'unknown_response'].includes(repo.disposition);
+const LOCK = '.futureagi-context.lock.json';
+
+/**
+ * Declarative precondition for the already-configured cohort. A configured run
+ * reaches it through the same public interfaces on a separate setup ledger and
+ * verifies the realised state before its first measured action. It is never
+ * relabelled as recurring work, and no compatible lock is seeded.
+ */
+export const CONFIGURED_PRECONDITION = Object.freeze({
+  schema: 1, population: 40, bindings: 40, installed_release: 1, installed_repositories: 33,
+  lockless_excluded_with_local_instructions: 6, unavailable: 1, deliberate_pins: 4,
+  open_pull_requests: 0, next_release_published: 2, reached_by: 'public interfaces on a separate setup ledger',
+});
+export const COLD_PRECONDITION = Object.freeze({
+  schema: 1, population: 40, bindings: 0, locks: 0, repositories_with_local_instructions: 39, unavailable: 1,
+});
+
+/** The 40-repository synthetic fixture with real local, private and nested instructions; no locks. */
+export function fixtureRepositories() {
+  return repositoryFixture().map((repo) => ({ ...repo, files: { ...repo.files,
+    'CLAUDE.local.md': `Private local instructions for synthetic repository ${repo.id}.\n`,
+    'nested/AGENTS.md': 'Retain nested precedence and all local policy.\n' } }));
+}
+
+export const J5_MEASUREMENTS = Object.freeze({ cold_adoption: 'cold', recurring_rollout: 'configured', recovery: 'configured' });
+
+/**
+ * Preregistration for one of the three separate J5 measurements. Expected
+ * observations derive from the fixture, never from a run. Checkpoint P and real
+ * GitHub conformance are external: no receipt or GitHub observation is supplied.
+ */
+export function j5Registration({ label, provenance, python, evidenceDir, native }) {
+  const cohort = J5_MEASUREMENTS[label];
+  assert.ok(cohort, 'unknown_j5_measurement');
+  const job = getJob('J5'); const repos = fixtureRepositories();
+  const initial = { label, precondition: { ...(cohort === 'cold' ? COLD_PRECONDITION : CONFIGURED_PRECONDITION) } };
+  const original = repos.filter((repo) => repo.disposition !== 'unavailable').flatMap((repo) => Object.entries(repo.files)
+    .map(([path, text]) => ({ path: `${repo.id}/${path}`, sha256: hash(text), size_bytes: Buffer.byteLength(text) })));
+  return { schema: 1, job: 'J5', cohort, evidence_scope: 'synthetic', population: job.population, fault_ids: job.fault_ids,
+    customer_input_hash: hash(canonical(repos)), initial_conditions_hash: hash(canonical(initial)),
+    safety_requirements_hash: hash(canonical(job.checks)), complete_job_boundary_hash: hash(canonical(job.steps)),
+    expected_observations: { 'exact-forty-targets': repos.map((repo) => repo.id), 'one-pr-per-target': { duplicates: 0 },
+      'authorized-base-preimages': { unauthorized_effects: 0 }, 'local-policy-preserved': original,
+      'pins-retained': { deliberate_pins: 4, advanced_pins: 0 }, 'stage-accounting': { target_count: 40, merge_install_load_distinct: true },
+      'real-github-conformance': { qualified: true } },
+    driver_provenance: provenance,
+    driver_config: { campaign_fixture: true, python, evidence_dir: evidenceDir, native, initial_conditions: initial },
+    limitations: ['Synthetic fixture on the repository fake Git server; no customer, comparator, human-time or GitHub conformance claim.',
+      'Checkpoint P acceptance is external; no receipt is supplied or fabricated.',
+      'real-github-conformance requires an authorized disposable-repository exercise and is never observed from the fake.',
+      cohort === 'configured' ? 'Configured precondition is reached through public interfaces on a separate retained setup ledger.' : 'Cold adoption starts from lockless repositories with real local instructions.'] };
+}
 
 /** Synthetic orchestration is useful evidence, but never a native-load receipt. */
 export function requireNativeDelivery(observations, repositoryIds, versionId) {
@@ -161,11 +213,34 @@ export function requireNativeDelivery(observations, repositoryIds, versionId) {
   }
 }
 
+/** Every exposed repository is reviewed exactly once across groups and exceptions. */
+export function reviewUnits(review, repos) {
+  const byId = new Map(repos.map((repo) => [repo.id, repo]));
+  const units = [
+    ...review.groups.map((group) => ({ kind: 'group', key: group.key, repos: group.members.map((row) => byId.get(row.repository_id)) })),
+    ...review.exceptions.map((row) => ({ kind: row.kind, key: `${row.kind}:${row.repository_id}`, repos: [byId.get(row.repository_id)] })),
+  ];
+  const ids = units.flatMap((unit) => unit.repos.map((repo) => repo?.id));
+  assert.ok(ids.every(Boolean), 'review_item_unknown');
+  assert.equal(ids.length, repos.length, 'review_item_count');
+  assert.deepEqual([...new Set(ids)].sort(), repos.map((repo) => repo.id).sort(), 'review_items_not_exactly_once');
+  return units;
+}
+
 class CampaignJourney {
   constructor({ runId, registration }) {
     this.mode = 'product'; this.provenance = registration.driver_provenance;
     this.config = registration.driver_config; this.runId = runId;
     assert.ok(this.config.python && this.config.evidence_dir, 'installed_sdk_and_evidence_directory_required');
+    assert.ok(['cold', 'configured'].includes(registration.cohort), 'cohort_required');
+    if (registration.initial_conditions_hash !== undefined) {
+      // The preregistered initial condition is a declarative document; the
+      // driver verifies the realised state against it, not just its label.
+      const document = this.config.initial_conditions;
+      const expected = registration.cohort === 'cold' ? COLD_PRECONDITION : CONFIGURED_PRECONDITION;
+      assert.deepEqual(document?.precondition, { ...expected }, 'initial_conditions_document_mismatch');
+      assert.equal(hash(canonical(document)), registration.initial_conditions_hash, 'initial_conditions_hash_mismatch');
+    }
     this.hubUrl = process.env.J5_HUB_URL;
     this.headers = JSON.parse(process.env.J5_HUB_HEADERS_JSON ?? 'null');
     assert.ok(this.hubUrl && this.headers, 'test_stack_actor_required');
@@ -174,12 +249,15 @@ class CampaignJourney {
       fetch: (url, init) => url.startsWith('https://api.github.com/') ? this.git.fetch(url, init) : fetch(url, init) });
     this.cohort = registration.cohort;
     this.profile = this.config.native ? 'codex' : 'claude-code';
-    this.campaigns = []; this.credentials = []; this.rounds = []; this.serial = 0;
+    this.campaigns = []; this.credentials = []; this.rounds = []; this.setupRounds = []; this.serial = 0; this.releases = 0;
     this.env = { ...process.env };
-    this.repos = repositoryFixture().map((repo) => ({ ...repo, files: { ...repo.files,
-      'CLAUDE.local.md': `Private local instructions for synthetic repository ${repo.id}.\n`,
-      'nested/AGENTS.md': 'Retain nested precedence and all local policy.\n' } }));
+    this.repos = fixtureRepositories();
     this.git = new J5GitFixture(this.repos);
+  }
+
+  batch() {
+    return new CampaignBatch({ hub: (method, path, data) => this.api(method, path, data), executor: this.executor,
+      python: this.config.python, env: this.env, signal: this.signal });
   }
 
   async save(name, value) {
@@ -222,29 +300,22 @@ class CampaignJourney {
   }
 
   async targets() {
-    const rows = [];
-    for (let page = 1; page <= 100; page++) {
-      const response = await this.api('GET', `${this.campaign.root}targets/?page=${page}`);
-      assert.ok(Number.isInteger(response.total_pages) && response.total_pages <= 100, 'invalid_target_pagination');
-      rows.push(...response.results);
-      if (page >= response.total_pages) return rows;
-    }
-    throw new Error('incomplete_target_pagination');
+    return this.batch().targets(this.campaign.id);
   }
 
-  async review(primitive, packet, preconditions, effect = async () => {}) {
+  /** One decision per exposed unit; the packet hash binds all units of the stage. */
+  async review(primitive, units, packet, preconditions, effect = async () => {}) {
     const decision = { packet_sha256: hash(canonical(packet)), preconditions_sha256: hash(canonical(preconditions)) };
-    // One exposed item is not one group-sized review. Record every repository's
-    // actual scripted review, including the deliberate pin/local/unavailable cases.
-    for (const repo of this.repos) await this.action(primitive, async () => {
-      assert.ok(packet.some((row) => row.repository_id === repo.id), 'review_item_not_exposed');
-    }, { repos: [repo], decision });
+    for (const unit of units) await this.action(primitive, async () => {
+      assert.ok(unit.repos.length > 0 && unit.repos.every((repo) => packet.some((row) => row.repository_id === repo.id)), 'review_item_not_exposed');
+    }, { repos: unit.repos, decision });
     await effect(); this.decision = decision;
-    await this.save(`decision-${this.stage.id}-${++this.serial}`, { decision, packet, preconditions });
+    await this.save(`decision-${this.stage.id}-${++this.serial}`, { decision, units: units.map((unit) => ({ kind: unit.kind, key: unit.key,
+      repositories: unit.repos.map((repo) => repo.id) })), packet, preconditions });
   }
 
   async prepareInventory() {
-    assert.equal(this.cohort, 'cold', 'configured_campaign_requires_retained_state_not_a_reseeded_cold_fixture');
+    assert.ok(this.cohort === 'cold' || this.setup, 'configured_campaign_requires_retained_state_not_a_reseeded_cold_fixture');
     this.scratch = await mkdtemp(join(tmpdir(), 'j5-driver-'));
     this.projects = new Map(this.repos.map((repo) => [repo.id, join(this.scratch, repo.name)]));
     this.bases = new Map(this.repos.map((repo) => [repo.id, repo.base]));
@@ -254,17 +325,18 @@ class CampaignJourney {
         const file = join(this.projects.get(repo.id), path); await mkdir(dirname(file), { recursive: true }); await writeFile(file, text);
       }
     }
-    const selected = this.repos.map((repo) => ({ repository_id: repo.id, project: this.projects.get(repo.id) }));
-    const manifest = join(this.scratch, 'selected.json'); await writeFile(manifest, JSON.stringify(selected));
+    this.selected = this.repos.map((repo) => ({ repository_id: repo.id, repository: `synthetic/${repo.name}`, project: this.projects.get(repo.id) }));
+    const manifest = join(this.scratch, 'selected.json');
+    await writeFile(manifest, JSON.stringify(this.selected.map(({ repository_id, project }) => ({ repository_id, project }))));
     await mkdir(this.config.evidence_dir, { recursive: true });
     const observed = await this.action('command', () => runInventory({ python: this.config.python, manifestPath: manifest,
-      evidencePath: join(this.config.evidence_dir, `${this.runId}-inventory.json`), signal: this.signal }));
+      evidencePath: join(this.config.evidence_dir, `${this.runId}${this.setup ? '-setup' : ''}-inventory.json`), signal: this.signal }));
     const expected = this.repos.map((repo) => ({ id: repo.id, available: repo.disposition !== 'unavailable', lock_sha256: null,
       files: Object.fromEntries(Object.entries(repo.files).filter(([path]) => path !== 'references/local-policy.md').map(([path, text]) => [path, hash(text)])) }));
     assertInventory(observed.inventory, expected); assert.equal(observed.exitCode, 6);
     for (const repo of this.repos.filter((repo) => repo.disposition !== 'unavailable')) {
       for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
-      await assert.rejects(lstat(join(this.projects.get(repo.id), '.futureagi-context.lock.json')), { code: 'ENOENT' });
+      await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
     }
     this.ledger.fault('no-lock-local-instructions', 'cold-inventory');
     this.ledger.fault('unavailable-target', 'cold-inventory');
@@ -275,8 +347,16 @@ class CampaignJourney {
     const head = await this.mutation('POST', `${this.contextRoot}draft/head-review/`, { revision });
     const ack = await this.mutation('POST', `${this.contextRoot}draft/acknowledge-head/`, { revision: head.draft_revision,
       expected_digest: head.candidate_digest, expected_head_version: head.expected_head_version, review_fingerprint: head.review_fingerprint }, 'review');
+    this.releases += 1;
     return (await this.mutation('POST', `${this.contextRoot}draft/publish/`, { revision: ack.revision, expected_digest: head.candidate_digest,
       expected_head_version: head.expected_head_version, review_fingerprint: ack.review_fingerprint, base_version: baseVersion, note: '', acknowledge_warnings: true }, 'approve')).version;
+  }
+
+  async publishNext() {
+    const draft = await this.mutation('POST', `${this.contextRoot}draft/start/`, { revision: 0, from_version: this.version.number });
+    const saved = await this.mutation('PUT', `${this.contextRoot}draft/`, { revision: draft.revision, base_version: this.version.number,
+      files: [{ path: 'AGENTS.md', content: `Reviewed managed release ${this.releases + 1}. Preserve all local instructions.\n` }], description: 'Synthetic fixture.', note: '' }, 'field_edit');
+    this.version = await this.publish(saved.revision, this.version.number); await this.grant();
   }
 
   async grant() {
@@ -297,21 +377,31 @@ class CampaignJourney {
       const localFiles = {};
       if (repo.disposition !== 'unavailable') {
         for (const path of Object.keys(repo.files)) localFiles[path] = await readFile(join(this.projects.get(repo.id), path), 'utf8');
-        await assert.rejects(lstat(join(this.projects.get(repo.id), '.futureagi-context.lock.json')), { code: 'ENOENT' });
+        await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
       }
       packet.push({ repository_id: repo.id, disposition: repo.disposition, local_files: localFiles });
     }
-    await this.review('review', packet, { locks: 'absent', selected: this.repos.map((repo) => repo.id) });
+    // Ownership is decided per repository: local instructions differ, so no
+    // grouping is claimed for this cold decision.
+    await this.review('review', this.repos.map((repo) => ({ kind: 'ownership', key: repo.id, repos: [repo] })), packet,
+      { locks: 'absent', selected: this.repos.map((repo) => repo.id) });
+    this.exclusions = Object.fromEntries(this.repos.filter((repo) => repo.disposition === 'local_modification')
+      .map((repo) => [repo.id, 'Locally modified repository; retain local policy and hold until its owners adopt explicitly.']));
     this.name = `e2e-j5-driver-${randomUUID().slice(0, 12)}`;
-    const created = await this.mutation('POST', ROOT, { name: this.name, description: 'Synthetic campaign driver; native delivery is not qualified.',
-      tags: [], files: [{ path: 'AGENTS.md', content: 'Reviewed managed release one. Preserve all local instructions.\n' }] }, 'configuration_edit');
+    const created = await this.mutation('POST', ROOT, { name: this.name, description: 'Synthetic campaign driver.',
+      tags: [], files: [{ path: 'AGENTS.md', content: 'Reviewed managed release 1. Preserve all local instructions.\n' }] }, 'configuration_edit');
     this.contextId = created.context_id; this.contextRoot = `${ROOT}${this.contextId}/`;
     this.first = this.version = await this.publish(created.revision, null);
-    await this.grant(); this.bindings = [];
-    for (const repo of this.repos) this.bindings.push(await this.mutation('POST', `${this.contextRoot}bindings/`, { name: repo.name, kind: 'repository',
-      selector: repo.disposition === 'pin' ? { version: this.first.number } : { label: 'production' }, update_mode: 'repository_lock',
-      profile: this.profile, profile_version: '1', repository: { provider: 'github', repository_id: repo.id, default_branch: 'main', project_scope: '' },
-      expected_report_interval_seconds: 3600 }, 'configuration_edit'));
+    await this.grant();
+    const rows = [];
+    for (const repo of this.repos) {
+      const row = { name: repo.name, repository_id: repo.id, profile: this.profile, selector: { label: 'production' } };
+      // Each deliberate pin is a separate edited selector in the binding manifest.
+      if (repo.disposition === 'pin') await this.action('field_edit', async () => { row.selector = { version: this.first.number }; }, { repos: [repo] });
+      rows.push(row);
+    }
+    this.bindings = await this.action('configuration_edit', () => this.batch().bindAll({ contextId: this.contextId, rows }));
+    assert.deepEqual(this.bindings.map((row) => row.repository.repository_id), this.repos.map((repo) => repo.id), 'binding_order');
     return { source: 'api', value: this.bindings };
   }
 
@@ -327,73 +417,103 @@ class CampaignJourney {
   }
 
   async plans(reverse = false) {
-    let revision = this.campaign.revision;
-    for (const [index, repo] of this.repos.entries()) {
-      const binding = this.bindings[index];
-      if (!included(repo)) {
-        this.campaign.decisions.push({ binding_id: binding.id, plan_digest: null, decision: 'exclude', reason: `Preserve deliberate ${repo.disposition}; no write authorized.` });
-        continue;
-      }
-      const path = join(this.scratch, `${this.campaign.label}-${this.campaign.id}-${repo.id}.json`);
-      if (reverse) await this.sdk(['restore', '--project', this.projects.get(repo.id), '--lock', join(this.scratch, `${repo.id}-original-lock.json`), '--allow-preview', '--out', path]);
-      else await this.sdk(['plan', '--name', this.name, '--version', String(this.version.number), '--client', this.profile, '--project', this.projects.get(repo.id), '--adopt-local', '--allow-preview', '--out', path]);
-      await this.sdk(['inspect', '--plan', path, '--diff']);
-      const patch = await this.action('command', async () => {
-        const { stdout } = await execute(process.execPath, [exporter, 'export', path, repo.id, this.bases.get(repo.id), String(binding.revision), String(revision)],
-          { env: { ...this.env, CONTEXT_SDK_PYTHON: this.config.python }, signal: this.signal, timeout: 65_000, maxBuffer: 8 * 1024 * 1024 });
-        return JSON.parse(stdout);
-      }, { repos: [repo] });
-      assert.equal(patch.plan.desired_version_id, this.version.id);
-      const recorded = await this.mutation('PUT', `${this.campaign.root}targets/${binding.id}/plan/`, patch.plan);
-      assert.equal(recorded.plan_digest, patch.plan.plan_digest); revision = recorded.revision;
-      this.campaign.patches.set(index, { ...patch, path });
-      this.campaign.decisions.push({ binding_id: binding.id, plan_digest: patch.plan.plan_digest, decision: 'include', reason: 'Reviewed exact local preimages, ownership and preserved local segments.' });
+    const restoreLocks = reverse ? Object.fromEntries(this.repos.filter(included).map((repo) => [repo.id, join(this.scratch, `${repo.id}-original-lock.json`)])) : {};
+    const review = await this.action('command', () => this.batch().planAll({ campaignId: this.campaign.id, selected: this.selected,
+      exclusions: this.exclusions, mode: reverse ? 'restore' : 'plan', name: this.name, version: this.version.number,
+      client: this.profile, restoreLocks, outDir: this.scratch }));
+    const index = new Map(this.bindings.map((binding, i) => [binding.id, i]));
+    // Independent expectation: exactly the deliberate followers are planned and
+    // each exception is the product's own classification of the fixture case.
+    const expectedKind = { pin: 'pinned_selector', local_modification: 'operator_exclusion', unavailable: 'unavailable' };
+    for (const row of review.exceptions) {
+      const repo = this.repos[index.get(row.binding_id)];
+      assert.equal(row.kind, expectedKind[repo.disposition] ?? 'ungrouped', 'exception_classification');
     }
+    assert.deepEqual([...review.patches.keys()].map((id) => this.repos[index.get(id)].id).sort(),
+      this.repos.filter(included).map((repo) => repo.id).sort(), 'planned_population');
+    for (const [bindingId, patch] of review.patches) {
+      assert.equal(patch.plan.desired_version_id, this.version.id);
+      this.campaign.patches.set(index.get(bindingId), patch);
+    }
+    this.campaign.decisions = review.decisions; this.campaign.review = review;
+    await this.observeExceptions(review);
     const targets = await this.targets();
-    await this.review('review', targets.map((row) => ({ ...row, repository_id: row.repository.repository_id })), await this.api('GET', this.campaign.root));
-    return { source: 'api', value: targets };
+    this.campaign.units = reviewUnits(review, this.repos);
+    const packet = targets.map((row) => ({ ...row, repository_id: row.repository.repository_id }));
+    await this.review('review', this.campaign.units, packet, { campaign: await this.api('GET', this.campaign.root),
+      groups: review.groups, exceptions: review.exceptions });
+    return { source: 'api', value: { targets, groups: review.groups, exceptions: review.exceptions } };
+  }
+
+  /** The plan command, not the driver, must surface lockless local policy and unavailable targets. */
+  async observeExceptions(review) {
+    const local = review.exceptions.filter((row) => row.kind === 'operator_exclusion');
+    assert.equal(local.length, 2, 'lockless_local_exceptions');
+    for (const row of local) {
+      const repo = this.repos.find((item) => item.id === row.repository_id);
+      assert.equal(row.observed.lock, 'absent');
+      await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
+      const witnessed = {};
+      for (const path of ['AGENTS.md', 'CLAUDE.local.md', 'nested/AGENTS.md']) witnessed[path] = hash(await readFile(join(this.projects.get(repo.id), path)));
+      assert.deepEqual(row.observed.local_instructions, witnessed, 'local_instruction_observation');
+      assert.deepEqual(witnessed, Object.fromEntries(['AGENTS.md', 'CLAUDE.local.md', 'nested/AGENTS.md'].map((path) => [path, hash(repo.files[path])])), 'local_instructions_changed');
+    }
+    const unavailable = review.exceptions.filter((row) => row.kind === 'unavailable');
+    assert.equal(unavailable.length, 1, 'unavailable_exception');
+    assert.equal(unavailable[0].observed.git_status, 404);
+    await assert.rejects(lstat(this.projects.get(unavailable[0].repository_id)), { code: 'ENOENT' });
+    this.ledger.fault('no-lock-local-instructions', `plan-${this.campaign.label}`);
+    this.ledger.fault('unavailable-target', `plan-${this.campaign.label}`);
   }
 
   async authorize() {
     const before = await this.api('GET', this.campaign.root);
     const targets = await this.targets();
     const packet = targets.map((row) => ({ ...row, repository_id: row.repository.repository_id }));
-    // Each explicit per-repository approval is counted; one API batch is not
-    // presented as one human review of forty independent local-policy decisions.
-    await this.review('approve', packet, before, () => this.api('POST', `${this.campaign.root}authorize/`, {
+    // Approval mirrors the reviewed units: one per proven-identical group and
+    // one per exception. Each exposure still names every repository it covers.
+    await this.review('approve', this.campaign.units, packet, before, () => this.api('POST', `${this.campaign.root}authorize/`, {
       revision: before.revision, expected_manifest_digest: before.manifest_digest, decisions: this.campaign.decisions, acknowledge_repository_writes: true }));
     return { source: 'api', value: await this.targets() };
   }
 
-  executeTarget(index) {
-    const repo = this.repos[index]; const patch = this.campaign.patches.get(index);
-    return this.action('command', () => this.executor.execute({ campaignId: this.campaign.id, bindingId: this.bindings[index].id,
-      repository: `synthetic/${repo.name}`, contents: patch.contents, idempotencyKey: randomUUID(), signal: this.signal }), { repos: [repo] });
+  executeTargets(indices, { key = () => randomUUID() } = {}) {
+    return this.batch().executeAll({ campaignId: this.campaign.id, targets: indices.map((index) => ({
+      bindingId: this.bindings[index].id, repository: `synthetic/${this.repos[index].name}`,
+      contents: this.campaign.patches.get(index).contents, idempotencyKey: key(index) })) });
   }
 
   async createPRs() {
-    if (!this.baseMovement) {
+    const indices = [...this.campaign.patches.keys()].sort((a, b) => a - b);
+    if (!this.baseMovement && !this.setup) {
       // Fixture fault, not an operator action: a concurrent contributor advances
-      // main after review. The public executor must refuse the stale plan. Stop
-      // this batch before other writes; recovery must review a new campaign.
-      const repo = this.repos[0];
-      const before = this.bases.get(repo.id);
+      // main after review. The batch must stop before any write; recovery must
+      // review a replacement campaign.
+      const repo = this.repos[indices[0]];
+      const before = (await (await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`)).json()).sha;
       const after = this.git.advanceUnchangedBase(repo.id);
       const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
-      const receipt = await this.executeTarget(0);
-      assert.equal(receipt.state, 'unknown'); assert.match(receipt.reason, /Base moved/);
+      const receipts = await this.action('command', () => this.executeTargets(indices));
+      assert.equal(receipts[0].state, 'unknown'); assert.match(receipts[0].reason, /Base moved/);
+      assert.ok(receipts.slice(1).every((row) => row.state === 'not_attempted'), 'batch_continued_after_base_movement');
       assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes, 'stale_base_wrote_git');
-      assert.ok(this.repos.every((row) => this.git.pulls(row.id).length === 0), 'stale_base_created_pr');
-      this.campaign.receipts.set(0, receipt);
-      this.baseMovement = { repository_id: repo.id, before, after, campaign_id: this.campaign.id, receipt, recovered: false };
+      assert.ok(this.repos.every((row) => this.git.pulls(row.id).length === this.prCount(row)), 'stale_base_created_pr');
+      this.campaign.receipts.set(indices[0], receipts[0]);
+      this.baseMovement = { repository_id: repo.id, before, after, campaign_id: this.campaign.id, receipt: receipts[0], recovered: false };
       return { source: 'git', value: this.baseMovement };
     }
-    for (const [index] of this.campaign.patches) {
-      const receipt = await this.executeTarget(index);
-      assert.equal(receipt.state, this.rounds.length === 0 && this.repos[index].disposition === 'unknown_response' ? 'unknown' : 'pr_open');
-      this.campaign.receipts.set(index, receipt);
+    const receipts = await this.action('command', () => this.executeTargets(indices));
+    for (const [position, index] of indices.entries()) {
+      const unknown = this.rounds.length === 0 && this.repos[index].disposition === 'unknown_response';
+      assert.equal(receipts[position].state, unknown ? 'unknown' : 'pr_open');
+      this.campaign.receipts.set(index, receipts[position]);
     }
     return { source: 'git', value: this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) })) };
+  }
+
+  /** Completed PRs for this repository before the current round. */
+  prCount(repo) {
+    return included(repo) ? this.setupRounds.length + this.rounds.length : 0;
   }
 
   async reconcile() {
@@ -405,7 +525,7 @@ class CampaignJourney {
       assert.equal(cancelled.status, 'cancelled');
       const oldTargets = await this.targets();
       assert.equal(oldTargets.length, 40, 'cancelled_target_accounting');
-      const repo = this.repos[0];
+      const repo = this.repos.find((row) => row.id === this.baseMovement.repository_id);
       const actual = await this.action('reconcile', async () => {
         const response = await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`);
         assert.equal(response.status, 200); return response.json();
@@ -417,8 +537,8 @@ class CampaignJourney {
       await this.save('base-movement', { ...this.baseMovement, cancelled, targets: oldTargets, duplicate_prs: 0 });
       this.ledger.fault('base-movement', 'reviewed-replacement-campaign');
       // Do not edit/retry the stale authorized plan or erase its uncertain
-      // receipt. All forty targets and every approval are counted again.
-      await this.freeze('cold'); await this.plans(); await this.authorize(); await this.createPRs();
+      // receipt. All forty targets and every review unit are decided again.
+      await this.freeze(this.campaign.label); await this.plans(); await this.authorize(); await this.createPRs();
     }
     for (const [index, receipt] of this.campaign.receipts) {
       if (receipt.state !== 'unknown') continue;
@@ -426,7 +546,7 @@ class CampaignJourney {
       const before = await this.api('GET', this.campaign.root);
       await this.mutation('POST', `${this.campaign.root}pause/`, { revision: before.revision, reason: 'Inspect uncertain Git result before retry.' }, 'recovery_decision');
       const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
-      const observed = await this.action('reconcile', () => this.executeTarget(index), { dimension: 'R', repos: [this.repos[index]] });
+      const [observed] = await this.action('reconcile', () => this.executeTargets([index]), { dimension: 'R', repos: [this.repos[index]] });
       assert.equal(observed.state, 'pr_open'); assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes);
       this.campaign.receipts.set(index, observed);
       const paused = await this.api('GET', this.campaign.root);
@@ -436,9 +556,10 @@ class CampaignJourney {
   }
 
   async install() {
-    const installs = [];
-    for (const [index, patch] of this.campaign.patches) {
-      const repo = this.repos[index]; const receipt = this.campaign.receipts.get(index);
+    const indices = [...this.campaign.patches.keys()].sort((a, b) => a - b);
+    const merges = new Map();
+    for (const index of indices) {
+      const repo = this.repos[index]; const patch = this.campaign.patches.get(index); const receipt = this.campaign.receipts.get(index);
       assert.equal(receipt.state, 'pr_open');
       const prUrl = `https://api.github.com/repos/synthetic/${repo.name}/pulls/${receipt.pull_request_number}`;
       const pr = await this.action('handoff', async () => (await this.git.fetch(prUrl)).json(), { dimension: 'H', repos: [repo], target: 'repository-review' });
@@ -452,10 +573,19 @@ class CampaignJourney {
         assert.equal(response.status, 200); return response.json();
       }, { repos: [repo] });
       assert.equal(merge.merged, true); assert.notEqual(merge.sha, receipt.repository_commit);
-      const observed = await this.executeTarget(index); assert.equal(observed.state, 'merged'); assert.equal(observed.delivered, false);
-      const installed = await this.sdk(['apply', '--plan', patch.path, '--quiescent']);
-      assert.equal(installed.state, 'installed'); assert.equal(installed.delivery, 'not_observed');
-      assert.equal((await this.sdk(['verify', '--project', this.projects.get(repo.id)])).verified, true);
+      merges.set(index, { pr, merge });
+    }
+    // One reconciliation command records every merged target; Git merge is
+    // never treated as installation or delivery.
+    const observed = await this.action('command', () => this.executeTargets(indices), { repos: indices.map((index) => this.repos[index]) });
+    assert.ok(observed.every((row) => row.state === 'merged' && row.delivered === false), 'merge_observation');
+    const applied = await this.action('command', () => this.batch().applyAll({ plans: indices.map((index) => ({
+      repository_id: this.repos[index].id, path: this.campaign.patches.get(index).path, project: this.projects.get(this.repos[index].id) })) }),
+    { repos: indices.map((index) => this.repos[index]) });
+    assert.ok(applied.every((row) => row.state === 'installed' && row.delivery === 'not_observed' && row.verified === true), 'installation_unverified');
+    const installs = [];
+    for (const index of indices) {
+      const repo = this.repos[index]; const { pr, merge } = merges.get(index);
       const hashes = {};
       for (const [path, text] of Object.entries(this.git.files(merge.sha))) {
         const bytes = await readFile(join(this.projects.get(repo.id), path)); assert.equal(bytes.toString(), text); hashes[path] = hash(bytes);
@@ -464,17 +594,17 @@ class CampaignJourney {
         const actual = await readFile(join(this.projects.get(repo.id), path), 'utf8');
         if (path === 'AGENTS.md') assert.ok(actual.includes(text), 'adopted_local_segment_lost'); else assert.equal(actual, text);
       }
-      const lockBytes = await readFile(join(this.projects.get(repo.id), '.futureagi-context.lock.json'));
+      const lockBytes = await readFile(join(this.projects.get(repo.id), LOCK));
       assert.equal(JSON.parse(lockBytes).version_id, this.version.id);
-      if (this.rounds.length === 0) await writeFile(join(this.scratch, `${repo.id}-original-lock.json`), lockBytes);
+      if (this.rounds.length === 0 && this.setupRounds.length === 0) await writeFile(join(this.scratch, `${repo.id}-original-lock.json`), lockBytes);
       this.bases.set(repo.id, merge.sha);
       // A cancelled stale-base campaign created no PR. Count successful rounds,
       // and independently forbid duplicate branches in the retained Git history.
       const pulls = this.git.pulls(repo.id);
-      assert.equal(pulls.length, this.rounds.length + 1, 'duplicate_pr');
-      assert.equal(new Set(pulls.map((pr) => pr.head.ref)).size, pulls.length, 'duplicate_pr_branch');
+      assert.equal(pulls.length, this.prCount(repo) + 1, 'duplicate_pr');
+      assert.equal(new Set(pulls.map((row) => row.head.ref)).size, pulls.length, 'duplicate_pr_branch');
       let native = { discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' };
-      if (this.config.native) {
+      if (this.config.native && !this.setup) {
         const boundary = await this.action('command', () => observeCodexLoad({ executable: this.config.native.executable,
           executableSha256: this.config.native.sha256, project: this.projects.get(repo.id),
           expectedInstructions: this.git.files(merge.sha)['AGENTS.md'], signal: this.signal }), { repos: [repo], target: 'native-host' });
@@ -485,11 +615,12 @@ class CampaignJourney {
         installed: true, ...native });
     }
     await this.checkExcluded();
-    const report = { evidence_class: 'synthetic fixture', complete_job: false, label: this.campaign.label,
-      campaign_id: this.campaign.id, targets: await this.targets(), installs,
+    const report = { evidence_class: 'synthetic fixture', complete_job: false, label: this.campaign.label, setup: Boolean(this.setup),
+      campaign_id: this.campaign.id, targets: await this.targets(), installs, review_units: this.campaign.units.map((unit) => ({ kind: unit.kind,
+        repositories: unit.repos.map((repo) => repo.id) })),
       plans: [...this.campaign.patches].map(([index, patch]) => ({ repository_id: this.repos[index].id,
         binding_id: this.bindings[index].id, plan: patch.plan, contents: patch.contents })) };
-    this.rounds.push(report); await this.save(this.campaign.label, report);
+    this.rounds.push(report); await this.save(`${this.setup ? 'setup-' : ''}${this.campaign.label}`, report);
     return report;
   }
 
@@ -498,7 +629,7 @@ class CampaignJourney {
       assert.equal(this.git.pulls(repo.id).length, 0, 'excluded_repository_written');
       if (repo.disposition === 'unavailable') { await assert.rejects(lstat(this.projects.get(repo.id)), { code: 'ENOENT' }); continue; }
       for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
-      await assert.rejects(lstat(join(this.projects.get(repo.id), '.futureagi-context.lock.json')), { code: 'ENOENT' });
+      await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
     }
   }
 
@@ -547,12 +678,7 @@ class CampaignJourney {
   async update(reverse) {
     assert.ok(this.rounds.length, 'initial_install_required');
     if (reverse) { await this.reverseConflictChecks(); this.version = this.first; }
-    else {
-      const draft = await this.mutation('POST', `${this.contextRoot}draft/start/`, { revision: 0, from_version: this.first.number });
-      const saved = await this.mutation('PUT', `${this.contextRoot}draft/`, { revision: draft.revision, base_version: this.first.number,
-        files: [{ path: 'AGENTS.md', content: 'Reviewed managed release two. Preserve all local instructions.\n' }], description: 'Synthetic fixture.', note: '' }, 'field_edit');
-      this.version = await this.publish(saved.revision, this.first.number); await this.grant();
-    }
+    else await this.publishNext();
     await this.freeze(reverse ? 'reverse' : 'second-update'); await this.plans(reverse);
     const reviewed = this.decision;
     await this.authorize(); await this.createPRs(); await this.reconcile();
@@ -562,13 +688,61 @@ class CampaignJourney {
     return this.install();
   }
 
+  /**
+   * Reach CONFIGURED_PRECONDITION through the same public interfaces on a
+   * separate, retained setup ledger, then verify the realised state before the
+   * first measured action. Setup never contributes to the measured ledger.
+   */
+  async prepareConfigured() {
+    const measured = { ledger: this.ledger, stage: this.stage };
+    this.setup = true;
+    const setupLedger = new ActionLedger({ runId: `${this.runId}-setup`, job: 'J5', mode: 'product',
+      path: join(this.config.evidence_dir, `${this.runId}-setup.jsonl`) });
+    this.ledger = setupLedger; this.stage = { id: 'configured-precondition', phase: 'cold' };
+    try {
+      await this.prepareInventory(); await this.ownership(); await this.freeze('setup'); await this.plans();
+      await this.authorize(); await this.createPRs(); await this.reconcile(); await this.install();
+      await this.publishNext();
+    } finally { setupLedger.close(); this.ledger = measured.ledger; this.stage = measured.stage; this.setup = false; }
+    this.setupRounds = this.rounds; this.rounds = [];
+    const bindings = await this.targets();
+    assert.equal(bindings.length, CONFIGURED_PRECONDITION.bindings);
+    let installed = 0; let lockless = 0; let open = 0;
+    for (const repo of this.repos) {
+      for (const pr of this.git.pulls(repo.id)) if (!pr.merged) open += 1;
+      if (repo.disposition === 'unavailable') { await assert.rejects(lstat(this.projects.get(repo.id)), { code: 'ENOENT' }); continue; }
+      let lock = null;
+      try { lock = JSON.parse(await readFile(join(this.projects.get(repo.id), LOCK))); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (included(repo)) { assert.equal(lock?.version_id, this.first.id, 'configured_release_not_installed'); installed += 1; }
+      else {
+        assert.equal(lock, null, 'excluded_repository_has_lock');
+        for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
+        lockless += 1;
+      }
+    }
+    const pins = bindings.filter((row) => row.selector?.version === this.first.number).length;
+    const realised = { schema: 1, population: this.repos.length, bindings: bindings.length, installed_release: this.first.number,
+      installed_repositories: installed, lockless_excluded_with_local_instructions: lockless,
+      unavailable: this.repos.filter((repo) => repo.disposition === 'unavailable').length, deliberate_pins: pins,
+      open_pull_requests: open, next_release_published: this.version.number, reached_by: CONFIGURED_PRECONDITION.reached_by };
+    assert.deepEqual(realised, { ...CONFIGURED_PRECONDITION }, 'configured_precondition_not_realised');
+    const unknown = this.repos.find((repo) => repo.disposition === 'unknown_response');
+    this.git.armUnknownResponse(unknown.id);
+    await this.save('configured-precondition', { evidence_class: 'synthetic fixture', realised,
+      setup_ledger: summarizeLedger(setupLedger.events()), setup_campaigns: this.campaigns.slice() });
+  }
+
   async perform(stage, { ledger, signal }) {
     this.stage = stage; this.ledger = ledger; this.signal = signal; this.decision = null;
     signal.throwIfAborted(); let result;
+    if (this.cohort === 'configured' && !this.setupRounds.length) {
+      assert.equal(stage.id, 'freeze-targets', 'configured_cohort_starts_at_recurring_rollout');
+      await this.prepareConfigured(); this.decision = null;
+    }
     switch (stage.id) {
       case 'inventory-existing-repositories': result = await this.prepareInventory(); break;
       case 'establish-ownership': result = await this.ownership(); break;
-      case 'freeze-targets': result = await this.freeze('cold'); break;
+      case 'freeze-targets': result = await this.freeze('rollout'); break;
       case 'review-plans': result = await this.plans(); break;
       case 'authorize-exact-patches': result = await this.authorize(); break;
       case 'create-prs': result = await this.createPRs(); break;
@@ -603,7 +777,7 @@ class CampaignJourney {
       source = 'git'; raw = this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) }));
       assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
       for (const [index, repo] of this.repos.entries()) {
-        const expected = included(repo) ? this.rounds.map((round) => `futureagi/context/${round.campaign_id}/${this.bindings[index].id}`).sort() : [];
+        const expected = included(repo) ? [...this.setupRounds, ...this.rounds].map((round) => `futureagi/context/${round.campaign_id}/${this.bindings[index].id}`).sort() : [];
         assert.deepEqual(raw[index].pulls.map((pr) => pr.head.ref).sort(), expected, 'pr_branch_accounting');
       }
       value = { duplicates: raw.reduce((count, row) => count + row.pulls.length - new Set(row.pulls.map((pr) => pr.head.ref)).size, 0) };

@@ -13,6 +13,7 @@ export class J5GitFixture {
     this.commits = new Map(); this.trees = new Map(); this.refs = new Map(); this.objects = new Map();
     this.requests = [];
     this.merged = new Map();
+    this.armed = new Set();
     for (const repo of repositories) {
       const tree = Object.entries(repo.files).map(([path, content]) => {
         const sha = blob(content); this.objects.set(sha, content);
@@ -33,6 +34,11 @@ export class J5GitFixture {
     this.commits.set(sha, { sha, tree: { ...parent.tree }, parents: [{ sha: current }] });
     this.base.advanceBase(id, sha);
     return sha;
+  }
+  /** Lose the next PR-creation response for one repository after the PR is durable. */
+  armUnknownResponse(id) {
+    if (!this.repositories.some((repo) => repo.id === id && repo.disposition === 'unknown_response')) throw new Error('unknown_response_fixture_only');
+    this.armed.add(id);
   }
   pulls(id) {
     const repo = this.repositories.find((row) => row.id === id);
@@ -122,6 +128,11 @@ export class J5GitFixture {
       // the repo's existing GitFixture, rather than inventing success receipts.
       const response = await this.base.fetch(request);
       if (!response.ok) return response;
+      if (request.method === 'POST' && this.armed.delete(repo.id)) {
+        // The PR is durable before the transport is lost, exactly like the
+        // base fixture's first-write fault, but for a later configured round.
+        throw new TypeError('Fixture transport disconnected after durable PR creation');
+      }
       const result = await response.json();
       return out(Array.isArray(result) ? result.map((pr) => this.enrich(repo, pr)) : this.enrich(repo, result), response.status);
     }
