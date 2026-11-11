@@ -39,6 +39,8 @@ first `git add` was blocked by the sandbox; see the exact commands below.
   compensation, and settlement replay. Receipts and their counters persist so
   unresolved jobs can settle after the usual metadata/budget TTL; ordinary chat
   writes preserve that persistence. This creates a retention tradeoff below.
+  (Superseded in review: receipts now live in expiring per-operation keys and
+  counters keep their period TTL; see configuration.md, `retention`.)
 - Added video cost processing and the direct-settlement budget-plugin guard.
   Settlement invokes `engine.RunPostPlugins` with `EndpointType=video`,
   `video_settlement=direct`, `video_cost_usd`, org/key identity, and video ID.
@@ -198,6 +200,11 @@ unmodified `make test` both pass.
   This preserves late settlement correctness but grows retained accounting
   data. A future compactor must prove that all referenced jobs/operations are
   retired before deleting receipts; ordinary TTL-based cleanup is unsafe.
+  (Superseded in review: chat reads every field of these hashes on each request,
+  so the growth slowed chat and shared Redis. Receipts moved to per-operation
+  keys that outlive job retention plus the settlement window and the counter
+  they protect; a late settlement writes to its own period's counter, which no
+  current-period check reads.)
 - Redis remains the Batch 1 single-primary schema, without a Redis Cluster
   cross-slot fallback. Memory storage remains explicitly opted-in development
   behavior. Disabling a provider can drain its existing jobs only while its

@@ -77,10 +77,14 @@ run; idempotent API replays are not counted as duplicate upstream submits.
 
 Redis storage is the sum of `MEMORY USAGE` for the scenario's owned keys after
 settlement. It excludes global Redis allocator overhead, replication/AOF
-buffers, and other namespaces. Budget hashes retain reservation and settlement
-receipts without TTL; settlement does not free them. Their growth must be
-included in long-term capacity planning. Shared gauge refresh reads all retained
-job metadata, so its cost also grows with retained jobs and replica count.
+buffers, and other namespaces. Budget counter hashes hold only spend fields and
+keep their period TTL (this scenario uses `total` periods, which never expire).
+Reservation, refund and settlement receipts live in separate
+`budget:receipt:<operation>` keys that expire after `retention.job_metadata` plus
+24h, so retained receipt storage is bounded by video volume over that window.
+The scenario fails if a counter carries a non-spend field or a receipt has no
+TTL. Shared gauge refresh reads all retained job metadata, so its cost also
+grows with retained jobs and replica count.
 
 ## Recorded output
 
@@ -122,7 +126,9 @@ constant allocation or flat OS RSS.
 Retained Redis state was 13,024.3 bytes per job in this workload. Of that,
 417.8 bytes per job were in two persistent budget hashes holding 4,000
 reservation/settlement receipt fields (two operations times two scopes times
-1,000 jobs). More budget scopes increase retained receipt storage. One shared
+1,000 jobs). That run predates moving receipts out of the counter hashes into
+expiring per-operation keys; the current output line reports them as
+`receipt_keys`/`receipt_fields` instead. One shared
 gauge refresh issued 1,001 client commands and took 1.397065 seconds over
 1,000 retained jobs; the full workload command count includes these scans.
 

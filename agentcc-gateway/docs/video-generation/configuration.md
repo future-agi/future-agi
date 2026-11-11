@@ -145,6 +145,13 @@ Range requests on S3 are Phase 1b.
 | `job_metadata` | `720h` (30 days) | Job hash lifetime. Not applied while `settlement_state` is `reserved` or `unsettled` or `reconciliation` is `pending`. |
 | `idempotency` | `720h` | Idempotency index TTL, refreshed while the job is unresolved. After expiry a replayed key is new paid work. |
 
+Budget operation receipts (reservation, refund and settlement) deduplicate
+replayed budget writes. Each lives in its own key, `<redis.prefix>budget:receipt:<operation>`,
+for `job_metadata` plus 24h, and never less than the TTL of the budget counter it
+protects. Budget counters keep their period TTL (48h daily, 8 days weekly, 35 days
+monthly; `total` never expires) and hold only spend, so video volume does not
+slow the budget reads made on every chat request.
+
 ### `limits`
 
 | Key | Default | Meaning |

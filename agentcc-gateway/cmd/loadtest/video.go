@@ -227,7 +227,7 @@ func runVideoLoad(jobs, concurrency int, timeout time.Duration) error {
 		return err
 	}
 	defer blobs.Close()
-	budget := redisstate.NewBudgetStore(client, prefix+"budget:")
+	budget := redisstate.NewBudgetStore(client, prefix+"budget:").WithReceiptTTL(lifecycle.ReceiptTTL(cfg))
 	store := video.NewRedisStore(client, video.StoreOptions{Prefix: prefix, Budget: budget})
 	service, err := lifecycle.New(lifecycle.Options{Config: cfg, Store: store, Redis: client, Budget: budget,
 		Adapters: registry, Artifacts: blobs, Prefix: prefix, Engine: pipeline.NewEngine(costplugin.New(true, nil, nil, nil))})
@@ -535,7 +535,7 @@ func (l *videoLoad) reportStorage(ctx context.Context, jobs int) error {
 	if err != nil {
 		return err
 	}
-	var bytes, budgetBytes, receipts, persistent int64
+	var bytes, budgetBytes, receiptBytes, receiptKeys, receipts, receiptsWithoutTTL, extraFields, persistent int64
 	for _, key := range keys {
 		n, err := l.client.Redis().MemoryUsage(ctx, key).Result()
 		if errors.Is(err, redis.Nil) {
@@ -545,27 +545,42 @@ func (l *videoLoad) reportStorage(ctx context.Context, jobs int) error {
 			return err
 		}
 		bytes += n
-		if strings.HasPrefix(key, l.prefix+"budget:") {
-			budgetBytes += n
-			fields, err := l.client.Redis().HKeys(ctx, key).Result()
-			if err != nil {
-				return err
-			}
-			for _, field := range fields {
-				if strings.HasPrefix(field, "op:video") {
-					receipts++
-				}
-			}
-			ttl, err := l.client.Redis().TTL(ctx, key).Result()
-			if err != nil {
-				return err
-			}
+		if !strings.HasPrefix(key, l.prefix+"budget:") {
+			continue
+		}
+		fields, err := l.client.Redis().HKeys(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		ttl, err := l.client.Redis().TTL(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		// Operation receipts live in their own expiring keys; counter hashes
+		// hold only spend (this scenario uses "total" periods, which never expire).
+		if strings.HasPrefix(key, l.prefix+"budget:receipt:") {
+			receiptBytes += n
+			receiptKeys++
+			receipts += int64(len(fields))
 			if ttl < 0 {
-				persistent++
+				receiptsWithoutTTL++
+			}
+			continue
+		}
+		budgetBytes += n
+		for _, field := range fields {
+			if field != "total" && !strings.HasPrefix(field, "model:") {
+				extraFields++
 			}
 		}
+		if ttl < 0 {
+			persistent++
+		}
 	}
-	fmt.Printf("Redis owned state: keys=%d bytes=%d bytes_per_job=%.1f budget_bytes=%d receipt_fields=%d persistent_budget_hashes=%d\n", len(keys), bytes, float64(bytes)/float64(jobs), budgetBytes, receipts, persistent)
+	fmt.Printf("Redis owned state: keys=%d bytes=%d bytes_per_job=%.1f budget_bytes=%d budget_non_spend_fields=%d persistent_budget_hashes=%d receipt_keys=%d receipt_fields=%d receipt_bytes=%d receipts_without_ttl=%d\n", len(keys), bytes, float64(bytes)/float64(jobs), budgetBytes, extraFields, persistent, receiptKeys, receipts, receiptBytes, receiptsWithoutTTL)
+	if extraFields != 0 || receiptsWithoutTTL != 0 {
+		return fmt.Errorf("budget counters carry %d non-spend fields; %d receipts never expire", extraFields, receiptsWithoutTTL)
+	}
 	return nil
 }
 

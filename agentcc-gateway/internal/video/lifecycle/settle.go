@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	provider "github.com/futureagi/agentcc-gateway/internal/providers/video"
 	"github.com/futureagi/agentcc-gateway/internal/video"
@@ -58,6 +59,14 @@ const maxUsagePolls = 12
 // maxUsageRefreshAge also ends accounting reads, including rate-limited ones
 // that do not count against maxUsagePolls, a day after the job ended.
 const maxUsageRefreshAge = 24 * time.Hour
+
+// ReceiptTTL is the least lifetime of a budget operation receipt (reserve,
+// refund, settle): job metadata retention plus the window in which a terminal
+// job's charge may still settle. Replays of one operation (lost replies, lease
+// takeover, orphan recovery) happen well inside it.
+func ReceiptTTL(cfg config.VideoConfig) time.Duration {
+	return cfg.Retention.JobMetadata + maxUsageRefreshAge
+}
 
 // refreshUsage re-reads a terminal job's provider status only to learn a
 // charge that was unknown when the job ended (for example OpenRouter reporting

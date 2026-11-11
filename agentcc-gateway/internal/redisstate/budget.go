@@ -22,9 +22,15 @@ type BudgetStore struct {
 	operation            string
 	at                   time.Time
 	guardKey, guardToken string
+	receiptTTL           time.Duration
 }
 
 const microUnit = 1_000_000 // 1 USD = 1,000,000 microdollars
+
+// DefaultReceiptTTL is the least lifetime of an operation receipt when the
+// store is not configured: the default 720h video job retention plus the 24h
+// window in which a terminal job may still settle.
+const DefaultReceiptTTL = 744 * time.Hour
 
 // NewBudgetStore creates a Redis-backed budget store.
 func NewBudgetStore(client *Client, prefix string) *BudgetStore {
@@ -76,19 +82,22 @@ func microsToUSD(micros int64) float64 {
 // setting TTL on first write. Values are integer microdollars.
 //
 // KEYS[1] = budget hash key
+// KEYS[2] = operation receipt key (present only when ARGV[4] > 0)
 // ARGV[1] = cost in microdollars (int)
 // ARGV[2] = model field name ("model:<name>") or "" for no model
 // ARGV[3] = TTL in seconds (0 = no expiry)
+// ARGV[4] = receipt TTL in seconds (0 = not an operation, no receipt)
 //
-// Returns the new total spend in microdollars.
+// Returns the new total spend in microdollars. A replayed operation returns
+// the current total without applying its delta again.
 var recordSpendScript = redis.NewScript(`
 local key = KEYS[1]
 local cost = tonumber(ARGV[1])
 local model_field = ARGV[2]
 local ttl = tonumber(ARGV[3])
-local operation = ARGV[4] or ''
-if operation ~= '' and redis.call('HEXISTS',key,'op:' .. operation) == 1 then
- return tonumber(redis.call('HGET',key,'total') or '0')
+local receipt_ttl = tonumber(ARGV[4] or '0')
+if receipt_ttl > 0 and redis.call('HEXISTS', KEYS[2], key) == 1 then
+    return tonumber(redis.call('HGET', key, 'total') or '0')
 end
 
 local new_total = redis.call('HINCRBY', key, 'total', cost)
@@ -97,15 +106,15 @@ if model_field ~= '' then
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
-    if current_ttl < 0 and redis.call('HEXISTS',key,'durable_video_receipts') == 0 then
+    if current_ttl < 0 then
         redis.call('EXPIRE', key, ttl)
     end
 end
-if operation ~= '' then
- redis.call('HSET',key,'op:' .. operation,ARGV[1])
- -- Unresolved accounting can outlive metadata TTL; never expire its proof.
- redis.call('HSET',key,'durable_video_receipts','1')
- redis.call('PERSIST',key)
+if receipt_ttl > 0 then
+    redis.call('HSET', KEYS[2], key, ARGV[1])
+    if redis.call('TTL', KEYS[2]) < receipt_ttl then
+        redis.call('EXPIRE', KEYS[2], receipt_ttl)
+    end
 end
 return new_total
 `)
@@ -114,11 +123,15 @@ return new_total
 // Returns -1 if over budget, otherwise the new total in microdollars.
 //
 // KEYS[1] = budget hash key
+// KEYS[2] = operation receipt key (present only when ARGV[6] > 0)
+// KEYS[3] = reservation fence (optional; only with a receipt key)
 // ARGV[1] = cost in microdollars
 // ARGV[2] = limit in microdollars
 // ARGV[3] = model field ("model:<name>") or ""
 // ARGV[4] = model limit in microdollars (0 = no per-model limit)
 // ARGV[5] = TTL in seconds
+// ARGV[6] = receipt TTL in seconds (0 = not an operation, no receipt)
+// ARGV[7] = reservation fence token
 var checkAndRecordScript = redis.NewScript(`
 local key = KEYS[1]
 local cost = tonumber(ARGV[1])
@@ -126,12 +139,12 @@ local limit = tonumber(ARGV[2])
 local model_field = ARGV[3]
 local model_limit = tonumber(ARGV[4])
 local ttl = tonumber(ARGV[5])
-local operation = ARGV[6] or ''
-if #KEYS > 1 and redis.call('GET',KEYS[2]) ~= ARGV[7] then
- return redis.error_reply('reservation fence lost')
+local receipt_ttl = tonumber(ARGV[6] or '0')
+if #KEYS > 2 and redis.call('GET', KEYS[3]) ~= ARGV[7] then
+    return redis.error_reply('reservation fence lost')
 end
-if operation ~= '' and redis.call('HEXISTS',key,'op:' .. operation) == 1 then
- return tonumber(redis.call('HGET',key,'total') or '0')
+if receipt_ttl > 0 and redis.call('HEXISTS', KEYS[2], key) == 1 then
+    return tonumber(redis.call('HGET', key, 'total') or '0')
 end
 
 local spent = tonumber(redis.call('HGET', key, 'total') or "0")
@@ -152,14 +165,15 @@ if model_field ~= '' then
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
-    if current_ttl < 0 and redis.call('HEXISTS',key,'durable_video_receipts') == 0 then
+    if current_ttl < 0 then
         redis.call('EXPIRE', key, ttl)
     end
 end
-if operation ~= '' then
- redis.call('HSET',key,'op:' .. operation,ARGV[1])
- redis.call('HSET',key,'durable_video_receipts','1')
- redis.call('PERSIST',key)
+if receipt_ttl > 0 then
+    redis.call('HSET', KEYS[2], key, ARGV[1])
+    if redis.call('TTL', KEYS[2]) < receipt_ttl then
+        redis.call('EXPIRE', KEYS[2], receipt_ttl)
+    end
 end
 return new_total
 `)
@@ -179,6 +193,7 @@ func (s *BudgetStore) RecordSpend(org, level, key, period, model string, cost fl
 	}
 	ttl := budgetTTL(period)
 	ttlSec := int64(ttl.Seconds())
+	keys, receiptSec := s.receiptKeys(redisKey, period)
 
 	var newTotal int64
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -186,8 +201,8 @@ func (s *BudgetStore) RecordSpend(org, level, key, period, model string, cost fl
 
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		res, err := recordSpendScript.Run(ctx, rdb,
-			[]string{redisKey},
-			costMicros, modelField, ttlSec, s.operation,
+			keys,
+			costMicros, modelField, ttlSec, receiptSec,
 		).Int64()
 		if err != nil {
 			return err
@@ -306,16 +321,20 @@ func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string,
 	if model != "" {
 		modelField = "model:" + model
 	}
+	// A reservation fence is only meaningful with the receipt that dedups it.
+	if s.guardKey != "" && s.operation == "" {
+		return -1, false, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var result int64
-	keys := []string{s.budgetKey(org, level, key, period)}
+	keys, receiptSec := s.receiptKeys(s.budgetKey(org, level, key, period), period)
 	if s.guardKey != "" {
 		keys = append(keys, s.guardKey)
 	}
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		var err error
-		result, err = checkAndRecordScript.Run(ctx, rdb, keys, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), s.operation, s.guardToken).Int64()
+		result, err = checkAndRecordScript.Run(ctx, rdb, keys, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), receiptSec, s.guardToken).Int64()
 		return err
 	})
 	if err != nil {
@@ -328,13 +347,42 @@ func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string,
 }
 
 // WithOperation pins a signed RecordSpend delta to its reservation period and
-// atomically deduplicates it in the existing budget hash. Copies are immutable
-// and safe across concurrent jobs; the ordinary plugin path is unchanged.
+// atomically deduplicates it with a receipt kept outside the counter hash.
+// Copies are immutable and safe across concurrent jobs; the ordinary plugin
+// path is unchanged.
 func (s *BudgetStore) WithOperation(id string, at time.Time) *BudgetStore {
 	copy := *s
 	copy.operation = id
 	copy.at = at
 	return &copy
+}
+
+// WithReceiptTTL sets the least lifetime of operation receipts written by the
+// returned copy. A receipt never expires before the counter hash it protects.
+func (s *BudgetStore) WithReceiptTTL(ttl time.Duration) *BudgetStore {
+	copy := *s
+	copy.receiptTTL = ttl
+	return &copy
+}
+
+// receiptKey holds one operation's receipts, one field per counter hash it
+// changed. Receipts stay out of the counter hashes so ordinary budget reads
+// (HGETALL on every chat request) do not grow with video volume, and the
+// counters keep their period TTL.
+func (s *BudgetStore) receiptKey() string { return s.prefix + "receipt:" + s.operation }
+
+// receiptKeys returns the script keys for a counter hash and the receipt TTL
+// in seconds, which is zero for ordinary (non-operation) spend.
+func (s *BudgetStore) receiptKeys(counter, period string) ([]string, int64) {
+	if s.operation == "" {
+		return []string{counter}, 0
+	}
+	ttl := s.receiptTTL
+	if ttl <= 0 {
+		ttl = DefaultReceiptTTL
+	}
+	ttl = max(ttl, budgetTTL(period))
+	return []string{counter, s.receiptKey()}, max(int64(ttl/time.Second), 1)
 }
 
 // WithReservation fences acceptance against orphan recovery. The existing
@@ -346,12 +394,15 @@ func (s *BudgetStore) WithReservation(id string, at time.Time, guardKey, token s
 }
 
 // OperationApplied distinguishes a lost reservation reply from an uncharged
-// scope. Receipts live in the same hash as the authoritative spend counter.
+// scope. The receipt is written atomically with the counter change.
 func (s *BudgetStore) OperationApplied(ctx context.Context, org, level, key, period string) (bool, error) {
+	if s.operation == "" {
+		return false, fmt.Errorf("budget operation id required")
+	}
 	var applied bool
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		var err error
-		applied, err = rdb.HExists(ctx, s.budgetKey(org, level, key, period), "op:"+s.operation).Result()
+		applied, err = rdb.HExists(ctx, s.receiptKey(), s.budgetKey(org, level, key, period)).Result()
 		return err
 	})
 	return applied, err

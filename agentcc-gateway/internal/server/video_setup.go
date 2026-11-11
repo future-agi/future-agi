@@ -26,7 +26,7 @@ func (s *Server) configureVideo(client *redisstate.Client) error {
 	if prefix == "" {
 		prefix = "agentcc:"
 	}
-	budget := redisstate.NewBudgetStore(client, prefix+"budget:")
+	budget := redisstate.NewBudgetStore(client, prefix+"budget:").WithReceiptTTL(lifecycle.ReceiptTTL(cfg))
 	videoPrefix := video.Namespace(s.cfg.Redis.Prefix)
 	opts := video.StoreOptions{Prefix: videoPrefix, Budget: budget, IdempotencyTTL: cfg.Retention.Idempotency}
 	if cfg.Store == "memory" && cfg.AllowNonDurableStore {
