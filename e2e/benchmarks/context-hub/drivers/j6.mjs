@@ -356,6 +356,10 @@ export async function createDriver({ jobId, runId, registration }) {
         state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]), approved_before_hop: true, request_id: stale.id };
         // Operator starts a fresh review against the moved release revision.
         // The recovery view follows the moved release on its own; the review restarts against the new revision.
+        // The view shows the release revision the review was made against; wait for it to match the moved release
+        // (a change after the review restarts it), so no later poll can restart the new review.
+        const movedRevision = (await read(`${context}release-state/`, signal)).release_revision;
+        await expect(authorPage.getByText(`Reviewed against release revision ${movedRevision}.`, { exact: false })).toBeVisible({ timeout: 60_000 });
         const reack = authorPage.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ });
         await expect(reack).toBeEnabled({ timeout: 30_000 });
         await expect(reack).not.toBeChecked();

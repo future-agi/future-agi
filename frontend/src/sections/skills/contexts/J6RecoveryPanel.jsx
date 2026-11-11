@@ -330,7 +330,14 @@ ClosureReview.propTypes = {
   closure: PropTypes.object.isRequired,
 };
 
-function RollbackRequest({ contextId, candidate, production, canPromote, closureReady }) {
+function RollbackRequest({
+  contextId,
+  candidate,
+  production,
+  canPromote,
+  closureReady,
+  releaseRevision,
+}) {
   const reviewers = useRecoveryReviewers();
   const preview = usePreviewRecoveryRelease();
   const submit = useSubmitRecoveryRequest(contextId);
@@ -345,6 +352,10 @@ function RollbackRequest({ contextId, candidate, production, canPromote, closure
           label={`Production v${production?.number ?? "?"} → v${candidate.number}`}
           value={`${candidate.id} · ${candidate.digest}`}
         />
+        <Typography variant="s3">
+          Reviewed against release revision {releaseRevision}. A change to the
+          release restarts this review.
+        </Typography>
         <FormControlLabel
           control={
             <Checkbox
@@ -430,6 +441,7 @@ RollbackRequest.propTypes = {
   production: PropTypes.object,
   canPromote: PropTypes.bool,
   closureReady: PropTypes.bool,
+  releaseRevision: PropTypes.number,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
@@ -552,7 +564,9 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   latestRefresh.current = refreshFacts;
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") latestRefresh.current();
+      // A load slower than the interval must finish, not be cancelled and restarted forever.
+      if (document.visibilityState === "visible")
+        latestRefresh.current({ cancelRefetch: false });
     }, RECOVERY_FACTS_REFRESH_MS);
     return () => clearInterval(timer);
   }, []);
@@ -608,6 +622,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           production={production}
           canPromote={data.canPromote}
           closureReady={Boolean(closure.data)}
+          releaseRevision={data.releaseRevision}
         />
       )}
       {candidate && (
@@ -619,7 +634,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           canIssue={data.canIssueCredentials}
         />
       )}
-      <Button variant="text" onClick={refreshFacts}>
+      <Button variant="text" onClick={() => refreshFacts()}>
         Refresh recovery facts
       </Button>
     </Stack>

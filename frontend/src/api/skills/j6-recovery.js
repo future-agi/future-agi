@@ -193,5 +193,6 @@ export function useRecoveryClosure(contextId, candidate, production) {
 export function useRefreshContextFacts(contextId) {
   const access = useSkillV11Scope();
   const client = useQueryClient();
-  return () => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, 'agent_context', contextId) });
+  // `options.cancelRefetch: false` lets a background refresh wait for a slow load instead of restarting it.
+  return (options) => client.invalidateQueries({ queryKey: skillsKeys.v11(access.scope, 'agent_context', contextId) }, options);
 }
