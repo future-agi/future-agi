@@ -1090,6 +1090,19 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
         "session_graph_root_estimate_sql": _SESSION_OR_USER,
     },
+    "tracer.services.clickhouse.v2.effective_tags": {
+        "read_effective_tag_rows": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "tag picker and exact filter residuals use the view/builder's "
+                "authorized project set and finite time window; singular tag "
+                "includes children, native tags selects the root; the PG overlay "
+                "only enriches those selected physical identities"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.filter_value_reads": {
         "_latest_span_value_cte": _FILTER_VALUE_PICKER,
         "_latest_voice_value_cte": _FILTER_VALUE_PICKER,
@@ -2000,7 +2013,17 @@ ENTRY_POINTS = {
         ),
     ),
     "read_span_detail": (None, frozenset({_SPAN_READS})),
-    "read_physical_span_detail": (None, frozenset({_SPAN_READS})),
+    "read_physical_span_detail": (
+        None,
+        frozenset(
+            {
+                _SPAN_READS,
+                # Tag writes reuse the bounded resolver only after authorizing the
+                # visible Project and write role; references confer no access.
+                "tracer/services/clickhouse/v2/entity_tag_targets.py",
+            }
+        ),
+    ),
     # The functions that turn a run into the hidden project's id. A module that
     # lists a run's traces adds itself here in the change that first calls them.
     "simulation_scope_for_run": (None, _RUN_SCOPE_CALLERS),
@@ -3084,6 +3107,9 @@ ROW_TYPES = {
     "prism.AgentccProject.tracer_project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
+    # Explicit user tag writes authorize through the visible Project manager;
+    # collector/simulation ingestion never creates a manual assignment.
+    "tracer.EntityTagAssignment.project": USER_MADE,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,
     # Made from an error cluster, so only for a project the clustering job visits.
     "tracer.ErrorFeedIssueEvent.project": JOB_THROUGH_MANAGERS,
