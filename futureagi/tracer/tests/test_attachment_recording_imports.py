@@ -465,11 +465,11 @@ def test_deletion_during_import_fences_publication(env, monkeypatch):
     original = imports._reserve_segment
     calls = []
 
-    def reserve(job_row, size):
+    def reserve(job_row, size, token=None):
         calls.append(size)
         if len(calls) == 2:
             retention.fence_scope(scope_id=job_row.scope_id)
-        return original(job_row, size)
+        return original(job_row, size, token)
 
     monkeypatch.setattr(imports, "_reserve_segment", reserve)
     assert drive(job, store, data) == "deleted"
@@ -764,7 +764,9 @@ def test_published_segments_survive_read_path_readmission_once_bound(env, user):
         with pytest.raises(AttachmentError):  # unbound: not readable yet
             occurrences.get_occurrence(viewer, Authority(), row.client_id, parent)
         with transaction.atomic():
-            retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
+            retention.bind_retention(
+                scope_id=scope.id, occurrence_id=row.id, source=state
+            )
         found, _, _ = occurrences.get_occurrence(
             viewer, Authority(), row.client_id, parent, ready=True
         )
@@ -879,7 +881,7 @@ def test_registration_needs_the_registrars_own_live_session(env):
 # ------------------------------------------------------------- HTTP routes
 
 
-def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_path):
+def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_path):  # noqa: F811
     from tracer.tests import test_attachment_api as http
 
     settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{KEY}"
@@ -967,9 +969,7 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     assert (done["state"], done["reason"]) == ("ready", "ready")
 
     # The viewer manifest lists the server-made segments, not gaps.
-    manifest_path = (
-        f"{http.base(api)}/recordings/{accepted['recording_id']}/manifest"
-    )
+    manifest_path = f"{http.base(api)}/recordings/{accepted['recording_id']}/manifest"
     parent = {"trace_id": TRACE, "span_id": SPAN}
     manifest = http.ok(
         api.client.get(manifest_path, parent, **http.auth(api.token)),
@@ -979,7 +979,9 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     assert manifest["capture_complete"] is True
     assert [s["duration_ms"] for s in manifest["segments"]] == [30000, 5000]
     assert all(gap["reason"] != "incomplete" for gap in manifest["gaps"])
-    linked = AttachmentOccurrence.objects.filter(recording__client_id=accepted["recording_id"])
+    linked = AttachmentOccurrence.objects.filter(
+        recording__client_id=accepted["recording_id"]
+    )
     assert {str(o.client_id) for o in linked} == {
         s["occurrence_id"] for s in manifest["segments"]
     }

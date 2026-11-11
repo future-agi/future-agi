@@ -434,9 +434,7 @@ def _admit_policy(scope, session, direction):
         # Import needs its own explicit source permission; recording opt-in
         # (record_audio) is a different switch and never implies it.
         raise AttachmentError("source_unavailable", 403)
-    admit_audio(
-        scope, policy, direction=direction, source_kind=IMPORTED_SOURCE_KIND
-    )
+    admit_audio(scope, policy, direction=direction, source_kind=IMPORTED_SOURCE_KIND)
 
 
 def submit(importer, *, scope_id, body):
@@ -873,7 +871,10 @@ def _publish(job, recording, facts, manifest, rows, token=None):
             ]
         )
         AttachmentImportJob.objects.filter(pk=job.pk).update(
-            state=RecordingState.READY, reason="ready", finished_at=now, lease_until=None
+            state=RecordingState.READY,
+            reason="ready",
+            finished_at=now,
+            lease_until=None,
         )
 
 
