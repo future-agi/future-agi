@@ -381,6 +381,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await admin.click(reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }), 'release-approved-packet');
         await admin.click(reviewerPage.getByRole('button', { name: 'Move production', exact: true }), 'move-production');
         await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
+        await expect(reviewerPage.getByText('Move production to v1?', { exact: false })).toBeHidden();
         await shot(reviewerPage, '04-rollback-receipt');
         const events = await labelEvents();
         const rollbackEvents = events.filter((row) => row.from_version === 3 && row.to_version === 1);
