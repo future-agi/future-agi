@@ -35032,6 +35032,140 @@ export interface UserCodeExampleResponseApi {
   result: string;
 }
 
+export interface AttachmentEmptyRequestApi {
+  [key: string]: unknown;
+}
+
+export type AttachmentErrorApiCode =
+  (typeof AttachmentErrorApiCode)[keyof typeof AttachmentErrorApiCode];
+
+export const AttachmentErrorApiCode = {
+  queued: "queued",
+  disabled: "disabled",
+  bootstrap_pending: "bootstrap_pending",
+  policy_denied: "policy_denied",
+  credential_scope_unsupported: "credential_scope_unsupported",
+  source_unavailable: "source_unavailable",
+  unsampled: "unsampled",
+  too_large: "too_large",
+  queue_full: "queue_full",
+  unsupported_version: "unsupported_version",
+  endpoint_unconfigured: "endpoint_unconfigured",
+  scope_unresolved: "scope_unresolved",
+  correlation_unavailable: "correlation_unavailable",
+  redaction_unavailable: "redaction_unavailable",
+  recording_disabled: "recording_disabled",
+  binding_pending: "binding_pending",
+  not_found: "not_found",
+  conflict: "conflict",
+  throttled: "throttled",
+  validation_failed: "validation_failed",
+  expired: "expired",
+  deleted: "deleted",
+  incomplete: "incomplete",
+  ready: "ready",
+} as const;
+
+export interface AttachmentErrorApi {
+  code: AttachmentErrorApiCode;
+  request_id: string;
+}
+
+export interface AttachmentBootstrapRequestApi {
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  schema_versions: number[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  project_name: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  project_type: string;
+  workspace_id?: string;
+  capture_session_id: string;
+  correlation_nonce: string;
+}
+
+export interface AttachmentScopeApi {
+  organization_id: string;
+  workspace_id: string;
+  project_id: string;
+}
+
+export type AttachmentPolicyApiAllowedSourcesItem =
+  (typeof AttachmentPolicyApiAllowedSourcesItem)[keyof typeof AttachmentPolicyApiAllowedSourcesItem];
+
+export const AttachmentPolicyApiAllowedSourcesItem = {
+  Bytes: "Bytes",
+  Blob: "Blob",
+  RemoteUrl: "RemoteUrl",
+  LocalFile: "LocalFile",
+  OwnedRecordingFile: "OwnedRecordingFile",
+  ProviderFile: "ProviderFile",
+} as const;
+
+export type AttachmentPolicyApiAllowedModalitiesItem =
+  (typeof AttachmentPolicyApiAllowedModalitiesItem)[keyof typeof AttachmentPolicyApiAllowedModalitiesItem];
+
+export const AttachmentPolicyApiAllowedModalitiesItem = {
+  audio: "audio",
+  image: "image",
+  video: "video",
+  document: "document",
+  file: "file",
+} as const;
+
+export interface AttachmentPolicyApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  version: string;
+  enabled: boolean;
+  allowed_sources: AttachmentPolicyApiAllowedSourcesItem[];
+  allowed_modalities: AttachmentPolicyApiAllowedModalitiesItem[];
+  require_media_redaction: boolean;
+  require_metadata_removal: boolean;
+  allow_unredacted_media_with_text_pii: boolean;
+  record_audio: boolean;
+  record_video: boolean;
+}
+
+export interface AttachmentLimitsApi {
+  max_upload_bytes: number;
+  segment_bytes: number;
+  segment_duration_ms: number;
+  recording_bytes: number;
+  recording_duration_ms: number;
+  active_transfers: number;
+  active_recordings: number;
+  reserved_bytes: number;
+  validation_jobs: number;
+  initializations_per_minute: number;
+  links_per_minute: number;
+  upload_bytes_per_second: number;
+  playback_bytes_per_second: number;
+  transfer_timeout_seconds: number;
+  grant_ttl_seconds: number;
+  revocation_check_seconds: number;
+}
+
+export interface AttachmentBootstrapResponseApi {
+  schema_version: number;
+  scope: AttachmentScopeApi;
+  capture_session_id: string;
+  policy: AttachmentPolicyApi;
+  limits: AttachmentLimitsApi;
+  expires_at: string;
+  transfer_modes: string[];
+}
+
 export type OTLPHealthResponseApiStatus =
   (typeof OTLPHealthResponseApiStatus)[keyof typeof OTLPHealthResponseApiStatus];
 
@@ -35043,6 +35177,542 @@ export interface OTLPHealthResponseApi {
   status: OTLPHealthResponseApiStatus;
   /** @minLength 1 */
   service: string;
+}
+
+export type AttachmentImportRequestApiRecording = { [key: string]: string };
+
+export type AttachmentImportRequestApiUpload = { [key: string]: string };
+
+export type AttachmentImportRequestApiSource = { [key: string]: string };
+
+export interface AttachmentImportRequestApi {
+  /** @minLength 1 */
+  mode?: string;
+  recording?: AttachmentImportRequestApiRecording;
+  upload?: AttachmentImportRequestApiUpload;
+  source: AttachmentImportRequestApiSource;
+}
+
+export type AttachmentImportStatusResponseApiState =
+  (typeof AttachmentImportStatusResponseApiState)[keyof typeof AttachmentImportStatusResponseApiState];
+
+export const AttachmentImportStatusResponseApiState = {
+  pending_upload: "pending_upload",
+  importing: "importing",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  rejected: "rejected",
+  expired: "expired",
+  deleted: "deleted",
+} as const;
+
+export type AttachmentImportStatusResponseApiReason =
+  (typeof AttachmentImportStatusResponseApiReason)[keyof typeof AttachmentImportStatusResponseApiReason];
+
+export const AttachmentImportStatusResponseApiReason = {
+  queued: "queued",
+  disabled: "disabled",
+  bootstrap_pending: "bootstrap_pending",
+  policy_denied: "policy_denied",
+  credential_scope_unsupported: "credential_scope_unsupported",
+  source_unavailable: "source_unavailable",
+  unsampled: "unsampled",
+  too_large: "too_large",
+  queue_full: "queue_full",
+  unsupported_version: "unsupported_version",
+  endpoint_unconfigured: "endpoint_unconfigured",
+  scope_unresolved: "scope_unresolved",
+  correlation_unavailable: "correlation_unavailable",
+  redaction_unavailable: "redaction_unavailable",
+  recording_disabled: "recording_disabled",
+  binding_pending: "binding_pending",
+  not_found: "not_found",
+  conflict: "conflict",
+  throttled: "throttled",
+  validation_failed: "validation_failed",
+  expired: "expired",
+  deleted: "deleted",
+  incomplete: "incomplete",
+  ready: "ready",
+} as const;
+
+export interface AttachmentImportStatusResponseApi {
+  job_id: string;
+  state: AttachmentImportStatusResponseApiState;
+  reason: AttachmentImportStatusResponseApiReason;
+}
+
+export type AttachmentReferenceApiDirection =
+  (typeof AttachmentReferenceApiDirection)[keyof typeof AttachmentReferenceApiDirection];
+
+export const AttachmentReferenceApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentReferenceApiModality =
+  (typeof AttachmentReferenceApiModality)[keyof typeof AttachmentReferenceApiModality];
+
+export const AttachmentReferenceApiModality = {
+  audio: "audio",
+  image: "image",
+  video: "video",
+  document: "document",
+  file: "file",
+} as const;
+
+export type AttachmentReferenceApiMimeType =
+  (typeof AttachmentReferenceApiMimeType)[keyof typeof AttachmentReferenceApiMimeType];
+
+export const AttachmentReferenceApiMimeType = {
+  "audio/wav": "audio/wav",
+  "audio/ogg": "audio/ogg",
+  "audio/mpeg": "audio/mpeg",
+  "audio/mp4": "audio/mp4",
+  "audio/webm": "audio/webm",
+  "audio/flac": "audio/flac",
+  "audio/L16": "audio/L16",
+  "image/png": "image/png",
+  "image/jpeg": "image/jpeg",
+  "image/webp": "image/webp",
+  "video/mp4": "video/mp4",
+  "video/webm": "video/webm",
+  "application/pdf": "application/pdf",
+  "application/octet-stream": "application/octet-stream",
+} as const;
+
+export type AttachmentReferenceApiPurpose =
+  (typeof AttachmentReferenceApiPurpose)[keyof typeof AttachmentReferenceApiPurpose];
+
+export const AttachmentReferenceApiPurpose = {
+  conversation_recording: "conversation_recording",
+  turn_recording: "turn_recording",
+  model_input: "model_input",
+  model_output: "model_output",
+  tool_result: "tool_result",
+  computer_screenshot: "computer_screenshot",
+  diagnostic: "diagnostic",
+  document: "document",
+} as const;
+
+export interface AttachmentReferenceApi {
+  attachment_id: string;
+  occurrence_id: string;
+  direction: AttachmentReferenceApiDirection;
+  modality: AttachmentReferenceApiModality;
+  mime_type: AttachmentReferenceApiMimeType;
+  purpose?: AttachmentReferenceApiPurpose;
+}
+
+export interface AttachmentParentApi {
+  /**
+   * @minLength 1
+   * @maxLength 36
+   */
+  trace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  span_id: string;
+}
+
+export type AttachmentOccurrenceApiState =
+  (typeof AttachmentOccurrenceApiState)[keyof typeof AttachmentOccurrenceApiState];
+
+export const AttachmentOccurrenceApiState = {
+  pending_upload: "pending_upload",
+  importing: "importing",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  rejected: "rejected",
+  expired: "expired",
+  deleted: "deleted",
+} as const;
+
+export type AttachmentOccurrenceApiBinding =
+  (typeof AttachmentOccurrenceApiBinding)[keyof typeof AttachmentOccurrenceApiBinding];
+
+export const AttachmentOccurrenceApiBinding = {
+  pending: "pending",
+  bound: "bound",
+} as const;
+
+export interface AttachmentOccurrenceApi {
+  reference: AttachmentReferenceApi;
+  scope: AttachmentScopeApi;
+  parent: AttachmentParentApi;
+  state: AttachmentOccurrenceApiState;
+  binding: AttachmentOccurrenceApiBinding;
+  capture_complete: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  policy_version: string;
+  deletion_generation: number;
+  expires_at: string;
+  recording_id?: string;
+}
+
+export interface AttachmentOccurrencePageApi {
+  items: AttachmentOccurrenceApi[];
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  next_cursor: string;
+}
+
+export interface AttachmentLinkRequestApi {
+  source_occurrence_id: string;
+  source_parent: AttachmentParentApi;
+  target_parent: AttachmentParentApi;
+  occurrence_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  policy_version: string;
+  /** @minimum 0 */
+  deletion_generation: number;
+}
+
+export type AttachmentRecordingManifestApiLayout =
+  (typeof AttachmentRecordingManifestApiLayout)[keyof typeof AttachmentRecordingManifestApiLayout];
+
+export const AttachmentRecordingManifestApiLayout = {
+  mixed: "mixed",
+  stereo: "stereo",
+  separate_tracks: "separate_tracks",
+} as const;
+
+export type AttachmentTrackApiDirection =
+  (typeof AttachmentTrackApiDirection)[keyof typeof AttachmentTrackApiDirection];
+
+export const AttachmentTrackApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentTrackApiRole =
+  (typeof AttachmentTrackApiRole)[keyof typeof AttachmentTrackApiRole];
+
+export const AttachmentTrackApiRole = {
+  user: "user",
+  assistant: "assistant",
+  mixed: "mixed",
+  unknown: "unknown",
+} as const;
+
+export interface AttachmentTrackApi {
+  track_id: string;
+  channels: number[];
+  direction: AttachmentTrackApiDirection;
+  role: AttachmentTrackApiRole;
+}
+
+export interface AttachmentSegmentApi {
+  occurrence_id: string;
+  index: number;
+  start_ms: number;
+  duration_ms: number;
+  track_id?: string;
+}
+
+export interface AttachmentGapApi {
+  start_ms: number;
+  duration_ms: number;
+  /** @minLength 1 */
+  reason: string;
+  track_id?: string;
+}
+
+export type AttachmentPlayoutApiEvidence =
+  (typeof AttachmentPlayoutApiEvidence)[keyof typeof AttachmentPlayoutApiEvidence];
+
+export const AttachmentPlayoutApiEvidence = {
+  generated: "generated",
+  played: "played",
+  unknown: "unknown",
+  truncated: "truncated",
+} as const;
+
+export interface AttachmentPlayoutApi {
+  start_ms: number;
+  duration_ms: number;
+  evidence: AttachmentPlayoutApiEvidence;
+}
+
+export interface AttachmentRecordingManifestApi {
+  schema_version: number;
+  recording_id: string;
+  /** @minLength 1 */
+  timebase: string;
+  /** @minLength 1 */
+  sample_format: string;
+  sample_rate_hz: number;
+  channels: number;
+  /** @minLength 1 */
+  codec: string;
+  /** @minLength 1 */
+  container: string;
+  layout: AttachmentRecordingManifestApiLayout;
+  tracks: AttachmentTrackApi[];
+  segments: AttachmentSegmentApi[];
+  gaps: AttachmentGapApi[];
+  playout: AttachmentPlayoutApi[];
+  capture_complete: boolean;
+  duration_ms: number;
+}
+
+export type AttachmentResolveItemApiRepresentation =
+  (typeof AttachmentResolveItemApiRepresentation)[keyof typeof AttachmentResolveItemApiRepresentation];
+
+export const AttachmentResolveItemApiRepresentation = {
+  original: "original",
+  playable: "playable",
+  channel: "channel",
+  peaks: "peaks",
+  thumbnail: "thumbnail",
+} as const;
+
+export interface AttachmentResolveItemApi {
+  occurrence_id: string;
+  parent: AttachmentParentApi;
+  representation: AttachmentResolveItemApiRepresentation;
+  /**
+   * @minimum 0
+   * @maximum 31
+   */
+  channel?: number;
+}
+
+export interface AttachmentResolveRequestApi {
+  items: AttachmentResolveItemApi[];
+}
+
+export type AttachmentResolveResultApiStatus =
+  (typeof AttachmentResolveResultApiStatus)[keyof typeof AttachmentResolveResultApiStatus];
+
+export const AttachmentResolveResultApiStatus = {
+  ready: "ready",
+  not_found: "not_found",
+  pending: "pending",
+  failed: "failed",
+  expired: "expired",
+  deleted: "deleted",
+} as const;
+
+export interface AttachmentResolveResultApi {
+  occurrence_id: string;
+  status: AttachmentResolveResultApiStatus;
+  /**
+   * @minLength 1
+   * @maxLength 194
+   */
+  gateway_path?: string;
+  expires_at?: string;
+}
+
+export interface AttachmentResolveResponseApi {
+  items: AttachmentResolveResultApi[];
+}
+
+export type AttachmentUploadRequestApiMimeType =
+  (typeof AttachmentUploadRequestApiMimeType)[keyof typeof AttachmentUploadRequestApiMimeType];
+
+export const AttachmentUploadRequestApiMimeType = {
+  "audio/wav": "audio/wav",
+  "audio/ogg": "audio/ogg",
+  "audio/mpeg": "audio/mpeg",
+  "audio/mp4": "audio/mp4",
+  "audio/webm": "audio/webm",
+  "audio/flac": "audio/flac",
+  "audio/L16": "audio/L16",
+  "image/png": "image/png",
+  "image/jpeg": "image/jpeg",
+  "image/webp": "image/webp",
+  "video/mp4": "video/mp4",
+  "video/webm": "video/webm",
+  "application/pdf": "application/pdf",
+  "application/octet-stream": "application/octet-stream",
+} as const;
+
+export type AttachmentUploadRequestApiModality =
+  (typeof AttachmentUploadRequestApiModality)[keyof typeof AttachmentUploadRequestApiModality];
+
+export const AttachmentUploadRequestApiModality = {
+  audio: "audio",
+  image: "image",
+  video: "video",
+  document: "document",
+  file: "file",
+} as const;
+
+export type AttachmentUploadRequestApiDirection =
+  (typeof AttachmentUploadRequestApiDirection)[keyof typeof AttachmentUploadRequestApiDirection];
+
+export const AttachmentUploadRequestApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentUploadRequestApiSourceKind =
+  (typeof AttachmentUploadRequestApiSourceKind)[keyof typeof AttachmentUploadRequestApiSourceKind];
+
+export const AttachmentUploadRequestApiSourceKind = {
+  Bytes: "Bytes",
+  Blob: "Blob",
+  RemoteUrl: "RemoteUrl",
+  LocalFile: "LocalFile",
+  OwnedRecordingFile: "OwnedRecordingFile",
+  ProviderFile: "ProviderFile",
+} as const;
+
+export type AttachmentUploadRequestApiPurpose =
+  (typeof AttachmentUploadRequestApiPurpose)[keyof typeof AttachmentUploadRequestApiPurpose];
+
+export const AttachmentUploadRequestApiPurpose = {
+  conversation_recording: "conversation_recording",
+  turn_recording: "turn_recording",
+  model_input: "model_input",
+  model_output: "model_output",
+  tool_result: "tool_result",
+  computer_screenshot: "computer_screenshot",
+  diagnostic: "diagnostic",
+  document: "document",
+} as const;
+
+export interface AttachmentAssociationApi {
+  capture_session_id: string;
+  correlation_nonce: string;
+  parent: AttachmentParentApi;
+}
+
+export interface AttachmentUploadRequestApi {
+  schema_version: number;
+  attachment_id: string;
+  occurrence_id: string;
+  association: AttachmentAssociationApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  policy_version: string;
+  /** @minimum 0 */
+  deletion_generation: number;
+  mime_type: AttachmentUploadRequestApiMimeType;
+  modality: AttachmentUploadRequestApiModality;
+  direction: AttachmentUploadRequestApiDirection;
+  source_kind: AttachmentUploadRequestApiSourceKind;
+  purpose?: AttachmentUploadRequestApiPurpose;
+  /**
+   * @minimum 1
+   * @maximum 52428800
+   */
+  declared_bytes: number;
+  message_index?: number;
+  part_index?: number;
+  recording_id?: string;
+  segment_index?: number;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  conversation_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  turn_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  tool_call_id?: string;
+}
+
+export interface AttachmentUploadResponseApi {
+  upload_id: string;
+  attachment_id: string;
+  occurrence_id: string;
+  /** @minLength 1 */
+  state: string;
+  reserved_bytes: number;
+  expires_at: string;
+  /** @minLength 1 */
+  transfer_mode: string;
+  /**
+   * @minLength 1
+   * @maxLength 4096
+   */
+  write_capability: string;
+}
+
+export interface AttachmentCompleteRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  policy_version: string;
+  /** @minimum 0 */
+  deletion_generation: number;
+}
+
+export type AttachmentStatusResponseApiState =
+  (typeof AttachmentStatusResponseApiState)[keyof typeof AttachmentStatusResponseApiState];
+
+export const AttachmentStatusResponseApiState = {
+  pending_upload: "pending_upload",
+  importing: "importing",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  rejected: "rejected",
+  expired: "expired",
+  deleted: "deleted",
+} as const;
+
+export type AttachmentStatusResponseApiReason =
+  (typeof AttachmentStatusResponseApiReason)[keyof typeof AttachmentStatusResponseApiReason];
+
+export const AttachmentStatusResponseApiReason = {
+  queued: "queued",
+  disabled: "disabled",
+  bootstrap_pending: "bootstrap_pending",
+  policy_denied: "policy_denied",
+  credential_scope_unsupported: "credential_scope_unsupported",
+  source_unavailable: "source_unavailable",
+  unsampled: "unsampled",
+  too_large: "too_large",
+  queue_full: "queue_full",
+  unsupported_version: "unsupported_version",
+  endpoint_unconfigured: "endpoint_unconfigured",
+  scope_unresolved: "scope_unresolved",
+  correlation_unavailable: "correlation_unavailable",
+  redaction_unavailable: "redaction_unavailable",
+  recording_disabled: "recording_disabled",
+  binding_pending: "binding_pending",
+  not_found: "not_found",
+  conflict: "conflict",
+  throttled: "throttled",
+  validation_failed: "validation_failed",
+  expired: "expired",
+  deleted: "deleted",
+  incomplete: "incomplete",
+  ready: "ready",
+} as const;
+
+export interface AttachmentStatusResponseApi {
+  upload_id: string;
+  state: AttachmentStatusResponseApiState;
+  reason: AttachmentStatusResponseApiReason;
 }
 
 export type AdminCustomPlanResponseApiResult = { [key: string]: string };
@@ -41647,6 +42317,48 @@ export type TracerUsersListParams = {
    * JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.
    */
   attribute_keys?: string;
+};
+
+export type ListAttachmentOccurrencesParams = {
+  /**
+   * Parent trace (F01 TraceInput).
+   */
+  trace_id: string;
+  /**
+   * Parent span (F01 SpanID).
+   */
+  span_id?: string;
+  /**
+   * Opaque F01 Token cursor.
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type DeleteAttachmentOccurrenceParams = {
+  /**
+   * Expected parent trace (F01 TraceInput).
+   */
+  trace_id: string;
+  /**
+   * Expected parent span (F01 SpanID).
+   */
+  span_id: string;
+};
+
+export type ReadRecordingManifestParams = {
+  /**
+   * Expected parent trace (F01 TraceInput).
+   */
+  trace_id: string;
+  /**
+   * Expected parent span (F01 SpanID).
+   */
+  span_id: string;
 };
 
 export type UsageAdminCustomPlanListParams = {

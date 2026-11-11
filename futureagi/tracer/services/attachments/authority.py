@@ -86,7 +86,9 @@ class LiveAuthority:
         try:
             span = self.span_reader(scope.project_id, parent.span_id)
         except Exception:
-            logger.warning("attachment_source_unavailable", project_id=str(scope.project_id))
+            logger.warning(
+                "attachment_source_unavailable", project_id=str(scope.project_id)
+            )
             return None
         if span is None or getattr(span, "is_deleted", 1):
             return None

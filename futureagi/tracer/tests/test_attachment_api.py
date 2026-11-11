@@ -155,7 +155,9 @@ def member(user, organization, workspace, *, role=OrganizationRoles.OWNER):
         workspace=workspace,
         defaults={
             "role": workspace_role,
-            "level": Level.OWNER if role == OrganizationRoles.OWNER else Level.WORKSPACE_VIEWER,
+            "level": Level.OWNER
+            if role == OrganizationRoles.OWNER
+            else Level.WORKSPACE_VIEWER,
             "is_active": True,
             "organization_membership": membership,
         },
@@ -222,7 +224,10 @@ def bootstrap(a, *, token=None, sid=None, nonce=None, **overrides):
         **overrides,
     }
     reply = post(
-        a, "/tracer/v1/attachment-sessions", body, {**auth(token or a.token), **key("bs")}
+        a,
+        "/tracer/v1/attachment-sessions",
+        body,
+        {**auth(token or a.token), **key("bs")},
     )
     return reply, body
 
@@ -260,14 +265,18 @@ def initialize(a, *, token=None, session_body=None, idem=None, **overrides):
         ok(reply, 200, "BootstrapResponse")
     body = upload_request(a, session_body, **overrides)
     headers = {**auth(token or a.token)}
-    headers["HTTP_IDEMPOTENCY_KEY"] = idem or f"up-{uuid.UUID(body['occurrence_id']).hex}"
+    headers["HTTP_IDEMPOTENCY_KEY"] = (
+        idem or f"up-{uuid.UUID(body['occurrence_id']).hex}"
+    )
     reply = post(a, f"{base(a)}/uploads", body, headers)
     return reply, body, session_body, headers
 
 
 def put_content(a, upload, payload=None, *, capability=None, length=None):
     payload = wav_bytes() if payload is None else payload
-    headers = {"HTTP_AUTHORIZATION": f"Bearer {capability or upload['write_capability']}"}
+    headers = {
+        "HTTP_AUTHORIZATION": f"Bearer {capability or upload['write_capability']}"
+    }
     if length is not None:
         headers["CONTENT_LENGTH"] = str(length)
     return a.client.put(
@@ -311,17 +320,23 @@ def ready_occurrence(a, **overrides):
         SimpleNamespace(user_id=a.user.id), a.scope, parent
     )
     assert source.generation == SOURCE_GENERATION
-    retention.bind_retention(scope_id=a.scope.id, occurrence_id=occurrence.id, source=source)
+    retention.bind_retention(
+        scope_id=a.scope.id, occurrence_id=occurrence.id, source=source
+    )
     return upload, body, session_body, occurrence
 
 
-def media_exchange(a, token=None, **extra):
+def media_exchange(a, token=None, origin=ORIGIN, **extra):
+    headers = {**auth(token or a.token), **extra}
+    if origin is not None:
+        headers["HTTP_ORIGIN"] = origin
+    # Like the app's client: a POST with no body at all.
     return a.client.post(
         "/tracer/v1/attachment-media-sessions",
+        data="",
+        content_type="application/json",
         secure=True,
-        HTTP_ORIGIN=ORIGIN,
-        **auth(token or a.token),
-        **extra,
+        **headers,
     )
 
 
@@ -352,7 +367,10 @@ def other_tenant():
         organization_role=OrganizationRoles.OWNER,
     )
     workspace = Workspace.objects.create(
-        name="Other", organization=organization, is_default=True, is_active=True,
+        name="Other",
+        organization=organization,
+        is_default=True,
+        is_active=True,
         created_by=stranger,
     )
     member(stranger, organization, workspace)
@@ -397,13 +415,19 @@ def test_bootstrap_credentials_and_feature_gate(api, settings):
     assert_error(
         post(api, path, body, {**auth("fiac1.forged.capability"), **key()}), 401
     )
-    assert_error(post(api, path, {**body, "extra": 1}, {**auth(api.token), **key()}), 400)
+    assert_error(
+        post(api, path, {**body, "extra": 1}, {**auth(api.token), **key()}), 400
+    )
     assert_error(
         post(api, path, {**body, "schema_versions": [2]}, {**auth(api.token), **key()}),
         400,
     )
-    AttachmentScope.objects.filter(pk=api.scope.id).update(enabled=False, policy_version=2)
-    assert_error(post(api, path, body, {**auth(api.token), **key()}), 403, "policy_denied")
+    AttachmentScope.objects.filter(pk=api.scope.id).update(
+        enabled=False, policy_version=2
+    )
+    assert_error(
+        post(api, path, body, {**auth(api.token), **key()}), 403, "policy_denied"
+    )
     settings.FI_ATTACHMENTS_ENABLED = False
     assert_error(post(api, path, body, {**auth(api.token), **key()}), 404)
     assert not CaptureSession.objects.exists()
@@ -447,12 +471,22 @@ def test_initialize_issues_capability_and_renews_on_replay(api):
     "scope_change,overrides,status,code",
     [
         ({"require_media_redaction": True}, {}, 403, "redaction_unavailable"),
-        ({"record_audio": False}, {"recording_id": str(uuid.uuid4()), "segment_index": 0}, 403, "recording_disabled"),
+        (
+            {"record_audio": False},
+            {"recording_id": str(uuid.uuid4()), "segment_index": 0},
+            403,
+            "recording_disabled",
+        ),
         ({}, {"modality": "image", "mime_type": "image/png"}, 403, "policy_denied"),
         ({}, {"source_kind": "RemoteUrl"}, 403, "policy_denied"),
         ({}, {"policy_version": "999"}, 409, "expired"),
         ({}, {"declared_bytes": 9 * 1024 * 1024}, 413, "too_large"),
-        ({}, {"modality": "audio", "mime_type": "image/png"}, 400, "unsupported_version"),
+        (
+            {},
+            {"modality": "audio", "mime_type": "image/png"},
+            400,
+            "unsupported_version",
+        ),
     ],
 )
 def test_initialize_privacy_denials(api, scope_change, overrides, status, code):
@@ -570,9 +604,7 @@ def test_ingest_key_needs_explicit_grant(api):
     )
     # An ingest key is never a viewer.
     assert_error(
-        api.client.get(
-            f"{base(api)}/occurrences", {"trace_id": TRACE}, **headers
-        ),
+        api.client.get(f"{base(api)}/occurrences", {"trace_id": TRACE}, **headers),
         403,
         "credential_scope_unsupported",
     )
@@ -587,7 +619,11 @@ def test_content_complete_status_and_replay(api):
     assert_error(put_content(api, upload, capability=api.token), 401)
     assert_error(put_content(api, upload, wav_bytes()[:-1]), 400)
     status = ok(put_content(api, upload), 200, "StatusResponse")
-    assert status == {"upload_id": upload["upload_id"], "state": "pending_upload", "reason": "queued"}
+    assert status == {
+        "upload_id": upload["upload_id"],
+        "state": "pending_upload",
+        "reason": "queued",
+    }
     # BR-3: identical replay succeeds; different bytes conflict.
     ok(put_content(api, upload), 200, "StatusResponse")
     altered = bytearray(wav_bytes())
@@ -702,7 +738,9 @@ def test_list_link_resolve_delete_through_live_authority(api):
     upload, body, _, occurrence = ready_occurrence(api)
     page = ok(
         api.client.get(
-            f"{base(api)}/occurrences", {"trace_id": TRACE, "span_id": SPAN}, **auth(api.token)
+            f"{base(api)}/occurrences",
+            {"trace_id": TRACE, "span_id": SPAN},
+            **auth(api.token),
         ),
         200,
         "OccurrencePage",
@@ -719,7 +757,11 @@ def test_list_link_resolve_delete_through_live_authority(api):
         "policy_version": str(api.scope.policy_version),
         "deletion_generation": api.scope.deletion_generation,
     }
-    linked = ok(post(api, f"{base(api)}/occurrences", link, {**auth(api.token), **key()}), 201, "Occurrence")
+    linked = ok(
+        post(api, f"{base(api)}/occurrences", link, {**auth(api.token), **key()}),
+        201,
+        "Occurrence",
+    )
     assert linked["parent"]["span_id"] == OTHER_SPAN
     # Resolve needs a media session first, then issues a same-origin grant.
     first = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")
@@ -727,12 +769,18 @@ def test_list_link_resolve_delete_through_live_authority(api):
     ok(media_exchange(api), 204)
     resolved = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")
     assert resolved["items"][0]["status"] == "ready"
-    wrong_parent = ok(resolve(api, body["occurrence_id"], span=OTHER_SPAN), 200, "ResolveResponse")
+    wrong_parent = ok(
+        resolve(api, body["occurrence_id"], span=OTHER_SPAN), 200, "ResolveResponse"
+    )
     assert wrong_parent["items"][0]["status"] == "not_found"
     for representation in ("channel", "peaks", "thumbnail"):
         if representation == "channel":
             continue
-        reply = ok(resolve(api, body["occurrence_id"], representation=representation), 200, "ResolveResponse")
+        reply = ok(
+            resolve(api, body["occurrence_id"], representation=representation),
+            200,
+            "ResolveResponse",
+        )
         assert reply["items"][0]["status"] == "not_found"
     delete = api.client.delete(
         f"{base(api)}/occurrences/{body['occurrence_id']}?trace_id={TRACE}&span_id={SPAN}",
@@ -762,14 +810,24 @@ def test_viewer_routes_refuse_capabilities_keys_and_strangers(api):
             post(
                 api,
                 f"{base(api)}/resolve",
-                {"items": [{"occurrence_id": body["occurrence_id"], "parent": {"trace_id": TRACE, "span_id": SPAN}, "representation": "original"}]},
+                {
+                    "items": [
+                        {
+                            "occurrence_id": body["occurrence_id"],
+                            "parent": {"trace_id": TRACE, "span_id": SPAN},
+                            "representation": "original",
+                        }
+                    ]
+                },
                 headers,
             ),
             status,
         )
     assert_error(
         api.client.get(
-            f"{base(api)}/occurrences", {"trace_id": TRACE, "cursor": "forged:cursor"}, **auth(api.token)
+            f"{base(api)}/occurrences",
+            {"trace_id": TRACE, "cursor": "forged:cursor"},
+            **auth(api.token),
         ),
         400,
     )
@@ -782,7 +840,10 @@ def test_manifest_write_replay_and_read(api):
     segments = []
     for index in range(2):
         upload, body, _, occurrence = ready_occurrence(
-            api, session_body=session_body, recording_id=recording_id, segment_index=index
+            api,
+            session_body=session_body,
+            recording_id=recording_id,
+            segment_index=index,
         )
         segments.append((upload, body))
     track = str(uuid.uuid4())
@@ -796,10 +857,27 @@ def test_manifest_write_replay_and_read(api):
         "codec": "pcm",
         "container": "wav",
         "layout": "stereo",
-        "tracks": [{"track_id": track, "channels": [0, 1], "direction": "mixed", "role": "mixed"}],
+        "tracks": [
+            {
+                "track_id": track,
+                "channels": [0, 1],
+                "direction": "mixed",
+                "role": "mixed",
+            }
+        ],
         "segments": [
-            {"occurrence_id": segments[0][1]["occurrence_id"], "index": 0, "start_ms": 0, "duration_ms": 10},
-            {"occurrence_id": segments[1][1]["occurrence_id"], "index": 1, "start_ms": 10, "duration_ms": 10},
+            {
+                "occurrence_id": segments[0][1]["occurrence_id"],
+                "index": 0,
+                "start_ms": 0,
+                "duration_ms": 10,
+            },
+            {
+                "occurrence_id": segments[1][1]["occurrence_id"],
+                "index": 1,
+                "start_ms": 10,
+                "duration_ms": 10,
+            },
         ],
         "gaps": [],
         "playout": [],
@@ -809,27 +887,56 @@ def test_manifest_write_replay_and_read(api):
     path = f"{base(api)}/recordings/{recording_id}/manifest"
     # BR-7: the second segment's capability still writes after its own complete.
     capability = segments[1][0]["write_capability"]
-    headers = {"HTTP_AUTHORIZATION": f"Bearer {capability}", "HTTP_IDEMPOTENCY_KEY": f"mf-{uuid.UUID(recording_id).hex}-1"}
+    headers = {
+        "HTTP_AUTHORIZATION": f"Bearer {capability}",
+        "HTTP_IDEMPOTENCY_KEY": f"mf-{uuid.UUID(recording_id).hex}-1",
+    }
     import json
 
     def put(body, hdrs):
-        return api.client.put(path, data=json.dumps(body), content_type="application/json", **hdrs)
+        return api.client.put(
+            path, data=json.dumps(body), content_type="application/json", **hdrs
+        )
 
     ok(put(manifest, headers), 204)
     ok(put(manifest, headers), 204)  # BR-5: identical replay.
-    changed = {**manifest, "playout": [{"start_ms": 0, "duration_ms": 5, "evidence": "played"}]}
+    changed = {
+        **manifest,
+        "playout": [{"start_ms": 0, "duration_ms": 5, "evidence": "played"}],
+    }
     assert_error(put(changed, headers), 409, "conflict")
-    foreign = {**manifest, "segments": [{**manifest["segments"][0], "occurrence_id": str(uuid.uuid4())}, manifest["segments"][1]]}
-    assert_error(put(foreign, {**headers, "HTTP_IDEMPOTENCY_KEY": "mf-x-2"}), 409, "conflict")
-    assert_error(put(manifest, {**headers, "HTTP_AUTHORIZATION": f"Bearer {api.token}"}), 401)
+    foreign = {
+        **manifest,
+        "segments": [
+            {**manifest["segments"][0], "occurrence_id": str(uuid.uuid4())},
+            manifest["segments"][1],
+        ],
+    }
+    assert_error(
+        put(foreign, {**headers, "HTTP_IDEMPOTENCY_KEY": "mf-x-2"}), 409, "conflict"
+    )
+    assert_error(
+        put(manifest, {**headers, "HTTP_AUTHORIZATION": f"Bearer {api.token}"}), 401
+    )
     # A capability without this recording cannot write it.
     reply, _, _, _ = initialize(api)
     plain = ok(reply, 201, "UploadResponse")
-    assert_error(put(manifest, {**headers, "HTTP_AUTHORIZATION": f"Bearer {plain['write_capability']}"}), 404)
+    assert_error(
+        put(
+            manifest,
+            {**headers, "HTTP_AUTHORIZATION": f"Bearer {plain['write_capability']}"},
+        ),
+        404,
+    )
     query = {"trace_id": TRACE, "span_id": SPAN}
     read = ok(api.client.get(path, query, **auth(api.token)), 200, "RecordingManifest")
     assert read["capture_complete"] is True and len(read["segments"]) == 2
-    assert_error(api.client.get(path, {"trace_id": TRACE, "span_id": OTHER_SPAN}, **auth(api.token)), 404)
+    assert_error(
+        api.client.get(
+            path, {"trace_id": TRACE, "span_id": OTHER_SPAN}, **auth(api.token)
+        ),
+        404,
+    )
     # Deleting one segment's occurrence turns it into an incomplete gap.
     api.client.delete(
         f"{base(api)}/occurrences/{segments[0][1]['occurrence_id']}?trace_id={TRACE}&span_id={SPAN}",
@@ -838,7 +945,9 @@ def test_manifest_write_replay_and_read(api):
     read = ok(api.client.get(path, query, **auth(api.token)), 200, "RecordingManifest")
     assert read["capture_complete"] is False and len(read["segments"]) == 1
     assert read["gaps"] == [{"start_ms": 0, "duration_ms": 10, "reason": "incomplete"}]
-    assert AttachmentRecording.objects.get(client_id=recording_id).manifest_revision == 1
+    assert (
+        AttachmentRecording.objects.get(client_id=recording_id).manifest_revision == 1
+    )
 
 
 # 14-17. media session and gateway ----------------------------------------------------
@@ -852,13 +961,8 @@ def gateway(a, path, method="get", cookie=None, **headers):
 
 def test_media_session_and_gateway_bytes(api):
     upload, body, _, _ = ready_occurrence(api)
-    assert_error(
-        api.client.post("/tracer/v1/attachment-media-sessions", secure=True, **auth(api.token)),
-        404,
-    )
-    assert_error(
-        media_exchange(api, HTTP_ORIGIN="https://evil.example.test"), 404
-    )
+    assert_error(media_exchange(api, origin=None), 404)
+    assert_error(media_exchange(api, origin="https://evil.example.test"), 404)
     exchange = media_exchange(api)
     ok(exchange, 204)
     cookie = exchange.cookies["fi_media_session"]
@@ -886,7 +990,9 @@ def test_media_session_and_gateway_bytes(api):
 def test_gateway_dies_with_application_session_and_egress_limit(api, monkeypatch):
     upload, body, _, _ = ready_occurrence(api)
     ok(media_exchange(api), 204)
-    path = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")["items"][0]["gateway_path"]
+    path = ok(resolve(api, body["occurrence_id"]), 200, "ResolveResponse")["items"][0][
+        "gateway_path"
+    ]
     assert gateway(api, path, method="head").status_code == 200
     from tracer.services.attachments import egress
 

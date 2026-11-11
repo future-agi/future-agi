@@ -4,8 +4,8 @@
 (current application session plus ClickHouse source state) and the trusted
 media origin from ``FI_ATTACHMENTS_MEDIA_ORIGIN``. No request field constructs a
 Viewer or an Authority. Every GET/HEAD/Range/conditional request re-authorizes
-before any status or metadata is sent, and open streams re-check at least every
-``RECHECK_SECONDS``. Bytes are charged to the viewer's egress budget first.
+before any status or metadata is sent, and open streams re-authorize before and
+after every bounded read. Bytes are charged to the viewer's egress budget first.
 """
 
 import re
@@ -24,7 +24,6 @@ from tracer.services.attachments.storage import ObjectIdentity
 
 CHUNK_BYTES = 64 * 1024
 MAX_RESPONSE_SECONDS = 30
-RECHECK_SECONDS = 2
 
 
 def private(response):
@@ -128,15 +127,11 @@ class RevocableBody:
         self.start, self.end, self.remaining = start, end, end - start + 1
         self.body, self.closed = None, False
         self.deadline = time.monotonic() + MAX_RESPONSE_SECONDS
-        self.checked_at = None
         self.charge = charge
 
     def check(self):
-        # Bounded re-authorization: at least every RECHECK_SECONDS while open.
-        now = time.monotonic()
-        if self.checked_at is None or now - self.checked_at >= RECHECK_SECONDS:
-            self.authorize()
-            self.checked_at = now
+        # Every bounded read is bracketed by a full live re-authorization.
+        self.authorize()
 
     def __iter__(self):
         return self

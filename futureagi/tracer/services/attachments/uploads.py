@@ -100,7 +100,9 @@ def _count_attempt(scope):
 
 
 def _capability_expiry(session):
-    return min(session.expires_at, timezone.now() + timedelta(seconds=CAPABILITY_SECONDS))
+    return min(
+        session.expires_at, timezone.now() + timedelta(seconds=CAPABILITY_SECONDS)
+    )
 
 
 def upload_response(upload, token, expires_at):
@@ -156,7 +158,10 @@ def initialize(writer, *, scope_id, body, key):
     scope = check_session(session)
     _check_generation(scope, body)
     parent = body["association"]["parent"]
-    trace_id, parent_span_id = trace_uuid(parent["trace_id"]), span_id(parent["span_id"])
+    trace_id, parent_span_id = (
+        trace_uuid(parent["trace_id"]),
+        span_id(parent["span_id"]),
+    )
     recording_id = body.get("recording_id")
     # Admission before hashing any request metadata, allocating or accessing bytes.
     admit_audio(

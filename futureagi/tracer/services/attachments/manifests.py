@@ -47,7 +47,16 @@ def _prefix(previous, current):
         return True
     if previous.get("capture_complete") and previous != current:
         return False
-    for field in ("timebase", "sample_format", "sample_rate_hz", "channels", "codec", "container", "layout", "tracks"):
+    for field in (
+        "timebase",
+        "sample_format",
+        "sample_rate_hz",
+        "channels",
+        "codec",
+        "container",
+        "layout",
+        "tracks",
+    ):
         if previous[field] != current[field]:
             return False
     for field in ("segments", "gaps", "playout"):
@@ -171,7 +180,7 @@ def read_manifest(viewer, authority, *, recording_id, parent):
     if recording is None:
         raise not_found()
     manifest = dict(recording.manifest)
-    live = set(
+    live = {
         str(value)
         for value in AttachmentUpload.objects.filter(
             scope=scope,
@@ -180,7 +189,7 @@ def read_manifest(viewer, authority, *, recording_id, parent):
             occurrence__deleted_at__isnull=True,
             occurrence__expires_at__gt=timezone.now(),
         ).values_list("occurrence__client_id", flat=True)
-    )
+    }
     segments, gaps = [], list(manifest["gaps"])
     for segment in manifest["segments"]:
         if segment["occurrence_id"] in live:

@@ -77556,6 +77556,104 @@ export const TracerUsersGetCodeExampleListResponse = zod.object({
   result: zod.string().min(1),
 });
 
+export const ExchangeAttachmentMediaSessionBody = zod.object({}).passthrough();
+
+/**
+ * Cookie-authenticated byte gateway. Errors carry no body.
+ */
+export const GetAttachmentMediaParams = zod.object({
+  occurrence_id: zod.string(),
+  grant_id: zod.string(),
+});
+
+export const bootstrapAttachmentSessionBodySchemaVersionsItemMax = 65535;
+
+export const bootstrapAttachmentSessionBodySchemaVersionsMax = 8;
+
+export const bootstrapAttachmentSessionBodyProjectNameMax = 255;
+
+export const bootstrapAttachmentSessionBodyProjectTypeMax = 64;
+
+export const BootstrapAttachmentSessionBody = zod.object({
+  schema_versions: zod
+    .array(
+      zod
+        .number()
+        .min(1)
+        .max(bootstrapAttachmentSessionBodySchemaVersionsItemMax),
+    )
+    .min(1)
+    .max(bootstrapAttachmentSessionBodySchemaVersionsMax),
+  project_name: zod
+    .string()
+    .min(1)
+    .max(bootstrapAttachmentSessionBodyProjectNameMax),
+  project_type: zod
+    .string()
+    .min(1)
+    .max(bootstrapAttachmentSessionBodyProjectTypeMax),
+  workspace_id: zod.string().uuid().optional(),
+  capture_session_id: zod.string().uuid(),
+  correlation_nonce: zod.string().uuid(),
+});
+
+export const bootstrapAttachmentSessionResponsePolicyVersionMax = 128;
+
+export const BootstrapAttachmentSessionResponse = zod.object({
+  schema_version: zod.number(),
+  scope: zod.object({
+    organization_id: zod.string().uuid(),
+    workspace_id: zod.string().uuid(),
+    project_id: zod.string().uuid(),
+  }),
+  capture_session_id: zod.string().uuid(),
+  policy: zod.object({
+    version: zod
+      .string()
+      .min(1)
+      .max(bootstrapAttachmentSessionResponsePolicyVersionMax),
+    enabled: zod.boolean(),
+    allowed_sources: zod.array(
+      zod.enum([
+        "Bytes",
+        "Blob",
+        "RemoteUrl",
+        "LocalFile",
+        "OwnedRecordingFile",
+        "ProviderFile",
+      ]),
+    ),
+    allowed_modalities: zod.array(
+      zod.enum(["audio", "image", "video", "document", "file"]),
+    ),
+    require_media_redaction: zod.boolean(),
+    require_metadata_removal: zod.boolean(),
+    allow_unredacted_media_with_text_pii: zod.boolean(),
+    record_audio: zod.boolean(),
+    record_video: zod.boolean(),
+  }),
+  limits: zod.object({
+    max_upload_bytes: zod.number(),
+    segment_bytes: zod.number(),
+    segment_duration_ms: zod.number(),
+    recording_bytes: zod.number(),
+    recording_duration_ms: zod.number(),
+    active_transfers: zod.number(),
+    active_recordings: zod.number(),
+    reserved_bytes: zod.number(),
+    validation_jobs: zod.number(),
+    initializations_per_minute: zod.number(),
+    links_per_minute: zod.number(),
+    upload_bytes_per_second: zod.number(),
+    playback_bytes_per_second: zod.number(),
+    transfer_timeout_seconds: zod.number(),
+    grant_ttl_seconds: zod.number(),
+    revocation_check_seconds: zod.number(),
+  }),
+  expires_at: zod.string().datetime({ offset: true }),
+  transfer_modes: zod.array(zod.string().min(1)),
+});
+
 /**
  * Health check - always returns OK.
  */
@@ -77563,6 +77661,678 @@ export const TracerUsersGetCodeExampleListResponse = zod.object({
 export const TracerV1HealthListResponse = zod.object({
   status: zod.enum(["healthy"]),
   service: zod.string().min(1),
+});
+
+/**
+ * The body is authenticated and shape-checked first, so the refusal is
+the same for every well-formed request and reveals nothing about the
+source. No source is fetched, sealed or recorded.
+ * @summary No trusted source resolver is deployed: every import is refused.
+ */
+export const ImportAttachmentParams = zod.object({
+  project_id: zod.string(),
+});
+
+export const ImportAttachmentBody = zod.object({
+  mode: zod.string().min(1).optional(),
+  recording: zod.record(zod.string(), zod.string()).optional(),
+  upload: zod.record(zod.string(), zod.string()).optional(),
+  source: zod.record(zod.string(), zod.string()),
+});
+
+export const GetAttachmentImportStatusParams = zod.object({
+  project_id: zod.string(),
+  job_id: zod.string(),
+});
+
+export const GetAttachmentImportStatusResponse = zod.object({
+  job_id: zod.string().uuid(),
+  state: zod.enum([
+    "pending_upload",
+    "importing",
+    "validating",
+    "ready",
+    "failed",
+    "rejected",
+    "expired",
+    "deleted",
+  ]),
+  reason: zod.enum([
+    "queued",
+    "disabled",
+    "bootstrap_pending",
+    "policy_denied",
+    "credential_scope_unsupported",
+    "source_unavailable",
+    "unsampled",
+    "too_large",
+    "queue_full",
+    "unsupported_version",
+    "endpoint_unconfigured",
+    "scope_unresolved",
+    "correlation_unavailable",
+    "redaction_unavailable",
+    "recording_disabled",
+    "binding_pending",
+    "not_found",
+    "conflict",
+    "throttled",
+    "validation_failed",
+    "expired",
+    "deleted",
+    "incomplete",
+    "ready",
+  ]),
+});
+
+export const ListAttachmentOccurrencesParams = zod.object({
+  project_id: zod.string(),
+});
+
+export const listAttachmentOccurrencesQueryLimitMax = 100;
+
+export const ListAttachmentOccurrencesQueryParams = zod.object({
+  trace_id: zod.string().describe("Parent trace (F01 TraceInput)."),
+  span_id: zod.string().optional().describe("Parent span (F01 SpanID)."),
+  cursor: zod.string().optional().describe("Opaque F01 Token cursor."),
+  limit: zod
+    .number()
+    .min(1)
+    .max(listAttachmentOccurrencesQueryLimitMax)
+    .optional(),
+});
+
+export const listAttachmentOccurrencesResponseItemsItemParentTraceIdMax = 36;
+
+export const listAttachmentOccurrencesResponseItemsItemParentSpanIdMax = 16;
+
+export const listAttachmentOccurrencesResponseItemsItemPolicyVersionMax = 128;
+
+export const listAttachmentOccurrencesResponseNextCursorMax = 128;
+
+export const ListAttachmentOccurrencesResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      reference: zod.object({
+        attachment_id: zod.string().uuid(),
+        occurrence_id: zod.string().uuid(),
+        direction: zod.enum(["input", "output", "mixed"]),
+        modality: zod.enum(["audio", "image", "video", "document", "file"]),
+        mime_type: zod.enum([
+          "audio/wav",
+          "audio/ogg",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/webm",
+          "audio/flac",
+          "audio/L16",
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "video/mp4",
+          "video/webm",
+          "application/pdf",
+          "application/octet-stream",
+        ]),
+        purpose: zod
+          .enum([
+            "conversation_recording",
+            "turn_recording",
+            "model_input",
+            "model_output",
+            "tool_result",
+            "computer_screenshot",
+            "diagnostic",
+            "document",
+          ])
+          .optional(),
+      }),
+      scope: zod.object({
+        organization_id: zod.string().uuid(),
+        workspace_id: zod.string().uuid(),
+        project_id: zod.string().uuid(),
+      }),
+      parent: zod.object({
+        trace_id: zod
+          .string()
+          .min(1)
+          .max(listAttachmentOccurrencesResponseItemsItemParentTraceIdMax),
+        span_id: zod
+          .string()
+          .min(1)
+          .max(listAttachmentOccurrencesResponseItemsItemParentSpanIdMax),
+      }),
+      state: zod.enum([
+        "pending_upload",
+        "importing",
+        "validating",
+        "ready",
+        "failed",
+        "rejected",
+        "expired",
+        "deleted",
+      ]),
+      binding: zod.enum(["pending", "bound"]),
+      capture_complete: zod.boolean(),
+      policy_version: zod
+        .string()
+        .min(1)
+        .max(listAttachmentOccurrencesResponseItemsItemPolicyVersionMax),
+      deletion_generation: zod.number(),
+      expires_at: zod.string().datetime({ offset: true }),
+      recording_id: zod.string().uuid().optional(),
+    }),
+  ),
+  next_cursor: zod
+    .string()
+    .min(1)
+    .max(listAttachmentOccurrencesResponseNextCursorMax),
+});
+
+export const LinkAttachmentOccurrenceParams = zod.object({
+  project_id: zod.string(),
+});
+
+export const linkAttachmentOccurrenceBodySourceParentTraceIdMax = 36;
+
+export const linkAttachmentOccurrenceBodySourceParentSpanIdMax = 16;
+
+export const linkAttachmentOccurrenceBodyTargetParentTraceIdMax = 36;
+
+export const linkAttachmentOccurrenceBodyTargetParentSpanIdMax = 16;
+
+export const linkAttachmentOccurrenceBodyPolicyVersionMax = 128;
+
+export const linkAttachmentOccurrenceBodyDeletionGenerationMin = 0;
+
+export const LinkAttachmentOccurrenceBody = zod.object({
+  source_occurrence_id: zod.string().uuid(),
+  source_parent: zod.object({
+    trace_id: zod
+      .string()
+      .min(1)
+      .max(linkAttachmentOccurrenceBodySourceParentTraceIdMax),
+    span_id: zod
+      .string()
+      .min(1)
+      .max(linkAttachmentOccurrenceBodySourceParentSpanIdMax),
+  }),
+  target_parent: zod.object({
+    trace_id: zod
+      .string()
+      .min(1)
+      .max(linkAttachmentOccurrenceBodyTargetParentTraceIdMax),
+    span_id: zod
+      .string()
+      .min(1)
+      .max(linkAttachmentOccurrenceBodyTargetParentSpanIdMax),
+  }),
+  occurrence_id: zod.string().uuid(),
+  policy_version: zod
+    .string()
+    .min(1)
+    .max(linkAttachmentOccurrenceBodyPolicyVersionMax),
+  deletion_generation: zod
+    .number()
+    .min(linkAttachmentOccurrenceBodyDeletionGenerationMin),
+});
+
+export const DeleteAttachmentOccurrenceParams = zod.object({
+  project_id: zod.string(),
+  occurrence_id: zod.string(),
+});
+
+export const DeleteAttachmentOccurrenceQueryParams = zod.object({
+  trace_id: zod.string().describe("Expected parent trace (F01 TraceInput)."),
+  span_id: zod.string().describe("Expected parent span (F01 SpanID)."),
+});
+
+export const ReadRecordingManifestParams = zod.object({
+  project_id: zod.string(),
+  recording_id: zod.string(),
+});
+
+export const ReadRecordingManifestQueryParams = zod.object({
+  trace_id: zod.string().describe("Expected parent trace (F01 TraceInput)."),
+  span_id: zod.string().describe("Expected parent span (F01 SpanID)."),
+});
+
+export const ReadRecordingManifestResponse = zod.object({
+  schema_version: zod.number(),
+  recording_id: zod.string().uuid(),
+  timebase: zod.string().min(1),
+  sample_format: zod.string().min(1),
+  sample_rate_hz: zod.number(),
+  channels: zod.number(),
+  codec: zod.string().min(1),
+  container: zod.string().min(1),
+  layout: zod.enum(["mixed", "stereo", "separate_tracks"]),
+  tracks: zod.array(
+    zod.object({
+      track_id: zod.string().uuid(),
+      channels: zod.array(zod.number()),
+      direction: zod.enum(["input", "output", "mixed"]),
+      role: zod.enum(["user", "assistant", "mixed", "unknown"]),
+    }),
+  ),
+  segments: zod.array(
+    zod.object({
+      occurrence_id: zod.string().uuid(),
+      index: zod.number(),
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      track_id: zod.string().uuid().optional(),
+    }),
+  ),
+  gaps: zod.array(
+    zod.object({
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      reason: zod.string().min(1),
+      track_id: zod.string().uuid().optional(),
+    }),
+  ),
+  playout: zod.array(
+    zod.object({
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      evidence: zod.enum(["generated", "played", "unknown", "truncated"]),
+    }),
+  ),
+  capture_complete: zod.boolean(),
+  duration_ms: zod.number(),
+});
+
+export const UpdateRecordingManifestParams = zod.object({
+  project_id: zod.string(),
+  recording_id: zod.string(),
+});
+
+export const UpdateRecordingManifestBody = zod.object({
+  schema_version: zod.number(),
+  recording_id: zod.string().uuid(),
+  timebase: zod.string().min(1),
+  sample_format: zod.string().min(1),
+  sample_rate_hz: zod.number(),
+  channels: zod.number(),
+  codec: zod.string().min(1),
+  container: zod.string().min(1),
+  layout: zod.enum(["mixed", "stereo", "separate_tracks"]),
+  tracks: zod.array(
+    zod.object({
+      track_id: zod.string().uuid(),
+      channels: zod.array(zod.number()),
+      direction: zod.enum(["input", "output", "mixed"]),
+      role: zod.enum(["user", "assistant", "mixed", "unknown"]),
+    }),
+  ),
+  segments: zod.array(
+    zod.object({
+      occurrence_id: zod.string().uuid(),
+      index: zod.number(),
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      track_id: zod.string().uuid().optional(),
+    }),
+  ),
+  gaps: zod.array(
+    zod.object({
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      reason: zod.string().min(1),
+      track_id: zod.string().uuid().optional(),
+    }),
+  ),
+  playout: zod.array(
+    zod.object({
+      start_ms: zod.number(),
+      duration_ms: zod.number(),
+      evidence: zod.enum(["generated", "played", "unknown", "truncated"]),
+    }),
+  ),
+  capture_complete: zod.boolean(),
+  duration_ms: zod.number(),
+});
+
+export const ResolveAttachmentOccurrencesParams = zod.object({
+  project_id: zod.string(),
+});
+
+export const resolveAttachmentOccurrencesBodyItemsItemParentTraceIdMax = 36;
+
+export const resolveAttachmentOccurrencesBodyItemsItemParentSpanIdMax = 16;
+
+export const resolveAttachmentOccurrencesBodyItemsItemChannelMin = 0;
+export const resolveAttachmentOccurrencesBodyItemsItemChannelMax = 31;
+
+export const ResolveAttachmentOccurrencesBody = zod.object({
+  items: zod.array(
+    zod.object({
+      occurrence_id: zod.string().uuid(),
+      parent: zod.object({
+        trace_id: zod
+          .string()
+          .min(1)
+          .max(resolveAttachmentOccurrencesBodyItemsItemParentTraceIdMax),
+        span_id: zod
+          .string()
+          .min(1)
+          .max(resolveAttachmentOccurrencesBodyItemsItemParentSpanIdMax),
+      }),
+      representation: zod.enum([
+        "original",
+        "playable",
+        "channel",
+        "peaks",
+        "thumbnail",
+      ]),
+      channel: zod
+        .number()
+        .min(resolveAttachmentOccurrencesBodyItemsItemChannelMin)
+        .max(resolveAttachmentOccurrencesBodyItemsItemChannelMax)
+        .optional(),
+    }),
+  ),
+});
+
+export const resolveAttachmentOccurrencesResponseItemsItemGatewayPathMax = 194;
+
+export const ResolveAttachmentOccurrencesResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      occurrence_id: zod.string().uuid(),
+      status: zod.enum([
+        "ready",
+        "not_found",
+        "pending",
+        "failed",
+        "expired",
+        "deleted",
+      ]),
+      gateway_path: zod
+        .string()
+        .min(1)
+        .max(resolveAttachmentOccurrencesResponseItemsItemGatewayPathMax)
+        .optional(),
+      expires_at: zod.string().datetime({ offset: true }).optional(),
+    }),
+  ),
+});
+
+export const InitializeAttachmentUploadParams = zod.object({
+  project_id: zod.string(),
+});
+
+export const initializeAttachmentUploadBodyAssociationParentTraceIdMax = 36;
+
+export const initializeAttachmentUploadBodyAssociationParentSpanIdMax = 16;
+
+export const initializeAttachmentUploadBodyPolicyVersionMax = 128;
+
+export const initializeAttachmentUploadBodyDeletionGenerationMin = 0;
+
+export const initializeAttachmentUploadBodyDeclaredBytesMax = 52428800;
+
+export const initializeAttachmentUploadBodyConversationIdMax = 128;
+
+export const initializeAttachmentUploadBodyTurnIdMax = 128;
+
+export const initializeAttachmentUploadBodyToolCallIdMax = 128;
+
+export const InitializeAttachmentUploadBody = zod.object({
+  schema_version: zod.number(),
+  attachment_id: zod.string().uuid(),
+  occurrence_id: zod.string().uuid(),
+  association: zod.object({
+    capture_session_id: zod.string().uuid(),
+    correlation_nonce: zod.string().uuid(),
+    parent: zod.object({
+      trace_id: zod
+        .string()
+        .min(1)
+        .max(initializeAttachmentUploadBodyAssociationParentTraceIdMax),
+      span_id: zod
+        .string()
+        .min(1)
+        .max(initializeAttachmentUploadBodyAssociationParentSpanIdMax),
+    }),
+  }),
+  policy_version: zod
+    .string()
+    .min(1)
+    .max(initializeAttachmentUploadBodyPolicyVersionMax),
+  deletion_generation: zod
+    .number()
+    .min(initializeAttachmentUploadBodyDeletionGenerationMin),
+  mime_type: zod.enum([
+    "audio/wav",
+    "audio/ogg",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/webm",
+    "audio/flac",
+    "audio/L16",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "video/mp4",
+    "video/webm",
+    "application/pdf",
+    "application/octet-stream",
+  ]),
+  modality: zod.enum(["audio", "image", "video", "document", "file"]),
+  direction: zod.enum(["input", "output", "mixed"]),
+  source_kind: zod.enum([
+    "Bytes",
+    "Blob",
+    "RemoteUrl",
+    "LocalFile",
+    "OwnedRecordingFile",
+    "ProviderFile",
+  ]),
+  purpose: zod
+    .enum([
+      "conversation_recording",
+      "turn_recording",
+      "model_input",
+      "model_output",
+      "tool_result",
+      "computer_screenshot",
+      "diagnostic",
+      "document",
+    ])
+    .optional(),
+  declared_bytes: zod
+    .number()
+    .min(1)
+    .max(initializeAttachmentUploadBodyDeclaredBytesMax),
+  message_index: zod.number().optional(),
+  part_index: zod.number().optional(),
+  recording_id: zod.string().uuid().optional(),
+  segment_index: zod.number().optional(),
+  conversation_id: zod
+    .string()
+    .min(1)
+    .max(initializeAttachmentUploadBodyConversationIdMax)
+    .optional(),
+  turn_id: zod
+    .string()
+    .min(1)
+    .max(initializeAttachmentUploadBodyTurnIdMax)
+    .optional(),
+  tool_call_id: zod
+    .string()
+    .min(1)
+    .max(initializeAttachmentUploadBodyToolCallIdMax)
+    .optional(),
+});
+
+export const AbortAttachmentUploadParams = zod.object({
+  project_id: zod.string(),
+  upload_id: zod.string(),
+});
+
+export const abortAttachmentUploadBodyPolicyVersionMax = 128;
+
+export const abortAttachmentUploadBodyDeletionGenerationMin = 0;
+
+export const AbortAttachmentUploadBody = zod.object({
+  policy_version: zod
+    .string()
+    .min(1)
+    .max(abortAttachmentUploadBodyPolicyVersionMax),
+  deletion_generation: zod
+    .number()
+    .min(abortAttachmentUploadBodyDeletionGenerationMin),
+});
+
+export const AbortAttachmentUploadResponse = zod.object({
+  upload_id: zod.string().uuid(),
+  state: zod.enum([
+    "pending_upload",
+    "importing",
+    "validating",
+    "ready",
+    "failed",
+    "rejected",
+    "expired",
+    "deleted",
+  ]),
+  reason: zod.enum([
+    "queued",
+    "disabled",
+    "bootstrap_pending",
+    "policy_denied",
+    "credential_scope_unsupported",
+    "source_unavailable",
+    "unsampled",
+    "too_large",
+    "queue_full",
+    "unsupported_version",
+    "endpoint_unconfigured",
+    "scope_unresolved",
+    "correlation_unavailable",
+    "redaction_unavailable",
+    "recording_disabled",
+    "binding_pending",
+    "not_found",
+    "conflict",
+    "throttled",
+    "validation_failed",
+    "expired",
+    "deleted",
+    "incomplete",
+    "ready",
+  ]),
+});
+
+export const CompleteAttachmentUploadParams = zod.object({
+  project_id: zod.string(),
+  upload_id: zod.string(),
+});
+
+export const completeAttachmentUploadBodyPolicyVersionMax = 128;
+
+export const completeAttachmentUploadBodyDeletionGenerationMin = 0;
+
+export const CompleteAttachmentUploadBody = zod.object({
+  policy_version: zod
+    .string()
+    .min(1)
+    .max(completeAttachmentUploadBodyPolicyVersionMax),
+  deletion_generation: zod
+    .number()
+    .min(completeAttachmentUploadBodyDeletionGenerationMin),
+});
+
+export const StreamAttachmentContentParams = zod.object({
+  project_id: zod.string(),
+  upload_id: zod.string(),
+});
+
+export const StreamAttachmentContentResponse = zod.object({
+  upload_id: zod.string().uuid(),
+  state: zod.enum([
+    "pending_upload",
+    "importing",
+    "validating",
+    "ready",
+    "failed",
+    "rejected",
+    "expired",
+    "deleted",
+  ]),
+  reason: zod.enum([
+    "queued",
+    "disabled",
+    "bootstrap_pending",
+    "policy_denied",
+    "credential_scope_unsupported",
+    "source_unavailable",
+    "unsampled",
+    "too_large",
+    "queue_full",
+    "unsupported_version",
+    "endpoint_unconfigured",
+    "scope_unresolved",
+    "correlation_unavailable",
+    "redaction_unavailable",
+    "recording_disabled",
+    "binding_pending",
+    "not_found",
+    "conflict",
+    "throttled",
+    "validation_failed",
+    "expired",
+    "deleted",
+    "incomplete",
+    "ready",
+  ]),
+});
+
+export const AttachmentUploadStatusParams = zod.object({
+  project_id: zod.string(),
+  upload_id: zod.string(),
+});
+
+export const AttachmentUploadStatusResponse = zod.object({
+  upload_id: zod.string().uuid(),
+  state: zod.enum([
+    "pending_upload",
+    "importing",
+    "validating",
+    "ready",
+    "failed",
+    "rejected",
+    "expired",
+    "deleted",
+  ]),
+  reason: zod.enum([
+    "queued",
+    "disabled",
+    "bootstrap_pending",
+    "policy_denied",
+    "credential_scope_unsupported",
+    "source_unavailable",
+    "unsampled",
+    "too_large",
+    "queue_full",
+    "unsupported_version",
+    "endpoint_unconfigured",
+    "scope_unresolved",
+    "correlation_unavailable",
+    "redaction_unavailable",
+    "recording_disabled",
+    "binding_pending",
+    "not_found",
+    "conflict",
+    "throttled",
+    "validation_failed",
+    "expired",
+    "deleted",
+    "incomplete",
+    "ready",
+  ]),
 });
 
 /**

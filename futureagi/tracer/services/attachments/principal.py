@@ -207,7 +207,9 @@ def project_writer(principal, project):
     scope = AttachmentScope.objects.filter(project_id=project.pk).first()
     if scope is None:
         raise AttachmentError("not_found", 404)
-    return Writer(principal.kind, principal.id, project.organization_id, project.workspace_id), scope
+    return Writer(
+        principal.kind, principal.id, project.organization_id, project.workspace_id
+    ), scope
 
 
 def project_viewer(principal, project):

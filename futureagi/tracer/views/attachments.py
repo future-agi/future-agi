@@ -14,24 +14,25 @@ import structlog
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import APIException, MethodNotAllowed
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.parsers import BaseParser
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
+from tfc.utils.api_contracts import validated_request
 from tracer.models.attachment import AttachmentScope
 from tracer.serializers.attachments import (
     AttachmentBootstrapRequestSerializer,
     AttachmentBootstrapResponseSerializer,
     AttachmentCompleteRequestSerializer,
+    AttachmentEmptyRequestSerializer,
     AttachmentErrorSerializer,
     AttachmentImportRequestSerializer,
     AttachmentImportStatusResponseSerializer,
     AttachmentLinkRequestSerializer,
     AttachmentOccurrencePageSerializer,
-    AttachmentOccurrenceQuerySerializer,
     AttachmentOccurrenceSerializer,
-    AttachmentParentQuerySerializer,
     AttachmentRecordingManifestSerializer,
     AttachmentResolveRequestSerializer,
     AttachmentResolveResponseSerializer,
@@ -67,6 +68,30 @@ IDEMPOTENCY_HEADER = openapi.Parameter(
     required=True,
     description="F01 Token; the same key with an identical body replays.",
 )
+
+
+def _query(name, required, description):
+    return openapi.Parameter(
+        name,
+        openapi.IN_QUERY,
+        type=openapi.TYPE_STRING,
+        required=required,
+        description=description,
+    )
+
+
+PARENT_QUERY = [
+    _query("trace_id", True, "Expected parent trace (F01 TraceInput)."),
+    _query("span_id", True, "Expected parent span (F01 SpanID)."),
+]
+OCCURRENCE_QUERY = [
+    _query("trace_id", True, "Parent trace (F01 TraceInput)."),
+    _query("span_id", False, "Parent span (F01 SpanID)."),
+    _query("cursor", False, "Opaque F01 Token cursor."),
+    openapi.Parameter(
+        "limit", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, minimum=1, maximum=100
+    ),
+]
 ERRORS = {
     status: openapi.Response("F01 Error", AttachmentErrorSerializer)
     for status in (400, 401, 403, 404, 409, 413, 429)
@@ -126,6 +151,20 @@ def empty_response(status):
     return _private(HttpResponse(status=status))
 
 
+class StrictJSONParser(BaseParser):
+    """Bounded JSON that rejects duplicate members and non-JSON numbers."""
+
+    media_type = "application/json"
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        view = (parser_context or {}).get("view")
+        limit = getattr(view, "max_body_bytes", READ_BYTES)
+        raw = stream.read(limit + 1) if stream is not None else b""
+        if len(raw) > limit:
+            raise AttachmentError("too_large", 413)
+        return wire.strict_json(raw)
+
+
 class OctetStreamParser(BaseParser):
     """Documentation only; content bodies are read from the raw stream."""
 
@@ -135,15 +174,34 @@ class OctetStreamParser(BaseParser):
         return None
 
 
+class NoNegotiation(BaseContentNegotiation):
+    """Responses are built explicitly; a media Accept header must not 406."""
+
+    def select_parser(self, request, parsers):
+        return parsers[0] if parsers else None
+
+    def select_renderer(self, request, renderers, format_suffix=None):
+        return renderers[0], renderers[0].media_type
+
+
 class AttachmentView(APIView):
     """Shared F01 envelope: own authentication, fixed errors, no-store."""
 
     authentication_classes = ()
     permission_classes = (AllowAny,)
+    content_negotiation_class = NoNegotiation
+    parser_classes = (StrictJSONParser,)
+    max_body_bytes = READ_BYTES
 
     def handle_exception(self, exc):
         if isinstance(exc, AttachmentError):
             return error_response(self.request, exc)
+        if isinstance(exc, MethodNotAllowed):
+            response = error_response(self.request, AttachmentError("invalid_request"))
+            response.status_code = 405
+            return response
+        if isinstance(exc, APIException):
+            return error_response(self.request, AttachmentError("invalid_request"))
         logger.warning(
             "attachment_request_failed",
             view=type(self).__name__,
@@ -151,21 +209,25 @@ class AttachmentView(APIView):
         )
         return error_response(self.request, AttachmentError("internal", 503))
 
+    def initial(self, request, *args, **kwargs):
+        # Dark routes answer 404 before any body is parsed or validated.
+        super().initial(request, *args, **kwargs)
+        self.enabled()
+
     def enabled(self):
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
             raise AttachmentError("not_found", 404)
 
-    def body(self, request, name, *, limit=READ_BYTES):
+    def body(self, request, name):
+        """The strictly parsed JSON body, validated against the F01 schema.
+
+        Authentication always runs before this, so the body's shape never
+        tells an unauthenticated caller anything.
+        """
         content_type = request.META.get("CONTENT_TYPE", "").split(";")[0].strip()
         if content_type != "application/json":
             raise AttachmentError("invalid_request")
-        length = request.META.get("CONTENT_LENGTH") or "0"
-        if not length.isdigit() or int(length) > limit:
-            raise AttachmentError("too_large", 413)
-        raw = request._request.read(limit + 1)
-        if len(raw) > limit:
-            raise AttachmentError("too_large", 413)
-        return wire.validate(name, wire.strict_json(raw))
+        return wire.validate(name, request.data)
 
     def key(self, request):
         return wire.idempotency_key(request.headers.get("Idempotency-Key"))
@@ -189,11 +251,12 @@ class AttachmentView(APIView):
 
 
 class AttachmentSessionView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="bootstrapAttachmentSession",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentBootstrapRequestSerializer,
+        request_serializer=AttachmentBootstrapRequestSerializer,
+        strict_request_validation=False,
         responses={200: AttachmentBootstrapResponseSerializer, **ERRORS},
     )
     def post(self, request):
@@ -207,11 +270,12 @@ class AttachmentSessionView(AttachmentView):
 
 
 class AttachmentUploadView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="initializeAttachmentUpload",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentUploadRequestSerializer,
+        request_serializer=AttachmentUploadRequestSerializer,
+        strict_request_validation=False,
         responses={201: AttachmentUploadResponseSerializer, **ERRORS},
     )
     def post(self, request, project_id):
@@ -245,7 +309,7 @@ def _uuid(value):
 class AttachmentContentView(AttachmentView):
     parser_classes = (OctetStreamParser,)
 
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="streamAttachmentContent",
         tags=[TAG],
         request_body=openapi.Schema(type=openapi.TYPE_STRING, format="binary"),
@@ -286,11 +350,12 @@ class AttachmentContentView(AttachmentView):
 
 
 class AttachmentCompleteView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="completeAttachmentUpload",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentCompleteRequestSerializer,
+        request_serializer=AttachmentCompleteRequestSerializer,
+        strict_request_validation=False,
         responses={202: AttachmentStatusResponseSerializer, **ERRORS},
     )
     def post(self, request, project_id, upload_id):
@@ -306,11 +371,12 @@ class AttachmentCompleteView(AttachmentView):
 
 
 class AttachmentAbortView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="abortAttachmentUpload",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentCompleteRequestSerializer,
+        request_serializer=AttachmentCompleteRequestSerializer,
+        strict_request_validation=False,
         responses={200: AttachmentStatusResponseSerializer, **ERRORS},
     )
     def post(self, request, project_id, upload_id):
@@ -326,7 +392,7 @@ class AttachmentAbortView(AttachmentView):
 
 
 class AttachmentUploadStatusView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="attachmentUploadStatus",
         tags=[TAG],
         responses={200: AttachmentStatusResponseSerializer, **ERRORS},
@@ -341,11 +407,12 @@ class AttachmentUploadStatusView(AttachmentView):
 
 
 class AttachmentImportView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="importAttachment",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentImportRequestSerializer,
+        request_serializer=AttachmentImportRequestSerializer,
+        strict_request_validation=False,
         responses={202: openapi.Response("Import accepted"), **ERRORS},
     )
     def post(self, request, project_id):
@@ -364,7 +431,7 @@ class AttachmentImportView(AttachmentView):
 
 
 class AttachmentImportStatusView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="getAttachmentImportStatus",
         tags=[TAG],
         responses={200: AttachmentImportStatusResponseSerializer, **ERRORS},
@@ -379,10 +446,10 @@ class AttachmentImportStatusView(AttachmentView):
 
 
 class AttachmentOccurrencesView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="listAttachmentOccurrences",
         tags=[TAG],
-        query_serializer=AttachmentOccurrenceQuerySerializer,
+        manual_parameters=OCCURRENCE_QUERY,
         responses={200: AttachmentOccurrencePageSerializer, **ERRORS},
     )
     def get(self, request, project_id):
@@ -410,11 +477,12 @@ class AttachmentOccurrencesView(AttachmentView):
         )
         return json_response(page)
 
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="linkAttachmentOccurrence",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentLinkRequestSerializer,
+        request_serializer=AttachmentLinkRequestSerializer,
+        strict_request_validation=False,
         responses={201: AttachmentOccurrenceSerializer, **ERRORS},
     )
     def post(self, request, project_id):
@@ -422,16 +490,14 @@ class AttachmentOccurrencesView(AttachmentView):
         self.key(request)
         viewer = self.viewer(request, project_id)
         body = self.body(request, "LinkRequest")
-        return json_response(
-            occurrences.link(viewer, authority(), body), status=201
-        )
+        return json_response(occurrences.link(viewer, authority(), body), status=201)
 
 
 class AttachmentOccurrenceView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="deleteAttachmentOccurrence",
         tags=[TAG],
-        query_serializer=AttachmentParentQuerySerializer,
+        manual_parameters=PARENT_QUERY,
         responses={204: openapi.Response("Deleted"), **ERRORS},
     )
     def delete(self, request, project_id, occurrence_id):
@@ -445,10 +511,11 @@ class AttachmentOccurrenceView(AttachmentView):
 
 
 class AttachmentResolveView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="resolveAttachmentOccurrences",
         tags=[TAG],
-        request_body=AttachmentResolveRequestSerializer,
+        request_serializer=AttachmentResolveRequestSerializer,
+        strict_request_validation=False,
         responses={200: AttachmentResolveResponseSerializer, **ERRORS},
     )
     def post(self, request, project_id):
@@ -461,11 +528,14 @@ class AttachmentResolveView(AttachmentView):
 
 
 class AttachmentManifestView(AttachmentView):
-    @swagger_auto_schema(
+    max_body_bytes = wire.MAX_MANIFEST_BYTES
+
+    @validated_request(
         operation_id="updateRecordingManifest",
         tags=[TAG],
         manual_parameters=[IDEMPOTENCY_HEADER],
-        request_body=AttachmentRecordingManifestSerializer,
+        request_serializer=AttachmentRecordingManifestSerializer,
+        strict_request_validation=False,
         responses={204: openapi.Response("Accepted"), **ERRORS},
     )
     def put(self, request, project_id, recording_id):
@@ -473,7 +543,7 @@ class AttachmentManifestView(AttachmentView):
         key = self.key(request)
         token = principal.capability_token(request)
         scope = _upload_scope(project_id)
-        body = self.body(request, "RecordingManifest", limit=wire.MAX_MANIFEST_BYTES)
+        body = self.body(request, "RecordingManifest")
         manifests.put_manifest(
             token,
             scope_id=scope.id,
@@ -483,10 +553,10 @@ class AttachmentManifestView(AttachmentView):
         )
         return empty_response(204)
 
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="readRecordingManifest",
         tags=[TAG],
-        query_serializer=AttachmentParentQuerySerializer,
+        manual_parameters=PARENT_QUERY,
         responses={200: AttachmentRecordingManifestSerializer, **ERRORS},
     )
     def get(self, request, project_id, recording_id):
@@ -503,10 +573,11 @@ class AttachmentManifestView(AttachmentView):
 
 
 class AttachmentMediaSessionView(AttachmentView):
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="exchangeAttachmentMediaSession",
         tags=[TAG],
-        request_body=None,
+        request_serializer=AttachmentEmptyRequestSerializer,
+        strict_request_validation=False,
         responses={204: openapi.Response("Media cookie set"), **ERRORS},
     )
     def post(self, request):
@@ -526,7 +597,7 @@ class AttachmentMediaSessionView(AttachmentView):
 class AttachmentMediaView(AttachmentView):
     """Cookie-authenticated byte gateway. Errors carry no body."""
 
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="getAttachmentMedia",
         tags=[TAG],
         responses={
@@ -541,7 +612,7 @@ class AttachmentMediaView(AttachmentView):
     def get(self, request, occurrence_id, grant_id):
         return self._serve(request, occurrence_id, grant_id)
 
-    @swagger_auto_schema(
+    @validated_request(
         operation_id="headAttachmentMedia",
         tags=[TAG],
         responses={

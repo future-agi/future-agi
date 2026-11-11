@@ -118,7 +118,11 @@ def _validator(name):
     if name not in schema["$defs"]:
         raise KeyError(name)
     return Draft202012Validator(
-        {"$schema": schema["$schema"], "$defs": schema["$defs"], "$ref": f"#/$defs/{name}"},
+        {
+            "$schema": schema["$schema"],
+            "$defs": schema["$defs"],
+            "$ref": f"#/$defs/{name}",
+        },
         format_checker=FormatChecker(),
     )
 
@@ -175,13 +179,19 @@ def _cross_field(name, value):
                 and item["gateway_path"].split("/")[4] != item["occurrence_id"]
             ):
                 raise ValueError("gateway occurrence mismatch")
-    if name in {"ImportRequest", "SingleAttachmentImportRequest", "RecordingImportRequest"}:
+    if name in {
+        "ImportRequest",
+        "SingleAttachmentImportRequest",
+        "RecordingImportRequest",
+    }:
         recording = value.get("mode") == "completed_recording"
         descriptor = value["recording" if recording else "upload"]
         if not recording:
             _cross_field("UploadRequest", descriptor)
         expected = (
-            "RemoteUrl" if value["source"]["kind"] == "RemoteUrlEnvelope" else "ProviderFile"
+            "RemoteUrl"
+            if value["source"]["kind"] == "RemoteUrlEnvelope"
+            else "ProviderFile"
         )
         if descriptor["source_kind"] != expected:
             raise ValueError("import source mismatch")
@@ -190,7 +200,10 @@ def _cross_field(name, value):
 
 
 def _manifest_rules(value):
-    if len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > MAX_MANIFEST_BYTES:
+    if (
+        len(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+        > MAX_MANIFEST_BYTES
+    ):
         raise ValueError("manifest byte limit")
     if value["capture_complete"] and value["gaps"]:
         raise ValueError("complete recording has capture gaps")

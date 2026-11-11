@@ -144,9 +144,7 @@ def initialized(setup, *, current=None, key=None, **overrides):
         current, _ = session(setup)
     body = upload_body(scope, current, **overrides)
     key = key or f"up-{uuid.UUID(body['occurrence_id']).hex}"
-    upload, token, _ = uploads.initialize(
-        writer, scope_id=scope.id, body=body, key=key
-    )
+    upload, token, _ = uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
     return upload, token, writer, {"body": body, "key": key, "session": current}
 
 
@@ -416,9 +414,7 @@ def test_workspace_and_type_identity(setup, user):
     assert created.id != scope.id and created.enabled is False
     for bad_type in ("unknown", "", "Observe"):
         with pytest.raises(AttachmentError, match="scope_unresolved"):
-            broker.resolve_scope(
-                writer, project_name="another", project_type=bad_type
-            )
+            broker.resolve_scope(writer, project_name="another", project_type=bad_type)
     with pytest.raises(AttachmentError, match="scope_unresolved"):
         broker.resolve_scope(
             replace(writer, workspace_id=uuid.uuid4()),

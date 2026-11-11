@@ -209,10 +209,26 @@ def test_mixed_batch_checks_parent_per_item(recording):
         r.viewer,
         r.authority,
         [
-            {"occurrence_id": str(r.row.client_id), "parent": wrong, "representation": "original"},
-            {"occurrence_id": str(r.row.client_id), "parent": parent, "representation": "original"},
-            {"occurrence_id": str(uuid.uuid4()), "parent": wrong, "representation": "original"},
-            {"occurrence_id": str(r.row.client_id), "parent": parent, "representation": "peaks"},
+            {
+                "occurrence_id": str(r.row.client_id),
+                "parent": wrong,
+                "representation": "original",
+            },
+            {
+                "occurrence_id": str(r.row.client_id),
+                "parent": parent,
+                "representation": "original",
+            },
+            {
+                "occurrence_id": str(uuid.uuid4()),
+                "parent": wrong,
+                "representation": "original",
+            },
+            {
+                "occurrence_id": str(r.row.client_id),
+                "parent": parent,
+                "representation": "peaks",
+            },
         ],
     )
     # A batch never inherits the first item's authorization, in either order.

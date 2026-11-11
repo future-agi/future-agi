@@ -83,6 +83,10 @@ PURPOSES = (
 REPRESENTATIONS = ("original", "playable", "channel", "peaks", "thumbnail")
 
 
+class AttachmentEmptyRequestSerializer(serializers.Serializer):
+    """The media-session exchange takes no fields; credentials carry everything."""
+
+
 class AttachmentErrorSerializer(serializers.Serializer):
     code = serializers.ChoiceField(choices=REASONS)
     request_id = serializers.UUIDField()
