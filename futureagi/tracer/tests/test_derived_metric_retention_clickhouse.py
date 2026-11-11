@@ -1724,16 +1724,29 @@ def test_finite_mixed_refresh_preserves_nonexpired_snapshot_pin(
                 **kwargs,
             )
     head = MetricProjectRefresh.for_project(scope.project).head_manifest
-    through = head.published_by.source_ceilings["private_cleanup_through"]
+    draft = head.published_by
+    # Nothing expires and every private owner link is proven retained, so the
+    # integrated retention plan publishes the draft itself: no replacement
+    # privacy checkpoint, no retention_replan abort, no revoked safe pin.
+    assert draft.purpose == "incremental"
+    assert not draft.source_ceilings.get("logical_expiry")
+    assert "private_cleanup_through" not in draft.source_ceilings
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=scope.project, abort_reason="retention_replan"
+    ).exists()
     predecessors = MetricAttemptLedgerChunk.objects.filter(
-        attempt__project_id=scope.project, attempt__generation__lte=through
+        attempt__project_id=scope.project, attempt__generation__lte=draft.generation
     )
     assert predecessors.exists() and pin.is_usable(now)
     later = writer.begin(ledger={"dirty_before": [{"unit_id": str(session)}]})
     MetricRefreshAttempt.abort(
         later.id, reason="injected_failure", **writer.lease.check()
     )
-    head = writer.compact()  # forwards the cleanup boundary through checkpoint/GC
+    # The crashed post-publication cleanup is retried (as the next retention
+    # pass does): every consumed private predecessor goes, newer work stays.
+    retention.purge_checkpoint(writer, draft, head)
+    assert not predecessors.exists()
+    head = writer.compact()
     writer.collect_garbage()
     assert not predecessors.exists()
     assert (

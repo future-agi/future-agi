@@ -482,6 +482,29 @@ def delete_rows(store, table, predicate, params):
         raise MetricStateConflict("snapshot physical deletion is incomplete")
 
 
+def fenced_delete_rows(store, run, table, predicate, params):
+    """A DELETE that could reach a successor attempt's rows is a submission.
+
+    The per-run execution gate is only best-effort exclusion: its connection
+    can drop while this worker is paused. A namespace a successor REUSES (run
+    results, a redaction's shared sketch states) is therefore deleted through
+    the durable dispatch protocol of THIS run attempt: its committed dispatch
+    CAS rejects an attempt replaced during the pause before any native I/O,
+    and a takeover's drain must observe this DELETE's terminal record before it
+    writes. The SQL carries no subject identities, so it stays query-logged.
+    """
+    names = {name for name in params if f"%({name})s" in predicate}
+    bound = {name: params[name] for name in names}
+    _write(
+        store,
+        run,
+        f"ALTER TABLE {table} DELETE WHERE {predicate} SETTINGS mutations_sync = 2",
+        bound,
+    )
+    if store.execute(f"SELECT count() FROM {table} WHERE {predicate}", bound) != [(0,)]:
+        raise MetricStateConflict("snapshot physical deletion is incomplete")
+
+
 def purge_run(
     store, *, organization_id, project_id, run_id, snapshot_id, result_id=None
 ):

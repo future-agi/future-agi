@@ -35,6 +35,7 @@ from tracer.services.derived_metrics.snapshots import (
     commit_results,
     delete_rows,
     drain_submissions,
+    fenced_delete_rows,
     purge_run,
     snapshot_execution_gate,
     snapshot_store,
@@ -221,16 +222,24 @@ def _redact_owned(store, request, token):
     }
     base = "org_id = toUUID(%(org)s) AND project_id = toUUID(%(project)s)"
     # Delete ALL result versions first. SQL workbench can bypass commit pointers.
+    # A successor redaction reuses this run's result and sketch namespaces, so
+    # these DELETEs are dispatched submissions of OUR attempt: losing the gate
+    # connection while paused cannot let them reach a successor's rows.
     for table in ("derived_metric_results", "derived_metric_commits"):
-        delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
+        fenced_delete_rows(
+            store, run, table, base + " AND run_id = toUUID(%(run)s)", params
+        )
     # Opaque sketches cannot be subtracted. Remove every old state before
     # deleting typed identities, including retries after partial rebuilds.
-    delete_rows(
+    fenced_delete_rows(
         store,
+        run,
         BUCKET_TABLE,
         base + " AND snapshot_id = toUUID(%(snapshot)s)",
         params,
     )
+    # Typed identities are not rebuilt by a successor: re-deleting erased
+    # subjects there is idempotent, so these private DELETEs stay unlogged.
     predicate = _subject_predicate(request.store_payload["subject_kind"])
     for table in (UNIT_TABLE, "derived_metric_inputs"):
         delete_rows(

@@ -14,6 +14,7 @@ from tracer.models.derived_metric import (
     DerivedMetricVersion,
     MetricErasureRequest,
     MetricGenerationPin,
+    MetricStateConflict,
 )
 from tracer.services.derived_metrics import erasure, snapshots
 from tracer.services.derived_metrics.deletion_protocol import _intent
@@ -279,6 +280,102 @@ def test_disconnected_capture_gate_cannot_delete_successor_namespace(
         "SELECT count() FROM derived_metric_commits WHERE run_id = %(r)s AND result_id = %(s)s",
         {"r": str(run.id), "s": str(run.result_id)},
     ) == [(1,)]
+
+
+@pytest.mark.parametrize("table", ["derived_metric_results", "derived_metric_commits"])
+def test_disconnected_redaction_gate_cannot_delete_successor_results(
+    capture_case, live_writer, monkeypatch, table
+):
+    """A paused redactor loses ONLY its gate backend; a takeover completes.
+
+    The resumed redactor must not delete the successor's rebuilt result or
+    commit rows: its run-wide DELETEs are dispatched under its own attempt,
+    which the takeover replaced, so they are rejected before native I/O.
+    """
+    from django.db import connection, connections
+
+    metric, run, _ = capture_case
+    store = live_writer.store
+    execute(run, store)
+    assert run.status == "complete", run.error
+    child = _intent(
+        organization_id=metric.organization_id,
+        project_id=metric.project_id,
+        scope="run",
+        run_key=run.id,
+        snapshot_key=run.snapshot_id,
+        metric_key=metric.id,
+        store_payload={
+            "protocol": "metric_snapshot_redaction",
+            "subject_kind": "users",
+            "subjects": ["erase-me"],
+            "removed_units": 1,
+        },
+    )
+    copy_database = connections["default"].copy
+    gates, completed, takeovers = [], [], []
+
+    def remember_gate(*args, **kwargs):
+        database = copy_database(*args, **kwargs)
+        if kwargs.get("alias") == "metric_snapshot_execution":
+            gates.append(database)
+        return database
+
+    monkeypatch.setattr(connections["default"], "copy", remember_gate)
+    fenced = erasure.fenced_delete_rows
+
+    def paused(store_, run_, target, *args, **kwargs):
+        if target == table and not takeovers:
+            # Only A pauses; the takeover B below runs this same hook unpaused.
+            takeovers.append(run_.attempt_id)
+            paused_attempt = run_.attempt_id
+            with gates[0].cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                gate_pid = cursor.fetchone()[0]
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_terminate_backend(%s)", [gate_pid])
+                assert cursor.fetchone()[0]
+            # A's request claim expires while it is paused; B takes over the
+            # same redaction, acquires the released gate and completes it.
+            MetricErasureRequest.objects.filter(pk=child.id).update(
+                claim_expires_at=timezone.now() - timedelta(seconds=1)
+            )
+            assert erasure.process_erasure(child.id, store=store)
+            successor = DerivedMetricRun.objects.get(pk=run.id)
+            assert successor.status == "complete"
+            assert successor.attempt_id != paused_attempt
+            assert overall(store, successor) == [(4.0, 3)]
+            completed.append((successor.attempt_id, successor.result_id))
+        return fenced(store_, run_, target, *args, **kwargs)
+
+    monkeypatch.setattr(erasure, "fenced_delete_rows", paused)
+    # A resumes into its fenced DELETE with a replaced attempt: the dispatch CAS
+    # rejects it before native I/O, and its stale claim cannot record anything.
+    with pytest.raises(MetricStateConflict, match="claim is not held"):
+        erasure.process_erasure(child.id, store=store)
+    assert len(completed) == 1
+    assert (
+        not MetricErasureRequest.objects.filter(
+            run_key=run.id,
+            store_payload__protocol=snapshots.SUBMISSION_PROTOCOL,
+            store_payload__phase="dispatching",
+        )
+        .exclude(status="done")
+        .exists()
+    )
+    run.refresh_from_db()
+    assert (run.attempt_id, run.result_id) == completed[0]
+    assert run.status == "complete"
+    assert overall(store, run) == [(4.0, 3)]
+    assert store.execute(
+        "SELECT count() FROM derived_metric_commits WHERE run_id = %(r)s AND result_id = %(s)s",
+        {"r": str(run.id), "s": str(run.result_id)},
+    ) == [(1,)]
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE user_id = 'erase-me'"
+    ) == [(0,)]
+    child.refresh_from_db()
+    assert child.status == "done"
 
 
 def test_90_day_capture_stays_pinned_across_uncommitted_and_later_refresh(

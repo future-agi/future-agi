@@ -650,22 +650,27 @@ class NativeMetricAnalytics:
         self, query, params, *, timeout_ms, settings, server_execution_cap_ms=None
     ):
         from tracer.services.clickhouse.query_service import QueryResult
+        from tracer.services.derived_metrics.publication import cooperative_timeout
 
         if self.lease is not None:
             self.lease.keepalive()
             timeout_ms = min(timeout_ms, self.lease.remaining_seconds() * 1000)
         started = monotonic()
-        rows, columns = self.client.execute(
-            query,
-            params,
-            with_column_types=True,
-            settings={
-                **settings,
-                "max_execution_time": max(
-                    0.001, min(timeout_ms, server_execution_cap_ms or timeout_ms) / 1000
-                ),
-            },
-        )
+        cap = max(0.001, min(timeout_ms, server_execution_cap_ms or timeout_ms) / 1000)
+        try:
+            rows, columns = self.client.execute(
+                query,
+                params,
+                with_column_types=True,
+                settings={**settings, "max_execution_time": cap},
+            )
+        except Exception as exc:
+            # A server timeout of a statement whose cap was reduced to the
+            # reservation's remaining pass budget is a cooperative yield.
+            cancelled = cooperative_timeout(self.lease, started + cap, exc)
+            if cancelled is not None:
+                raise cancelled from exc
+            raise
         names = [name for name, _ in columns]
         progress = self.client.last_query.progress
         return QueryResult(

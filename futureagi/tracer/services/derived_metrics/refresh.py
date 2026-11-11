@@ -708,8 +708,8 @@ class RefreshWriter:
         ):
             return None
         from tracer.services.derived_metrics.retention import (
+            ProposalCaptures,
             _current_tables,
-            _proposal_rows,
             retention_cutoff,
         )
 
@@ -719,58 +719,13 @@ class RefreshWriter:
         ):
             # The final locked policy read must still reject a concurrent shrink.
             return "unlimited"
-        if attempt.purpose == "compaction":
-            fields, params = payload_select(
-                FIELD_VALUES,
-                [
-                    FrozenRows.from_plan(p)
-                    for p in self.plans(attempt, kind="field_values")
-                ],
-                prefix="policy_fields",
-            )
-        else:
-            fields, params = _proposal_rows(
-                self, attempt, attempt.parent_manifest, FIELD_VALUES, "policy_fields"
-            )
-        private_relations = [(fields, params)]
-        for table in _current_tables(self, attempt.parent_manifest, attempt):
-            if attempt.purpose == "compaction":
-                facts, bound = payload_select(
-                    table,
-                    [
-                        FrozenRows.from_plan(p)
-                        for p in self.plans(attempt, kind=TABLE_KIND[table.name])
-                    ],
-                    prefix="policy_" + table.name,
-                )
-            else:
-                facts, bound = _proposal_rows(
-                    self,
-                    attempt,
-                    attempt.parent_manifest,
-                    table,
-                    "policy_" + table.name,
-                )
-            private_relations.append((facts, bound))
+        with ProposalCaptures(self, attempt, attempt.parent_manifest) as captures:
+            return self._retention_minimum(attempt, captures, _current_tables)
+
+    def _retention_minimum(self, attempt, captures, current_tables):
+        tables = [FIELD_VALUES, *current_tables(self, attempt.parent_manifest, attempt)]
         if any(v.get("level") == "span" for v in attempt.metric_versions):
-            if attempt.purpose == "compaction":
-                dependencies, bound = payload_select(
-                    SOURCE_DEPENDENCIES,
-                    [
-                        FrozenRows.from_plan(p)
-                        for p in self.plans(attempt, kind="source_dependencies")
-                    ],
-                    prefix="policy_dependencies",
-                )
-            else:
-                dependencies, bound = _proposal_rows(
-                    self,
-                    attempt,
-                    attempt.parent_manifest,
-                    SOURCE_DEPENDENCIES,
-                    "policy_dependencies",
-                )
-            private_relations.append((dependencies, bound))
+            tables.append(SOURCE_DEPENDENCIES)
         starts = (
             [
                 datetime.fromisoformat(str(entry["unit_start"]))
@@ -786,6 +741,24 @@ class RefreshWriter:
             # nor frozen physical rows. Its durable ledger proves emptiness;
             # still validate any span recovery preimages against the final policy.
             return min(starts) if starts else None
+        private_relations = []
+        for table in tables:
+            if attempt.purpose == "compaction":
+                # A checkpoint's frozen rows ARE its complete relation: the
+                # minimum of per-batch minima, one bounded batch per statement.
+                private_relations.extend(
+                    payload_select(
+                        table,
+                        [FrozenRows.from_plan(plan)],
+                        prefix=f"policy_{number}",
+                    )
+                    for number, plan in enumerate(
+                        self.plans(attempt, kind=TABLE_KIND[table.name])
+                    )
+                )
+            else:
+                # A delta's collapsed proposal, its overlay captured once.
+                private_relations.append(captures.proposal(table))
         for sql, bound in private_relations:
             oldest = self.store.execute(
                 f"SELECT minOrNull(unit_start) FROM ({sql})", bound
@@ -1666,13 +1639,34 @@ class RefreshWriter:
         # BL01-Q must qualify and byte-bound current-fact maintenance before
         # it joins production refreshes. Copying full message inputs here can
         # exceed the batch cap even when the scalar metric payload is small.
-        field_payloads = [
-            FrozenRows.from_plan(p) for p in self.plans(attempt, kind="field_values")
-        ]
-        overlay, overlay_params = payload_select(
-            FIELD_VALUES, field_payloads, prefix="overlay"
-        )
-        if field_payloads:
+        from tracer.services.derived_metrics.retention import ProposalCaptures
+
+        with ProposalCaptures(self, attempt, head) as captures:
+            attempt = self._finish_proposal(
+                attempt,
+                head,
+                definitions,
+                captures,
+                cutoff=cutoff,
+                as_of=as_of,
+                settle_minutes=settle_minutes,
+            )
+        self.seal(attempt, cursors=dict(change.cursor_updates), publication=publication)
+        manifest = self.stage_and_publish(attempt)
+        if cutoff is not None:
+            from tracer.services.derived_metrics.retention import purge_checkpoint
+
+            purge_checkpoint(self, attempt, manifest)
+        return manifest
+
+    def _finish_proposal(
+        self, attempt, head, definitions, captures, *, cutoff, as_of, settle_minutes
+    ):
+        """Lifecycle, buckets and retention over ONE captured field overlay."""
+        has_fields = any(True for _ in self.plans(attempt, kind="field_values"))
+        # The draft's frozen field batches, captured once (one batch per INSERT).
+        overlay, overlay_params = captures.overlay(FIELD_VALUES)
+        if has_fields:
             # Retain ALL existing checked proposals, including losers and
             # both open predicates. R01 changes only the prior lookup domain;
             # a separate all-proposal scratch stream is deferred to R03.
@@ -1729,14 +1723,9 @@ class RefreshWriter:
                 head,
                 retirement_definitions(self, head, definitions),
                 cutoff,
+                captures=captures,
             )
-        self.seal(attempt, cursors=dict(change.cursor_updates), publication=publication)
-        manifest = self.stage_and_publish(attempt)
-        if cutoff is not None:
-            from tracer.services.derived_metrics.retention import purge_checkpoint
-
-            purge_checkpoint(self, attempt, manifest)
-        return manifest
+        return attempt
 
     def _unproven_source_admission(
         self, head, source_page, query, params, old_sql, old_params, floor

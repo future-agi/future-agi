@@ -9,7 +9,7 @@ import pytest
 
 from tracer.models.derived_metric import MetricProjectRefresh
 from tracer.services.clickhouse import v2
-from tracer.services.derived_metrics import admission, reads
+from tracer.services.derived_metrics import admission, backfill, reads
 from tracer.services.derived_metrics.publication import ClickHousePublicationStore
 from tracer.services.derived_metrics.queries import Scope
 from tracer.tests.test_derived_metric_backfill import make_version
@@ -206,7 +206,7 @@ def test_large_initial_history_yields_after_checkpoint_and_resumes_next_reservat
 
     def yield_after_history_checkpoint(self, attempt, **kwargs):
         head = publish(self, attempt, **kwargs)
-        if attempt.purpose == "repair":
+        if attempt.purpose == "backfill":
             self.lease.deadline = monotonic() - 1
         return head
 
@@ -215,21 +215,34 @@ def test_large_initial_history_yields_after_checkpoint_and_resumes_next_reservat
         "stage_and_publish",
         yield_after_history_checkpoint,
     )
+    definition = backfill.pending_versions(observe_project.id).get()
     positions, heads = [], []
-    for _ in range(2):
+    for reservation_number in range(2):
         started = monotonic()
         (reservation,) = admission.reserve_projects()
         assert not admission.execute_reservation(reservation.payload())
         state = MetricProjectRefresh.for_project(observe_project.id)
-        assert (
-            state.head_manifest_id and state.pending_backfill and state.pending_repair
-        )
+        definition.refresh_from_db()
+        # The 1,400 owners overflow the 1,000-item admission cap: the initial
+        # history is a paged backfill sweep, never a diverted repair.
+        assert state.head_manifest_id and not state.pending_repair
+        assert state.reconciliation_cursor is None
         assert state.lease_token is None and state.consecutive_failures == 0
-        assert state.reconciliation_cursor
-        positions.append(state.reconciliation_cursor["scanned"])
+        assert state.head_manifest.published_by.purpose == "backfill"
+        positions.append(definition.backfill_cursor["coverage"]["scanned"])
         heads.append(state.head_manifest_id)
+        if reservation_number == 0:
+            # Durable progress, nothing consumed or activated before completion.
+            assert definition.backfill_status == "running"
+            assert definition.activated_at is None and state.pending_backfill
+            assert state.watermark_ns == 0
+        else:
+            definition.metric.refresh_from_db()
+            assert definition.backfill_status == "complete"
+            assert definition.metric.active_version_id == definition.id
+            assert not state.pending_backfill and state.watermark_ns
         assert monotonic() - started < 60
-    assert positions[1] > positions[0] > 0
+    assert positions == [1000, 1400]
     assert heads[0] != heads[1]
     print(f"LARGE_HISTORY checkpoints={positions}")
 

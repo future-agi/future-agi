@@ -245,3 +245,75 @@ def test_erasure_completion_fences_replacement_lease_discovery_during_purge(
             as_of=now,
         )
     assert_purged(replacement, before, pin)
+
+
+@pytest.mark.parametrize("scope_kind", ["project", "organization"])
+@pytest.mark.parametrize("with_head", [False, True])
+def test_erasure_fences_initial_sweep_page_before_registration(
+    live_writer, workspace, observe_project, monkeypatch, scope_kind, with_head
+):
+    """The paged initial-history sweep is a discovery path of its own.
+
+    Its source page reads private memberships (and, after the first page,
+    committed preimages) before writer.refresh registers an attempt. A project
+    erasure completing in that window must fence registration exactly like
+    ordinary incremental discovery: no new attempt or private chunk survives.
+    """
+    writer = live_writer
+    writer.store.execute(
+        "ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''"
+    )
+    scope = Scope(writer.org_id, workspace.id, observe_project.id)
+    make_version(
+        observe_project,
+        workspace,
+        inputs=[
+            {
+                "alias": "x",
+                "source": "span",
+                "field": "attribute_number",
+                "attribute_key": "resolved",
+                "reducer": "latest",
+            }
+        ],
+    )
+    at = timezone.now() - timedelta(hours=2)
+    session, user, trace = uuid4(), uuid4(), uuid4()
+    for span in ("private-span-a", "private-span-b"):
+        seed_span(writer.store.client, scope, span, session, user, at, trace_id=trace)
+    # Initial history whose exhaustive discovery overflows the admission cap.
+    writer.incremental_unit_limit = 0
+    runner = backfill.BackfillRunner(
+        writer, Analytics(writer.store.client), scope, page_size=1
+    )
+    if with_head:
+        runner.run_pass(max_chunks=1)
+        state = MetricProjectRefresh.for_project(observe_project.id)
+        assert state.head_manifest_id and state.watermark_ns == 0
+        assert backfill.sweep_participants(observe_project.id)
+    refresh, observed = writer.refresh, []
+
+    def erase_after_discovery(batch, *args, **kwargs):
+        assert str(user) in str(batch.dependencies)
+        assert kwargs["publication"]["backfills"]
+        writer.store.execute(
+            "ALTER TABLE spans DELETE WHERE 1 SETTINGS mutations_sync=2"
+        )
+        job = erasure.erase_metric_data(
+            organization_id=writer.org_id,
+            project_id=scope.project if scope_kind == "project" else None,
+            scope_kind=scope_kind,
+        )
+        assert erasure.process_erasure(job.id, store=writer.store)
+        job.refresh_from_db()
+        assert job.status == "done" and job.completed_at
+        observed.append(private_state(scope.project))
+        with pytest.raises(MetricFencingError):
+            writer.lease.check()
+        return refresh(batch, *args, **kwargs)
+
+    monkeypatch.setattr(writer, "refresh", erase_after_discovery)
+    with pytest.raises(MetricFencingError):
+        runner.run_pass(max_chunks=1)
+    assert len(observed) == 1
+    assert_purged(writer, observed[0], None)

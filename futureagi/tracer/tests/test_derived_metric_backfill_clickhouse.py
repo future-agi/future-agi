@@ -358,12 +358,25 @@ def test_conversation_to_span_edit_preserves_old_grain_groups_and_labels_until_s
     assert active_version(old.metric).id == draft.id
     assert active_version(old.metric).level == "span"
     assert bucket_value(writer, head, draft) == 5  # two ended spans, (2 + 8) / 2
-    assert (
-        writer.store.execute(
-            "SELECT count() FROM metric_field_values WHERE level = 'span'"
-        )[0][0]
-        == 0
+    # Span evidence is committed FIELD_VALUES evidence (span_evidence), now
+    # published as an ordinary delta when no privacy transition is needed.
+    # After ordinary GC the ONLY physical span rows are the head's own evidence
+    # of the new span version: the old conversation grain never wrote any, and
+    # no superseded or abandoned span row survives outside the head.
+    assert sorted(row[2] for row in fields(writer, head, draft)) == [2.0, 8.0]
+    cleanup_now = datetime.now(UTC) + timedelta(seconds=2)
+    MetricRefreshAttempt.objects.exclude(id=head.published_by_id).update(
+        expires_at=cleanup_now - timedelta(seconds=1)
     )
+    writer.lease.clock = lambda: cleanup_now
+    writer.collect_garbage()
+    allowed = tuple(str(attempt) for _, attempt in head.allowed_attempts())
+    for name in (FIELD_VALUES.name, FIELD_VALUES.name + "_checkpoint"):
+        assert writer.store.execute(
+            f"SELECT count() FROM {name} WHERE level = 'span' "
+            "AND (attempt_id NOT IN %(allowed)s OR field_version != %(version)s)",
+            {"allowed": allowed, "version": draft.version},
+        ) == [(0,)]
 
 
 @pytest.mark.django_db(transaction=True)

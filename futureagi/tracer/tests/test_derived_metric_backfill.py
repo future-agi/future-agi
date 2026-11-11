@@ -1,8 +1,8 @@
 """PG state-machine tests; production CH discovery/recompute is tested separately."""
 
 import json
-from datetime import UTC, datetime, timedelta
-from types import MethodType
+from datetime import UTC, date, datetime, timedelta
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -18,6 +18,7 @@ from tracer.services.derived_metrics import backfill, changes
 from tracer.services.derived_metrics.deletion_protocol import (
     capture_pin,
     collect_history,
+    lifecycle_lock_budget,
 )
 from tracer.services.derived_metrics.lease import project_lease
 from tracer.services.derived_metrics.queries import Scope
@@ -29,11 +30,25 @@ NOW = datetime(2026, 10, 31, 12, tzinfo=UTC)
 EMPTY = changes.ChangeBatch((), (), (), (), (), {})
 
 
+class _EmptySession:
+    """Native-session stand-in: scratch captures of an empty store need no replay."""
+
+    def __init__(self):
+        self.socket = object()
+
+
 class EmptyPolicyRecorder(Recorder):
     def __init__(self):
         super().__init__()
         self.checkpoint_projects = set()
         self.checkpoint_calls = []
+        self.client = SimpleNamespace(
+            connection=_EmptySession(), disconnect=lambda: None
+        )
+
+    def _restore_transients(self):
+        # The session never drops, so no registered capture needs a replay.
+        pass
 
     def consolidate_checkpoint(self, project_id, *, deadline=None):
         # Empty physical ranges need no layout work. Still enforce the scope of
@@ -44,6 +59,19 @@ class EmptyPolicyRecorder(Recorder):
         self.checkpoint_calls.append((str(project_id), deadline))
 
     def execute(self, query, params=None):
+        # Pass-scoped session captures of an empty physical store: a native
+        # session probe, scratch DDL, and the (empty) measure and digest reads.
+        if query == "SELECT 1":
+            return [(1,)]
+        if query.startswith(
+            ("CREATE TEMPORARY TABLE metric_capture_", "DROP TEMPORARY TABLE")
+        ) and ("metric_capture_" in query.split("(", 1)[0]):
+            return []
+        if query.startswith("SELECT count(), sum(length(formatRow('RowBinary'"):
+            return [(0, 0, "0")] if "cityHash64" in query else [(0, 0)]
+        # Empty proposals have no oldest retained anchor.
+        if query.startswith("SELECT minOrNull(unit_start) FROM ("):
+            return [(None,)]
         if query.startswith("SELECT count()"):
             return [(0,)]
         # Checkpoint discovery now nominates the last key of a bounded range,
@@ -281,7 +309,11 @@ def setup_runner(observe_project, workspace, monkeypatch):
                 observe_project.id,
             ),
         )
-        yield runner, clock
+        # These PG state-machine tests drive a frozen lease clock (including
+        # takeovers by a second worker). The lifecycle lock budget is covered by
+        # the integration-fence tests; here it would fence fixture/ORM writes.
+        with lifecycle_lock_budget(None):
+            yield runner, clock
 
 
 @pytest.mark.django_db
@@ -655,35 +687,120 @@ def test_takeover_replans_unpublished_day_without_skipping_coverage(
         old_writer.stage_and_publish(abandoned)
 
 
+def _named_version(project, workspace, name, **overrides):
+    metric = DerivedMetric.objects.create(
+        project=project,
+        workspace=workspace,
+        organization=workspace.organization,
+        name=name,
+    )
+    return make_version(project, workspace, metric=metric, **overrides)
+
+
+def _overflow(*args, **kwargs):
+    raise changes.arrivals.ContinuousCandidateOverflow("metric candidate cap exceeded")
+
+
+def _two_page_sweep(pages):
+    """A retained-history pass that publishes one private page, then completes."""
+
+    def reconcile(analytics, *, now, checkpoint=None, **kwargs):
+        pages.append(checkpoint)
+        done = checkpoint is not None
+        cp = changes.ReconciliationCheckpoint(
+            started_at=checkpoint.started_at if done else now,
+            completed_at=now if done else None,
+            phase="complete" if done else "sources",
+            after=None
+            if done
+            else ("", "", "2026-10-31 06:00:00", "private-trace", "private-span"),
+            scanned=2 if done else 1,
+            completed_passes=int(done),
+            day=None if done else date(2026, 10, 31),
+            last_day=None if done else date(2026, 10, 31),
+            covered_through=checkpoint.started_at if done else None,
+        )
+        batch = changes.ChangeBatch(
+            (),
+            (),
+            (),
+            (),
+            (),
+            {
+                # The project's repair cursor fields: the sweep must drop them.
+                "reconciliation_cursor": cp.to_dict(),
+                "reconciliation_started_at": cp.started_at,
+                "reconciliation_completed_at": cp.completed_at,
+                "pending_repair": not done,
+            },
+        )
+        return changes.ReconciliationPage(batch, cp)
+
+    return reconcile
+
+
 @pytest.mark.django_db
-def test_overflow_reroutes_to_full_repair_before_consuming_arrival_cursor(
+def test_overflowing_initial_history_publishes_definition_progress_not_repair(
     setup_runner, observe_project, workspace, monkeypatch
 ):
+    """Initial discovery above the admission cap is backfill, never repair.
+
+    Every page publishes ALL pending versions' durable progress. No arrival
+    cursor moves until the completing page, which activates every participant
+    in its own head switch and consumes arrivals only up to the pass START.
+    """
     runner, clock = setup_runner
-    draft = make_version(observe_project, workspace)
-
-    def overflow(analytics, writer, head, definitions, **kwargs):
-        if MetricProjectRefresh.for_project(observe_project.id).watermark_ns == 0:
-            raise changes.arrivals.ContinuousCandidateOverflow(
-                "metric candidate cap exceeded"
-            )
-        return EMPTY
-
-    monkeypatch.setattr(backfill, "incremental_changes", overflow)
+    first = make_version(observe_project, workspace)
+    second = _named_version(observe_project, workspace, "Second history metric")
+    pages = []
+    monkeypatch.setattr(backfill, "incremental_changes", _overflow)
+    monkeypatch.setattr(changes, "reconcile_page", _two_page_sweep(pages))
+    started = clock[0]
     runner.run_pass(max_chunks=1)
-    draft.refresh_from_db()
     state = MetricProjectRefresh.for_project(observe_project.id)
-    assert draft.backfill_cursor is None and draft.activated_at is None
-    assert state.reconciliation_cursor["phase"] == "complete"
-    assert state.watermark_ns == changes.ns(clock[0]) and not state.pending_repair
-    assert state.pending_backfill
+    head = state.head_manifest
+    assert head.published_by.purpose == "backfill"
+    for draft in (first, second):
+        draft.refresh_from_db()
+        assert draft.backfill_status == "running" and draft.activated_at is None
+        assert draft.backfill_cursor["phase"] == backfill.SWEEP_PHASE
+        assert draft.backfill_cursor["coverage"]["phase"] == "sources"
+        assert backfill.has_private_keyset(draft.backfill_cursor)
+        assert draft.backfill_days_done == 1 and draft.backfill_days_total == 2
+    assert first.backfill_cursor["coverage"] == second.backfill_cursor["coverage"]
+    assert (state.watermark_ns, state.eval_watermark_ns, state.remap_cursor_ns) == (
+        0,
+        0,
+        0,
+    )
+    assert state.reconciliation_cursor is None and not state.pending_repair
+    assert state.pending_backfill and state.backfill_last_progress_at
+    clock[0] += timedelta(seconds=30)
     runner.run_pass(max_chunks=1)
-    draft.refresh_from_db()
-    assert draft.backfill_days_done == 1
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.head_manifest_id != head.id
+    assert state.head_manifest.published_by.purpose == "backfill"
+    assert pages[0] is None and pages[1].started_at == started
+    for draft in (first, second):
+        draft.refresh_from_db()
+        draft.metric.refresh_from_db()
+        assert draft.backfill_status == "complete"
+        assert draft.metric.active_version_id == draft.id
+        assert draft.activated_at == clock[0]
+        assert draft.backfill_days_done == draft.backfill_days_total == 2
+        assert not backfill.has_private_keyset(draft.backfill_cursor)
+    ceiling = changes.ns(started)
+    assert (state.watermark_ns, state.eval_watermark_ns, state.remap_cursor_ns) == (
+        ceiling,
+        ceiling,
+        ceiling,
+    )
+    assert state.reconciliation_cursor is None and not state.pending_repair
+    assert not state.pending_backfill
 
 
 @pytest.mark.django_db
-def test_overflow_repair_crash_then_bulk_reset_replans_instead_of_replaying_stale_cas(
+def test_overflow_sweep_crash_then_privacy_reset_replans_instead_of_replaying_stale_cas(
     setup_runner,
     observe_project,
     workspace,
@@ -691,29 +808,48 @@ def test_overflow_repair_crash_then_bulk_reset_replans_instead_of_replaying_stal
 ):
     runner, clock = setup_runner
     draft = make_version(observe_project, workspace)
-
-    def overflow(*args, **kwargs):
-        raise changes.arrivals.ContinuousCandidateOverflow(
-            "metric candidate cap exceeded"
-        )
-
-    monkeypatch.setattr(backfill, "incremental_changes", overflow)
+    monkeypatch.setattr(backfill, "incremental_changes", _overflow)
     runner.writer.store.fail_after = 0
     with pytest.raises(RuntimeError, match="injected"):
         runner.run_pass(max_chunks=1)
     failed = MetricRefreshAttempt.objects.get(state="staging")
-    assert failed.purpose == "repair"
-    assert MetricProjectRefresh.for_project(observe_project.id).watermark_ns == 0
+    assert failed.purpose == "backfill"
+    draft.refresh_from_db()
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert draft.backfill_cursor is None and draft.activated_at is None
+    assert state.watermark_ns == 0 and state.head_manifest_id is None
     clock[0] += timedelta(seconds=1)
-    backfill.queue_bulk_change(observe_project.id, now=clock[0])
+    # An erasure-style scrub moves the progress token of the sealed intent.
+    backfill.scrub_private_progress(observe_project.id, now=clock[0])
     runner.writer.store.fail_after = None
     runner.run_pass(max_chunks=1)
     failed.refresh_from_db()
     draft.refresh_from_db()
     state = MetricProjectRefresh.for_project(observe_project.id)
-    assert failed.state == "aborted" and not state.pending_repair
+    assert failed.state == "aborted"
+    assert draft.backfill_status == "complete" and draft.activated_at == clock[0]
+    # The replanned pass started after the reset; it consumed only to its start.
     assert state.watermark_ns == changes.ns(clock[0])
-    assert draft.backfill_cursor is None and state.pending_backfill
+    assert not state.pending_repair and not state.pending_backfill
+
+
+@pytest.mark.django_db
+def test_overflow_with_serving_versions_keeps_history_progress_beside_repair(
+    setup_runner, observe_project, workspace, monkeypatch
+):
+    """Repair must not starve a new version: the backfill lane still publishes."""
+    runner, clock = setup_runner
+    make_version(observe_project, workspace, active=True)
+    draft = _named_version(observe_project, workspace, "New history metric")
+    monkeypatch.setattr(backfill, "incremental_changes", _overflow)
+    runner.run_pass(max_chunks=1)
+    draft.refresh_from_db()
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert state.head_manifest.published_by.purpose == "backfill"
+    assert draft.backfill_days_done == 1 and draft.backfill_status == "running"
+    # Arrivals were rerouted to the durable repair sweep, never consumed here.
+    assert state.pending_repair and state.reconciliation_cursor is None
+    assert state.watermark_ns == 0
 
 
 @pytest.mark.django_db

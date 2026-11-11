@@ -39,6 +39,124 @@ class FrozenRelationOverflow(MetricVisibilityError):
     code = "metric_frozen_relation_overflow"
 
 
+# Pass-scoped input captures: a proposal/overlay relation is executed ONCE
+# into session scratch, then every page refers to it by name. The same fail-
+# closed row/byte bounds as other scratch relations; never a lossy truncation.
+CAPTURE_ROWS = 1_000_000
+CAPTURE_BYTES = RELATION_BYTES
+
+
+class SessionCapture:
+    """A checked, connection-owned copy of immutable compiler inputs.
+
+    Sources are compiler-owned (sql, params) pairs over immutable inputs only:
+    frozen ledger batches, allowlisted committed attempts, or earlier captures.
+    Each source is a separate INSERT, so no statement carries more than one
+    frozen batch of inline bytes. Every exception discards the native session
+    (and this table); the store replays registered captures on the next
+    statement, in registration (dependency) order, and the replay must reproduce
+    the identical count/bytes/content digest or the pass fails closed.
+    """
+
+    def __init__(self, store, *, schema, sources, role):
+        self.store = store
+        self.schema = tuple(schema)
+        self.columns = tuple(name for name, _ in self.schema)
+        self.sources = sources  # callable -> iterable of (sql, params)
+        self.role = role
+        self.name = "metric_capture_" + uuid4().hex
+        self.socket = None
+        self.digest = None
+
+    def __enter__(self):
+        self.store._restore_transients()
+        self._build()
+        relations = getattr(self.store, "_transient_relations", None)
+        if relations is None:
+            relations = self.store._transient_relations = []
+        relations.append(self)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        relations = getattr(self.store, "_transient_relations", None) or []
+        if self in relations:
+            relations.remove(self)
+        socket = self.store.client.connection.socket
+        try:
+            if socket is not None and socket is self.socket:
+                self.store.execute(f"DROP TEMPORARY TABLE IF EXISTS {self.name}")
+        except Exception:
+            # Never return a pooled connection holding private scratch rows.
+            self.store.client.disconnect()
+            if exc_type is None:
+                raise
+        finally:
+            self.socket = None
+        return False
+
+    @property
+    def select(self):
+        return f"SELECT {', '.join(self.columns)} FROM {self.name}"
+
+    def ensure(self):
+        socket = self.store.client.connection.socket
+        if socket is None or socket is not self.socket:
+            self._build()
+
+    def _measure(self):
+        encoded = f"formatRow('RowBinary', {', '.join(self.columns)})"
+        return tuple(
+            self.store.execute(
+                f"SELECT count(), sum(length({encoded})), "
+                f"toString(sum(cityHash64({encoded}))) FROM {self.name}"
+            )[0]
+        )
+
+    def _build(self):
+        store = self.store
+        previous = getattr(store, "_restoring", False)
+        # Our own statements must not recursively replay this capture.
+        store._restoring = True
+        try:
+            store.execute("SELECT 1")
+            socket = store.client.connection.socket
+            if socket is None:
+                raise MetricVisibilityError("session capture requires a native session")
+            schema = ", ".join(f"{column} {kind}" for column, kind in self.schema)
+            store.execute(
+                f"CREATE TEMPORARY TABLE {self.name} ({schema}) ENGINE=Memory"
+            )
+            casts = ", ".join(
+                "CAST(" + column + ", '" + kind.replace("'", "\\'") + "') AS " + column
+                for column, kind in self.schema
+            )
+            encoded = f"formatRow('RowBinary', {', '.join(self.columns)})"
+            rows = size = 0
+            for sql, params in self.sources():
+                typed = f"SELECT {casts} FROM ({sql})"
+                count, length = store.execute(
+                    f"SELECT count(), sum(length({encoded})) FROM ({typed})", params
+                )[0]
+                rows, size = rows + count, size + (length or 0)
+                if rows > CAPTURE_ROWS or size > CAPTURE_BYTES:
+                    raise FrozenRelationOverflow("session capture exceeds its budget")
+                if count:
+                    store.execute(
+                        f"INSERT INTO {self.name} ({', '.join(self.columns)}) {typed}",
+                        params,
+                    )
+            if store.client.connection.socket is not socket:
+                raise MetricVisibilityError("session capture lost its native session")
+            digest = self._measure()
+            if digest[0] != rows or (digest[1] or 0) != size:
+                raise MetricVisibilityError("session capture is incomplete")
+            if self.digest is not None and digest != self.digest:
+                raise MetricVisibilityError("session capture changed on replay")
+            self.digest, self.socket = digest, socket
+        finally:
+            store._restoring = previous
+
+
 @dataclass(frozen=True, repr=False)
 class FrozenRelationHandle:
     """No payload list and no unqualified/latest-table read API.
