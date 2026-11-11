@@ -1,7 +1,8 @@
 name: Low-risk PR autopilot
 # Binds each run to one PR; scripts/pr_risk.py trusts review evidence only from
 # a run whose title names the same PR.
-run-name: ${{ github.event_name == 'pull_request_target' && format('PR autopilot #{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('PR autopilot #{0}', inputs.pr_number) || github.event_name == 'pull_request' && format('PR autopilot tests #{0}', github.event.pull_request.number) || 'PR autopilot sweep' }}
+# Quoted: an unquoted ' #' would start a YAML comment and cut the expression.
+run-name: "${{ github.event_name == 'pull_request_target' && format('PR autopilot #{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('PR autopilot #{0}', inputs.pr_number) || github.event_name == 'pull_request' && format('PR autopilot tests #{0}', github.event.pull_request.number) || 'PR autopilot sweep' }}"
 
 on:
   # This event uses dev's trusted workflow, not the PR's proposed workflow.
@@ -52,6 +53,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # PyYAML lets the tests parse this workflow as GitHub does.
+          python3 -m pip install --disable-pip-version-check -q PyYAML==6.0.3
           python3 scripts/test_pr_risk.py
 
   prepare:

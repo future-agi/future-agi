@@ -1150,6 +1150,24 @@ class ControllerTests(unittest.TestCase):
             self.api.jobs = []
             self.assertFalse(risk.review_check_passes(self.api, self.api.checks, context, POLICY))
 
+    def test_workflow_expressions_survive_yaml_parsing(self):
+        # An unquoted " #" starts a YAML comment: GitHub then rejects the file
+        # and no autopilot run happens at all.
+        run_name = next(line for line in WORKFLOW_TEXT.splitlines() if line.startswith("run-name:"))
+        self.assertTrue(run_name.startswith('run-name: "${{') and run_name.endswith('}}"'), run_name)
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        workflow = yaml.safe_load(WORKFLOW_TEXT)
+        self.assertIn("format('PR autopilot #{0}', github.event.pull_request.number)", workflow["run-name"])
+        self.assertTrue(workflow["run-name"].endswith("}}"))
+        steps = workflow["jobs"]["review-gate-and-merge"]["steps"]
+        expected = risk.VERDICT_STEP.format(
+            head="${{ fromJSON(needs.prepare.outputs.context).head }}",
+            base="${{ fromJSON(needs.prepare.outputs.context).base }}")
+        self.assertIn(expected, [step.get("name") for step in steps])
+
     def test_workflow_verdict_step_name_matches_the_controller(self):
         text = WORKFLOW_TEXT
         expected = risk.VERDICT_STEP.format(
