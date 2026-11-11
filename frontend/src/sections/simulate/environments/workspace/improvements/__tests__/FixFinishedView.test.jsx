@@ -297,6 +297,77 @@ describe("FixVerdict", () => {
   });
 });
 
+describe("FixDecisionDrawer without a kept trial", () => {
+  const checkNames = (trial) =>
+    trial
+      .getAllByText(/^(static|target|held-back|must-pass)$/)
+      .map((el) => el.textContent);
+
+  it("shows each rejected trial with the check that rejected it first", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-no-improvement")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Rejected trials")).toBeInTheDocument();
+    for (const attempt of [1, 2]) {
+      const trial = within(screen.getByTestId(`rejected-${attempt}`));
+      expect(trial.getByText(`Trial ${attempt}`)).toBeInTheDocument();
+      expect(checkNames(trial)).toEqual(["target", "static", "must-pass"]);
+      expect(
+        trial.getByText("0 of 1 target scenarios passed"),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("says a check after the rejecting one was not run, never passed or unverified", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-no-improvement")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    const trial = within(screen.getByTestId("rejected-1"));
+    const row = trial.getByText("must-pass").parentElement;
+    expect(within(row).getByText("not run")).toBeInTheDocument();
+    expect(trial.queryByText("not verified")).toBeNull();
+    expect(within(row).queryByText(/passed|held/)).toBeNull();
+  });
+
+  it("leaves a fix with a kept trial as it was", () => {
+    renderUi(
+      <FixDecisionDrawer
+        fix={fixOf("fix-ready-archive")}
+        open
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Rejected trials")).toBeNull();
+    expect(screen.queryByTestId("rejected-1")).toBeNull();
+    expect(screen.getByText("Checks · 5 of 5 passed")).toBeInTheDocument();
+  });
+
+  it("still shows a rejected trial whose verdict predates recorded checks", () => {
+    const fix = fixOf("fix-no-improvement");
+    delete fix.candidates[0].verdict.tiers;
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+
+    const trial = within(screen.getByTestId("rejected-1"));
+    expect(
+      trial.getByText("target: 0 of 1 target scenarios passed"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("rejected-2")).getByText("target"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("FixFinishedView", () => {
   it("leads a failed fix with why it failed and offers no Ship", () => {
     const fix = fixOf("fix-failed", {

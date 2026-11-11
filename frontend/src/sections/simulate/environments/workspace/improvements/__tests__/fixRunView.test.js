@@ -9,7 +9,9 @@ import {
   heldToRows,
   identityLine,
   isShipped,
+  markNotRun,
   outcomeLabel,
+  rejectionChecks,
   STATE_LABEL,
   stepRows,
   verdictCards,
@@ -113,6 +115,51 @@ describe("verdict", () => {
     expect(
       checksLine([{ name: "target", status: "failed" }, ...tiers.slice(1)]),
     ).toBe("Checks · 0 of 1 passed");
+  });
+
+  it("marks a skipped check as not run only when an earlier check failed", () => {
+    const tiers = [
+      { name: "repeats", status: "passed" },
+      { name: "ceilings", status: "skipped" },
+      { name: "model-lock", status: "failed" },
+    ];
+    expect(markNotRun(tiers).map((t) => t.notRun)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(
+      markNotRun([
+        { name: "held-back", status: "failed" },
+        ...tiers.slice(1),
+      ]).map((t) => [t.name, t.notRun]),
+    ).toEqual([
+      ["held-back", false],
+      ["ceilings", true],
+      ["model-lock", false],
+    ]);
+  });
+
+  it("puts the check that rejected a trial first and keeps the rest in order", () => {
+    const tiers = [
+      { name: "static", status: "passed" },
+      { name: "target", status: "passed" },
+      { name: "held-back", status: "failed" },
+      { name: "must-pass", status: "skipped" },
+      { name: "ceilings", status: "skipped" },
+    ];
+    expect(rejectionChecks(tiers).map((t) => [t.name, t.notRun])).toEqual([
+      ["held-back", false],
+      ["static", false],
+      ["target", false],
+      ["must-pass", true],
+      ["ceilings", true],
+    ]);
+    // A verdict that failed nothing keeps its order.
+    expect(rejectionChecks(tiers.slice(0, 2)).map((t) => t.name)).toEqual([
+      "static",
+      "target",
+    ]);
   });
 });
 

@@ -144,6 +144,25 @@ export function checksLine(tiers = []) {
   return `${line} · ${unverified} not verified`;
 }
 
+// Each check with `notRun` set when it was skipped because an earlier one failed. The verdict
+// marks both kinds of skip the same way, so the order tells them apart, as in checksLine.
+export function markNotRun(tiers = []) {
+  return tiers.map((t, i) => ({
+    ...t,
+    notRun:
+      t.status === "skipped" &&
+      tiers.slice(0, i).some((earlier) => earlier.status === "failed"),
+  }));
+}
+
+// A rejected trial's checks with the one that rejected it first.
+export function rejectionChecks(tiers = []) {
+  const marked = markNotRun(tiers);
+  const rejecting = marked.findIndex((t) => t.status === "failed");
+  if (rejecting < 0) return marked;
+  return [marked[rejecting], ...marked.filter((_, i) => i !== rejecting)];
+}
+
 export const tierIcon = (status) =>
   ({
     passed: "solar:check-circle-linear",

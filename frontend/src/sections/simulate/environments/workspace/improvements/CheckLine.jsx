@@ -8,7 +8,8 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { tierIcon } from "./fixRunView";
 
 // One check of a verdict: its status, name and detail. A check that could not
-// measure reads skipped, which is said as "not verified".
+// measure reads skipped, which is said as "not verified"; one skipped because an
+// earlier check failed (`notRun`, from markNotRun) is said as "not run".
 export default function CheckLine({
   check,
   variant = "s3",
@@ -52,15 +53,18 @@ export default function CheckLine({
             flexShrink: 0,
           }}
         >
-          not verified
+          {check.notRun ? "not run" : "not verified"}
         </Typography>
       )}
-      <Typography
-        noWrap={noWrap}
-        sx={{ typography: variant, color: "text.secondary", minWidth: 0 }}
-      >
-        {check.detail}
-      </Typography>
+      {/* A check that was not run has nothing to add beyond saying so. */}
+      {!check.notRun && (
+        <Typography
+          noWrap={noWrap}
+          sx={{ typography: variant, color: "text.secondary", minWidth: 0 }}
+        >
+          {check.detail}
+        </Typography>
+      )}
     </Stack>
   );
 }
