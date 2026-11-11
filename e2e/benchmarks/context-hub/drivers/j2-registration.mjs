@@ -33,7 +33,7 @@ const expected = {
   'historical-reproduced': { reproduced: true, exactHistoricalContext: true, qualifiedEnvironment: true },
   'origin-and-reviewed-head': { origin: 4, reviewedHead: 6, personalWorkPreserved: true },
   'case-arm-repeat-matrix': titles.flatMap((case_id) => ['candidate', 'reference', 'production'].map((arm) => ({ case_id, arm, repeat: 0, complete: true }))),
-  'natural-child-selection': { catalogMembers: 15, refundCorrect: true, chargebackNearMissHeld: true },
+  'natural-child-selection': { catalogMembers: 15, refundCorrect: true, chargebackNearMissHeld: true, shippingCorrect: true, membersWithResults: 15, wrongMemberSelections: 0 },
   'tool-failure-hold': { textPassToolFailHeld: true, nativeEvidenceRequired: true },
   'neighboring-behavior': { chargebackPreserved: true, shippingPreserved: true },
   'external-identity': { changedHubIdentity: true, oldExternalVersionReused: false },
@@ -45,7 +45,8 @@ const registration = { schema: 1, job: 'J2', cohort, evidence_scope: 'synthetic'
   safety_requirements_hash: digest({ authorization: true, exactIdentities: true, noFalseGreen: true, noBusinessDuplicates: true, noNeighborRegression: true }),
   complete_job_boundary_hash: digest(job.steps), population: job.population, expected_observations: expected, fault_ids: job.fault_ids,
   independent_comparator_reviewer: null, strongest_configured_route_hash: null,
-  limitations: ['Synthetic fixture mechanics; the ratio against a customer comparator is not established.'] };
+  limitations: ['Synthetic fixture mechanics; the ratio against a customer comparator is not established.',
+    'Cold scope: the packaged runtime build and measured-configuration pin are counted; the application source, the 15-skill context, the tracing project that holds the incident, workspace credentials and the spend policy are preconditions recorded in initial_conditions_hash and are not counted.'] };
 await mkdir(outDir, { recursive: true });
 await writeFile(resolve(outDir, `${cohort}-registration.json`), JSON.stringify(registration, null, 2), { mode: 0o600 });
 console.log('registered', cohort);

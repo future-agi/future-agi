@@ -108,6 +108,20 @@ export async function createDriver({ jobId, runId, registration }) {
       };
       try {
         if (stage.id === 'qualify-application') {
+          // Cold provisioning the customer performs with the packaged adapter, counted as operator commands:
+          // build the application runtime from the packaged wheels, then measure its pinned configuration from
+          // the freshly built image with the application source mounted read-only.
+          requireValue(process.env.J2_LANE_ROOT, 'J2_LANE_ROOT names the cloud lane root');
+          const laneRoot = process.env.J2_LANE_ROOT;
+          const commit = execFileSync('docker', ['exec', input.runtimeContainer, 'printenv', 'CTXHUB_APP_COMMIT'], { encoding: 'utf8' }).trim();
+          const image = `ctxhub-j2-cold-${runId}`.toLowerCase().replace(/[^a-z0-9_.-]/g, '-');
+          state.provisionImage = image;
+          await op.transition('provision-application-runtime', async () => {
+            await op.command('build-application-runtime', 'docker', ['build', '--quiet', '-t', image, '--build-arg', `CTXHUB_APP_COMMIT=${commit}`, `${laneRoot}/e2e/stack/native-runtime`], { timeoutMs: 280_000 });
+            const fresh = await op.command('measure-provisioned-configuration', 'docker', ['run', '--rm', '--read-only', '--network', 'none', '-e', `CTXHUB_APP_COMMIT=${commit}`,
+              '-v', `${laneRoot}/e2e/fixtures/skills-r3/support-application:/fi_app:ro`, '--entrypoint', 'python', image, '/opt/ctxhub/measure.py', 'config']);
+            state.provisioned = JSON.parse(fresh.stdout.trim().split('\n').at(-1));
+          });
           await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}`);
           await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
           // The application's production binding already exists; a deployment without one registers it here.
@@ -121,7 +135,8 @@ export async function createDriver({ jobId, runId, registration }) {
           const targets = await api('GET', `${root}native/targets/`);
           const measured = JSON.parse(execFileSync('docker', ['exec', input.runtimeContainer, 'python', '/opt/ctxhub/measure.py', 'config'], { encoding: 'utf8' }));
           requireValue(targets.targets[0].qualified && digest(targets.targets[0].configuration) === digest(measured), 'Pinned configuration differs from the runtime measurement');
-          receipt('api', await record('target-qualified', { evidenceClass: 'synthetic fixture', target: targets.targets[0], measuredDigest: digest(measured) }));
+          requireValue(digest(state.provisioned) === digest(measured), 'The runtime the customer built does not reproduce the pinned configuration');
+          receipt('api', await record('target-qualified', { evidenceClass: 'synthetic fixture', target: targets.targets[0], measuredDigest: digest(measured), provisionedDigest: digest(state.provisioned), provisionedFromBuild: true }));
           return;
         }
         if (stage.id === 'external-failure') {
@@ -430,8 +445,21 @@ export async function createDriver({ jobId, runId, registration }) {
         const candidateTurns = ledger.filter((row) => row.kind === 'model' && row.turn === 1 && row.messages[0].content.includes('POLICY-REFUND: capped-25') && !row.messages[0].content.includes('POLICY-ROUTING'));
         const selected = (row) => JSON.parse(row.messages.find((m) => m.role === 'assistant').tool_calls[0].function.arguments).skill_id;
         const byRequest = (text) => candidateTurns.filter((row) => row.request === text).map(selected);
+        // Per catalog member: which candidate-arm requests selected it, retained as an artifact (not only a boolean).
+        const catalogIds = [...new Set([...turns[0].system.matchAll(/"id":\s*"([^"]+)"/g)].map((match) => match[1]))];
+        const wanted = { refund: input.skills.refund, chargeback: input.skills.chargeback, shipping: input.skills.shipping };
+        const perMember = catalogIds.map((id) => {
+          const selectedBy = Object.fromEntries(Object.keys(wanted).map((key) => [key, byRequest(input.requests[key]).filter((chosen) => chosen === id).length]));
+          const expectedFor = Object.keys(wanted).filter((key) => wanted[key] === id);
+          const correct = Object.keys(wanted).every((key) => (selectedBy[key] > 0) === expectedFor.includes(key));
+          return { member_id: id, selected_by_request: selectedBy, expected_for: expectedFor, correct };
+        });
+        const requestsSeen = Object.fromEntries(Object.keys(wanted).map((key) => [key, byRequest(input.requests[key]).length]));
         return make('model_boundary', { catalogMembers: Math.min(...turns.map((t) => t.catalogMembers)), refundCorrect: byRequest(input.requests.refund).length > 0 && byRequest(input.requests.refund).every((id) => id === input.skills.refund),
-          chargebackNearMissHeld: byRequest(input.requests.chargeback).length > 0 && byRequest(input.requests.chargeback).every((id) => id === input.skills.chargeback) });
+          chargebackNearMissHeld: byRequest(input.requests.chargeback).length > 0 && byRequest(input.requests.chargeback).every((id) => id === input.skills.chargeback),
+          shippingCorrect: byRequest(input.requests.shipping).length > 0 && byRequest(input.requests.shipping).every((id) => id === input.skills.shipping),
+          membersWithResults: perMember.length, wrongMemberSelections: perMember.filter((row) => !row.correct).length },
+        { perMember, requestsSeen });
       }
       if (check.id === 'tool-failure-hold') {
         const { textOnly, nearMiss } = state.controls;
@@ -464,6 +492,7 @@ export async function createDriver({ jobId, runId, registration }) {
     async teardown() {
       await context?.close();
       await browser?.close();
+      if (state.provisionImage) { try { execFileSync('docker', ['rmi', '-f', state.provisionImage], { stdio: 'ignore' }); } catch { /* best effort */ } }
       await fetch(`${input.fixtureOrigin}/scenarios/${input.providerNamespace}`, { method: 'DELETE' }).catch(() => {});
       await pool.end().catch(() => {});
       return { qualified: !browser || !browser.isConnected() };
