@@ -805,7 +805,13 @@ logging:
 # Explicit development-only memory storage requires allow_non_durable_store: true.
 # Credentials use ${ENV}, vault://, aws-sm://, gcp-sm:// or azure-kv://.
 # Credential rotation requires a restart; disabled routes return 501 not_configured.
-# Runtime kill switch: video:v1:killswitch (admin /-/admin/video/); config is startup-only.
+# Runtime kill switch: <video namespace>killswitch via admin /-/admin/video/.
+# The default Redis prefix (agentcc: or empty) retains video:v1:. Custom Redis
+# prefixes use <redis.prefix>video:v1: for every video queue, limit and sweeper.
+# Before upgrading an existing custom-prefix installation, drain its legacy
+# video:v1: jobs with the previous gateway release and the same configuration.
+# Legacy shared jobs cannot be safely attributed/migrated between installations.
+# Kill switch config is startup-only; use the admin endpoint at runtime.
 # Canonical requests are stored plain in Redis under the metadata retention.
 # video:
 #   enabled: false

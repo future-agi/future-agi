@@ -27,7 +27,8 @@ func (s *Server) configureVideo(client *redisstate.Client) error {
 		prefix = "agentcc:"
 	}
 	budget := redisstate.NewBudgetStore(client, prefix+"budget:")
-	opts := video.StoreOptions{Budget: budget, IdempotencyTTL: cfg.Retention.Idempotency}
+	videoPrefix := video.Namespace(s.cfg.Redis.Prefix)
+	opts := video.StoreOptions{Prefix: videoPrefix, Budget: budget, IdempotencyTTL: cfg.Retention.Idempotency}
 	if cfg.Store == "memory" && cfg.AllowNonDurableStore {
 		s.handlers.videoStore = video.NewMemoryStoreWithOptions(opts)
 	} else {
@@ -54,7 +55,7 @@ func (s *Server) configureVideo(client *redisstate.Client) error {
 	adapters := provider.NewRegistry()
 	host := s.cfg.Server.Host
 	host = strings.Trim(host, "[]")
-	svc, err := lifecycle.New(lifecycle.Options{Config: cfg, Store: s.handlers.videoStore, Redis: client, Budget: budget, Adapters: adapters, Artifacts: blobs, Engine: s.engine, DeniedHosts: []string{host, "localhost"}})
+	svc, err := lifecycle.New(lifecycle.Options{Prefix: videoPrefix, Config: cfg, Store: s.handlers.videoStore, Redis: client, Budget: budget, Adapters: adapters, Artifacts: blobs, Engine: s.engine, DeniedHosts: []string{host, "localhost"}})
 	if err != nil {
 		return err
 	}

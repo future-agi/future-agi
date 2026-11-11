@@ -130,5 +130,8 @@ func validateCompletion(old, next *VideoJob) error {
 // Only the lifecycle sets this after a capability-proven absence. The public
 // transition table still refuses an unqualified retry of an uncertain submit.
 func authorizedResubmit(old, next *VideoJob) bool {
-	return old.Status == StatusSubmissionUnknown && next.Status == StatusSubmitting && next.Phase == PhasePrepared && next.ResubmitAuthorized && old.ProviderJobID == ""
+	if next.Status != StatusSubmitting || next.Phase != PhasePrepared || !next.ResubmitAuthorized || old.ProviderJobID != "" || next.ProviderJobID != "" {
+		return false
+	}
+	return old.Status == StatusSubmissionUnknown || old.Status == StatusSubmitting && old.Phase == PhaseCalling && next.ReconcileReason == "submit_not_sent" && !next.UpstreamMayContinue && next.AttemptID == old.AttemptID
 }

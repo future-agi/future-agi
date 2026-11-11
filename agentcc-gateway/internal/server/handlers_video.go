@@ -16,6 +16,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/otel"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	budgetplugin "github.com/futureagi/agentcc-gateway/internal/plugins/budget"
+	ipaclplugin "github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
@@ -72,6 +73,12 @@ func (h *Handlers) videoIdentity(r *http.Request, rc *models.RequestContext) err
 		return &models.APIError{Status: 403, Type: models.ErrTypeInvalidRequest, Code: "missing_org", Message: "Video generation requires an organization API key"}
 	}
 	rc.Metadata["org_id"] = org
+	// Enforce network access on every video route, including reads and mutations.
+	// Build from current org configuration so a revoked network is not cached.
+	// This is independent of whether generation's global ACL plugin is enabled.
+	if result := ipaclplugin.New(h.videoIPACL, h.tenantStore).ProcessRequest(r.Context(), rc); result.Error != nil {
+		return result.Error
+	}
 	return nil
 }
 func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,7 @@ const WireOpenAI = "openai"
 // gateway extensions audio, resolution and aspect_ratio let callers reach
 // provider settings that seconds/size cannot express.
 type OpenAICreate struct {
+	secondsPresent               bool
 	Model, Prompt, Seconds, Size string
 	Resolution, AspectRatio      string
 	Audio                        *bool
@@ -229,6 +230,7 @@ func (c *OpenAICreate) set(k, v string) {
 	case "prompt":
 		c.Prompt = v
 	case "seconds":
+		c.secondsPresent = true
 		c.Seconds = v
 	case "size":
 		c.Size = v
@@ -344,7 +346,7 @@ func SizeFor(resolution, aspect string) string {
 // a first_frame input. Conflicting size and explicit tier/ratio fail closed.
 func (c OpenAICreate) Request() (Request, error) {
 	req := Request{Model: c.Model, Prompt: c.Prompt, Resolution: c.Resolution, AspectRatio: c.AspectRatio, Audio: c.Audio}
-	if c.Seconds != "" {
+	if c.secondsPresent || c.Seconds != "" {
 		n, err := strconv.Atoi(strings.TrimSpace(c.Seconds))
 		if err != nil || n <= 0 {
 			return Request{}, invalid("invalid_parameter", "seconds", "positive integer seconds required")

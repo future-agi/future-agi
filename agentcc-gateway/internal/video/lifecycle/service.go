@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -46,22 +47,25 @@ type Options struct {
 	DeniedHosts []string
 }
 type Service struct {
-	metrics          *metrics.Registry
-	exporter         otel.SpanExporter
-	telemetryService string
-	cfg              config.VideoConfig
-	store            video.Store
-	redis            *redisstate.Client
-	budget           *redisstate.BudgetStore
-	adapters         *provider.Registry
-	blobs            artifacts.Store
-	engine           *pipeline.Engine
-	clock            Clock
-	hooks            Hooks
-	prefix           string
-	limiter          *redisstate.RateLimiter
-	sweeper          *artifacts.Sweeper
-	deniedHosts      []string
+	metrics                           *metrics.Registry
+	metricsMu                         sync.Mutex
+	metricsCursor                     int64
+	metricsReserved, metricsUnsettled int64
+	exporter                          otel.SpanExporter
+	telemetryService                  string
+	cfg                               config.VideoConfig
+	store                             video.Store
+	redis                             *redisstate.Client
+	budget                            *redisstate.BudgetStore
+	adapters                          *provider.Registry
+	blobs                             artifacts.Store
+	engine                            *pipeline.Engine
+	clock                             Clock
+	hooks                             Hooks
+	prefix                            string
+	limiter                           *redisstate.RateLimiter
+	sweeper                           *artifacts.Sweeper
+	deniedHosts                       []string
 }
 
 func New(o Options) (*Service, error) {
@@ -180,6 +184,14 @@ func (s *Service) Killed(ctx context.Context) (bool, error) {
 func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req provider.Request, idem string, scopes []video.BudgetReservation) (video.AcceptResult, error) {
 	fail := func(e error) (video.AcceptResult, error) { return video.AcceptResult{}, e }
 	org := rc.Metadata["org_id"]
+	// This metadata is produced by the budget pre-plugin, never request JSON.
+	if raw := rc.Metadata["video_global_scopes"]; raw != "" {
+		var global []video.BudgetReservation
+		if err := json.Unmarshal([]byte(raw), &global); err != nil {
+			return fail(video.ErrStoreUnavailable)
+		}
+		scopes = append(append([]video.BudgetReservation(nil), scopes...), global...)
+	}
 	if org == "" {
 		return fail(api(403, "missing_org"))
 	}
@@ -267,6 +279,12 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 		return fail(err)
 	}
 	j := &video.VideoJob{ID: id, OrgID: org, KeyID: rc.Metadata["auth_key_id"], KeyType: rc.Metadata["key_type"], Creator: rc.Metadata["auth_key_owner"], Model: req.Model, Service: service, ModelID: resolved.ModelID, Region: resolved.Region, AccountRef: pc.AccountRef, CapabilityRevision: resolved.CapabilityRevision, RequestCanonical: canonical, Fingerprint: fp, Ingress: ingress, EndUserHash: endHash, CreatedAt: now, ExpiresAt: expires, SubmitBy: now.Add(s.cfg.Submit.Deadline), RetrySafe: true, CancelState: "none", ReconcileState: video.ReconcileNone, ClientMetadata: r.Metadata, TraceID: rc.TraceID}
+	j.BudgetIdentity = make(map[string]string)
+	for k, v := range rc.Metadata {
+		if k == "key_team" || k == "rbac_team" || k == "auth_key_owner" || k == "auth_key_name" || strings.HasPrefix(k, "tag:") {
+			j.BudgetIdentity[k] = v
+		}
+	}
 	j.StateChangedAt = now
 	j.Status = video.StatusSubmitting
 	j.Duration = r.DurationSeconds
@@ -293,7 +311,9 @@ func (s *Service) Accept(ctx context.Context, rc *models.RequestContext, req pro
 		keep = errors.Is(err, video.ErrReservationUncertain)
 		return fail(err)
 	}
-	keep = !result.Replay
+	// A lost create reply can replay this invocation's committed job.
+	// Only a different job ID owns a duplicate attempt whose uploads we discard.
+	keep = result.Job.ID == id
 	if result.Replay {
 		j.ID = result.Job.ID
 		j.TraceID = result.Job.TraceID
@@ -326,6 +346,13 @@ func (s *Service) ingress(ctx context.Context, id string, res *capability.Resolv
 		spec := res.Capability.Inputs[in.Role]
 		key := s.blobKey(id, fmt.Sprintf("input-%d", i))
 		sink := func(c context.Context, k string, r io.Reader) error {
+			// Register before the first possible commit. A process crash after Put
+			// must leave a recoverable expiry entry even without an accepted job.
+			if s.sweeper != nil {
+				if e := s.sweeper.Track(c, k, expiry); e != nil {
+					return e
+				}
+			}
 			_, e := s.blobs.Put(c, k, r, artifacts.Meta{ContentType: in.MediaType, ExpiresAt: expiry})
 			return e
 		}
@@ -362,11 +389,6 @@ func (s *Service) ingress(ctx context.Context, id string, res *capability.Resolv
 		in.Width = v.Width
 		in.Height = v.Height
 		in.DurationSeconds = v.DurationSeconds
-		if s.sweeper != nil {
-			if err = s.sweeper.Track(ctx, key, expiry); err != nil {
-				return out, err
-			}
-		}
 	}
 	return out, nil
 }

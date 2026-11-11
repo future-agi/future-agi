@@ -29,6 +29,21 @@ func (w *Worker) Start() {
 	w.done = make(chan struct{})
 	go func() {
 		defer close(w.done)
+		metricsDone := make(chan struct{})
+		go func() {
+			defer close(metricsDone)
+			tick := time.NewTicker(5 * time.Second)
+			defer tick.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					_ = w.s.RefreshMetrics(ctx)
+				}
+			}
+		}()
+		defer func() { cancel(); <-metricsDone }()
 		t := time.NewTicker(250 * time.Millisecond)
 		defer t.Stop()
 		for {
@@ -93,7 +108,7 @@ func (w *Worker) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.RefreshMetrics(ctx)
+	return nil
 }
 func (w *Worker) process(parent context.Context, c video.Claim) (err error) {
 	s := w.s

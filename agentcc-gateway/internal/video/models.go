@@ -10,6 +10,7 @@ import (
 
 // VideoJob represents a video generation job.
 type VideoJob struct {
+	BudgetIdentity     map[string]string     `json:"-" store:"budget_identity_json"`
 	StateChangedAt     time.Time             `json:"-" store:"state_changed_at"`
 	OrgMaxActive       int                   `json:"-" store:"org_max_active"`
 	AccountMaxActive   int                   `json:"-" store:"account_max_active"`

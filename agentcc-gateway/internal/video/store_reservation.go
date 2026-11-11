@@ -87,7 +87,7 @@ func (s *RedisStore) reserveAccept(ctx context.Context, j *VideoJob) (rollback, 
 	}
 	reserver := b.WithReservation("video-reserve:"+j.ID, j.CreatedAt, s.reservationGuard(j.ID), token)
 	for _, scope := range j.Reservations {
-		_, allowed, ok := reserver.CheckAndRecordSpend(j.OrgID, scope.Level, scope.Key, scope.Period, j.Model, float64(j.ReservedMicros)/1e6, scope.Limit, scope.ModelLimit)
+		_, allowed, ok := reserver.CheckAndRecordSpend(scope.BudgetOrg(j.OrgID), scope.Level, scope.Key, scope.Period, j.Model, float64(j.ReservedMicros)/1e6, scope.Limit, scope.ModelLimit)
 		if !ok {
 			return nil, nil, "", errors.Join(ErrStoreUnavailable, rollback())
 		}
@@ -113,12 +113,12 @@ func (s *RedisStore) recoverReservation(ctx context.Context, id string, b *redis
 	charged := b.WithOperation("video-reserve:"+id, r.At)
 	refund := b.WithOperation("video-refund:"+id, r.At)
 	for _, scope := range r.Scopes {
-		applied, e := charged.OperationApplied(ctx, r.Org, scope.Level, scope.Key, scope.Period)
+		applied, e := charged.OperationApplied(ctx, scope.BudgetOrg(r.Org), scope.Level, scope.Key, scope.Period)
 		if e != nil {
 			return errors.Join(ErrCompensationFailed, e)
 		}
 		if applied {
-			if _, ok := refund.RecordSpend(r.Org, scope.Level, scope.Key, scope.Period, r.Model, -float64(r.Micros)/1e6); !ok {
+			if _, ok := refund.RecordSpend(scope.BudgetOrg(r.Org), scope.Level, scope.Key, scope.Period, r.Model, -float64(r.Micros)/1e6); !ok {
 				return ErrCompensationFailed
 			}
 		}

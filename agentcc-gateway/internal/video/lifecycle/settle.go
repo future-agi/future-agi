@@ -141,7 +141,7 @@ func (s *Service) settle(ctx context.Context, j *video.VideoJob, l video.Lease) 
 		if s.budget == nil {
 			return video.ErrStoreUnavailable
 		}
-		_, ok := s.budget.WithOperation("video:"+j.ID+":settle", j.CreatedAt).RecordSpend(j.OrgID, scope.Level, scope.Key, scope.Period, j.Model, delta)
+		_, ok := s.budget.WithOperation("video:"+j.ID+":settle", j.CreatedAt).RecordSpend(scope.BudgetOrg(j.OrgID), scope.Level, scope.Key, scope.Period, j.Model, delta)
 		if !ok {
 			return video.ErrStoreUnavailable
 		}
@@ -167,6 +167,9 @@ func (s *Service) settle(ctx context.Context, j *video.VideoJob, l video.Lease) 
 			rc.Provider = j.Service
 			rc.TraceID = j.TraceID
 			rc.RequestID = j.ID
+			for k, v := range j.BudgetIdentity {
+				rc.Metadata[k] = v
+			}
 			rc.Metadata["org_id"] = j.OrgID
 			rc.Metadata["key_org_id"] = j.OrgID
 			rc.Metadata["auth_key_id"] = j.KeyID

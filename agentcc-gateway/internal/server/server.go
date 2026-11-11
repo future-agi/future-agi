@@ -237,6 +237,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
+	handlers.videoIPACL = cfg.IPACL
 	s.handlers = handlers
 
 	// Set up Files API store.

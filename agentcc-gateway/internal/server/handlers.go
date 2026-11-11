@@ -90,6 +90,7 @@ type Handlers struct {
 	fileStore *files.Store
 
 	// Video generation store.
+	videoIPACL    config.IPACLConfig
 	videoStore    video.Store
 	videoService  *lifecycle.Service
 	videoSyncWait time.Duration

@@ -2,6 +2,7 @@ package budget
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,12 +30,12 @@ type RedisBudgetBackend interface {
 // Plugin enforces hierarchical spend budgets as a pipeline plugin.
 // Priority 90: runs after auth (100) and RBAC (95).
 type Plugin struct {
-	tracker      *budgetpkg.Tracker
-	pricing      *PricingLookup
-	enabled      bool
-	tenantStore  *tenant.Store
-	redisBudget  RedisBudgetBackend // nil = local-only
-	orgCounters  sync.Map           // orgID -> *orgHierarchyCounters
+	tracker     *budgetpkg.Tracker
+	pricing     *PricingLookup
+	enabled     bool
+	tenantStore *tenant.Store
+	redisBudget RedisBudgetBackend // nil = local-only
+	orgCounters sync.Map           // orgID -> *orgHierarchyCounters
 
 	unpricedWarned      sync.Map     // model -> struct{}: models already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -47,6 +48,9 @@ const maxUnpricedWarnings = 1024
 // SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
 func (p *Plugin) SetRedisBudget(rb RedisBudgetBackend) {
 	p.redisBudget = rb
+	if p.tracker != nil {
+		p.tracker.SetGlobalBudgetBackend(rb)
+	}
 }
 
 // PricingLookup provides model pricing for independent cost calculation.
@@ -198,6 +202,14 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		}
 	}
 
+	if rc.EndpointType == "video" && p.enabled && p.tracker != nil {
+		scopes := p.videoScopes(rc)
+		if len(scopes) > 0 && (p.redisBudget == nil || !p.redisBudget.Available()) {
+			return pipeline.ResultError(&models.APIError{Status: 503, Type: models.ErrTypeServer, Code: "budget_store_unavailable", Message: "Durable video budget accounting required"})
+		}
+		data, _ := json.Marshal(scopes)
+		rc.Metadata["video_global_scopes"] = string(data)
+	}
 	// Per-org hierarchical budget check.
 	if p.tenantStore != nil {
 		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
@@ -394,6 +406,7 @@ func (p *Plugin) getCounterSpend(bc *orgBudgetCounter, period string, now time.T
 
 // ProcessResponse records actual spend against all applicable budgets.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Durable video settlement reconciles both global and tenant reservations.
 	if rc.Metadata["video_settlement"] == "direct" {
 		return pipeline.ResultContinue()
 	}

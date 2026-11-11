@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +51,7 @@ type Store interface {
 	Accept(context.Context, AcceptRequest) (AcceptResult, error)
 	GetAccounting(context.Context, string) (*VideoJob, error)
 	ListAccounting(context.Context) ([]*VideoJob, error)
+	ScanAccounting(context.Context, int64, int64) ([]*VideoJob, int64, error)
 	Lease(context.Context, string, string, time.Duration) (Lease, error)
 	Renew(context.Context, Lease, time.Duration) error
 	Release(context.Context, Lease) error
@@ -66,6 +69,7 @@ type BudgetRecorder interface {
 	RecordSpend(org, level, key, period, model string, cost float64) (float64, bool)
 }
 type BudgetReservation struct {
+	Global             bool `json:"Global,omitempty"`
 	Level, Key, Period string
 	Limit, ModelLimit  float64
 }
@@ -187,14 +191,14 @@ func reserve(opts StoreOptions, j *VideoJob) (func() error, error) {
 		var result error
 		for i := len(recorded) - 1; i >= 0; i-- {
 			s := recorded[i]
-			if _, ok := opts.Budget.RecordSpend(j.OrgID, s.Level, s.Key, s.Period, j.Model, -cost); !ok {
+			if _, ok := opts.Budget.RecordSpend(s.BudgetOrg(j.OrgID), s.Level, s.Key, s.Period, j.Model, -cost); !ok {
 				result = errors.Join(result, ErrCompensationFailed)
 			}
 		}
 		return result
 	}
 	for _, s := range j.Reservations {
-		_, allowed, ok := opts.Budget.CheckAndRecordSpend(j.OrgID, s.Level, s.Key, s.Period, j.Model, cost, s.Limit, s.ModelLimit)
+		_, allowed, ok := opts.Budget.CheckAndRecordSpend(s.BudgetOrg(j.OrgID), s.Level, s.Key, s.Period, j.Model, cost, s.Limit, s.ModelLimit)
 		if !ok {
 			return nil, errors.Join(ErrStoreUnavailable, rollback())
 		}
@@ -284,8 +288,28 @@ func filterJobs(all []*VideoJob, org string, f VideoListFilters) ([]*VideoJob, i
 	return out[f.Offset:end], n, nil
 }
 func validateImmutable(old, next *VideoJob) error {
-	if old.KeyID != next.KeyID || old.Creator != next.Creator || old.TariffRevision != next.TariffRevision || old.ReservedMicros != next.ReservedMicros || !old.CreatedAt.Equal(next.CreatedAt) || !old.SubmitBy.Equal(next.SubmitBy) || !old.RunBy.IsZero() && !old.RunBy.Equal(next.RunBy) || old.ProviderJobID != "" && old.ProviderJobID != next.ProviderJobID || old.ID != next.ID || old.OrgID != next.OrgID || old.Service != next.Service || old.ModelID != next.ModelID || old.Region != next.Region || old.AccountRef != next.AccountRef || old.Model != next.Model || old.CapabilityRevision != next.CapabilityRevision || old.Fingerprint != next.Fingerprint || old.IdemDigest != next.IdemDigest || old.IdemOp != next.IdemOp {
+	if !maps.Equal(old.BudgetIdentity, next.BudgetIdentity) || !slices.Equal(old.Reservations, next.Reservations) || old.KeyID != next.KeyID || old.Creator != next.Creator || old.TariffRevision != next.TariffRevision || old.ReservedMicros != next.ReservedMicros || !old.CreatedAt.Equal(next.CreatedAt) || !old.SubmitBy.Equal(next.SubmitBy) || !old.RunBy.IsZero() && !old.RunBy.Equal(next.RunBy) || old.ProviderJobID != "" && old.ProviderJobID != next.ProviderJobID || old.ID != next.ID || old.OrgID != next.OrgID || old.Service != next.Service || old.ModelID != next.ModelID || old.Region != next.Region || old.AccountRef != next.AccountRef || old.Model != next.Model || old.CapabilityRevision != next.CapabilityRevision || old.Fingerprint != next.Fingerprint || old.IdemDigest != next.IdemDigest || old.IdemOp != next.IdemOp {
 		return fmt.Errorf("video pinned identity is immutable")
 	}
 	return nil
+}
+
+// Namespace preserves the historical default deployment namespace. A custom
+// Redis prefix opts into an isolated ledger. Legacy unprefixed jobs cannot be
+// attributed to a custom installation safely: drain them using the previous gateway
+// release with the same Redis/budget configuration before upgrading; never automatically adopt another ledger.
+func Namespace(redisPrefix string) string {
+	if redisPrefix == "" || redisPrefix == "agentcc:" {
+		return "video:v1:"
+	}
+	return redisPrefix + "video:v1:"
+}
+
+// BudgetOrg maps a global scope to a separate accounting namespace. No tenant
+// can select these counters through its own org/team/user/key/tag hierarchy.
+func (s BudgetReservation) BudgetOrg(org string) string {
+	if s.Global {
+		return ""
+	}
+	return org
 }

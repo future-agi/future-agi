@@ -130,6 +130,7 @@ func (s *Service) submitError(ctx context.Context, j *video.VideoJob, l video.Le
 		j.Status = video.StatusSubmitting
 		j.Phase = video.PhasePrepared
 		j.ResubmitAuthorized = true
+		j.ReconcileReason = "submit_not_sent"
 		j.ReconcileState = video.ReconcileNone
 		j.UpstreamMayContinue = false
 		return s.saveLater(ctx, j, l, time.Second)

@@ -105,11 +105,13 @@ func (s *Service) RefreshMetrics(ctx context.Context) error {
 	if s.metrics == nil {
 		return nil
 	}
-	jobs, e := s.store.ListAccounting(ctx)
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	jobs, next, e := s.store.ScanAccounting(ctx, s.metricsCursor, 128)
 	if e != nil {
 		return e
 	}
-	var reserved, unsettled int64
+	reserved, unsettled := s.metricsReserved, s.metricsUnsettled
 	for _, j := range jobs {
 		switch j.SettlementState {
 		case video.SettlementReserved:
@@ -118,7 +120,12 @@ func (s *Service) RefreshMetrics(ctx context.Context) error {
 			unsettled += j.ReservedMicros
 		}
 	}
-	s.metrics.VideoBalances(reserved, unsettled)
+	s.metricsCursor = next
+	s.metricsReserved, s.metricsUnsettled = reserved, unsettled
+	if next == 0 {
+		s.metrics.VideoBalances(reserved, unsettled)
+		s.metricsReserved, s.metricsUnsettled = 0, 0
+	}
 	return nil
 }
 func (s *Service) claimMetrics(c video.Claim) {

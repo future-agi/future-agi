@@ -147,6 +147,9 @@ local d = cjson.decode(ARGV[1])
 for _,field in ipairs({'id','org_id','service','model_id','region','account_ref','model','capability_revision','fingerprint','idem_digest','idem_op','key_id','creator','tariff_revision','reserved_micros','created_at','submit_by'}) do
  if (redis.call('HGET',KEYS[1],field) or '') ~= (d[field] or '') then return {-5} end
 end
+for _,field in ipairs({'budget_identity_json','reservations_json'}) do
+ if (redis.call('HGET',KEYS[1],field) or 'null') ~= (d[field] or 'null') then return {-5} end
+end
 local run_by = redis.call('HGET',KEYS[1],'run_by')
 if run_by and run_by ~= '0' and run_by ~= d.run_by then return {-5} end
 local provider_id = redis.call('HGET',KEYS[1],'provider_job_id')
@@ -162,7 +165,9 @@ elseif old == 'submitting' and phase == 'calling' then allowed = status == 'queu
 elseif old == 'submission_unknown' then allowed = status == 'queued' or status == 'running' or status == 'completed' or status == 'failed' or status == 'cancelled'
 elseif old == 'queued' then allowed = status == 'running' or status == 'completed' or status == 'failed' or status == 'cancelled'
 elseif old == 'running' then allowed = status == 'completed' or status == 'failed' or status == 'cancelled' end
-if old == 'submission_unknown' and status == 'submitting' and d.phase == 'prepared' and d.resubmit_authorized == 'true' then allowed = true end
+if status == 'submitting' and d.phase == 'prepared' and d.resubmit_authorized == 'true' and (provider_id or '') == '' and (d.provider_job_id or '') == '' then
+ if old == 'submission_unknown' or (old == 'submitting' and phase == 'calling' and d.reconcile_reason == 'submit_not_sent' and d.upstream_may_continue == 'false' and d.attempt_id == redis.call('HGET',KEYS[1],'attempt_id')) then allowed = true end
+end
 if not allowed then return {-4} end
 local deleted = redis.call('HGET',KEYS[1],'deleted_at')
 if deleted and deleted ~= '' then d.deleted_at = deleted end
@@ -706,4 +711,27 @@ func (s *RedisStore) ListAccounting(ctx context.Context) ([]*VideoJob, error) {
 		return nil, err
 	}
 	return s.readJobs(ctx, ids)
+}
+
+// ScanAccounting reads at most limit records. Gauges use an incremental,
+// eventually consistent snapshot; lifecycle decisions never depend on it.
+func (s *RedisStore) ScanAccounting(ctx context.Context, offset, limit int64) ([]*VideoJob, int64, error) {
+	if offset < 0 || limit < 1 || limit > 128 {
+		return nil, 0, fmt.Errorf("invalid accounting page")
+	}
+	var ids []string
+	err := s.do(func(c redis.UniversalClient) error {
+		var e error
+		ids, e = c.ZRange(ctx, s.opts.Prefix+"expire", offset, offset+limit-1).Result()
+		return e
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	jobs, err := s.readJobs(ctx, ids)
+	next := int64(0)
+	if int64(len(ids)) == limit {
+		next = offset + limit
+	}
+	return jobs, next, err
 }

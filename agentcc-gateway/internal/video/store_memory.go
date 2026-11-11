@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -406,4 +407,33 @@ func (s *MemoryStore) ListAccounting(ctx context.Context) ([]*VideoJob, error) {
 		}
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) ScanAccounting(ctx context.Context, offset, limit int64) ([]*VideoJob, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if offset < 0 || limit < 1 || limit > 128 {
+		return nil, 0, fmt.Errorf("invalid accounting page")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.jobs))
+	for id := range s.jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := []*VideoJob{}
+	for i := offset; i < int64(len(ids)) && i < offset+limit; i++ {
+		j, err := cloneJob(s.jobs[ids[i]])
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, j)
+	}
+	next := int64(0)
+	if offset+limit < int64(len(ids)) {
+		next = offset + limit
+	}
+	return out, next, nil
 }

@@ -27,6 +27,18 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 		lb.counter.modelSpend = make(map[string]float64)
 	}
 
+	if backend, ok := t.durable.(interface {
+		SeedSpendFloor(string, string, string, string, float64, map[string]float64) bool
+	}); ok {
+		if level == "org" {
+			key = ""
+		}
+		// Logs include video costs already in the shared ledger. Seed a floor, not
+		// a second additive balance, and never erase a live reservation/receipt.
+		if backend.SeedSpendFloor("", "global_"+level, key, lb.period, totalSpend, modelSpend) {
+			return
+		}
+	}
 	lb.counter.totalSpend = totalSpend
 	for m, s := range modelSpend {
 		lb.counter.modelSpend[m] = s

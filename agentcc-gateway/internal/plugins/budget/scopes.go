@@ -59,3 +59,15 @@ func HierarchyScopes(b *tenant.BudgetsConfig, rc *models.RequestContext) []video
 	}
 	return scopes
 }
+
+// videoScopes snapshots the same authenticated team/user/key/tag identity used
+// by CheckBudget. Global scopes have their own keys, never tenant counters.
+func (p *Plugin) videoScopes(rc *models.RequestContext) []video.BudgetReservation {
+	team, user, key, model := extractIdentity(rc)
+	scopes := p.tracker.VideoScopes(team, user, key, model, extractTags(rc))
+	out := make([]video.BudgetReservation, 0, len(scopes))
+	for _, s := range scopes {
+		out = append(out, video.BudgetReservation{Global: true, Level: "global_" + s.Level, Key: s.Key, Period: s.Period, Limit: s.Limit, ModelLimit: s.ModelLimit})
+	}
+	return out
+}
