@@ -33,7 +33,7 @@ test('all six jobs register existing prerequisite flows without claiming complet
   }
 });
 
-for (const jobId of ['J1', 'J2', 'J3', 'J6']) {
+for (const jobId of ['J1', 'J2', 'J3']) {
   test(`${jobId} dispatcher records unavailable cold/configured runs with null counts and nonzero exit`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'skills-dispatch-'));
     try {
@@ -59,6 +59,24 @@ for (const jobId of ['J1', 'J2', 'J3', 'J6']) {
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 }
+
+test('J6 registered driver refuses to run without its private owned-stack input and invents no ledger', async () => {
+  const previous = process.env.J6_DRIVER_INPUT;
+  delete process.env.J6_DRIVER_INPUT;
+  const directory = await mkdtemp(join(tmpdir(), 'skills-j6-dispatch-'));
+  try {
+    for (const cohort of ['cold', 'configured']) {
+      const path = join(directory, `${cohort}-input.json`);
+      await writeFile(path, JSON.stringify({ job: 'J6', cohort }));
+      // The driver needs its private input (and, for cold, an application qualification it does not implement): no report.
+      await assert.rejects(main(['run', 'J6', 'missing', path, 'registered', join(directory, cohort)]));
+      await assert.rejects(readdir(join(directory, cohort)), { code: 'ENOENT' });
+    }
+  } finally {
+    if (previous !== undefined) process.env.J6_DRIVER_INPUT = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('dispatcher refuses unknown jobs instead of resolving preregistration paths', async () => {
   await assert.rejects(createRegisteredDriver({ jobId: 'J7', runId: 'invalid', registration: {} }), /Unknown benchmark job/);
