@@ -32,7 +32,7 @@ export function assertMigrationExport({ archive, mapping, version, row, files, s
  * establish native delivery. The registered runner must reach them in order;
  * isolated tests of this helper remain explicitly prerequisite-only. */
 export async function performUpdate(stage, tools, state) {
-  const { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, choose, go } = tools;
+  const { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, go } = tools;
   if (!['second-import', 'preserve-draft', 'export'].includes(stage.id)) return false;
   requireValue(input.update?.exchange && input.update?.name && input.update?.files, 'Preregistered synthetic source revision two is required');
   const row = imported.find(item => item.name === input.update.name);
@@ -54,8 +54,12 @@ export async function performUpdate(stage, tools, state) {
     assert.deepEqual(await read(`${destination}/labels/`, signal), []);
   };
   const edit = async (page, files) => {
-    await go(page, `/dashboard/skills/${id}/edit`, 'diverged-leaf-editor');
-    await operator.click(page.getByRole('tablist', { name: 'Skill document view' }).getByRole('tab', { name: 'Source', exact: true }), 'source-view');
+    // Only navigate and switch to Source when the owner is not already there:
+    // after publishing, the editor stays open in the Source view.
+    const source = page.getByRole('tablist', { name: 'Skill document view' }).getByRole('tab', { name: 'Source', exact: true });
+    const onEditor = page.url().endsWith(`/dashboard/skills/${id}/edit`) && await source.count() > 0;
+    if (!onEditor) await go(page, `/dashboard/skills/${id}/edit`, 'diverged-leaf-editor');
+    if (!(onEditor && await source.getAttribute('aria-selected') === 'true')) await operator.click(source, 'source-view');
     const root = files.find(file => file.path === 'SKILL.md');
     requireValue(root, 'Explicit SKILL.md revision required');
     await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'edit-policy-source' }, async () => {
@@ -111,16 +115,17 @@ export async function performUpdate(stage, tools, state) {
     await operator.recoveryDecision('preserve-before-source-switch', async () => {
       await operator.transition('draft-preservation', () => click(page, 'button', `Preserve draft for ${row.name}`));
       await expect(page.getByRole('heading', { name: 'Preserve your draft', exact: true })).toBeVisible();
-      const download = page.waitForEvent('download');
-      await click(page, 'button', 'Download unsent edits');
-      const path = resolve(output, 'personal-draft.json');
-      await (await download).saveAs(path);
-      state.downloaded = JSON.parse(await readFile(path, 'utf8'));
-      assert.deepEqual(state.downloaded.files, input.update.personal);
+      // Every personal edit is already saved on the server (asserted when it was
+      // made), so the private checkpoint is the preservation; there are no
+      // unsent edits to download.
       await operator.click(page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }), 'confirm-checkpoint-and-suspend');
       await click(page, 'button', 'Preserve and suspend draft');
       await expect(page).toHaveURL(/\/dashboard\/skills$/);
     }, decision);
+    // Independent API read: the retained checkpoint is exactly the personal draft.
+    const checkpoints = (await read(`${id}/draft/checkpoints/?page_size=100`, signal)).results;
+    state.checkpoint = checkpoints.find(item => item.reason === 'suspension' && item.draft_revision === state.personal.revision);
+    requireValue(state.checkpoint && state.checkpoint.digest === state.personal.recovery_digest, 'The personal draft must be retained as a private checkpoint');
     // Suspension returns to the same retained review: the immutable plan and
     // fingerprint are reloaded with live destination/draft state, no re-upload.
     await expect(page.getByRole('heading', { name: 'Review all items', exact: true })).toBeVisible();
@@ -130,11 +135,13 @@ export async function performUpdate(stage, tools, state) {
     // The diverged item is an exception: the owner inspects Base/Source/Hub and
     // chooses replacement explicitly; the unchanged-Hub item has the safe default.
     await expect(page.getByText('Source and Hub both changed. Choose keep or replace; nothing is merged.', { exact: true })).toBeVisible();
-    await operator.click(page.getByText('Inspect Base, Source and Hub differences', { exact: true }), 'inspect-base-source-hub');
+    // The exception's Base/Source/Hub differences are already open in the row.
     await operator.review('base-source-hub-differences', names, [row.name], async () => {
       await expect(page.getByRole('table', { name: 'Retained migration items' }).getByText(/^SKILL\.md · /).first()).toBeVisible();
     }, { packet_sha256: digest(fresh), preconditions_sha256: digest(state.personal) });
-    await choose(page, `Decision for ${row.name}`, 'Replace with reviewed source');
+    const decisionGroup = page.getByRole('radiogroup', { name: `Decision for ${row.name}`, exact: true });
+    await expect(decisionGroup.getByRole('radio', { name: 'Replace with reviewed source', exact: true })).not.toBeChecked();
+    await operator.click(decisionGroup.getByRole('radio', { name: 'Replace with reviewed source', exact: true }), 'choose-replace');
     await operator.click(page.getByRole('checkbox', { name: /^I confirm my rights to copy all 2 items/ }), 'confirm-source-rights');
     await ledger.measure({ dimension: 'A', primitive: 'approve', actor: 'owner', step: stage.id, phase: stage.phase, target: 'replace-and-publish-reviewed-set',
       items: names, exceptionItems: [row.name], decision: { packet_sha256: digest(fresh), preconditions_sha256: digest(fresh.fingerprint) } }, async () => {
@@ -156,10 +163,10 @@ export async function performUpdate(stage, tools, state) {
     state.updated = updated;
     state.fresh = fresh;
     state.receipts = receipts;
-    await receipt('api', { fresh, updated, receipts, personal_download_sha256: digest(state.downloaded) }, decision);
+    await receipt('api', { fresh, updated, receipts, personal_checkpoint: { id: state.checkpoint.id, digest: state.checkpoint.digest } }, decision);
     return true;
   }
-  requireValue(state.updated?.length && state.downloaded, 'Reviewed update and preserved personal draft must precede export');
+  requireValue(state.updated?.length && state.checkpoint, 'Reviewed update and preserved personal draft must precede export');
   // One export of every linked skill's current version from the exact context,
   // each nested archive byte-identical to its single-version export.
   const contextId = tools.contextId();

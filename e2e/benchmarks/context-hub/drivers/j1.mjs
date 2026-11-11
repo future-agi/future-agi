@@ -83,13 +83,25 @@ export async function createDriver({ jobId, runId, registration }) {
   const baseArgs = ['--folder', input.folder, '--langfuse', input.exchange, '--agents', input.agents,
     '--name', input.contextName, '--description', input.description,
     '--source-origin', 'local:synthetic-j1', '--source-project', input.sourceProject, '--source-revision', 'v1'];
-  const local = async (operator, selected) => {
+  // One inventory command also writes the private migration packet the browser
+  // review consumes, so no source is chosen twice and no identity is copied.
+  const packetPath = resolve(output, 'migration-packet.json');
+  const local = async operator => {
     await terminal(operator);
     const result = await operator.command('local-library-inventory', 'bash', [resolve(input.productRoot, 'bin/skills-inventory'), ...baseArgs,
-      ...(selected ? selected.flatMap(key => ['--select', key]) : [])], {
+      '--packet', packetPath], {
       cwd: input.productRoot, env: { PATH: process.env.PATH, SKILLS_INVENTORY_PYTHON: input.python },
     });
-    return JSON.parse(result.stdout);
+    const report = JSON.parse(result.stdout);
+    requireValue(report.migration_packet?.sha256 === sha256(await readFile(packetPath)), 'The packet must be the one this inventory wrote');
+    return report;
+  };
+  const supportedSubset = report => {
+    const proposed = report.proposed_supported_subset;
+    assert.equal(proposed.compiled_closure.fits, true);
+    assert.equal(proposed.excluded.length, 1);
+    assert.deepEqual([...proposed.selected].sort(), [...input.selected].sort());
+    return proposed;
   };
   const supportedNames = () => input.names.slice(0, 14);
   const sourceHash = async () => {
@@ -122,16 +134,6 @@ export async function createDriver({ jobId, runId, registration }) {
       requireValue(!signal.aborted, 'Journey cancelled');
       const operator = new MeasuredOperator({ ledger, actor: 'owner', step: stage.id, phase: stage.phase, signal });
       const click = (page, role, name) => operator.click(page.getByRole(role, { name, exact: true }), name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, ''));
-      const choose = async (page, label, value) => {
-        // The existing context-link fields render visible labels without an
-        // accessible combobox name. Locate their visible FormControl, as a
-        // mouse user does; this does not qualify screen-reader accessibility.
-        const field = ['Update policy', 'Published leaf skill'].includes(label)
-          ? page.locator('.MuiFormControl-root').filter({ has: page.getByText(label, { exact: true }) }).getByRole('combobox')
-          : page.getByRole('combobox', { name: label, exact: true });
-        await operator.click(field, 'choose-field');
-        await operator.click(page.getByRole('option', { name: value, exact: true }), 'select-option');
-      };
       const go = (page, path, target) => { place = 'browser'; return operator.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'owner', step: stage.id, phase: stage.phase, target }, () => page.goto(path))); };
       const receipt = async (source, value, decision = undefined) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: await record(stage.id, value), actionSequences: [], ...(decision ? { decision } : {}) });
       const abort = () => { void context?.close().catch(() => {}); };
@@ -150,14 +152,12 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'choose-subset') {
           requireValue(inventory, 'Inventory must precede subset selection');
-          const selected = inventory.members.filter(member => !member.blockers.length).map(member => member.key);
+          // The same report already projects the supported subset's compiled
+          // closure; the owner reviews it with the blocked member as the exception.
           const decision = { packet_sha256: digest(inventory), preconditions_sha256: digest(inventory.members.map(member => member.manifest_digest)) };
           await operator.review('supported-subset', inventory.members.map((member, i) => member.blockers.length ? 'binary-member' : `member-${i}`), ['binary-member'], async () => {
-            assert.equal(selected.length, 14);
+            assert.equal(supportedSubset(inventory).selected.length, 14);
           }, decision);
-          inventory = await local(operator, selected);
-          assert.equal(inventory.compiled_closure.fits, true);
-          assert.equal(inventory.excluded.length, 1);
           await receipt('filesystem', inventory, decision);
           return;
         }
@@ -165,32 +165,34 @@ export async function createDriver({ jobId, runId, registration }) {
           if (!inventory) {
             // Configured runs still measure any fresh preflight; a prior report
             // cannot be silently treated as an action-free current inventory.
-            inventory = await local(operator, input.selected);
-            assert.equal(inventory.compiled_closure.fits, true);
+            inventory = await local(operator);
+            supportedSubset(inventory);
             ledger.fault('unsupported-member', 'binary-member');
           }
-          // Both retained sources are previewed in ONE import session and reviewed
-          // together. The exchange format is the visible preselected default and
-          // choosing a private folder selects the folder format itself.
+          // Both retained sources come from ONE packet chosen in ONE import session
+          // and are reviewed together. Identities travel inside the packet.
           const page = await newPage();
           await go(page, '/dashboard/skills', 'migration-library');
           await operator.click(page.getByRole('button', { name: /^(Import a folder or ZIP|Import)$/ }), 'open-import');
           await click(page, 'tab', 'Retained migration');
-          for (const kind of ['exchange', 'folder']) {
-            await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-source-input' }, () => page.getByLabel(kind === 'exchange' ? 'Retained source files' : 'Retained private folder', { exact: true }).setInputFiles(kind === 'exchange' ? input.exchange : input.folder));
-            // The identities come from the terminal inventory report: a manual
-            // information transfer into the browser form (H), plus the field edit (A).
-            if (kind === 'folder') await operator.handoff('inventory-identities-to-import-form', async () => {});
-            if (kind === 'folder') await operator.fill(page.getByLabel('Immutable source identities JSON', { exact: true }), JSON.stringify(inventory.folder_upload_source_identities), 'source-identity-map');
-            const preview = page.waitForResponse(response => response.url().includes('/intake/') && response.url().endsWith('/preview/') && response.request().method() === 'POST');
-            await click(page, 'button', 'Preview retained migration');
-            const response = await preview;
+          const previews = [];
+          const onPreview = response => {
+            const url = response.url();
+            if (response.request().method() === 'POST' && url.includes('/intake/') && url.endsWith('/preview/')) previews.push(response);
+          };
+          page.on('response', onPreview);
+          await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: 'select-inventory-packet' },
+            () => page.getByLabel('Inventory migration packet', { exact: true }).setInputFiles(packetPath));
+          await expect.poll(() => previews.length).toBe(2);
+          page.off('response', onPreview);
+          for (const response of previews) {
             assert.equal(response.status(), 200);
             const result = (await response.json()).result;
             const plan = await read(`intake/${result.id}/`, signal);
             assert.equal(plan.id, result.id);
-            plans.push({ kind, page, plan });
+            plans.push({ kind: response.url().endsWith('/langfuse/preview/') ? 'exchange' : 'folder', page, plan });
           }
+          assert.deepEqual(plans.map(({ kind }) => kind), ['exchange', 'folder']);
           await expect(page.getByRole('heading', { name: 'Review all items', exact: true })).toBeVisible();
           await expect(page.getByRole('table', { name: 'Retained migration items' }).getByRole('row')).toHaveCount(16);
           await page.screenshot({ path: resolve(output, 'shots', 'preview-reviewed-set.png'), fullPage: true });
@@ -253,46 +255,44 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'assemble-context') {
-          // The published set is carried forward as proposed pinned links; the
-          // owner still writes AGENTS.md, previews the exact resolution and accepts it.
+          // The packet's proposed context (name, purpose, AGENTS.md from the local
+          // inventory) is assembled in the same review over the published set.
           const page = plans[0].page;
           lastPage = page;
-          await operator.transition('context-from-migration', () => click(page, 'button', 'Create agent context from these skills'));
-          await expect(page.getByText(/14 published skills from your migration will be proposed/)).toBeVisible();
-          await operator.fill(page.getByLabel('AGENTS.md', { exact: true }), await readFile(input.agents, 'utf8'), 'standing-instructions');
-          await operator.fill(page.getByLabel('Immutable name', { exact: true }), input.contextName, 'context-name');
-          await operator.fill(page.getByLabel('Purpose', { exact: true }), input.description, 'context-purpose');
+          await expect(page.getByRole('heading', { name: 'Agent context from this migration', exact: true })).toBeVisible();
+          // Prefilled values are only free if they are what the owner wants.
+          assert.equal(await page.getByLabel('Immutable name', { exact: true }).inputValue(), input.contextName);
+          assert.equal(await page.getByLabel('Purpose', { exact: true }).inputValue(), input.description);
+          assert.equal(await page.getByLabel('AGENTS.md', { exact: true }).inputValue(), await readFile(input.agents, 'utf8'));
           const created = page.waitForResponse(res => res.url().endsWith('/contexts/') && res.request().method() === 'POST');
-          await click(page, 'button', 'Create draft');
-          const response = await created;
-          assert.equal(response.status(), 201);
-          const createdReceipt = (await response.json()).result;
+          const previewed = page.waitForResponse(res => res.url().endsWith('/dependencies/preview/') && res.request().method() === 'POST');
+          await click(page, 'button', 'Preview agent context');
+          const createdResponse = await created;
+          assert.equal(createdResponse.status(), 201);
+          const createdReceipt = (await createdResponse.json()).result;
           contextId = createdReceipt.context_id ?? createdReceipt.context?.id;
           requireValue(contextId, 'Context creation must retain an identity');
-          await expect(page.getByText(/14 skills from your migration are proposed/)).toBeVisible();
-          // The read-only dependency preview resolves on arrival; acceptance stays explicit.
-          await expect(page.getByText(/^Compiled candidate /)).toBeVisible();
-          await operator.click(page.getByRole('checkbox', { name: 'Accept these exact resolved versions and selector policies.', exact: true }), 'accept-pinned-links');
-          await click(page, 'button', 'Apply selected updates to draft');
-          await expect(page.getByRole('heading', { name: 'Linked skills · 14 accepted locks', exact: true })).toBeVisible();
-          await click(page, 'button', 'Review changes');
-          await expect(page.getByText('Immutable candidate', { exact: true })).toBeVisible();
-          const reviewCandidate = async () => {
-            const reviewed = page.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
-            if (!(await reviewed.isChecked())) await operator.click(reviewed, 'review-context-preconditions');
-            const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
-            if (await warning.count() && !(await warning.isChecked())) await operator.click(warning, 'acknowledge-context-warnings');
-          };
-          await reviewCandidate();
-          const acknowledge = page.getByRole('button', { name: 'Acknowledge reviewed head', exact: true });
-          if (await acknowledge.count()) {
-            await operator.click(acknowledge, 'acknowledge-current-head');
-            await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
-            await reviewCandidate();
-          }
+          const previewResponse = await previewed;
+          assert.equal(previewResponse.status(), 200);
+          const preview = (await previewResponse.json()).result;
+          await expect(page.getByRole('table', { name: 'Pinned links' }).getByRole('row')).toHaveCount(15);
+          // Nothing is linked yet: the draft holds only AGENTS.md until acceptance.
+          const draft = await read(`contexts/${contextId}/draft/`, signal);
+          assert.equal(draft.resolved_lock.links.length, 0);
+          assert.deepEqual(preview.resolved_lock.links.map(link => link.skill_id).sort(), imported.map(row => row.result.resource_id).sort());
+          const decision = { packet_sha256: digest(preview), preconditions_sha256: digest({ revision: draft.revision, files: draft.files }) };
+          await operator.review('agent-context-candidate', preview.resolved_lock.links.map(link => link.mount), [], async () => {
+            assert.ok(preview.resolved_lock.links.every(link => link.version === 1 && link.requested.version === 1));
+            await expect(page.getByText(`Compiled candidate ${preview.candidate_digest} · 14 pinned links · private draft of ${input.contextName}`, { exact: true })).toBeVisible();
+          }, decision);
+          await operator.click(page.getByRole('checkbox', { name: 'Accept these 14 exact pinned versions and this compiled candidate.', exact: true }), 'accept-pinned-candidate');
+          const warning = page.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+          if (await warning.count()) await operator.click(warning, 'acknowledge-context-warnings');
           const published = page.waitForResponse(res => res.url().endsWith(`/contexts/${contextId}/draft/publish/`) && res.request().method() === 'POST');
-          await operator.click(page.getByRole('button', { name: 'Publish version', exact: true }), 'publish-context');
+          await ledger.measure({ dimension: 'A', primitive: 'approve', actor: 'owner', step: stage.id, phase: stage.phase, target: 'publish-agent-context',
+            items: preview.resolved_lock.links.map(link => link.mount), exceptionItems: [], decision }, () => page.getByRole('button', { name: 'Publish agent context', exact: true }).click());
           assert.equal((await published).status(), 201);
+          await expect(page.getByText(/^Published .* v1 · sha256:[a-f0-9]{64}\. No labels moved; production is unchanged\.$/)).toBeVisible();
           candidate = await read(`contexts/${contextId}/versions/1/inspection/`, signal);
           assert.deepEqual(candidate.descriptor.links.map(link => link.skill_id).sort(), imported.map(row => row.result.resource_id).sort());
           assert.ok(candidate.descriptor.links.every(link => link.version === 1 && link.requested.version === 1));
@@ -310,17 +310,18 @@ export async function createDriver({ jobId, runId, registration }) {
           assert.equal(manifest.length, inventory.compiled_closure.file_count);
           assert.deepEqual(manifest.map(file => file.path).sort(), [...inventory.compiled_closure.paths].sort());
           assert.deepEqual((await read(`contexts/${contextId}/`, signal)).release_state.labels, []);
-          await receipt('api', { ...candidate, complete_manifest: manifest });
+          assert.equal(candidate.manifest.digest, preview.candidate_digest, 'The published context must be the reviewed candidate');
+          await page.screenshot({ path: resolve(output, 'shots', 'published-agent-context.png'), fullPage: true });
+          await receipt('api', { ...candidate, complete_manifest: manifest }, decision);
           return;
         }
         if (stage.id === 'credential-and-install') {
           requireValue(candidate && contextId, 'Published immutable context must precede installation');
-          const page = await newPage();
-          await go(page, `/dashboard/skills/contexts/${contextId}?version=1`, 'exact-context');
-          await click(page, 'tab', 'Use');
-          // The handoff stays honest: no released package or verified profile is
-          // claimed, so the operator uses the SDK CLI's explicit preview opt-in.
-          await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
+          // The returned immutable version's pilot credential is issued where it
+          // was published. No released package or verified profile is claimed, so
+          // the operator still uses the SDK CLI's explicit preview opt-in.
+          const page = plans[0].page;
+          lastPage = page;
           const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
           await click(page, 'button', 'Issue pilot credential');
           const issuedResponse = await issued;
@@ -424,7 +425,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await receipt('filesystem', { removal_plan_sha256: sha256(planBytes), inspected: redactPlan(inspected), credential: credentialId }, decision);
           return;
         }
-        if (await performUpdate(stage, { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, choose, go, contextId: () => contextId }, update)) return;
+        if (await performUpdate(stage, { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, go, contextId: () => contextId }, update)) return;
         throw new Error(`No completed public-interface stage evidence: ${stage.id}`);
       } catch (error) {
         await record('blocked-stage', { stage: stage.id, errorType: error.name, message: String(error.message).slice(0, 4000), stack: String(error.stack).split('\n').slice(0, 8), qualified: false });
