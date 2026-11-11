@@ -362,11 +362,23 @@ class EnvironmentPolicyTests(unittest.TestCase):
                      "futureagi/scripts/setup_peerdb_mirrors.sql", "futureagi/bin/test-db-init.sql"):
             self.assertFalse(policy.is_migration(path), path)
 
+    def test_operator_provisioned_grouping_schema_counts_but_other_grouping_code_does_not(self):
+        for path in ("futureagi/tracer/services/grouping/feature_store.py",
+                     "futureagi/tracer/management/commands/provision_grouping_features.py"):
+            self.assertTrue(policy.is_migration(path), path)
+        for path in ("futureagi/tracer/services/grouping/clusterer.py",
+                     "futureagi/tracer/management/commands/requeue_failed_grouping.py",
+                     "futureagi/tracer/services/grouping/feature_store_test.py",
+                     "ee/tracer/services/grouping/feature_store.py"):
+            self.assertFalse(policy.is_migration(path), path)
+
     def test_clickhouse_appliers_and_schema_directory_exist_in_this_repository(self):
         # A rename would silently stop counting; fail here instead.
         repo = Path(__file__).resolve().parents[1]
-        for path in policy.CLICKHOUSE_APPLIERS:
+        for path in policy.CLICKHOUSE_APPLIERS | policy.OPERATOR_SCHEMA:
             self.assertTrue((repo / path).is_file(), path)
+        self.assertIn("def grouping_feature_ddl(",
+                      (repo / "futureagi/tracer/services/grouping/feature_store.py").read_text())
         schema = sorted((repo / policy.CLICKHOUSE / "v2/schema").glob("*.sql"))
         self.assertTrue(schema)
         self.assertTrue(all(policy.is_migration(path.relative_to(repo).as_posix()) for path in schema))
@@ -532,6 +544,21 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         sha = self.git("rev-parse", "HEAD").strip()
         text = self.release(version="v1.3.0", sha=sha)
+        self.assertIn("environment=Production\n", text)
+        self.assertIn("migrations=1\n", text)
+
+    def test_grouping_schema_in_python_keeps_review_and_other_grouping_code_stays_auto(self):
+        self.write("futureagi/tracer/services/grouping/clusterer.py")
+        self.commit()
+        self.git("tag", "v1.2.0")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        text = self.release(version="v1.2.0", sha=self.git("rev-parse", "HEAD").strip())
+        self.assertIn("environment=production-auto\n", text)
+        self.write("futureagi/tracer/services/grouping/feature_store.py", "def grouping_feature_ddl():\n")
+        self.commit()
+        self.git("tag", "v1.3.0")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        text = self.release(version="v1.3.0", sha=self.git("rev-parse", "HEAD").strip())
         self.assertIn("environment=Production\n", text)
         self.assertIn("migrations=1\n", text)
 

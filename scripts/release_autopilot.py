@@ -522,6 +522,12 @@ CLICKHOUSE = "futureagi/tracer/services/clickhouse/"
 # Query builders and other readers are not schema and stay uncounted.
 CLICKHOUSE_APPLIERS = frozenset(CLICKHOUSE + name for name in (
     "schema.py", "v2/apply_schema.py", "v2/apply_schema_rewriter.py", "v2/schema_topology.py"))
+# ClickHouse schema written in Python outside CLICKHOUSE: the Error Feed grouping
+# tables (grouping_feature_ddl) and the operator command that applies them. The
+# module also holds queries, so a non-schema edit to it selects Production too.
+OPERATOR_SCHEMA = frozenset({
+    "futureagi/tracer/services/grouping/feature_store.py",
+    "futureagi/tracer/management/commands/provision_grouping_features.py"})
 
 
 def is_migration(path):
@@ -530,6 +536,8 @@ def is_migration(path):
     # ClickHouse schema sources. Callers count additions, edits and deletions.
     parts = path.split("/")
     if path.startswith(CLICKHOUSE) and (path.endswith(".sql") or path in CLICKHOUSE_APPLIERS):
+        return True
+    if path in OPERATOR_SCHEMA:
         return True
     return (len(parts) >= 4 and parts[0] in {"futureagi", "ee"}
             and parts[-2] == "migrations" and parts[-1].endswith((".py", ".sql"))

@@ -153,10 +153,20 @@ approval. New steps then fetch full history and execute the policy from `main`:
    (the live `v2/schema/` directory, `v2/observed_catalog/schema.sql`, the legacy
    `schema/` and `oss_cdc_migrations/`) and the files that apply it (`schema.py`,
    `v2/apply_schema.py`, `v2/apply_schema_rewriter.py`, `v2/schema_topology.py`).
-   Query builders and other ClickHouse readers do not count, and neither do
-   `__init__.py` files. Hosted pods never apply ClickHouse schema at start, and
-   the deployment's `migrate --check` covers Django only, so this count is the
-   only automatic stop for a ClickHouse schema change.
+   Two Python files outside that directory also count, because they hold
+   operator-provisioned ClickHouse schema: `futureagi/tracer/services/grouping/feature_store.py`
+   (`grouping_feature_ddl()`, the Error Feed grouping tables) and
+   `futureagi/tracer/management/commands/provision_grouping_features.py`, which
+   applies it. `feature_store.py` also holds queries, so any edit to it selects
+   `Production`. Query builders and other ClickHouse readers do not count, and
+   neither do `__init__.py` files. Hosted pods never apply ClickHouse schema at
+   start, and the deployment's `migrate --check` covers Django only. For the
+   files listed here, this count is the only automatic stop. ClickHouse DDL
+   added anywhere else is not counted until it is added to the list.
+   System-eval seeds (`seed_system_evals`) and operator backfill commands do not
+   count either. Hosted pods never run them and the deployment pipeline runs no
+   seed, so a seed-only release deploys automatically and its eval content stays
+   stale until someone runs the seeder.
 4. Choose `production-auto` only when `RELEASE_AUTO_APPROVE=on`, the event is an
    exact tag push by the release App, this is the run's first attempt, and the
    count is known to be zero. "By the release App" means both `GITHUB_ACTOR` and
@@ -259,11 +269,12 @@ E2B or CI, not on the shared development host.
 (`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
 every `scripts/test_*.py` when `release-images.yml`, `release-autopilot.yml`, this
 script or its tests change. Its `paths` filter does not list
-`.github/workflows/build-image-multiarch.yml` or
-`futureagi/tracer/services/clickhouse/**`. A rename of that workflow's `publish`
-job (one of the two jobs that prove a release shipped), or a move of a ClickHouse
-schema applier or of `v2/schema/`, is therefore caught only when a listed file
-next changes. Adding those two paths to the filter closes the gap.
+`.github/workflows/build-image-multiarch.yml`,
+`futureagi/tracer/services/clickhouse/**` or the two grouping schema files. A
+rename of that workflow's `publish` job (one of the two jobs that prove a release
+shipped), or a move of a ClickHouse schema applier, of `v2/schema/` or of a
+grouping schema file, is therefore caught only when a listed file next changes.
+Adding those paths to the filter closes the gap.
 
 The `release-images.yml` diff is deliberately limited:
 
