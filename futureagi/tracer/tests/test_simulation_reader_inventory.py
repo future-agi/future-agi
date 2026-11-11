@@ -1989,11 +1989,16 @@ _RUN_TRACES_CALLERS = frozenset(
 # The entry points that hand those readers their project ids, pinned the same
 # way so that a new route to a builder fails here too.
 ENTRY_POINTS = {
+    # Evaluation Logs source navigation reads one project from
+    # tracer.views.trace._project_queryset_for_request, a manager that leaves
+    # out simulation projects, and takes no run scope, so it never opens a
+    # hidden project.
     "read_trace_detail": (
         None,
         frozenset(
             {
                 _DETAIL_FILE,
+                "model_hub/services/eval_log_source_navigation.py",
                 "tracer/services/clickhouse/v2/query_builders/trace_detail.py",
                 "tracer/views/trace.py",
             }
