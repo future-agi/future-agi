@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from django.middleware.csrf import get_token
 from django.test import RequestFactory
 from django.utils import timezone
 
@@ -110,12 +109,16 @@ def recording(setup, user, monkeypatch):
     )
     authority = AuthorityDouble(viewer, state)
     session, cookie = playback.exchange(viewer, authority)
-    result = playback.issue(
+    (result,) = playback.resolve(
         viewer,
         authority,
-        media_session_id=session.id,
-        occurrence_id=row.client_id,
-        parent=parent,
+        [
+            {
+                "occurrence_id": str(row.client_id),
+                "parent": {"trace_id": str(parent.trace_id), "span_id": parent.span_id},
+                "representation": "original",
+            }
+        ],
     )
     return SimpleNamespace(
         scope=scope,
@@ -159,20 +162,15 @@ def assert_readable(r):
 def test_own_bound_occurrence_and_safe_metadata(recording):
     r = recording
     assert_readable(r)
-    items = occurrences.resolve_metadata(
+    page = occurrences.list_occurrences(
         r.viewer,
         r.authority,
-        [
-            {
-                "occurrence_id": str(r.row.client_id),
-                "parent": {
-                    "trace_id": str(r.parent.trace_id),
-                    "span_id": r.parent.span_id,
-                },
-            }
-        ],
+        trace_id=str(r.parent.trace_id),
+        parent_span_id=r.parent.span_id,
     )
+    items = page["items"]
     assert items[0]["reference"]["occurrence_id"] == str(r.row.client_id)
+    assert items[0]["reference"]["mime_type"] == "audio/wav"
     encoded = json.dumps(items)
     for secret in (
         r.blob.storage_key,
@@ -207,18 +205,20 @@ def test_mixed_batch_checks_parent_per_item(recording):
     r = recording
     parent = {"trace_id": str(r.parent.trace_id), "span_id": r.parent.span_id}
     wrong = {**parent, "span_id": "1234567890abcdef"}
-    items = occurrences.resolve_metadata(
+    items = playback.resolve(
         r.viewer,
         r.authority,
         [
-            {"occurrence_id": str(r.row.client_id), "parent": parent},
-            {"occurrence_id": str(r.row.client_id), "parent": wrong},
-            {"occurrence_id": str(uuid.uuid4()), "parent": wrong},
+            {"occurrence_id": str(r.row.client_id), "parent": wrong, "representation": "original"},
+            {"occurrence_id": str(r.row.client_id), "parent": parent, "representation": "original"},
+            {"occurrence_id": str(uuid.uuid4()), "parent": wrong, "representation": "original"},
+            {"occurrence_id": str(r.row.client_id), "parent": parent, "representation": "peaks"},
         ],
     )
-    assert "reference" in items[0]
-    assert [v["status"] for v in items[1:]] == ["not_found", "not_found"]
-    assert all(set(v) == {"occurrence_id", "status"} for v in items[1:])
+    # A batch never inherits the first item's authorization, in either order.
+    assert items[1]["status"] == "ready"
+    assert [items[i]["status"] for i in (0, 2, 3)] == ["not_found"] * 3
+    assert all(set(items[i]) == {"occurrence_id", "status"} for i in (0, 2, 3))
 
 
 @pytest.mark.parametrize(
@@ -322,11 +322,14 @@ def test_revoke_session_and_expired_grant(recording):
         token_digest=playback.digest(r.grant)
     ).update(expires_at=timezone.now())
     assert response(r).status_code == 404
+    AttachmentPlaybackGrant.objects.filter(
+        token_digest=playback.digest(r.grant)
+    ).update(expires_at=timezone.now() + timedelta(seconds=30))
+    assert response(r, method="HEAD").status_code == 200
     playback.revoke_application_session(
         user_id=r.viewer.user_id, application_session_id=r.viewer.application_session_id
     )
-    with pytest.raises(AttachmentError):
-        playback.media_session(r.cookie, r.authority)
+    assert response(r, method="HEAD").status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -424,33 +427,37 @@ def test_revocation_during_storage_read_discards_chunk(recording):
     assert body.closed
 
 
-def test_exchange_requires_csrf_exact_origin_and_sets_narrow_cookie(
-    recording, settings
-):
+def test_exchange_requires_exact_origin_and_sets_narrow_cookie(recording, settings):
     r = recording
     settings.ALLOWED_HOSTS = ["app.example.test"]
     factory = RequestFactory()
 
-    def request(origin=ORIGIN, csrf=True):
-        req = factory.post(
-            "/tracer/v1/attachment-media-sessions",
-            secure=True,
-            HTTP_HOST="app.example.test",
-            HTTP_ORIGIN=origin,
+    def request(origin=ORIGIN, **extra):
+        headers = {"HTTP_HOST": "app.example.test", **extra}
+        if origin is not None:
+            headers["HTTP_ORIGIN"] = origin
+        return factory.post(
+            "/tracer/v1/attachment-media-sessions", secure=True, **headers
         )
-        if csrf:
-            token = get_token(req)
-            req.COOKIES[settings.CSRF_COOKIE_NAME] = req.META["CSRF_COOKIE"]
-            req.META["HTTP_X_CSRFTOKEN"] = token
-        return req
 
     count = AttachmentMediaSession.objects.count()
-    for req in (request(csrf=False), request(origin="https://evil.example.test")):
+    for req in (
+        request(origin=None),
+        request(origin="https://evil.example.test"),
+        request(HTTP_SEC_FETCH_SITE="cross-site"),
+    ):
         assert (
             exchange_response(req, r.viewer, r.authority, origin=ORIGIN).status_code
             == 404
         )
+    r.authority.live = False
+    assert (
+        exchange_response(request(), r.viewer, r.authority, origin=ORIGIN).status_code
+        == 404
+    )
+    r.authority.live = True
     assert AttachmentMediaSession.objects.count() == count
+    # Bearer-authenticated: no ambient cookie credential, so no CSRF token needed.
     reply = exchange_response(request(), r.viewer, r.authority, origin=ORIGIN)
     assert reply.status_code == 204
     cookie = reply.cookies[playback.COOKIE_NAME]
@@ -487,6 +494,12 @@ def test_lists_hide_child_and_no_foreign_scope_cursor(recording):
     }
     with pytest.raises(AttachmentError):
         occurrences.list_occurrences(r.viewer, r.authority, cursor="forged", **args)
+    r.authority.state = replace(r.authority.state, readable=True)
+    # Cursors are F01 Tokens bound to this viewer, session, scope and parent.
+    cursor = occurrences.encode_cursor(["other"], r.row.id)
+    assert len(cursor) <= 128 and cursor.replace("-", "").replace("_", "").isalnum()
+    with pytest.raises(AttachmentError, match="not_found"):
+        occurrences.list_occurrences(r.viewer, r.authority, cursor=cursor, **args)
 
 
 def test_grants_and_audits_do_not_store_capability_secrets(recording):

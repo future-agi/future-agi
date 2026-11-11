@@ -4,6 +4,10 @@ Rollback: disable attachment admission, drain/abort transfers, erase private
 objects via the deletion outbox, then reverse 0132 and 0131. Reversing 0131 drops
 control records, not object storage; never use it as a physical-erasure shortcut.
 
+This is the LAST attachment migration on purpose: every table it fences is
+created by 0131, so the triggers attach to final table shapes. Each upload
+names its own parent, so occurrences are not tied to a per-session parent.
+
 Why this is RunSQL and not Django schema operations: every fence here compares a
 row's OLD and NEW values (identity, tombstone, snapshot and blob immutability,
 monotonic policy/deletion generations, the allowed state transitions) or reads
@@ -33,9 +37,11 @@ BEGIN
        OR NEW.deletion_generation < OLD.deletion_generation THEN
       RAISE EXCEPTION 'attachment scope immutable' USING ERRCODE = '23514';
     END IF;
-    IF (NEW.enabled, NEW.require_media_redaction, NEW.allow_unredacted_media_with_text_pii)
+    IF (NEW.enabled, NEW.require_media_redaction, NEW.allow_unredacted_media_with_text_pii,
+        NEW.record_audio)
        IS DISTINCT FROM
-       (OLD.enabled, OLD.require_media_redaction, OLD.allow_unredacted_media_with_text_pii)
+       (OLD.enabled, OLD.require_media_redaction, OLD.allow_unredacted_media_with_text_pii,
+        OLD.record_audio)
        AND NEW.policy_version <= OLD.policy_version THEN
       RAISE EXCEPTION 'attachment policy version required' USING ERRCODE = '23514';
     END IF;
@@ -101,12 +107,6 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-  IF TG_TABLE_NAME = 'tracer_attachmentoccurrence' THEN
-    IF NOT EXISTS (SELECT 1 FROM tracer_capturesession s WHERE s.id=NEW.capture_session_id
-      AND s.trace_id=NEW.trace_id AND s.span_id=NEW.span_id) THEN
-      RAISE EXCEPTION 'attachment association mismatch' USING ERRCODE = '23514';
-    END IF;
-  END IF;
   IF TG_TABLE_NAME = 'tracer_attachmentupload' THEN
     IF NOT EXISTS (SELECT 1 FROM tracer_attachmentoccurrence o WHERE o.id=NEW.occurrence_id
       AND o.attachment_id=NEW.attachment_id AND o.capture_session_id=NEW.capture_session_id) THEN

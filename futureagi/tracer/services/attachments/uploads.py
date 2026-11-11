@@ -1,14 +1,28 @@
 """Bounded authenticated transfer primitives; no direct presigns or multipart.
 
-HTTP adapters must enforce body/header read deadlines before handing chunks to
-this service. Completion queues validation and cannot make any occurrence ready.
+``initialize`` authenticates the eligible original identity plus an F01
+``Association``; every later step uses the upload-bound write capability.
+HTTP adapters enforce body/header read deadlines before handing chunks to this
+service. Completion queues validation and cannot make any occurrence ready.
+
+Backend requirements implemented here (SDK design section 11):
+- BR-1: replaying ``POST .../uploads`` with the same key and identical body
+  for a live pending upload returns the same identifiers, the remaining
+  reservation and a freshly minted capability with a later expiry.
+- BR-3: ``PUT .../content`` may be replayed in full until ``complete``. A
+  partial transfer is discarded. After a snapshot is persisted, a byte-identical
+  replay succeeds and any other body conflicts (409).
+- BR-4: a recording ``segment_index`` is reusable once the earlier upload for
+  it is terminal (aborted, failed, rejected or expired).
 """
 
+import hashlib
 import tempfile
 import time
 from datetime import timedelta
+from uuid import UUID
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from tracer.models.attachment import (
@@ -16,26 +30,39 @@ from tracer.models.attachment import (
     AttachmentBudget,
     AttachmentOccurrence,
     AttachmentOutbox,
+    AttachmentRecording,
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
     UploadReservation,
 )
 from tracer.services.attachments.bootstrap import (
+    CAPABILITY_SECONDS,
+    LIMITS,
     authorize,
     capability,
     check_session,
+    check_writer,
+    find_session,
     session_policy,
 )
 from tracer.services.attachments.contract import (
+    SERVER_MODALITIES,
     AttachmentError,
     admit_audio,
     fingerprint,
+    span_id,
+    trace_uuid,
 )
 
 CHUNK_BYTES = 256 * 1024
-MAX_UPLOAD_BYTES = 8 * 1024 * 1024
-TRANSFER_SECONDS = 60
+MAX_UPLOAD_BYTES = LIMITS["max_upload_bytes"]
+TRANSFER_SECONDS = LIMITS["transfer_timeout_seconds"]
+LIVE_STATES = (
+    AttachmentState.PENDING,
+    AttachmentState.VALIDATING,
+    AttachmentState.READY,
+)
 # Finite operational safety bounds, not edition limits. No ambient plan checks.
 BUDGETS = (
     (128, 8 * 1024**3, 8192, 960),
@@ -72,55 +99,106 @@ def _count_attempt(scope):
     return allowed
 
 
-def initialize(
-    token,
-    *,
-    scope_id,
-    upload_id,
-    attachment_id,
-    occurrence_id,
-    expected_bytes,
-    mime_type,
-    direction,
-    source_kind,
-):
-    session = authorize(token, operation="create", scope_id=scope_id)
+def _capability_expiry(session):
+    return min(session.expires_at, timezone.now() + timedelta(seconds=CAPABILITY_SECONDS))
+
+
+def upload_response(upload, token, expires_at):
+    """F01 ``UploadResponse``. Never log, cache or export this body."""
+    return {
+        "upload_id": str(upload.id),
+        "attachment_id": str(upload.attachment.client_id),
+        "occurrence_id": str(upload.occurrence.client_id),
+        "state": "pending_upload",
+        "reserved_bytes": upload.expected_bytes,
+        "expires_at": expires_at.isoformat(),
+        "transfer_mode": "authenticated_stream",
+        "write_capability": token,
+    }
+
+
+def _check_generation(scope, body):
+    if (
+        body["policy_version"] != str(scope.policy_version)
+        or body["deletion_generation"] != scope.deletion_generation
+    ):
+        raise AttachmentError("expired", 409)
+
+
+def _renew(upload, session):
+    """BR-1: same job, same reservation, fresh capability and later expiry."""
+    if upload.state != AttachmentState.PENDING:
+        # UploadResponse.state is pending_upload by contract; a completed job is
+        # not re-issued. Its existing capability stays valid until it expires.
+        raise AttachmentError("idempotency_conflict", 409)
+    occurrence = upload.occurrence
+    if (
+        occurrence.deleted_at
+        or occurrence.expires_at <= timezone.now()
+        or upload.expires_at <= timezone.now()
+    ):
+        raise AttachmentError("expired", 409)
+    expires_at = max(_capability_expiry(session), upload.expires_at)
+    expires_at = max(expires_at, timezone.now() + timedelta(microseconds=1))
+    upload.expires_at = expires_at
+    upload.save(update_fields=["expires_at"])
+    UploadReservation.objects.filter(
+        upload=upload, scope_id=upload.scope_id, settled_at__isnull=True
+    ).update(expires_at=expires_at)
+    return upload, capability(session, upload, expires_at=expires_at), expires_at
+
+
+def initialize(writer, *, scope_id, body, key):
+    """F01 ``initializeAttachmentUpload``; ``body`` is a validated UploadRequest."""
+    scope = AttachmentScope.objects.get(pk=scope_id)
+    check_writer(writer, scope)
+    session = find_session(writer, scope, body["association"])
     scope = check_session(session)
+    _check_generation(scope, body)
+    parent = body["association"]["parent"]
+    trace_id, parent_span_id = trace_uuid(parent["trace_id"]), span_id(parent["span_id"])
+    recording_id = body.get("recording_id")
     # Admission before hashing any request metadata, allocating or accessing bytes.
     admit_audio(
-        scope, session_policy(session), direction=direction, source_kind=source_kind
+        scope,
+        session_policy(session),
+        direction=body["direction"],
+        source_kind=body["source_kind"],
+        creates_recording=recording_id is not None,
     )
-    if type(expected_bytes) is not int or not 0 < expected_bytes <= MAX_UPLOAD_BYTES:
+    if body["mime_type"] not in SERVER_MODALITIES.get(body["modality"], ()):
+        raise AttachmentError("unsupported_media", 403)
+    expected_bytes = body["declared_bytes"]
+    if not 0 < expected_bytes <= MAX_UPLOAD_BYTES:
         raise AttachmentError("too_large", 413)
-    if mime_type != "audio/wav":
-        raise AttachmentError("unsupported_media", 415)
+    digest = fingerprint({"session": session.id, "body": body})
+    existing = AttachmentUpload.objects.filter(
+        scope=scope, capture_session=session, idempotency_key=key
+    ).first()
+    if existing is not None:
+        if existing.request_fingerprint != digest:
+            raise AttachmentError("idempotency_conflict", 409)
+        with transaction.atomic():
+            locked = AttachmentUpload.objects.select_for_update().get(
+                pk=existing.pk, scope=scope
+            )
+            check_session(session)
+            return _renew(locked, session)
     if not _count_attempt(scope):
         raise AttachmentError("throttled", 429)
-    normalized = {
-        "session": session.id,
-        "attachment": attachment_id,
-        "occurrence": occurrence_id,
-        "length": expected_bytes,
-        "mime": mime_type,
-        "direction": direction,
-        "source_kind": source_kind,
-    }
-    digest = fingerprint(normalized)
     with transaction.atomic():
         # One ordering for all budget-mutating operations, then scope/upload.
         budgets = _lock_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
         check_session(session)
+        _check_generation(scope, body)
         existing = AttachmentUpload.objects.filter(
-            scope=scope, client_id=upload_id
+            scope=scope, capture_session=session, idempotency_key=key
         ).first()
-        if existing:
-            if (
-                existing.request_fingerprint != digest
-                or existing.capture_session_id != session.id
-            ):
+        if existing is not None:
+            if existing.request_fingerprint != digest:
                 raise AttachmentError("idempotency_conflict", 409)
-            return existing, capability(session, "transfer", existing)
+            return _renew(existing, session)
         for row, limits in zip(budgets, BUDGETS, strict=False):
             if (
                 row.active_transfers >= limits[0]
@@ -129,42 +207,69 @@ def initialize(
             ):
                 raise AttachmentError("throttled", 429)
         if (
-            Attachment.objects.filter(scope=scope, client_id=attachment_id).exists()
+            Attachment.objects.filter(
+                scope=scope, client_id=UUID(body["attachment_id"])
+            ).exists()
             or AttachmentOccurrence.objects.filter(
-                scope=scope, client_id=occurrence_id
+                scope=scope, client_id=UUID(body["occurrence_id"])
             ).exists()
         ):
             raise AttachmentError("idempotency_conflict", 409)
+        recording = None
+        if recording_id is not None:
+            recording = _recording_for(
+                scope, session, UUID(recording_id), trace_id, parent_span_id, body
+            )
+            if AttachmentUpload.objects.filter(
+                scope=scope,
+                recording=recording,
+                segment_index=body["segment_index"],
+                state__in=LIVE_STATES,
+            ).exists():
+                raise AttachmentError("segment_conflict", 409)
         common = {
             "scope": scope,
             "policy_version": scope.policy_version,
             "deletion_generation": scope.deletion_generation,
         }
-        attachment = Attachment.objects.create(
-            **common, client_id=attachment_id, source_kind=source_kind
-        )
-        expiry = min(session.expires_at, timezone.now() + timedelta(minutes=5))
-        occurrence = AttachmentOccurrence.objects.create(
-            **common,
-            client_id=occurrence_id,
-            attachment=attachment,
-            capture_session=session,
-            trace_id=session.trace_id,
-            span_id=session.span_id,
-            direction=direction,
-            expires_at=timezone.now() + timedelta(hours=24),
-        )
-        upload = AttachmentUpload.objects.create(
-            **common,
-            client_id=upload_id,
-            capture_session=session,
-            attachment=attachment,
-            occurrence=occurrence,
-            request_fingerprint=digest,
-            expected_bytes=expected_bytes,
-            mime_type=mime_type,
-            expires_at=expiry,
-        )
+        now = timezone.now()
+        expiry = _capability_expiry(session)
+        try:
+            with transaction.atomic():
+                attachment = Attachment.objects.create(
+                    **common,
+                    client_id=UUID(body["attachment_id"]),
+                    modality=body["modality"],
+                    mime_type=body["mime_type"],
+                    source_kind=body["source_kind"],
+                )
+                occurrence = AttachmentOccurrence.objects.create(
+                    **common,
+                    client_id=UUID(body["occurrence_id"]),
+                    attachment=attachment,
+                    capture_session=session,
+                    trace_id=trace_id,
+                    span_id=parent_span_id,
+                    direction=body["direction"],
+                    purpose=body.get("purpose", ""),
+                    recording=recording,
+                    expires_at=now + timedelta(hours=24),
+                )
+                upload = AttachmentUpload.objects.create(
+                    **common,
+                    capture_session=session,
+                    attachment=attachment,
+                    occurrence=occurrence,
+                    idempotency_key=key,
+                    request_fingerprint=digest,
+                    expected_bytes=expected_bytes,
+                    mime_type=body["mime_type"],
+                    recording=recording,
+                    segment_index=body.get("segment_index"),
+                    expires_at=expiry,
+                )
+        except IntegrityError:
+            raise AttachmentError("idempotency_conflict", 409) from None
         UploadReservation.objects.create(
             scope=scope,
             upload=upload,
@@ -187,55 +292,112 @@ def initialize(
             generation=scope.deletion_generation,
             available_at=timezone.now(),
         )
-        return upload, capability(session, "transfer", upload)
+        return upload, capability(session, upload, expires_at=expiry), expiry
 
 
-def _live_upload(token, scope_id, upload_id, operation):
-    session = authorize(
+def _recording_for(scope, session, recording_id, trace_id, parent_span_id, body):
+    """A recording belongs to one session and parent; it is never relinked."""
+    recording, created = AttachmentRecording.objects.get_or_create(
+        scope=scope,
+        client_id=recording_id,
+        defaults={
+            "capture_session": session,
+            "trace_id": trace_id,
+            "span_id": parent_span_id,
+            "capture_session_client_id": session.client_id,
+            "correlation_nonce": session.correlation_nonce,
+            "direction": body["direction"],
+            "policy_version": scope.policy_version,
+            "deletion_generation": scope.deletion_generation,
+        },
+    )
+    if not created and (
+        recording.capture_session_id != session.id
+        or (recording.trace_id, recording.span_id) != (trace_id, parent_span_id)
+        or recording.deleted_at
+        or recording.deletion_generation != scope.deletion_generation
+    ):
+        raise AttachmentError("idempotency_conflict", 409)
+    return recording
+
+
+def _live_upload(token, scope_id, upload_id, operation, *, states=None):
+    session, _ = authorize(
         token, operation=operation, scope_id=scope_id, upload_id=upload_id
     )
     upload = (
-        AttachmentUpload.objects.select_related("occurrence")
+        AttachmentUpload.objects.select_related("occurrence", "attachment")
         .filter(pk=upload_id, scope_id=scope_id, capture_session=session)
         .first()
     )
     if upload is None:
         raise AttachmentError("not_found", 404)
+    now = timezone.now()
+    occurrence = upload.occurrence
     if (
-        upload.expires_at <= timezone.now()
-        or upload.deletion_generation != session.deletion_generation
-        or upload.occurrence.deleted_at
-        or upload.occurrence.expires_at <= timezone.now()
+        upload.deletion_generation != session.deletion_generation
+        or occurrence.deleted_at
+        or occurrence.expires_at <= now
         or (
-            upload.occurrence.source_expires_at is not None
-            and upload.occurrence.source_expires_at <= timezone.now()
+            occurrence.source_expires_at is not None
+            and occurrence.source_expires_at <= now
         )
     ):
-        raise AttachmentError("capability_expired", 403)
+        raise AttachmentError("deleted", 409)
+    if states is not None and upload.state not in states:
+        raise AttachmentError("transfer_conflict", 409)
     admit_audio(
         check_session(session),
         session_policy(session),
-        direction=upload.occurrence.direction,
+        direction=occurrence.direction,
         source_kind=upload.attachment.source_kind,
+        creates_recording=upload.recording_id is not None,
     )
     return upload
 
 
-def transfer(token, *, scope_id, upload_id, chunks, storage):
-    upload = _live_upload(token, scope_id, upload_id, "upload")
+def status_document(upload):
+    """F01 ``StatusResponse``: content-free state and reason only."""
+    reasons = {
+        AttachmentState.PENDING: "queued",
+        AttachmentState.VALIDATING: "queued",
+        AttachmentState.READY: "ready",
+        AttachmentState.FAILED: "validation_failed",
+        AttachmentState.REJECTED: "validation_failed",
+        AttachmentState.EXPIRED: "expired",
+        AttachmentState.DELETED: "deleted",
+    }
+    return {
+        "upload_id": str(upload.id),
+        "state": upload.state,
+        "reason": reasons[upload.state],
+    }
+
+
+def transfer(token, *, scope_id, upload_id, chunks, storage, content_length=None):
+    """F01 ``streamAttachmentContent``; replayable in full until ``complete``."""
+    upload = _live_upload(
+        token, scope_id, upload_id, "upload", states=(AttachmentState.PENDING,)
+    )
+    if content_length is not None and content_length != upload.expected_bytes:
+        raise AttachmentError("length_mismatch")
     with transaction.atomic():
         locked = AttachmentUpload.objects.select_for_update().get(
             pk=upload.id, scope_id=scope_id
         )
-        if (
-            locked.state != AttachmentState.PENDING
-            or locked.transfer_started_at
-            or locked.quarantine_version
-        ):
+        if locked.state != AttachmentState.PENDING:
             raise AttachmentError("transfer_conflict", 409)
-        locked.transfer_started_at = timezone.now()
-        locked.save(update_fields=["transfer_started_at"])
-    started, size = time.monotonic(), 0
+        replay = bool(locked.quarantine_version)
+        if not replay:
+            started = locked.transfer_started_at
+            if started and timezone.now() - started < timedelta(
+                seconds=TRANSFER_SECONDS
+            ):
+                # Another transfer holds the lease; a stale lease is taken over.
+                raise AttachmentError("transfer_conflict", 409)
+            locked.transfer_started_at = timezone.now()
+            locked.save(update_fields=["transfer_started_at"])
+    started, size, hasher = time.monotonic(), 0, hashlib.sha256()
     try:
         # Disk belongs to the bounded server transfer, not an SDK disk spool.
         with tempfile.TemporaryFile() as snapshot:
@@ -248,9 +410,15 @@ def transfer(token, *, scope_id, upload_id, chunks, storage):
                 size += len(chunk)
                 if size > upload.expected_bytes:
                     raise AttachmentError("too_large", 413)
-                snapshot.write(chunk)
+                hasher.update(chunk)
+                if not replay:
+                    snapshot.write(chunk)
             if size != upload.expected_bytes:
                 raise AttachmentError("length_mismatch")
+            if replay:
+                if hasher.hexdigest() != locked.quarantine_sha256:
+                    raise AttachmentError("transfer_conflict", 409)
+                return status_document(locked)
             snapshot.seek(0)
             identity = storage.put_quarantine(upload.id, snapshot, size)
         with transaction.atomic():
@@ -259,30 +427,56 @@ def transfer(token, *, scope_id, upload_id, chunks, storage):
                 pk=upload.id, scope=scope
             )
             _live_upload(token, scope_id, upload_id, "upload")
-            if locked.state != AttachmentState.PENDING:
+            if locked.state != AttachmentState.PENDING or locked.quarantine_version:
                 raise AttachmentError("transfer_conflict", 409)
             locked.quarantine_key, locked.quarantine_version = (
                 identity.key,
                 identity.version,
             )
+            locked.quarantine_sha256 = hasher.hexdigest()
             locked.received_bytes = size
+            locked.transfer_started_at = None
             locked.save(
-                update_fields=["quarantine_key", "quarantine_version", "received_bytes"]
+                update_fields=[
+                    "quarantine_key",
+                    "quarantine_version",
+                    "quarantine_sha256",
+                    "received_bytes",
+                    "transfer_started_at",
+                ]
             )
+            return status_document(locked)
     except Exception as exc:
-        settle(upload.id, scope_id=scope_id, outcome=AttachmentState.FAILED)
+        if not replay:
+            # Discard the partial transfer and release the lease so the SDK can
+            # replay the whole body (BR-3). The reservation stays until expiry.
+            AttachmentUpload.objects.filter(
+                pk=upload.id,
+                scope_id=scope_id,
+                state=AttachmentState.PENDING,
+                quarantine_version="",
+            ).update(transfer_started_at=None)
         if isinstance(exc, AttachmentError):
             raise
         raise AttachmentError("transfer_failed", 503) from None
 
 
+def _check_request(upload, body):
+    if body is not None and (
+        body["policy_version"] != str(upload.policy_version)
+        or body["deletion_generation"] != upload.deletion_generation
+    ):
+        raise AttachmentError("expired", 409)
+
+
 @transaction.atomic
-def complete(token, *, scope_id, upload_id):
-    _live_upload(token, scope_id, upload_id, "complete")
+def complete(token, *, scope_id, upload_id, body=None):
+    upload = _live_upload(token, scope_id, upload_id, "complete")
+    _check_request(upload, body)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     upload = AttachmentUpload.objects.select_for_update().get(pk=upload_id, scope=scope)
     _live_upload(token, scope_id, upload_id, "complete")
-    if upload.state == AttachmentState.VALIDATING:
+    if upload.state in {AttachmentState.VALIDATING, AttachmentState.READY}:
         return upload
     if (
         upload.state != AttachmentState.PENDING
@@ -362,13 +556,22 @@ def settle(upload_id, *, scope_id, outcome):
     return True
 
 
-def abort(token, *, scope_id, upload_id):
-    _live_upload(token, scope_id, upload_id, "abort")
-    return settle(upload_id, scope_id=scope_id, outcome=AttachmentState.DELETED)
+def abort(token, *, scope_id, upload_id, body=None):
+    """Releases this job exactly once; repeating it reports the same state."""
+    upload = _live_upload(token, scope_id, upload_id, "abort")
+    _check_request(upload, body)
+    settle(upload_id, scope_id=scope_id, outcome=AttachmentState.DELETED)
+    return AttachmentUpload.objects.get(pk=upload_id, scope_id=scope_id)
 
 
 def status(token, *, scope_id, upload_id):
-    upload = _live_upload(token, scope_id, upload_id, "status")
-    return {
-        "state": upload.state
-    }  # No source, blob, filename, hash or parent metadata.
+    session, _ = authorize(
+        token, operation="status", scope_id=scope_id, upload_id=upload_id
+    )
+    upload = AttachmentUpload.objects.filter(
+        pk=upload_id, scope_id=scope_id, capture_session=session
+    ).first()
+    if upload is None:
+        raise AttachmentError("not_found", 404)
+    # No source, blob, filename, hash or parent metadata.
+    return status_document(upload)

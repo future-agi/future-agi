@@ -96,35 +96,58 @@ def setup(project, user, settings):
     return scope, writer
 
 
+TRACE = "00112233445566778899aabbccddeeff"
+SPAN = "0123456789abcdef"
+
+
 def session(setup, **overrides):
+    """Bootstrap the writer's capture session against the scope's project."""
     scope, writer = setup
-    values = {
-        "scope_id": scope.id,
-        "client_id": uuid.uuid4(),
-        "trace_id": "00112233445566778899aabbccddeeff",
-        "parent_span_id": "0123456789abcdef",
-        "policy": CapturePolicy(enabled=True),
+    body = {
+        "schema_versions": [1],
+        "project_name": scope.project.name,
+        "project_type": scope.project.trace_type,
+        "capture_session_id": str(uuid.uuid4()),
+        "correlation_nonce": str(uuid.uuid4()),
     }
-    values.update(overrides)
-    return broker.bootstrap(writer, **values)
+    body.update(overrides)
+    return broker.bootstrap(writer, body)
 
 
-def initialized(setup, **overrides):
-    scope, _ = setup
-    current, token = session(setup)
-    args = {
-        "scope_id": scope.id,
-        "upload_id": uuid.uuid4(),
-        "attachment_id": uuid.uuid4(),
-        "occurrence_id": uuid.uuid4(),
-        "expected_bytes": len(wav_bytes()),
+def upload_body(scope, current, **overrides):
+    body = {
+        "schema_version": 1,
+        "attachment_id": str(uuid.uuid4()),
+        "occurrence_id": str(uuid.uuid4()),
+        "association": {
+            "capture_session_id": str(current.client_id),
+            "correlation_nonce": str(current.correlation_nonce),
+            "parent": {"trace_id": TRACE, "span_id": SPAN},
+        },
+        "policy_version": str(scope.policy_version),
+        "deletion_generation": scope.deletion_generation,
         "mime_type": "audio/wav",
+        "modality": "audio",
         "direction": "mixed",
-        "source_kind": "bytes",
+        "source_kind": "Bytes",
+        "declared_bytes": len(wav_bytes()),
     }
-    args.update(overrides)
-    upload, transfer_token = uploads.initialize(token, **args)
-    return upload, transfer_token, token, args
+    body.update(overrides)
+    return body
+
+
+def initialized(setup, *, current=None, key=None, **overrides):
+    """Returns (upload, write capability, writer, {"body", "key", "session"})."""
+    scope, writer = setup
+    scope.refresh_from_db()
+    if current is None:
+        current, _ = session(setup)
+    body = upload_body(scope, current, **overrides)
+    key = key or f"up-{uuid.UUID(body['occurrence_id']).hex}"
+    upload, token, _ = uploads.initialize(
+        writer, scope_id=scope.id, body=body, key=key
+    )
+    return upload, token, writer, {"body": body, "key": key, "session": current}
 
 
 @pytest.mark.parametrize(
@@ -185,7 +208,7 @@ def test_deny_wins_before_source_access(change, direction, reason):
             scope,
             replace(CapturePolicy(enabled=True), **change),
             direction=direction,
-            source_kind="bytes",
+            source_kind="Bytes",
         )
 
 
@@ -196,9 +219,9 @@ def test_mixed_denied_but_independent_output_allowed():
         allow_unredacted_media_with_text_pii=False,
     )
     policy = CapturePolicy(enabled=True, hide_inputs=True)
-    admit_audio(scope, policy, direction="output", source_kind="bytes")
+    admit_audio(scope, policy, direction="output", source_kind="Bytes")
     with pytest.raises(AttachmentError):
-        admit_audio(scope, policy, direction="mixed", source_kind="bytes")
+        admit_audio(scope, policy, direction="mixed", source_kind="Bytes")
 
 
 def test_pii_requires_separate_server_and_client_choices():
@@ -212,15 +235,15 @@ def test_pii_requires_separate_server_and_client_choices():
             scope,
             CapturePolicy(enabled=True, pii_redaction=True),
             direction="input",
-            source_kind="bytes",
+            source_kind="Bytes",
         )
     policy = CapturePolicy(
         enabled=True, pii_redaction=True, allow_unredacted_media_with_text_pii=True
     )
-    admit_audio(scope, policy, direction="input", source_kind="bytes")
+    admit_audio(scope, policy, direction="input", source_kind="Bytes")
     scope.require_media_redaction = True
     with pytest.raises(AttachmentError, match="redaction_unavailable"):
-        admit_audio(scope, policy, direction="input", source_kind="bytes")
+        admit_audio(scope, policy, direction="input", source_kind="Bytes")
 
 
 def test_recording_separate_from_import():
@@ -230,13 +253,13 @@ def test_recording_separate_from_import():
         allow_unredacted_media_with_text_pii=False,
     )
     policy = CapturePolicy(enabled=True)
-    admit_audio(scope, policy, direction="mixed", source_kind="owned_recording_file")
+    admit_audio(scope, policy, direction="mixed", source_kind="OwnedRecordingFile")
     with pytest.raises(AttachmentError, match="recording_disabled"):
         admit_audio(
             scope,
             policy,
             direction="mixed",
-            source_kind="bytes",
+            source_kind="Bytes",
             creates_recording=True,
         )
 
@@ -248,13 +271,32 @@ def test_default_off_creates_nothing(setup, settings):
     assert not broker.CaptureSession.objects.exists()
 
 
-def test_session_idempotency_and_exact_binding(setup):
-    client_id = uuid.uuid4()
-    first, _ = session(setup, client_id=client_id)
-    second, _ = session(setup, client_id=client_id)
+def test_session_renewal_and_exact_binding(setup, user):
+    sid, nonce = str(uuid.uuid4()), str(uuid.uuid4())
+    first, document = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+    second, renewed = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+    # BR-2: the same writer + pair renews the same session with a later expiry.
     assert first.id == second.id
+    assert renewed["expires_at"] >= document["expires_at"]
+    assert renewed["scope"] == document["scope"]
+    assert document["policy"]["version"] == "1"
     with pytest.raises(AttachmentError, match="idempotency_conflict"):
-        session(setup, client_id=client_id, parent_span_id="ffffffffffffffff")
+        session(setup, capture_session_id=sid, correlation_nonce=str(uuid.uuid4()))
+    with pytest.raises(AttachmentError, match="idempotency_conflict"):
+        session(setup, correlation_nonce=nonce)
+    scope, writer = setup
+    other = OrgApiKey.no_workspace_objects.create(
+        type="system",
+        organization_id=scope.organization_id,
+        workspace_id=scope.workspace_id,
+        api_key=uuid.uuid4().hex,
+        secret_key=uuid.uuid4().hex,
+    )
+    stranger = broker.Writer(
+        "api_key", other.id, scope.organization_id, scope.workspace_id
+    )
+    with pytest.raises(AttachmentError, match="idempotency_conflict"):
+        session((scope, stranger), capture_session_id=sid, correlation_nonce=nonce)
 
 
 @pytest.mark.parametrize(
@@ -288,7 +330,9 @@ def test_exact_upload_and_scope_binding(setup):
                 token, operation="status", scope_id=scope_id, upload_id=upload_id
             )
     assert uploads.status(token, scope_id=upload.scope_id, upload_id=upload.id) == {
-        "state": "pending_upload"
+        "upload_id": str(upload.id),
+        "state": "pending_upload",
+        "reason": "queued",
     }
 
 
@@ -312,13 +356,15 @@ def test_restricted_key_needs_live_explicit_eligibility(setup, user):
         enabled=True,
         expires_at=timezone.now() + timedelta(minutes=5),
     )
-    current, token = session((scope, writer))
-    broker.authorize(token, operation="create", scope_id=scope.id)
+    upload, token, _, args = initialized((scope, writer))
+    broker.authorize(token, operation="status", scope_id=scope.id, upload_id=upload.id)
     grant.enabled = False
     grant.save(update_fields=["enabled"])
     with pytest.raises(AttachmentError, match="credential_scope_unsupported"):
-        broker.authorize(token, operation="create", scope_id=scope.id)
-    assert current.writer_id == key.id
+        broker.authorize(
+            token, operation="status", scope_id=scope.id, upload_id=upload.id
+        )
+    assert args["session"].writer_id == key.id
 
 
 def test_policy_change_revokes_before_transfer(setup):
@@ -362,8 +408,17 @@ def test_workspace_and_type_identity(setup, user):
         ).id
         != scope.id
     )
-    with pytest.raises(AttachmentError, match="scope_unresolved"):
-        broker.resolve_scope(writer, project_name="missing", project_type="experiment")
+    # A missing project is created exactly as ingestion would, with a scope
+    # that stays disabled until an owner enables it.
+    created = broker.resolve_scope(
+        writer, project_name="missing", project_type="experiment"
+    )
+    assert created.id != scope.id and created.enabled is False
+    for bad_type in ("unknown", "", "Observe"):
+        with pytest.raises(AttachmentError, match="scope_unresolved"):
+            broker.resolve_scope(
+                writer, project_name="another", project_type=bad_type
+            )
     with pytest.raises(AttachmentError, match="scope_unresolved"):
         broker.resolve_scope(
             replace(writer, workspace_id=uuid.uuid4()),
@@ -389,23 +444,39 @@ def test_duplicate_client_ids_scoped(setup, user):
         enabled=True,
         require_media_redaction=False,
     )
+    body = args["body"]
     second, _, _, _ = initialized(
-        (other, writer), **{k: v for k, v in args.items() if k != "scope_id"}
+        (other, writer),
+        attachment_id=body["attachment_id"],
+        occurrence_id=body["occurrence_id"],
     )
-    assert first.id != second.id and first.client_id == second.client_id
+    assert first.id != second.id
+    assert first.occurrence.client_id == second.occurrence.client_id
     with pytest.raises(AttachmentError, match="not_found"):
         uploads.status(token, scope_id=other.id, upload_id=second.id)
 
 
 def test_upload_idempotency_and_conflict(setup):
-    first, _, token, args = initialized(setup)
-    second, _ = uploads.initialize(token, **args)
-    assert first.id == second.id
+    scope, writer = setup
+    first, token, _, args = initialized(setup)
+    # BR-1: an identical replay renews the capability for the same job.
+    second, renewed, expires_at = uploads.initialize(
+        writer, scope_id=scope.id, body=args["body"], key=args["key"]
+    )
+    assert first.id == second.id and renewed != token
+    assert expires_at >= first.expires_at
     assert UploadReservation.objects.count() == 1
+    broker.authorize(renewed, operation="status", scope_id=scope.id, upload_id=first.id)
     with pytest.raises(AttachmentError, match="idempotency_conflict"):
         uploads.initialize(
-            token, **{**args, "expected_bytes": args["expected_bytes"] + 1}
+            writer,
+            scope_id=scope.id,
+            body={**args["body"], "declared_bytes": args["body"]["declared_bytes"] + 1},
+            key=args["key"],
         )
+    # A different key cannot claim the same occurrence.
+    with pytest.raises(AttachmentError, match="idempotency_conflict"):
+        uploads.initialize(writer, scope_id=scope.id, body=args["body"], key="up-other")
 
 
 @pytest.mark.parametrize(
@@ -416,7 +487,7 @@ def test_upload_idempotency_and_conflict(setup):
         ([b"short"], "length_mismatch"),
     ],
 )
-def test_malformed_transfer_releases_once(setup, chunks, code):
+def test_malformed_transfer_is_discarded_and_replayable(setup, chunks, code):
     upload, token, _, _ = initialized(setup)
     storage = ImmutableStore()
     with pytest.raises(AttachmentError, match=code):
@@ -428,6 +499,22 @@ def test_malformed_transfer_releases_once(setup, chunks, code):
             storage=storage,
         )
     assert storage.objects == {}
+    upload.refresh_from_db()
+    # BR-3: the partial transfer is discarded and the lease released.
+    assert upload.state == "pending_upload" and upload.transfer_started_at is None
+    assert uploads.transfer(
+        token,
+        scope_id=upload.scope_id,
+        upload_id=upload.id,
+        chunks=[wav_bytes()],
+        storage=storage,
+    ) == {"upload_id": str(upload.id), "state": "pending_upload", "reason": "queued"}
+    assert len(storage.objects) == 1
+
+
+def test_abandoned_reservation_is_released_once(setup):
+    upload, token, _, _ = initialized(setup)
+    uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
     assert not uploads.settle(
         upload.id, scope_id=upload.scope_id, outcome=AttachmentState.FAILED
     )
@@ -457,24 +544,22 @@ def test_complete_is_validation_not_readiness(setup):
 def test_replay_and_delete_do_not_resurrect(setup):
     upload, token, _, _ = initialized(setup)
     storage = ImmutableStore()
-    uploads.transfer(
-        token,
-        scope_id=upload.scope_id,
-        upload_id=upload.id,
-        chunks=[wav_bytes()],
-        storage=storage,
+    args = {"scope_id": upload.scope_id, "upload_id": upload.id, "storage": storage}
+    uploads.transfer(token, chunks=[wav_bytes()], **args)
+    # BR-3: a byte-identical replay succeeds without a second object.
+    assert uploads.transfer(token, chunks=[wav_bytes()], **args)["state"] == (
+        "pending_upload"
     )
+    assert len(storage.objects) == 1
+    altered = bytearray(wav_bytes())
+    altered[-1] ^= 1
     with pytest.raises(AttachmentError, match="transfer_conflict"):
-        uploads.transfer(
-            token,
-            scope_id=upload.scope_id,
-            upload_id=upload.id,
-            chunks=[wav_bytes()],
-            storage=storage,
-        )
+        uploads.transfer(token, chunks=[bytes(altered)], **args)
     uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
     with pytest.raises(AttachmentError, match="incomplete_upload"):
         uploads.complete(token, scope_id=upload.scope_id, upload_id=upload.id)
+    with pytest.raises(AttachmentError, match="transfer_conflict"):
+        uploads.transfer(token, chunks=[wav_bytes()], **args)
     assert not AttachmentBlob.objects.exists()
 
 

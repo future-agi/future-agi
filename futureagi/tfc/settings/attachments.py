@@ -8,6 +8,9 @@ unqualified; there is intentionally no ambient/default credential fallback.
 import os
 
 FI_ATTACHMENTS_ENABLED = os.getenv("FI_ATTACHMENTS_ENABLED", "false").lower() == "true"
+# Exact https origin of the app that proxies /tracer/v1/attachment-media/*.
+# Empty keeps the media-session exchange and gateway dark (404).
+FI_ATTACHMENTS_MEDIA_ORIGIN = os.getenv("FI_ATTACHMENTS_MEDIA_ORIGIN", "")
 FI_ATTACHMENTS_STORAGE = {
     "backend": os.getenv("FI_ATTACHMENTS_STORAGE_BACKEND", "disabled"),
     "region": os.getenv("FI_ATTACHMENTS_STORAGE_REGION", ""),

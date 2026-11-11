@@ -63,6 +63,50 @@ class CapturePolicy:
             raise AttachmentError("invalid_policy")
 
 
+# F01 SourceKind values the server accepts for an authenticated byte upload.
+# RemoteUrl/LocalFile/ProviderFile never reach the upload route: the SDK
+# resolves owned files itself and remote sources only arrive through imports.
+UPLOAD_SOURCES = ("Bytes", "Blob", "OwnedRecordingFile")
+# Server-internal kinds written by trusted server paths, never by a client body.
+INTERNAL_SOURCES = ("imported_recording",)
+# Only modalities whose bytes the validation worker can settle are advertised.
+# Accepting a modality nothing can validate would strand uploads in validating.
+SERVER_MODALITIES = {"audio": ("audio/wav",)}
+
+
+def server_policy(scope):
+    """The scope's capture policy. Clients never supply policy to the server.
+
+    Client-side hide/PII flags are applied by the SDK before egress; the server
+    enforces the scope switches and re-checks them on every later operation.
+    """
+    return CapturePolicy(
+        enabled=bool(scope.enabled),
+        allow_unredacted_media_with_text_pii=bool(
+            scope.allow_unredacted_media_with_text_pii
+        ),
+        record_audio=bool(scope.record_audio),
+    )
+
+
+def policy_document(scope):
+    """F01 ``Policy``: the server's current, versioned decision for this scope."""
+    enabled = bool(scope.enabled)
+    return {
+        "version": str(scope.policy_version),
+        "enabled": enabled,
+        "allowed_sources": list(UPLOAD_SOURCES) if enabled else [],
+        "allowed_modalities": sorted(SERVER_MODALITIES) if enabled else [],
+        "require_media_redaction": bool(scope.require_media_redaction),
+        "require_metadata_removal": False,
+        "allow_unredacted_media_with_text_pii": bool(
+            scope.allow_unredacted_media_with_text_pii
+        ),
+        "record_audio": bool(scope.record_audio),
+        "record_video": False,
+    }
+
+
 def admit_audio(
     scope, policy, *, direction, source_kind, creates_recording=False, error_body=False
 ):
@@ -73,7 +117,7 @@ def admit_audio(
         raise AttachmentError("policy_denied", 403)
     if direction not in {"input", "output", "mixed"}:
         raise AttachmentError("invalid_direction")
-    if source_kind not in {"bytes", "owned_recording_file"}:
+    if source_kind not in UPLOAD_SOURCES + INTERNAL_SOURCES:
         raise AttachmentError("source_unavailable", 403)
     if creates_recording and not policy.record_audio:
         raise AttachmentError("recording_disabled", 403)
