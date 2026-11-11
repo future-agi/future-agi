@@ -171,36 +171,46 @@ def locked_context_graph(
     if private:
         require_private_principal(principal=principal)
     require_scope_access(principal=principal, write=write)
-    context = get_resource(
-        principal=principal, resource_id=context_id, kind="agent_context"
-    )
-    preliminary = _owned(principal, context) if private else None
-    ids = {context.pk, *_link_ids(preliminary), *(extra_ids or set())}
-    with transaction.atomic():
-        rows = list(
-            HubSkill._base_manager.filter(
-                pk__in=ids,
-                organization_id=principal.scope.organization_id,
-                workspace_id=principal.scope.workspace_id,
-                workspace__organization_id=principal.scope.organization_id,
-            )
-            .order_by("id")
-            .select_for_update(of=("self",))
+    # A read observes committed state: when an apply lands between the preliminary
+    # read and the row locks, renew the ID set instead of failing the reader. Writes
+    # still fail CAS so the client renews its own preview.
+    attempts = 1 if write else 3
+    for attempt in range(attempts):
+        context = get_resource(
+            principal=principal, resource_id=context_id, kind="agent_context"
         )
-        resources = {row.pk: row for row in rows}
-        locked = resources.get(context.pk)
-        if locked is None or locked.deleted or locked.kind != "agent_context":
-            raise SkillsHubError("resource_not_found", "Context not found.", status=404)
-        context = locked
-        require_scope_access(principal=principal, write=write)
-        draft = _owned(principal, context) if private else None
-        if not _link_ids(draft).issubset(ids):
-            raise SkillsHubError(
-                "draft_conflict",
-                "The accepted dependency set changed; reload the draft.",
-                status=409,
+        preliminary = _owned(principal, context) if private else None
+        ids = {context.pk, *_link_ids(preliminary), *(extra_ids or set())}
+        with transaction.atomic():
+            rows = list(
+                HubSkill._base_manager.filter(
+                    pk__in=ids,
+                    organization_id=principal.scope.organization_id,
+                    workspace_id=principal.scope.workspace_id,
+                    workspace__organization_id=principal.scope.organization_id,
+                )
+                .order_by("id")
+                .select_for_update(of=("self",))
             )
-        yield context, draft, resources
+            resources = {row.pk: row for row in rows}
+            locked = resources.get(context.pk)
+            if locked is None or locked.deleted or locked.kind != "agent_context":
+                raise SkillsHubError(
+                    "resource_not_found", "Context not found.", status=404
+                )
+            context = locked
+            require_scope_access(principal=principal, write=write)
+            draft = _owned(principal, context) if private else None
+            if not _link_ids(draft).issubset(ids):
+                if attempt + 1 < attempts:
+                    continue
+                raise SkillsHubError(
+                    "draft_conflict",
+                    "The accepted dependency set changed; reload the draft.",
+                    status=409,
+                )
+            yield context, draft, resources
+            return
 
 
 def compile_owned_draft(*, context: HubSkill, draft: HubSkillDraft) -> CompiledContext:

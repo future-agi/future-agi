@@ -29,7 +29,11 @@ export async function createDriver({ jobId, runId, registration }) {
   const headers = (actor) => ({ Authorization: `Bearer ${actor.access}`, 'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId });
   const read = async (path, signal, actor = input.author) => {
     const response = await fetch(`${input.apiUrl}/model-hub/skills/${path}`, { headers: headers(actor), signal });
-    requireValue(response.ok, `Independent API observation unavailable (${response.status})`);
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      // Synthetic fixture: the error code is evidence, never a credential.
+      requireValue(false, `Independent API observation unavailable (${response.status}) ${path.slice(0, 80)} ${body.slice(0, 160)}`);
+    }
     return (await response.json()).result;
   };
   const fake = async (path, method = 'GET', body) => {
