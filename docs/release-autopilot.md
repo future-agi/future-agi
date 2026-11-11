@@ -44,11 +44,11 @@ changes none of them.
     `future-agi/future-agi` only. Reusing the deployment repository's approver
     App would let either repository's key approve in the other.
   - GitHub counts a required approval only from a reviewer with write access.
-    Reports say an App installed with only "Pull requests: write" gives
-    approvals that do not count, and that the same review counts once the
-    installation also has "Contents: write". Install the App with Pull
-    requests: Read and write and Contents: Read and write. This is not
-    verified live.
+    A GitHub community report and an independent reproduction say that an App
+    installed with only "Pull requests: write" gives approvals that do not
+    count, and that the same review counts once the installation also has
+    "Contents: write". Install the App with Pull requests: Read and write and
+    Contents: Read and write. This is not verified live.
   - The workflow mints the token with only `permission-pull-requests: write`.
     Counting follows the installation's access, not the token's, so adding
     `permission-contents: read` to the token would not make the approval count
@@ -58,8 +58,8 @@ changes none of them.
     merge PRs. Keep the key only in the main-only environment below, and keep
     the App off every ruleset bypass list.
   - **Live check before `RELEASE_AUTOPILOT=on`.** Mint a token exactly as the
-    workflow does. Approve a throwaway PR opened by the release-bot App with
-    it. `gh pr view <number> --json reviewDecision,mergeStateStatus` must show
+    workflow does. Approve a throwaway PR opened by the release-bot App, or the
+    next release PR, with it. `gh pr view <number> --json reviewDecision,mergeStateStatus` must show
     `APPROVED` and `CLEAN`. Do not rely on the merge button: organisation
     admins bypass the ruleset. If `reviewDecision` stays `REVIEW_REQUIRED`,
     grant the installation Contents: write and read the same PR again. An
@@ -217,9 +217,9 @@ by any other login, including `github-actions[bot]`, are neither reused nor a
 stop. A missing or invalid approver token or login, or a login equal to the
 release bot's or `github-actions[bot]`, stops the merge job before any request.
 An approval that GitHub records under another login stops the run before the
-merge. The final merge uses the release App token
-and supplies the exact verified head SHA to GitHub's merge API, so a concurrent
-push cannot substitute another commit. The final read cannot atomically lock
+merge. The final merge uses the release App token and supplies the exact
+verified head SHA to GitHub's merge API, so a concurrent push cannot substitute
+another commit. The final read cannot atomically lock
 labels, check reruns or settings; branch protection and tag protection remain
 necessary server-side controls.
 
@@ -331,9 +331,11 @@ write access can edit a PR body.
   from releases cut before this change carry no line and therefore wait for a
   person. Every bump PR waits until a release is cut from a tag that contains
   this change.
-- **Retries.** A `components=bump` dispatch regenerates the bump branch from
-  deployment `main` and force-pushes a new commit, so its commit carries the
-  line with the count the retry's guard computed. An already-open PR's body is
+- **Retries.** A `components=bump` dispatch from `main` (or from any ref that
+  contains this change) regenerates the bump branch from deployment `main` and
+  force-pushes a new commit, so its commit carries the line with the count the
+  retry's guard computed. A dispatch from an older release tag runs that tag's
+  workflow and writes no line. An already-open PR's body is
   not edited, as before.
 - **For the `Production` approver.** A release with a positive or unknown count
   still publishes its images once approved, but its bump PR then waits. If the
@@ -387,15 +389,16 @@ run by this bot.
   requires up-to-date branches), the check step waits without approving. If
   GitHub still refuses the merge (HTTP 405 or 422), the run records the refused
   head in a PR comment, keeps the approval and ends green; the next eligible run
-  retries once, and a second refusal of the same head fails the run. Only runs from the release PR itself
-  count: the run's head branch must be `release-please--branches--main` in
+  retries once, and a second refusal of the same head fails the run. Only runs
+  from the release PR itself count: the run's head branch must be
+  `release-please--branches--main` in
   `future-agi/future-agi`. Runs from a fork or another branch at the same commit
   are ignored before the newest run is chosen, so another PR can neither pass
   nor block this gate. GitHub allows one open PR per head branch and base, and
   the callout workflow runs only for PRs to `main`.
-- First merge with both variables unset. Verify labels, App permissions,
-  environment protections, default-branch/main availability, required check
-  names, and immutable-tag rules. Then enable PR merging during an explicit
+- First merge with both variables unset. Verify labels, App permissions, the
+  approver App live check, environment protections, default-branch/main
+  availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
   weekday window; verify that the App merge triggers release-please tagging.
   Enable `RELEASE_AUTO_APPROVE` separately after observing its manual-path
   summaries and the deployment safety net. No admin setting is changed by code.
