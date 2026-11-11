@@ -1102,7 +1102,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
 
 **Tags:** —
 
@@ -1118,7 +1118,7 @@
 
 **Browser observations:**
 
-- both Jev rows are enabled and prompt for a TypeSafe API key
+- all three Jev rows are enabled and prompt for a TypeSafe API key
 - choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
 - the drawer takes input (Add enables) and the evaluator model stays unselected
 
@@ -1126,13 +1126,13 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. keep Pass/fail and describe a pass and a fail
 4. save the evaluation
@@ -1151,13 +1151,13 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
 4. save the evaluation
@@ -1176,13 +1176,13 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Scoring and add four ordered levels
 4. save the evaluation
@@ -1201,7 +1201,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
 
 **Tags:** —
 
@@ -1222,8 +1222,33 @@
 
 **Browser observations:**
 
-- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
+
+**Goal:** Choose a decision model’s direct or OpenRouter connection, run a Pass/Fail evaluation through it, and retain the explicit choice after reload
+
+**Spec:** `flows/evals/decision-model-connections.spec.ts:93`
+
+**Tags:** —
+
+**User steps:**
+
+1. attest the isolated managed mock routing
+2. search one decision model with native OpenAI and OpenRouter connections
+3. add the native synthetic key through the product drawer and publish a Pass/Fail evaluator
+4. run the evaluator through native OpenAI against deterministic synthetic input
+5. choose OpenRouter, add its synthetic key through the drawer and run again
+6. save the new version as default and reload the persisted connection
+
+**Backend state verified:**
+
+- the model-list API exposes one group with the exact native OpenAI and OpenRouter route IDs shown by the UI
+- UI-created provider keys belong only to the isolated actor scope and update that connection’s catalog readiness
+- the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
+- both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
+- the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
 
 ## gateway
 
@@ -1567,39 +1592,41 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
@@ -2315,6 +2342,27 @@
 - Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
+
+### OBS-E2E-059 — Copilot agent traces show request usage and optional timing detail
+
+**Goal:** A developer inspects a VS Code Copilot turn with accurate token usage, an Agent label and optional internal timing detail
+
+**Spec:** `flows/observe/copilot-agent-usage-timing.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. send the sanitized native VS Code capture plus Strands, Pydantic and parent-only controls
+2. open the captured trace from the real Observe grid
+3. read the agent label and observed token summary with timing activity hidden
+4. show timing spans and hide them again without losing their stored data
+
+**Backend state verified:**
+
+- all 91 captured spans retain their IDs; one agent, five model calls and 72 internal timing spans are stored
+- trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
+- all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
 
 ## prompts
 
