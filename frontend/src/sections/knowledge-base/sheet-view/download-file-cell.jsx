@@ -2,27 +2,20 @@ import { Button } from "@mui/material";
 import { saveAs } from "file-saver";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
-import { useState } from "react";
-import axios, { endpoints } from "src/utils/axios";
+import { useDownloadKnowledgeBaseFile } from "src/api/knowledge-base/files";
 
 export default function DownloadFileCell({ file, knowledgeId }) {
-  const [downloading, setDownloading] = useState(false);
+  const { mutateAsync: downloadFile, isPending: downloading } = useDownloadKnowledgeBaseFile();
 
   const download = async (event) => {
     event.stopPropagation();
-    setDownloading(true);
     try {
-      const response = await axios.get(
-        endpoints.knowledge.downloadFile(knowledgeId),
-        { params: { file_id: file.id }, responseType: "blob" },
-      );
-      saveAs(response.data, file.name);
+      const blob = await downloadFile({ kbId: knowledgeId, fileId: file.id });
+      saveAs(blob, file.name);
     } catch {
       enqueueSnackbar("Unable to download this file. Check your access and try again.", {
         variant: "error",
       });
-    } finally {
-      setDownloading(false);
     }
   };
 
