@@ -11,7 +11,6 @@ export const newVersionAction = (agent) => {
     };
   }
   if (
-    agent.agentKind === "source" ||
     agent.source === "github" ||
     agent.source === "vapi" ||
     agent.source === "retell"

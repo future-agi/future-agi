@@ -19,6 +19,7 @@ from simulate.models import (
     AgentDefinition,
     AgentVersion,
     AgentVersionSetup,
+    HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
 from simulate.selectors.runs import user_executions
@@ -53,9 +54,20 @@ def annotate_agent_rows(
     )
     source_kind = KT("payload__source__kind")
     source_kinds = first_environment.annotate(kind=source_kind).values("kind")
+    version_source_kinds = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_definition=OuterRef("pk"),
+            agent_version__deleted=False,
+        )
+        .order_by("-agent_version__version_number")
+        .values("source_kind")
+    )
     return queryset.annotate(
         _agent_kind=Subquery(stored_setups.values("agent_kind")[:1]),
-        _build_source_kind=Subquery(source_kinds[:1]),
+        _build_source_kind=Coalesce(
+            Subquery(source_kinds[:1]),
+            Subquery(version_source_kinds[:1]),
+        ),
         _version_count=Coalesce(
             Subquery(
                 versions.values("agent_definition")

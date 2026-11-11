@@ -179,6 +179,33 @@ def test_list_tells_a_code_agent_from_a_hosted_one(
 
 
 @pytest.mark.django_db
+def test_a_code_agent_without_an_environment_takes_its_newest_version_source(
+    auth_client, organization, workspace
+):
+    upload = _agent(organization, workspace, "Fresh Upload", provider="")
+    first = upload.create_version(description="", commit_message="v1", status="draft")
+    second = upload.create_version(description="", commit_message="v2", status="draft")
+    store_agent(agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3")
+    for version, kind in ((first, "github"), (second, "archive")):
+        HarnessAgentVersionRuntime.objects.create(
+            agent_version=version,
+            agent_definition=upload,
+            organization=organization,
+            hash="sha256:" + str(version.version_number) * 64,
+            source_kind=kind,
+            trigger="creation",
+        )
+
+    row = _rows(auth_client)["Fresh Upload"]
+
+    assert (row["agent_kind"], row["source"], row["environment_count"]) == (
+        "source",
+        "archive",
+        0,
+    )
+
+
+@pytest.mark.django_db
 def test_list_counts_every_environment_and_lists_the_five_oldest(
     auth_client, organization, workspace
 ):

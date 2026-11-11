@@ -19,10 +19,13 @@ describe("newVersionAction", () => {
     },
   );
 
-  it("syncs a code agent whatever its source", () => {
+  it("never offers Sync to a code agent whose source is not GitHub", () => {
     expect(
-      newVersionAction({ source: "other", agentKind: "source" }),
-    ).toMatchObject({ kind: "sync" });
+      newVersionAction({ source: null, agentKind: "source" }).kind,
+    ).not.toBe("sync");
+    expect(
+      newVersionAction({ source: "archive", agentKind: "source" }),
+    ).toMatchObject({ kind: "upload" });
   });
 
   it("takes a new upload for an uploaded agent", () => {
