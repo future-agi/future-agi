@@ -1921,6 +1921,22 @@ class ControllerTests(unittest.TestCase):
                     self.assertEqual(self.outputs["context"], "")
                     self.assertTrue(any("deleted" in body for body in self.escalations()))
 
+    def test_reused_pass_clears_an_escalation_that_no_longer_applies(self):
+        # Escalated while the run looked deleted; once it reads again, the next
+        # run reuses the pass and must not merge beside "a person must review".
+        self.passing_review()
+        restore = self.fail_reads("run", 404)
+        self.prepare()
+        [escalation] = [c for c in self.api.comments if c["body"].startswith(risk.ESCALATION_MARKER)]
+        self.assertIn("deleted", escalation["body"])
+        restore()
+        context = self.prepare()
+        self.assertEqual(context["head"], HEAD)
+        self.assertNotIn("check_id", context)
+        self.assertTrue(escalation["body"].startswith(risk.RESOLVED))
+        risk.merge(self.api, POLICY, settings(), context)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+
     def test_transient_api_failures_fail_the_run_without_escalating(self):
         # 5xx, rate limits, timeouts and GraphQL errors are not evidence that
         # anything was deleted or edited: the run fails, the next one retries.
