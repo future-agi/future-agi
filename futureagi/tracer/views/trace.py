@@ -1982,6 +1982,10 @@ def _build_annotation_map_from_scores_pg(
 
 
 class TraceView(BaseModelViewSetMixin, ModelViewSet):
+    # B10 installs an AuthorizedAttachmentReader only after control-store and
+    # gateway qualification. No reader means no queries or response changes.
+    attachment_reader = None
+
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = TraceSerializer
@@ -2156,7 +2160,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 test_execution_id=query.get("test_execution_id"),
                 call_execution_id=query.get("call_execution_id"),
             )
-            return self._gm.success_response(handler.fetch())
+            result = handler.fetch()
+            from tracer.services.attachments.view_enrichment import (
+                enrich_observations,
+                trace_observations,
+            )
+
+            enrich_observations(
+                request=request,
+                project_id=(result.get("trace") or {}).get("project"),
+                observations=trace_observations(result),
+                reader=self.attachment_reader,
+            )
+            return self._gm.success_response(result)
         except Trace.DoesNotExist:
             return self._gm.bad_request(
                 f"error retrieving trace {get_error_message('ERROR_GETTING_TRACE')}"
@@ -4414,6 +4430,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
+        from tracer.services.attachments.view_enrichment import enrich_observations
+
+        enrich_observations(
+            request=request,
+            project_id=project_id,
+            observations=observation_span,
+            reader=self.attachment_reader,
+        )
         return self._gm.success_response(result)
 
     def _get_trace_id_by_index_observe_clickhouse(
@@ -6637,6 +6661,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     entry["annotation_outputs"] = annotation_outputs
 
             results.append(entry)
+
+        if not include_export_fields:
+            # Evaluation/export reuse is not attachment authorization.
+            from tracer.services.attachments.view_enrichment import enrich_voice_page
+
+            enrich_voice_page(
+                request=request,
+                project_id=project_id,
+                entries=results,
+                reader=self.attachment_reader,
+            )
 
         # Return DRF-style paginated response
         import math

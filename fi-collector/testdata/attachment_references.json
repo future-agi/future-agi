@@ -1,0 +1,223 @@
+{
+  "schema": "fi.attachments.v1",
+  "references": [
+    {
+      "name": "empty",
+      "version": 1,
+      "raw": "[]",
+      "valid": true
+    },
+    {
+      "name": "mixed_recording",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"channel\":0}]",
+      "valid": true
+    },
+    {
+      "name": "unknown_version",
+      "version": 2,
+      "raw": "[]",
+      "valid": false
+    },
+    {
+      "name": "null",
+      "version": 1,
+      "raw": "null",
+      "valid": false
+    },
+    {
+      "name": "missing_fields",
+      "version": 1,
+      "raw": "[{}]",
+      "valid": false
+    },
+    {
+      "name": "trailing_json",
+      "version": 1,
+      "raw": "[] []",
+      "valid": false
+    },
+    {
+      "name": "invalid_json",
+      "version": 1,
+      "raw": "[",
+      "valid": false
+    },
+    {
+      "name": "scalar_ref",
+      "version": 1,
+      "raw": "[1]",
+      "valid": false
+    },
+    {
+      "name": "nested",
+      "version": 1,
+      "raw": "[{\"direction\": {\"source_url\":\"https://example.invalid/private\"}}]",
+      "valid": false
+    },
+    {
+      "name": "duplicate_member",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"attachment_id\":\"12345678-1234-1234-1234-123456789abc\",\"occurrence_id\":\"87654321-4321-4321-4321-cba987654321\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\"}]",
+      "valid": false
+    },
+    {
+      "name": "valid-Reference",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": true
+    },
+    {
+      "name": "valid-References",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": true
+    },
+    {
+      "name": "valid-SpanAttributes",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": true
+    },
+    {
+      "name": "forbidden-Reference-source_url",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"source_url\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-local_path",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"local_path\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-provider_credential",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"provider_credential\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-object_key",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"object_key\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-content_hash",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"content_hash\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-filename",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"filename\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-speaker_name",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"speaker_name\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-exif",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"exif\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbidden-Reference-playback_signature",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\",\"playback_signature\":\"SYNTHETIC_CANARY_DO_NOT_EXPORT\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbid-unknown-reference-version",
+      "version": 2,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": false
+    },
+    {
+      "name": "forbid-65-references",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"}]",
+      "valid": false
+    },
+    {
+      "name": "same-occurrence-with-different-metadata",
+      "version": 1,
+      "raw": "[{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"conversation_recording\"},{\"attachment_id\":\"00000006-0000-0000-0000-000000000001\",\"occurrence_id\":\"00000007-0000-0000-0000-000000000001\",\"direction\":\"mixed\",\"modality\":\"audio\",\"mime_type\":\"audio/wav\",\"purpose\":\"turn_recording\"}]",
+      "valid": false
+    }
+  ],
+  "identities": [
+    {
+      "input": "12345678123412341234123456789abc",
+      "output": "12345678-1234-1234-1234-123456789abc"
+    },
+    {
+      "input": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "output": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    },
+    {
+      "input": "00000000000000000000000000000000",
+      "output": ""
+    },
+    {
+      "input": "00000000-0000-0000-0000-000000000000",
+      "output": ""
+    },
+    {
+      "input": "12345678123412341234123456789ABC",
+      "output": ""
+    },
+    {
+      "input": "1234",
+      "output": ""
+    },
+    {
+      "input": "0123456789abcdef0123456789abcdef",
+      "output": "01234567-89ab-cdef-0123-456789abcdef"
+    },
+    {
+      "input": "01234567-89ab-cdef-0123-456789abcdef",
+      "output": "01234567-89ab-cdef-0123-456789abcdef"
+    },
+    {
+      "input": "ffffffffffffffffffffffffffffffff",
+      "output": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    },
+    {
+      "input": "00000000000000000000000000000000",
+      "output": ""
+    },
+    {
+      "input": "00000000-0000-0000-0000-000000000000",
+      "output": ""
+    },
+    {
+      "input": "abc",
+      "output": ""
+    },
+    {
+      "input": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+      "output": ""
+    },
+    {
+      "input": "0123456789ABCDEF0123456789ABCDEF",
+      "output": ""
+    },
+    {
+      "input": "0123456789abcdef0123456789abcdef\n",
+      "output": ""
+    },
+    {
+      "input": "{01234567-89ab-cdef-0123-456789abcdef}",
+      "output": ""
+    }
+  ],
+  "source": "traceAI/spec/attachments/v1",
+  "source_schema_sha256": "470035bd5e0b66592c8be98fbf5cc67ffe0e32d9803102b621e25807548f4961"
+}

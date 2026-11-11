@@ -782,7 +782,12 @@ DECODER = AttributeDecoder()
 
 
 def convert_otel_span_to_observation_span(
-    otel_span, organization_id=None, user_id=None, workspace_id=None
+    otel_span,
+    organization_id=None,
+    user_id=None,
+    workspace_id=None,
+    *,
+    attachment_binding=None,
 ):
     """
     Convert an OTel span dictionary to an ObservationSpan object with mapped fields.
@@ -825,6 +830,10 @@ def convert_otel_span_to_observation_span(
             user_id,
             workspace_id,
         )
+        if attachment_binding is not None:
+            attachment_binding.stage(
+                otel_span, project, organization_id, timezone.now()
+            )
         metadata = otel_span.get("metadata") or attributes.get(SpanAttributes.METADATA)
         project_version_id = otel_span.get("project_version_id")
         project_version = get_or_create_project_version(
@@ -1054,12 +1063,21 @@ def process_attributes(attributes: dict[str, Any], org_id=None) -> dict[str, Any
         rf"^(?:{SpanAttributes.OUTPUT_MESSAGES}|{SpanAttributes.INPUT_MESSAGES}).*\.({MessageContentAttributes.MESSAGE_CONTENT_IMAGE}|{MessageContentAttributes.MESSAGE_CONTENT_AUDIO}|{MessageContentAttributes.MESSAGE_CONTENT_VIDEO})$"
     )
 
-    updated_attributes = attributes.copy()
+    from tracer.services.attachments.references import (
+        is_attachment_media,
+        normalize_attributes,
+    )
 
-    for key in attributes.keys():
+    updated_attributes = normalize_attributes(attributes)
+
+    for key in list(updated_attributes):
         match = pattern.match(key)
         if match:
-            content = attributes[key]
+            content = updated_attributes[key]
+            if is_attachment_media(content):
+                # New occurrences resolve only through the authenticated gateway.
+                # Even malformed scheme values must never reach legacy storage.
+                continue
             content_type = match.group(1).split(".")[-1]
 
             try:
@@ -1475,7 +1493,9 @@ def _bulk_get_or_create_project_versions(version_keys, projects, organization_id
     return project_versions
 
 
-def _convert_single_span(otel_span, projects, project_versions, organization_id):
+def _convert_single_span(
+    otel_span, projects, project_versions, organization_id, *, attachment_binding=None
+):
     """
     Converts a single OTel span dictionary into the target ObservationSpan format.
 
@@ -1519,6 +1539,9 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         raise Exception(
             f"Project not found for version data: project_name={project_name}, project_type={project_type}"
         )
+
+    if attachment_binding is not None:
+        attachment_binding.stage(otel_span, project, organization_id, timezone.now())
 
     # Process Input/Output
     input_val = attributes.get("fi.llm.input") or attributes.get(
@@ -1688,7 +1711,12 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
 
 
 def bulk_convert_otel_spans_to_observation_spans(
-    otel_spans, organization_id=None, user_id=None, workspace_id=None
+    otel_spans,
+    organization_id=None,
+    user_id=None,
+    workspace_id=None,
+    *,
+    attachment_binding=None,
 ):
     """
     Converts a list of OTel span dictionaries to ObservationSpan objects with mapped fields in bulk.
@@ -1708,7 +1736,13 @@ def bulk_convert_otel_spans_to_observation_spans(
 
         # 3. Process each span individually with the pre-fetched data
         results = [
-            _convert_single_span(span, projects, project_versions, organization_id)
+            _convert_single_span(
+                span,
+                projects,
+                project_versions,
+                organization_id,
+                attachment_binding=attachment_binding,
+            )
             for span in otel_spans
         ]
 
