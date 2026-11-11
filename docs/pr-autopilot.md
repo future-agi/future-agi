@@ -78,7 +78,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including `statuses: write` in the prepare job (it posts the reservation status) and `statuses: read` in the `approve-and-merge` job. No Administration permission or protection-bypass role is needed or granted. The workflow token never approves, so turn **off** “Allow GitHub Actions to create and approve pull requests” (see [Approver App and owner settings](#approver-app-and-owner-settings)). An organisation-level “off” overrides the repository setting |
 | Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the token step in the `approve-and-merge` job fails. The review outcome is already recorded by then. Nothing is approved or merged, and the bot posts one note per head on the PR |
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
-| `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient. An active `pull_request` rule must also dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 11 Nov). Also require approval of the most recent push; the controller does not check this one |
+| `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset that targets `dev` only, with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Do not put the strict rule in organisation ruleset 2289447 or any ruleset that also covers `main`: `main` must not require up-to-date branches, because the release autopilot merges a release PR that is behind `main` (`docs/release-autopilot.md`). Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient. An active `pull_request` rule must also dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 11 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one |
 | Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
@@ -252,7 +252,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    repository ruleset rather than by editing organisation ruleset 2289447,
    which covers other repositories. Otherwise a writer can push onto someone
    else's PR and approve it. The autopilot never pushes, so the approver is
-   never the last pusher.
+   never the last pusher. A branch workflow can still push onto another
+   person's PR as a bot (workflow token or App token), and the writer's own
+   approval then probably counts (inferred, not tested). Test that on a
+   scratch repository; until the test shows that it does not count, this step
+   is not met and step 6 waits.
 4. **Create the environments, with no key yet.** GitHub creates a missing
    environment with no rules the first time a job names it, so create each one
    with its branch rule first. Neither may have required reviewers or a wait
@@ -264,17 +268,28 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
      `release-autopilot.yml` names it.
 5. **Move the release-bot App key** (`RELEASE_BOT_APP_ID`,
    `RELEASE_BOT_PRIVATE_KEY`, organisation secrets today) into environment
-   secrets whose deployment branch policy allows only protected branches and
-   release tags. Any writer's branch workflow can read an organisation secret,
-   and that App can approve PRs too, so until this step a writer can still
-   get a PR approved without another person. Every job that reads the key
-   must then name such an environment. A job names only one environment, so
-   the key can need a copy in more than one. `docs/bot-pr-autopilot.md` in
-   `future-agi/deployment` and `docs/release-autopilot.md` here list the
-   jobs. Once every such job names an environment, delete the organisation
-   secrets, generate a new private key for the release-bot App and delete
-   the old one, because any branch workflow could read the old key. Step 6
-   waits for this.
+   secrets whose deployment branch policy admits only refs that one writer
+   cannot create or merge into alone. "Protected branches only" is not
+   enough: `fix/nightly-dev-27-05` is protected here with one approval and no
+   status checks, and until a tag ruleset exists any writer can push a tag
+   at their own commit, whose workflow files a tag run uses. Use "Selected
+   branches and tags", make each admitted branch need a person's review
+   (steps 2 and 3), and add a tag ruleset on `v*` that lets only
+   administrators and the release App create, move or delete release tags,
+   before an environment that admits tags gets the key. Any writer's branch
+   workflow can read an organisation secret, and that App can approve PRs
+   too, so until this step a writer can still get a PR approved without
+   another person. Every job that reads the key must then name such an
+   environment; a job that names an environment still reads organisation
+   secrets, so the jobs change first. A job names only one environment, so
+   the key can need a copy in more than one. `docs/release-autopilot.md` here
+   lists this repository's three holders and the jobs, and
+   `docs/auto-deploy.md` in `future-agi/deployment` (Administrator setup
+   step 1) lists the jobs in every repository. The same custody is a
+   precondition of that repository's deploy identity. Once every such job
+   names an environment, delete the organisation secrets, generate a new
+   private key for the release-bot App and delete the old one, because any
+   branch workflow could read the old key. Step 6 waits for this.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
