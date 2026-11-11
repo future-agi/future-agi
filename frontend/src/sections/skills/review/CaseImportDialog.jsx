@@ -19,11 +19,8 @@ import {
   useReviewClock,
 } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
-import {
-  ApplicationBehaviorFields,
-  behaviorPartial,
-  withBehavior,
-} from "../tests/applicationBehavior";
+import ApplicationBehaviorFields from "../tests/ApplicationBehaviorFields";
+import { behaviorPartial, withBehavior } from "../tests/applicationBehavior";
 
 const bytes = (text) => new TextEncoder().encode(text).length;
 function ReviewedExample({

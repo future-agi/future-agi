@@ -15,8 +15,8 @@ import {
 
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import Section from "src/components/section";
+import ApplicationBehaviorFields from "./ApplicationBehaviorFields";
 import {
-  ApplicationBehaviorFields,
   BEHAVIOR_FIXTURE,
   behaviorPartial as isBehaviorPartial,
   readBehavior,
