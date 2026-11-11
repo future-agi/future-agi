@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
 import {
@@ -38,6 +38,12 @@ import { CONNECT_AGENT_PATH, CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { GITHUB_SOURCE } from "./connectSources";
 import { AgentDetails, FoundAgents, ManualAgent } from "./ConnectAgentSteps";
 import { githubSource } from "./githubSource";
+import {
+  clearConnectDraft,
+  draftHasProgress,
+  readConnectDraft,
+  saveConnectDraft,
+} from "./connectDraft";
 import { LogoTile, OptionCard, TextLink } from "./connectBits";
 import { MONO } from "./connectStyles";
 
@@ -323,20 +329,56 @@ export default function GitHubConnectFlow({ outcome }) {
   const { enqueueSnackbar } = useSnackbar();
   const github = useGitHubConnection({ refetchOnWindowFocus: true });
   const connection = github.data;
-  const [mode, setMode] = useState("app");
-  const [repository, setRepository] = useState(null);
-  const [branch, setBranch] = useState("");
-  const [link, setLink] = useState("");
-  const [linkBranch, setLinkBranch] = useState("");
+  const [draft] = useState(() => readConnectDraft() || {});
+  const [mode, setMode] = useState(draft.mode || "app");
+  const [repository, setRepository] = useState(draft.repository || null);
+  const [branch, setBranch] = useState(draft.branch || "");
+  const [link, setLink] = useState(draft.link || "");
+  const [linkBranch, setLinkBranch] = useState(draft.linkBranch || "");
   // "source": pick where the code is. "agents": the scan's list. "details":
   // name and values of the one picked.
-  const [stage, setStage] = useState("source");
-  const [scanId, setScanId] = useState(null);
-  const [picked, setPicked] = useState(null);
-  const [manual, setManual] = useState(false);
-  const [subfolder, setSubfolder] = useState("");
-  const [name, setName] = useState("");
+  const [stage, setStage] = useState(
+    draft.scanId ? draft.stage || "source" : "source",
+  );
+  const [scanId, setScanId] = useState(draft.scanId || null);
+  const [picked, setPicked] = useState(draft.picked || null);
+  const [manual, setManual] = useState(!!draft.manual);
+  const [subfolder, setSubfolder] = useState(draft.subfolder || "");
+  const [name, setName] = useState(draft.name || "");
   const [values, setValues] = useState({});
+
+  useEffect(() => {
+    const next = {
+      mode,
+      repository,
+      branch,
+      link,
+      linkBranch,
+      stage,
+      scanId,
+      picked,
+      manual,
+      subfolder,
+      name,
+    };
+    if (draftHasProgress(next)) {
+      saveConnectDraft(next);
+    } else {
+      clearConnectDraft();
+    }
+  }, [
+    mode,
+    repository,
+    branch,
+    link,
+    linkBranch,
+    stage,
+    scanId,
+    picked,
+    manual,
+    subfolder,
+    name,
+  ]);
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
   const connect = useConnectAgent();
@@ -387,6 +429,7 @@ export default function GitHubConnectFlow({ outcome }) {
       {
         ...source,
         ...(chosenFolder ? { subfolder: chosenFolder } : {}),
+        ...(scan.data?.commitSha ? { commit_sha: scan.data.commitSha } : {}),
         name: name.trim(),
         env_values: Object.fromEntries(
           Object.entries(values).filter(([, value]) => value),
@@ -394,6 +437,7 @@ export default function GitHubConnectFlow({ outcome }) {
       },
       {
         onSuccess: (data) => {
+          clearConnectDraft();
           enqueueSnackbar(
             data.exists
               ? "This agent is already connected"
@@ -632,6 +676,19 @@ export default function GitHubConnectFlow({ outcome }) {
           bgcolor: "background.paper",
         }}
       >
+        {stage !== "source" && (
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={() => setStage(stage === "details" ? "agents" : "source")}
+            startIcon={
+              <Iconify icon="solar:alt-arrow-left-linear" width={14} />
+            }
+            sx={{ flexShrink: 0 }}
+          >
+            Back
+          </Button>
+        )}
         <Box flex={1} />
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {hint}

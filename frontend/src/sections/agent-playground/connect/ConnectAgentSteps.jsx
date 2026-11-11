@@ -125,7 +125,9 @@ export function FoundAgents({ scan, picked, onPick, onManual }) {
       })}
       {scan.truncated && (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          Only the first 50 are listed.
+          {agents.length >= 50
+            ? "Only the first 50 are listed."
+            : "Some agents may be missing from this list."}
         </Typography>
       )}
       <TextLink onClick={onManual}>Not in the list? Name its folder</TextLink>

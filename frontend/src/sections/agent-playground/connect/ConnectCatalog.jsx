@@ -37,7 +37,11 @@ function CatalogRow({ item, selected, onPick, single }) {
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography
           noWrap
-          sx={{ typography: "s1", fontWeight: 500, color: inert ? "text.secondary" : "text.primary" }}
+          sx={{
+            typography: "s1",
+            fontWeight: 500,
+            color: inert ? "text.secondary" : "text.primary",
+          }}
         >
           {item.name}
         </Typography>
@@ -85,7 +89,10 @@ function RowGrid({ items, columns = 2, single = false, pickedId, onPick }) {
         display: "grid",
         gridTemplateColumns: "1fr",
         p: 1,
-        [t.breakpoints.up("md")]: { gridTemplateColumns: `repeat(${columns}, 1fr)`, columnGap: 4 },
+        [t.breakpoints.up("md")]: {
+          gridTemplateColumns: `repeat(${columns}, 1fr)`,
+          columnGap: 4,
+        },
       })}
     >
       {items.map((item) => (
@@ -108,46 +115,63 @@ RowGrid.propTypes = {
   onPick: PropTypes.func.isRequired,
 };
 
-function DropZone() {
+function DropZone({ item, selected, onPick }) {
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1.5}
+    <ButtonBase
+      onClick={() => onPick(item)}
+      aria-pressed={selected}
+      data-testid="connect-upload-folder"
       sx={{
         m: 1,
+        display: "flex",
+        justifyContent: "flex-start",
+        textAlign: "left",
+        gap: 1.5,
         px: 2,
         py: 1.5,
         borderRadius: "6px",
         border: "1px dashed",
-        borderColor: "divider",
-        opacity: 0.6,
+        borderColor: selected ? "text.secondary" : "divider",
+        bgcolor: selected ? "action.selected" : "transparent",
+        "&:hover": { bgcolor: "action.hover" },
+        "&.Mui-focusVisible": focusRing,
       }}
     >
-      <LogoTile icon="solar:upload-minimalistic-linear" muted />
+      <LogoTile icon={item.icon} />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.secondary" }}>
-          Drop a folder or a .zip
+        <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+          {item.name}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>Up to 200 MB</Typography>
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          Up to 200 MB · secrets files are left out
+        </Typography>
       </Box>
-      <ComingSoonChip />
-    </Stack>
+    </ButtonBase>
   );
 }
+DropZone.propTypes = {
+  item: PropTypes.object.isRequired,
+  selected: PropTypes.bool,
+  onPick: PropTypes.func.isRequired,
+};
 
 export default function ConnectCatalog({ pickedId, onPick }) {
   const [query, setQuery] = useState("");
   const [groupId, setGroupId] = useState(CONNECT_GROUPS[0].id);
   const searching = !!query.trim();
-  const results = useMemo(() => (searching ? searchGroups(query) : []), [query, searching]);
+  const results = useMemo(
+    () => (searching ? searchGroups(query) : []),
+    [query, searching],
+  );
   const group = CONNECT_GROUPS.find((candidate) => candidate.id === groupId);
 
   let list;
   if (searching && !results.length) {
     list = (
       <Box sx={{ ...PANEL_SX, py: 5, px: 2, textAlign: "center" }}>
-        <Typography sx={{ typography: "m3", fontWeight: 600 }}>{`Nothing matches "${query.trim()}"`}</Typography>
+        <Typography
+          sx={{ typography: "m3", fontWeight: 600 }}
+        >{`Nothing matches "${query.trim()}"`}</Typography>
         <Typography sx={{ typography: "s1", color: "text.secondary", mt: 0.5 }}>
           Try a platform, a framework or where the code lives.
         </Typography>
@@ -155,7 +179,11 @@ export default function ConnectCatalog({ pickedId, onPick }) {
     );
   } else if (searching) {
     list = results.map((result) => (
-      <Panel key={result.id} title={`${result.title} · ${result.items.length}`} reach={result.reach}>
+      <Panel
+        key={result.id}
+        title={`${result.title} · ${result.items.length}`}
+        reach={result.reach}
+      >
         <RowGrid items={result.items} pickedId={pickedId} onPick={onPick} />
       </Panel>
     ));
@@ -163,7 +191,11 @@ export default function ConnectCatalog({ pickedId, onPick }) {
     list = group.sections.map((section) => (
       <Panel key={section.id} title={section.title} reach={section.reach}>
         {section.dropzone ? (
-          <DropZone />
+          <DropZone
+            item={section.items[0]}
+            selected={pickedId === section.items[0].id}
+            onPick={onPick}
+          />
         ) : (
           <RowGrid
             items={section.items}
@@ -193,8 +225,16 @@ export default function ConnectCatalog({ pickedId, onPick }) {
         inputProps={{ "aria-label": "Search ways to connect" }}
       />
       {!searching && (
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-          <SegmentedTabs value={groupId} onChange={(_event, next) => setGroupId(next)}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          spacing={2}
+        >
+          <SegmentedTabs
+            value={groupId}
+            onChange={(_event, next) => setGroupId(next)}
+          >
             {CONNECT_GROUPS.map((candidate) => (
               <Tab
                 key={candidate.id}
