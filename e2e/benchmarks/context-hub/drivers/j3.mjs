@@ -101,8 +101,9 @@ export async function createDriver({ jobId, runId, registration }) {
         await snapshot(`parent-${index}-publication-review`, page);
         await click('Acknowledge reviewed head', `parent-${index}-acknowledge-head`);
         await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
-        await operator.review(`parent-${index}-confirmed-head`, ['standing-root', 'accepted-lock', 'publication-head'], [], () => reviewed.check(), decision);
-        if (await warning.count()) await operator.click(warning, `parent-${index}-confirmed-warnings`);
+        // The recorded acknowledgement carries to the publish step; it is visible, not re-requested.
+        await expect(reviewed).toBeChecked();
+        if (await warning.count()) await expect(warning).toBeChecked();
         await click('Publish version', `parent-${index}-publish`);
         await expect.poll(async () => (await read(`contexts/${parent.id}/`, signal)).context.latest_version, { timeout: 60_000 }).toBe(expected);
       };
