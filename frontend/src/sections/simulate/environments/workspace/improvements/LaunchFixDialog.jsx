@@ -498,9 +498,9 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               </Select>
             </Stack>
           </Row>
-          <Row k="Cost">
+          <Row k="Stops at">
             <Typography sx={{ typography: "s2" }}>
-              Stops at the limit with the best it found.
+              {`${formatCredits(budget)} or ${formatMinutes(minutes)}, whichever comes first.`}
             </Typography>
           </Row>
         </Box>

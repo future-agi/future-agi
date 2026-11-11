@@ -248,6 +248,25 @@ describe("LaunchFixDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("says where the fix stops, from the budget and time the user picks", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "1,500 credits or 2 h 30 min, whichever comes first.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Stops at")).toBeInTheDocument();
+    // "Agent's cost" is the agent's spend; the fix's own stop is not a second "Cost".
+    expect(screen.queryByText("Cost")).not.toBeInTheDocument();
+
+    await pickOption(user, "Budget", "5,000 credits");
+    await pickOption(user, "Time limit", "1 h");
+    expect(
+      screen.getByText("5,000 credits or 1 h, whichever comes first."),
+    ).toBeInTheDocument();
+  });
+
   it("disables Start with the reason when nothing may change", async () => {
     const user = userEvent.setup();
     renderDialog();
