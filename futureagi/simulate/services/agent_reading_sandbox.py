@@ -49,6 +49,7 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _validate_resolved_egress_domains,
     acquire_source_archive,
+    stored_upload_name,
 )
 from simulate.services.hosted_sandbox import (
     E2BSandboxRuntimeProvider,
@@ -56,6 +57,7 @@ from simulate.services.hosted_sandbox import (
     SandboxRuntimeProvider,
     get_sandbox_provider,
 )
+from simulate.temporal.constants import READING_ACTIVITY_TIMEOUT_SECONDS
 
 logger = structlog.get_logger(__name__)
 
@@ -72,10 +74,14 @@ READ_ARGS = "--read-agent-only"
 # reading; this is the one place it changes.
 SCAN_ARGS = "--find-agents"
 SECRETS_PATH = "/run/futureagi/secrets.json"
+SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 COST_FILE = f"{READING_DIR}/cost.json"
 COST_MAX_BYTES = 1_048_576
 _OUTPUT_TAIL = 2000
 _PREPARE_TIMEOUT = 120
+_SANDBOX_OVERHEAD_SECONDS = 600
+_ALK_READING_MARGIN_SECONDS = 300
+_COLLECT_SECONDS = 120
 # A crashed reading that left no failure file; the next attempt may succeed.
 CRASHED = "agent_reading_crashed"
 # The reading finished but not with the files agreed on; retried as well.
@@ -113,7 +119,10 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
         cpu_units, memory_mb, disk_gb = E2BSandboxRuntimeProvider.configured_resources()
     else:
         cpu_units, memory_mb, disk_gb = 2, 4096, 10
-    timeout = int(getattr(settings, "ALK_HOSTED_READING_TIMEOUT", 2400))
+    timeout = min(
+        int(getattr(settings, "ALK_HOSTED_READING_TIMEOUT", 2400)),
+        READING_ACTIVITY_TIMEOUT_SECONDS - _SANDBOX_OVERHEAD_SECONDS,
+    )
     spec = SandboxLaunchSpec(
         cpu_units=cpu_units,
         memory_mb=memory_mb,
@@ -123,20 +132,26 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
         labels=labels,
         allowed_domains=tuple(sorted(domains)),
     )
-    env = {
+    material = {
         name: value
         for name, value in simulator_env.items()
         if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
     }
-    env["PATH"] = _CHAT_RUNTIME_PATH
-    return spec, env, timeout
+    env = {
+        **material,
+        "PATH": _CHAT_RUNTIME_PATH,
+        "ALK_READING_MAX_DURATION_SECONDS": str(
+            max(60, timeout - _ALK_READING_MARGIN_SECONDS - _COLLECT_SECONDS)
+        ),
+    }
+    return spec, env, material, timeout
 
 
 @contextmanager
 def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
     """A sandbox with the source and job document in place, deleted on the way out."""
     provider = _provider()
-    spec, env, timeout = _launch_spec(provider, labels)
+    spec, env, material, timeout = _launch_spec(provider, labels)
     sandbox = provider.create(spec, timeout=provider.create_timeout_seconds)
     try:
         sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
@@ -145,6 +160,10 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             "/work/job.json",
         )
         sandbox.fs.upload_file(b"{}", SECRETS_PATH)
+        sandbox.fs.upload_file(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode(),
+            SIMULATOR_SECRETS_PATH,
+        )
         overlay = _alk_source_overlay()
         if overlay is not None:
             sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -158,7 +177,8 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             )
             + "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
             "chown -R svc-control:svc-control /work/source && "
-            f"chmod -R a-w /work/source && chmod 0600 /work/job.json {SECRETS_PATH}",
+            "chmod -R a-w /work/source && "
+            f"chmod 0600 /work/job.json {SECRETS_PATH} {SIMULATOR_SECRETS_PATH}",
             timeout=_PREPARE_TIMEOUT,
         )
         if prepared.exit_code:
@@ -263,6 +283,8 @@ def _source_document(kind: str, source: Mapping[str, Any], access: Mapping[str, 
     for name in ("ref", "commit_sha", "subfolder"):
         if source.get(name):
             document[name] = source[name]
+    if access.get("installation_id"):
+        document["installation_id"] = str(access["installation_id"])
     return document
 
 
@@ -283,6 +305,19 @@ def reading_job_document(
     for name in ("mode", "call_direction"):
         if payload.get(name):
             agent[name] = payload[name]
+    metadata = {
+        "name": definition.agent_name,
+        "agent_name": definition.agent_name,
+        "authoring_key": definition.agent_name,
+        "generic_harness_v1": True,
+        "environment_value_names": sorted(name.upper() for name in names),
+        "agent_definition_id": str(definition.id),
+        "agent_version_id": str(runtime.agent_version_id),
+        "reading": "agent",
+    }
+    offered = _offered_evals(runtime)
+    if offered:
+        metadata["available_evals"] = offered
     return {
         "schema_version": "futureagi.harness-job.v1",
         "job_id": str(runtime.agent_version_id),
@@ -296,23 +331,34 @@ def reading_job_document(
         "agent": agent,
         "scenario_count": 1,
         **_job_defaults(),
-        "metadata": {
-            "name": definition.agent_name,
-            "agent_name": definition.agent_name,
-            "authoring_key": definition.agent_name,
-            "generic_harness_v1": True,
-            "environment_value_names": sorted(name.upper() for name in names),
-            "agent_definition_id": str(definition.id),
-            "agent_version_id": str(runtime.agent_version_id),
-            "reading": "agent",
-        },
+        "metadata": metadata,
     }
+
+
+def _offered_evals(runtime: HarnessAgentVersionRuntime) -> list[dict[str, Any]]:
+    """The evals a fresh build of this version is offered, so the reading it seeds
+    from was made from the same list."""
+    from simulate.services.harness_evals import briefing_evals
+
+    try:
+        return briefing_evals(runtime.organization, runtime.workspace)
+    except Exception:  # noqa: BLE001 - a catalogue never fails a reading
+        logger.exception(
+            "agent_reading_eval_catalogue_failed",
+            agent_version_id=str(runtime.agent_version_id),
+        )
+        return []
 
 
 def scan_job_document(scan: AgentScan) -> dict[str, Any]:
     source = scan.source or {}
     kind = SourceKind.ARCHIVE if source.get("kind") == "archive" else SourceKind.GITHUB
-    name = str(source.get("repository") or "upload")
+    folder = (
+        stored_upload_name(scan.organization_id, source.get("archive_artifact_id"))
+        if kind == SourceKind.ARCHIVE
+        else None
+    )
+    name = str(source.get("repository") or folder or "upload")
     return {
         "schema_version": "futureagi.harness-job.v1",
         "job_id": str(scan.id),
@@ -324,7 +370,7 @@ def scan_job_document(scan: AgentScan) -> dict[str, Any]:
         **_job_defaults(),
         "metadata": {
             "name": name,
-            "agent_name": name,
+            **({"agent_name": folder} if folder else {}),
             "generic_harness_v1": True,
             "environment_value_names": [],
             "reading": "scan",
@@ -355,19 +401,26 @@ def _first_reading(runtime: HarnessAgentVersionRuntime) -> bool:
     return runtime.trigger == Trigger.CONNECT or runtime.parent_id is None
 
 
-def read_version(version_id: UUID | str) -> ReadOutcome:
+def read_version(version_id: UUID | str, *, document_only: bool = False) -> ReadOutcome:
     """Read one version's agent in the sandbox and store what it found. A refusal
     or a channel change fails the version for good; anything the next attempt may
-    outlive is raised for the caller to retry."""
+    outlive is raised for the caller to retry. With ``document_only`` the reading
+    only stores the document of a version that has none, whatever its check says,
+    and decides nothing about the version or its agent."""
     runtime = (
         HarnessAgentVersionRuntime.no_workspace_objects.select_related(
-            "agent_definition", "organization"
+            "agent_definition", "organization", "workspace"
         )
         .defer("credential_blob")
         .filter(agent_version_id=version_id)
         .first()
     )
-    if runtime is None or runtime.preflight_status != Status.PENDING:
+    if runtime is None:
+        return ReadOutcome("skipped", code="not_pending")
+    if document_only:
+        if _has_document(runtime.agent_version_id):
+            return ReadOutcome("skipped", code="already_stored")
+    elif runtime.preflight_status != Status.PENDING:
         return ReadOutcome("skipped", code="not_pending")
     definition = runtime.agent_definition
     try:
@@ -396,14 +449,15 @@ def read_version(version_id: UUID | str) -> ReadOutcome:
             return _crashed(run), None, None, _spend(run.sandbox)
         return None, reading.agent, reading.contract, _spend(run.sandbox)
 
+    job_document = reading_job_document(definition, runtime)
     failure, agent, contract, spend = run_reading(
         source_archive,
-        reading_job_document(definition, runtime),
+        job_document,
         args=READ_ARGS,
         labels=labels,
         collect=collect,
     )
-    _bill(runtime, spend)
+    _bill(runtime, job_document["run_id"], spend)
     if failure is not None:
         return ReadOutcome(
             "failed",
@@ -412,10 +466,14 @@ def read_version(version_id: UUID | str) -> ReadOutcome:
             retryable=bool(failure["retryable"]),
             spend=spend,
         )
-    return _store_reading(runtime, definition, agent, contract, spend)
+    return _store_reading(
+        runtime, definition, agent, contract, spend, document_only=document_only
+    )
 
 
-def _bill(runtime: HarnessAgentVersionRuntime, spend: dict[str, Any] | None) -> None:
+def _bill(
+    runtime: HarnessAgentVersionRuntime, run_id: str, spend: dict[str, Any] | None
+) -> None:
     if not spend:
         return
     try:
@@ -423,6 +481,7 @@ def _bill(runtime: HarnessAgentVersionRuntime, spend: dict[str, Any] | None) -> 
             organization_id=runtime.organization_id,
             workspace_id=runtime.workspace_id,
             subject_id=runtime.agent_version_id,
+            run_id=run_id,
             spend=spend,
         )
     except Exception:  # noqa: BLE001 - a pricing gap never loses the reading
@@ -445,6 +504,8 @@ def _store_reading(
     agent: dict[str, Any],
     contract: dict[str, Any],
     spend: dict[str, Any] | None,
+    *,
+    document_only: bool = False,
 ) -> ReadOutcome:
     unwrapped = _unwrap(agent)
     if unwrapped is None:
@@ -456,6 +517,20 @@ def _store_reading(
             spend=spend,
         )
     document, sdk_version = unwrapped
+    expected = str((runtime.source or {}).get("subfolder") or "")
+    echoed = ((document.get("extension") or {}).get("source") or {}).get(
+        "subfolder"
+    ) or ""
+    if echoed != expected:
+        return ReadOutcome(
+            "failed",
+            code="subfolder_ignored",
+            message=(
+                f"the reading was asked for folder {expected!r} but read "
+                + (repr(echoed) if echoed else "the repository root")
+            ),
+            spend=spend,
+        )
     channel = _channel(document)
     with transaction.atomic():
         locked = (
@@ -463,10 +538,12 @@ def _store_reading(
             .defer("credential_blob")
             .get(id=runtime.id)
         )
-        if locked.preflight_status != Status.PENDING:
+        if not document_only and locked.preflight_status != Status.PENDING:
             return ReadOutcome("skipped", code="not_pending", spend=spend)
         current = AgentDefinition.no_workspace_objects.get(id=definition.id)
-        if _first_reading(locked) or not _agent_read_before(definition.id):
+        if document_only:
+            pass
+        elif _first_reading(locked) or not _agent_read_before(definition.id):
             if current.agent_type != channel:
                 AgentDefinition.no_workspace_objects.filter(id=definition.id).update(
                     agent_type=channel, updated_at=timezone.now()
@@ -514,6 +591,13 @@ def _store_reading(
         tools=len(document.get("tools") or []),
     )
     return ReadOutcome("stored", spend=spend)
+
+
+def _has_document(agent_version_id: UUID) -> bool:
+    return AgentVersionSetup.no_workspace_objects.filter(
+        agent_version_id=agent_version_id,
+        status=AgentVersionSetup.Status.STORED,
+    ).exists()
 
 
 def _agent_read_before(definition_id: UUID) -> bool:
@@ -569,9 +653,10 @@ def scan_source(scan_id: UUID | str) -> None:
             return _crashed(run), None, _spend(run.sandbox)
         return None, found.scan, _spend(run.sandbox)
 
+    job_document = scan_job_document(scan)
     failure, report, spend = run_reading(
         source_archive,
-        scan_job_document(scan),
+        job_document,
         args=SCAN_ARGS,
         labels={"futureagi.agent_scan": str(scan.id), "futureagi.reading": "scan"},
         collect=collect,
@@ -582,6 +667,7 @@ def scan_source(scan_id: UUID | str) -> None:
                 organization_id=scan.organization_id,
                 workspace_id=scan.workspace_id,
                 subject_id=scan.id,
+                run_id=job_document["run_id"],
                 spend=spend,
             )
         except Exception:  # noqa: BLE001 - a pricing gap never loses the scan

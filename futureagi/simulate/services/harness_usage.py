@@ -454,12 +454,12 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
 
 
 def record_agent_reading_usage(
-    *, organization_id, workspace_id, subject_id, spend: dict
+    *, organization_id, workspace_id, subject_id, run_id, spend: dict
 ) -> dict | None:
     """Price the model stages of one reading of an agent (or one scan for agents)
     and bill them like a build's authoring. Returns the priced report, or None
-    when nothing was billed. One event per stage, so a repeated call bills nothing
-    twice."""
+    when nothing was billed. One event per stage of each reading run, so a repeated
+    call for the same run bills nothing twice and a retried reading bills again."""
     if is_oss() or not isinstance(spend, dict):
         return None
     records = [
@@ -482,7 +482,7 @@ def record_agent_reading_usage(
             continue
         emit(
             UsageEvent(
-                event_id=str(uuid5(UUID(str(subject_id)), f"reading:{item['stage']}")),
+                event_id=str(uuid5(UUID(str(run_id)), f"reading:{item['stage']}")),
                 org_id=str(organization_id),
                 event_type=BillingEventType.HARNESS_AUTHORING,
                 amount=item["credits"],
@@ -490,6 +490,7 @@ def record_agent_reading_usage(
                 properties={
                     "source": "agent_reading",
                     "source_id": str(subject_id),
+                    "reading_run_id": str(run_id),
                     "workspace_id": str(workspace_id or ""),
                     "phase": "reading",
                     "authoring_stage": item["stage"],

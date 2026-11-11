@@ -6,7 +6,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, CancelledError
 
-from simulate.temporal.constants import QUEUE_RUNNER
+from simulate.temporal.constants import QUEUE_RUNNER, READING_ACTIVITY_TIMEOUT_SECONDS
 from simulate.temporal.types.agent_version import (
     AgentVersionFailure,
     AgentVersionInput,
@@ -30,9 +30,7 @@ _STEP_RETRY = RetryPolicy(
         "SandboxProviderUnavailableError",
     ],
 )
-# A reading runs up to ALK_HOSTED_READING_TIMEOUT in the sandbox, after the
-# sandbox was created and the source uploaded.
-_READ_TIMEOUT = timedelta(minutes=30)
+_READ_TIMEOUT = timedelta(seconds=READING_ACTIVITY_TIMEOUT_SECONDS)
 
 
 @workflow.defn

@@ -4,13 +4,14 @@ from typing import Any
 
 from django.db import close_old_connections
 
+from simulate.temporal.constants import READING_ACTIVITY_TIMEOUT_SECONDS
 from tfc.logging.temporal.context import try_activity_info
 from tfc.temporal.drop_in import temporal_activity
 
 __all__ = ["scan_agent_source", "schedule_agent_scan"]
 
 
-SCAN_TIME_LIMIT_SECONDS = 2400
+SCAN_TIME_LIMIT_SECONDS = READING_ACTIVITY_TIMEOUT_SECONDS
 SCAN_MAX_RETRIES = 2
 SCAN_DEADLINE_SECONDS = SCAN_TIME_LIMIT_SECONDS * (SCAN_MAX_RETRIES + 1) + 300
 
