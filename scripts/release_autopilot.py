@@ -510,11 +510,12 @@ def version_tuple(tag):
     return tuple(map(int, match.groups())) if match else None
 
 
-CLICKHOUSE_SCHEMA = ("futureagi/tracer/services/clickhouse/schema/",
-                     "futureagi/tracer/services/clickhouse/oss_cdc_migrations/",
-                     "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
-                     "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
-                     "futureagi/tracer/services/clickhouse/schema.py")
+CLICKHOUSE = "futureagi/tracer/services/clickhouse/"
+# Every .sql file under CLICKHOUSE is schema (v2/schema/, v2/observed_catalog/,
+# the legacy schema/ and oss_cdc_migrations/), plus the code that applies it.
+# Query builders and other readers are not schema and stay uncounted.
+CLICKHOUSE_APPLIERS = frozenset(CLICKHOUSE + name for name in (
+    "schema.py", "v2/apply_schema.py", "v2/apply_schema_rewriter.py", "v2/schema_topology.py"))
 
 
 def is_migration(path):
@@ -522,7 +523,7 @@ def is_migration(path):
     # are not migrations), SQL under any migrations/ directory, and the
     # ClickHouse schema sources. Callers count additions, edits and deletions.
     parts = path.split("/")
-    if path.startswith(CLICKHOUSE_SCHEMA):
+    if path.startswith(CLICKHOUSE) and (path.endswith(".sql") or path in CLICKHOUSE_APPLIERS):
         return True
     return (len(parts) >= 4 and parts[0] in {"futureagi", "ee"}
             and parts[-2] == "migrations" and parts[-1].endswith((".py", ".sql"))

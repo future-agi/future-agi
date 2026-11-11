@@ -141,8 +141,14 @@ approval. New steps then fetch full history and execute the policy from `main`:
 3. Count every added, edited, deleted or renamed migration or schema file since
    that baseline: `futureagi/*/migrations/*.py` and `*.sql`, nested
    `futureagi/ee/**/migrations/`, `ee/**/migrations/`, and the ClickHouse schema
-   sources (`tracer/services/clickhouse/schema/`, `oss_cdc_migrations/`,
-   `schema.py`, `v2/apply_schema*.py`). `__init__.py` files do not count.
+   sources: every `.sql` file under `futureagi/tracer/services/clickhouse/`
+   (the live `v2/schema/` directory, `v2/observed_catalog/schema.sql`, the legacy
+   `schema/` and `oss_cdc_migrations/`) and the files that apply it (`schema.py`,
+   `v2/apply_schema.py`, `v2/apply_schema_rewriter.py`, `v2/schema_topology.py`).
+   Query builders and other ClickHouse readers do not count, and neither do
+   `__init__.py` files. Hosted pods never apply ClickHouse schema at start, and
+   the deployment's `migrate --check` covers Django only, so this count is the
+   only automatic stop for a ClickHouse schema change.
 4. Choose `production-auto` only when `RELEASE_AUTO_APPROVE=on`, the event is an
    exact tag push by the release App (`GITHUB_ACTOR` is
    `futureagi-release-bot[bot]`), and the count is known to be zero. Otherwise

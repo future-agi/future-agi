@@ -332,14 +332,33 @@ class EnvironmentPolicyTests(unittest.TestCase):
     def test_oss_and_ee_migration_paths_and_initializers(self):
         for path in ("futureagi/accounts/migrations/0002_new.py",
                      "futureagi/ee/billing/migrations/0002_new.py", "ee/billing/migrations/0002_new.py",
-                     "futureagi/app/migrations/0002___init___data.py", "futureagi/app/migrations/0003_schema.sql",
-                     "futureagi/tracer/services/clickhouse/schema/spans.sql",
-                     "futureagi/tracer/services/clickhouse/oss_cdc_migrations/0001.sql",
-                     "futureagi/tracer/services/clickhouse/v2/apply_schema.py"):
+                     "futureagi/app/migrations/0002___init___data.py", "futureagi/app/migrations/0003_schema.sql"):
             self.assertTrue(policy.is_migration(path), path)
         for path in ("futureagi/app/migrations/__init__.py", "futureagi/ee/billing/migrations/__init__.py",
                      "futureagi/app/migrations/README.md", "other/app/migrations/new.py", "futureagi/app/views.py"):
             self.assertFalse(policy.is_migration(path), path)
+
+    def test_clickhouse_schema_files_and_appliers_count_but_readers_do_not(self):
+        root = "futureagi/tracer/services/clickhouse/"
+        for name in ("v2/schema/028_x.sql", "v2/schema/024_spans_created_at_index.sql",
+                     "v2/observed_catalog/schema.sql", "schema/dataset_cdc.sql",
+                     "oss_cdc_migrations/cdc_003_x.sql", "schema.py", "v2/apply_schema.py",
+                     "v2/apply_schema_rewriter.py", "v2/schema_topology.py"):
+            self.assertTrue(policy.is_migration(root + name), name)
+        # Routine query changes stay automatic, and SQL outside the ClickHouse tree is not schema.
+        for path in (root + "query_builders/span_list.py", root + "v2/query_builders/span_list.py",
+                     root + "v2/span_reader.py", root + "client.py", root + "v2/schema/README.md",
+                     "futureagi/scripts/setup_peerdb_mirrors.sql", "futureagi/bin/test-db-init.sql"):
+            self.assertFalse(policy.is_migration(path), path)
+
+    def test_clickhouse_appliers_and_schema_directory_exist_in_this_repository(self):
+        # A rename would silently stop counting; fail here instead.
+        repo = Path(__file__).resolve().parents[1]
+        for path in policy.CLICKHOUSE_APPLIERS:
+            self.assertTrue((repo / path).is_file(), path)
+        schema = sorted((repo / policy.CLICKHOUSE / "v2/schema").glob("*.sql"))
+        self.assertTrue(schema)
+        self.assertTrue(all(policy.is_migration(path.relative_to(repo).as_posix()) for path in schema))
 
 
 @contextmanager
@@ -454,10 +473,28 @@ class GitEvidenceTests(unittest.TestCase):
 
     def test_edited_and_deleted_migrations_and_schema_files_count(self):
         self.write("futureagi/app/migrations/0001_initial.py", "edited\n")
-        self.write("futureagi/tracer/services/clickhouse/schema/spans.sql")
+        self.write("futureagi/tracer/services/clickhouse/v2/schema/028_x.sql")
         self.commit()
         sha = self.git("rev-parse", "HEAD").strip()
         self.assertEqual(policy.migration_evidence("v1.2.0", sha), ("v1.1.0", 2))
+
+    def test_clickhouse_v2_schema_keeps_review_and_query_builders_stay_auto(self):
+        self.write("futureagi/tracer/services/clickhouse/v2/query_builders/span_list.py")
+        self.commit()
+        self.git("tag", "v1.2.0")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        sha = self.git("rev-parse", "HEAD").strip()
+        text = self.release(version="v1.2.0", sha=sha)
+        self.assertIn("environment=production-auto\n", text)
+        self.assertIn("migrations=0\n", text)
+        self.write("futureagi/tracer/services/clickhouse/v2/schema/028_x.sql")
+        self.commit()
+        self.git("tag", "v1.3.0")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        sha = self.git("rev-parse", "HEAD").strip()
+        text = self.release(version="v1.3.0", sha=sha)
+        self.assertIn("environment=Production\n", text)
+        self.assertIn("migrations=1\n", text)
 
     def test_added_ee_and_oss_files_count_but_modified_and_init_do_not(self):
         self.write("futureagi/app/migrations/0001_initial.py", "modified\n")
