@@ -67,6 +67,7 @@ def annotate_agent_rows(
         _build_source_kind=Coalesce(
             Subquery(source_kinds[:1]),
             Subquery(version_source_kinds[:1]),
+            output_field=CharField(),
         ),
         _version_count=Coalesce(
             Subquery(
