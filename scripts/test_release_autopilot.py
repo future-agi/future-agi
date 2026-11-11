@@ -308,12 +308,21 @@ class MetadataPolicyTests(unittest.TestCase):
 
 
 class EnvironmentPolicyTests(unittest.TestCase):
-    def decide(self, enabled="on", event="push", ref="refs/tags/v1.2.3", version="v1.2.3", count=0, actor=policy.AUTHOR):
-        return policy.environment_decision(enabled, event, ref, version, count, actor)[0]
+    def decide(self, enabled="on", event="push", ref="refs/tags/v1.2.3", version="v1.2.3", count=0, actor=policy.AUTHOR,
+               triggering_actor=policy.AUTHOR, attempt="1"):
+        return policy.environment_decision(enabled, event, ref, version, count, actor, triggering_actor, attempt)[0]
 
     def test_only_the_release_app_tag_push_skips_review(self):
         for actor in (None, "", "someone", "github-actions[bot]"):
             self.assertEqual(self.decide(actor=actor), "Production")
+
+    def test_a_persons_rerun_of_the_release_app_run_keeps_review(self):
+        # GitHub keeps GITHUB_ACTOR from attempt 1; the person shows only as the triggering actor.
+        for triggering_actor in ("someone", None, "", "github-actions[bot]"):
+            self.assertEqual(self.decide(triggering_actor=triggering_actor), "Production")
+        for attempt in ("2", "10", None, "", 1, "01", " 1"):
+            self.assertEqual(self.decide(attempt=attempt), "Production")
+        self.assertEqual(self.decide(triggering_actor=policy.AUTHOR, attempt="1"), "production-auto")
 
     def test_only_opted_in_exact_tag_push_without_new_migrations_is_auto(self):
         self.assertEqual(self.decide(), "production-auto")
@@ -409,12 +418,14 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-m", "synthetic history")
 
-    def release(self, *, event="push", version="v1.1.0", sha=None, **kwargs):
+    def release(self, *, event="push", version="v1.1.0", sha=None, env=None, **kwargs):
         output = self.root / "outputs"
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": f"refs/tags/{version}",
-                                     "GITHUB_ACTOR": policy.AUTHOR,
+                                     "GITHUB_ACTOR": policy.AUTHOR, "GITHUB_TRIGGERING_ACTOR": policy.AUTHOR,
+                                     "GITHUB_RUN_ATTEMPT": "1",
                                      "GITHUB_SHA": sha or self.sha, "RELEASE_AUTO_APPROVE": "on",
-                                     "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(self.root / "summary")}, clear=True), \
+                                     "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
+                                     **(env or {})}, clear=True), \
                 patch("sys.stdout", new_callable=io.StringIO):
             policy.release_environment(version, **kwargs)
         return output.read_text()
@@ -464,13 +475,23 @@ class GitEvidenceTests(unittest.TestCase):
                 self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
 
     def test_tag_pushed_by_a_person_keeps_review(self):
-        output = self.root / "outputs"
-        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/v1.1.0", "GITHUB_ACTOR": "someone",
-                                     "GITHUB_SHA": self.sha, "RELEASE_AUTO_APPROVE": "on", "GITHUB_OUTPUT": str(output),
-                                     "GITHUB_STEP_SUMMARY": str(self.root / "summary")}, clear=True), \
-                patch("sys.stdout", new_callable=io.StringIO):
-            policy.release_environment("v1.1.0")
-        self.assertIn("environment=Production", output.read_text())
+        self.assertIn("environment=Production", self.release(env={"GITHUB_ACTOR": "someone"}))
+
+    def test_rerun_of_the_release_app_run_keeps_review(self):
+        for env in ({"GITHUB_TRIGGERING_ACTOR": "someone", "GITHUB_RUN_ATTEMPT": "2"},
+                    {"GITHUB_RUN_ATTEMPT": "2"}, {"GITHUB_TRIGGERING_ACTOR": "someone"}):
+            with self.subTest(env=env):
+                self.assertIn("environment=Production\n", self.release(env=env))
+                # Re-running only approve of an automatic run stops and says how to get review.
+                (self.root / "summary").unlink()
+                with self.assertRaises(RuntimeError):
+                    self.release(env=env, expected_sha=self.sha, approved_environment="production-auto")
+                self.assertIn("Re-run all jobs", (self.root / "summary").read_text())
+        for variable in ("GITHUB_TRIGGERING_ACTOR", "GITHUB_RUN_ATTEMPT"):
+            with self.subTest(missing=variable):
+                self.assertIn("environment=Production\n", self.release(env={variable: ""}))
+        self.assertIn("environment=production-auto\n",
+                      self.release(expected_sha=self.sha, approved_environment="production-auto"))
 
     def test_edited_and_deleted_migrations_and_schema_files_count(self):
         self.write("futureagi/app/migrations/0001_initial.py", "edited\n")

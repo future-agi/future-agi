@@ -156,13 +156,27 @@ approval. New steps then fetch full history and execute the policy from `main`:
    the deployment's `migrate --check` covers Django only, so this count is the
    only automatic stop for a ClickHouse schema change.
 4. Choose `production-auto` only when `RELEASE_AUTO_APPROVE=on`, the event is an
-   exact tag push by the release App (`GITHUB_ACTOR` is
-   `futureagi-release-bot[bot]`), and the count is known to be zero. Otherwise
-   choose `Production`. Missing baseline/history/diff means **unknown**, never zero.
-   An ancestry failure stops the run altogether, rather than offering approval.
+   exact tag push by the release App, this is the run's first attempt, and the
+   count is known to be zero. "By the release App" means both `GITHUB_ACTOR` and
+   `GITHUB_TRIGGERING_ACTOR` are `futureagi-release-bot[bot]`, and "first attempt"
+   means `GITHUB_RUN_ATTEMPT` is exactly `1`. GitHub keeps `GITHUB_ACTOR` from the
+   first attempt on a re-run, so these two extra variables are what show that a
+   person started it. Otherwise choose `Production`. Missing baseline/history/diff
+   means **unknown**, never zero. An ancestry failure stops the run altogether,
+   rather than offering approval.
 5. Repeat the evidence check after entering the selected environment. If an
-   automatic decision is no longer safe, stop; a fresh run is needed to select
-   human review. Manual approval never becomes less restrictive in-place.
+   automatic decision is no longer safe, stop and write the next step to the job
+   summary: use **Re-run all jobs**, which repeats the guard and selects
+   `Production` review. Manual approval never becomes less restrictive in-place.
+
+**Re-runs.** A person's **Re-run all jobs** on a release run, old or new, repeats
+the guard and now always selects `Production` review, including a retry of the
+newest release after a transient guard failure. Re-running only the approve job
+of an automatic run stops at the recheck in step 5. Re-running failed build jobs
+after approve succeeded reuses the earlier guard and approval and does not ask
+for review again, as the `release-images.yml` header says; that route can still
+rebuild an older release and move `latest` and the minor alias back, and closing
+it needs a check in the publish step of `build-image-multiarch.yml`.
 
 The policy applies to the supported stable, beta and rc tag-push events; their
 existing component/channel restrictions remain unchanged. The hours/weekend
@@ -233,14 +247,13 @@ immutable Git API evidence, current-SHA status handling, transaction rechecks,
 idempotent audit/approval, and environment decisions. Run workload tests only in
 E2B or CI, not on the shared development host.
 
-**Integration prerequisite:** the existing `Release script checks` job discovers
-`scripts/test_*.py`, but its workflow is outside this lane's edit ownership. Before
-landing, its owner must add `.github/workflows/release-autopilot.yml`,
-`scripts/release_autopilot.py` and `scripts/test_release_autopilot.py` to the
-`pull_request.paths` filter in `.github/workflows/worker-release-checks.yml`, and
-install `PyYAML==6.0.3` before discovery. Without that change, policy-only/test-only
-PRs lack a regression gate and the discover-all run cannot rely on an installed
-parser. This is required wiring, not a documentation substitute for CI coverage.
+**CI wiring:** the `Release script checks` workflow
+(`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
+every `scripts/test_*.py` when `release-images.yml`, `release-autopilot.yml`, this
+script or its tests change. Its `paths` filter does not list
+`.github/workflows/build-image-multiarch.yml`, so a rename of that workflow's
+`publish` job (one of the two jobs that prove a release shipped) is caught only
+when a listed file next changes. Adding that path to the filter closes the gap.
 
 The `release-images.yml` diff is deliberately limited:
 

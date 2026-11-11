@@ -591,13 +591,17 @@ def migration_evidence(version, sha):
     return last, sum(is_migration(path) for path in changed.split("\0") if path)
 
 
-def environment_decision(enabled, event, ref, version, count, actor=None):
+def environment_decision(enabled, event, ref, version, count, actor=None, triggering_actor=None, attempt=None):
     if enabled != "on":
         return "Production", "RELEASE_AUTO_APPROVE is not on"
     if event != "push" or ref != f"refs/tags/{version}":
         return "Production", "only an exact tag push may skip review; dispatches require a person"
     if actor != AUTHOR:
         return "Production", "the tag was not pushed by the release App"
+    # A re-run keeps GITHUB_ACTOR from the first attempt; only the triggering
+    # actor and the attempt number show that a person started it.
+    if triggering_actor != AUTHOR or attempt != "1":
+        return "Production", "a re-run keeps human review; only the release App's first attempt may skip it"
     if version_tuple(version) is None:
         return "Production", "prerelease tags keep human review"
     if type(count) is not int or count < 0:
@@ -635,7 +639,9 @@ def release_environment(version, expected_sha=None, approved_environment=None):
     environment, reason = environment_decision(os.environ.get("RELEASE_AUTO_APPROVE"),
                                                os.environ.get("GITHUB_EVENT_NAME"),
                                                os.environ.get("GITHUB_REF"), version, count,
-                                               os.environ.get("GITHUB_ACTOR"))
+                                               os.environ.get("GITHUB_ACTOR"),
+                                               os.environ.get("GITHUB_TRIGGERING_ACTOR"),
+                                               os.environ.get("GITHUB_RUN_ATTEMPT"))
     summary(f"Release approval: `{environment}` for `{version}` at `{sha}`. {reason}.\n\n"
             f"Migration baseline: `{last or 'unknown'}`; new files: {count if count is not None else 'unknown'}. "
             "The tag commit is on a reviewed branch.")
@@ -643,7 +649,11 @@ def release_environment(version, expected_sha=None, approved_environment=None):
         if approved_environment not in {"Production", "production-auto"}:
             raise ValueError("invalid approved environment")
         if approved_environment == "production-auto" and environment != "production-auto":
-            raise RuntimeError("automatic approval is no longer safe; start a new run for human review")
+            # main() prints only the error type, so say what to do here. Re-running
+            # all jobs repeats the guard, which then selects Production review.
+            summary("Release refused: automatic approval no longer applies to this run. "
+                    "Use Re-run all jobs so the guard selects Production review.")
+            raise RuntimeError("automatic approval is no longer safe; re-run all jobs for human review")
     outputs(environment=environment, migrations=count if count is not None else "unknown",
             tag_sha=sha)
 
