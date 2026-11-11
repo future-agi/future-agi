@@ -92923,20 +92923,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         key: {
           title: "Key",
           type: "string",
-          maxLength: 200,
           minLength: 1,
         },
         name: {
           title: "Name",
           type: "string",
-          maxLength: 500,
-          minLength: 1,
           "x-nullable": true,
         },
         sub_goal: {
           title: "Sub goal",
           type: "string",
-          maxLength: 200,
           minLength: 1,
         },
         passed: {

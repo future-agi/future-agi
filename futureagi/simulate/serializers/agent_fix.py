@@ -187,11 +187,12 @@ class AgentFixFlakyProtectedSerializer(serializers.Serializer):
     """A protected case the current version does not pass on every baseline run, so the fix
     could not be held to it."""
 
-    key = serializers.CharField(max_length=200)
+    key = serializers.CharField()
+    # An unnamed scenario reaches the engine's inventory as "".
     name = serializers.CharField(
-        max_length=500, required=False, allow_null=True, default=None
+        required=False, allow_null=True, allow_blank=True, default=None
     )
-    sub_goal = serializers.CharField(max_length=200)
+    sub_goal = serializers.CharField()
     passed = serializers.IntegerField(min_value=0)
     runs = serializers.IntegerField(min_value=1)
 

@@ -2623,6 +2623,36 @@ class TestEngineMemory:
         read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
         assert read["flaky_protected"] == flaky
 
+    def test_no_flaky_case_fails_the_final_report_it_arrives_with(
+        self, api_client, auth_client, source_run
+    ):
+        # Scenario keys run to 255 characters, sub-goals are free text and an unnamed
+        # scenario's name is "". The list is only shown, so none of these may refuse the
+        # ending.
+        fix_run = _armed(_fix_run(source_run))
+        flaky = [
+            {
+                "key": "k" * 255,
+                "name": "n" * 255,
+                "sub_goal": " ".join(["the agent"] * 60),
+                "passed": 1,
+                "runs": 3,
+            },
+            {"key": "unnamed", "name": "", "sub_goal": "done", "passed": 1, "runs": 2},
+        ]
+
+        self._report(
+            api_client,
+            fix_run,
+            ending="no_improvement",
+            summary="nothing held up",
+            flaky_protected=flaky,
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        assert read["flaky_protected"] == flaky
+        assert read["ending"] == "no_improvement"
+
     def test_a_report_from_before_flaky_protected_reads_as_none(
         self, api_client, auth_client, source_run
     ):

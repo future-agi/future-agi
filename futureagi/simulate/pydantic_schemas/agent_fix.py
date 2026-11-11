@@ -269,9 +269,9 @@ class FlakyProtectedCase(BaseModel):
     """A protected case the current version does not pass on every baseline run, so the fix
     could not be held to it: one sub-goal of it, with its baseline passes."""
 
-    key: str = Field(max_length=200)
-    name: str | None = Field(default=None, max_length=500)
-    sub_goal: str = Field(max_length=200)
+    key: str
+    name: str | None = None
+    sub_goal: str
     passed: int = Field(ge=0)
     runs: int = Field(ge=1)
 

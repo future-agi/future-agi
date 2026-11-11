@@ -18054,20 +18054,10 @@ export interface AgentFixEngineFailureApi {
 }
 
 export interface AgentFixFlakyProtectedApi {
-  /**
-   * @minLength 1
-   * @maxLength 200
-   */
+  /** @minLength 1 */
   key: string;
-  /**
-   * @minLength 1
-   * @maxLength 500
-   */
   name?: string;
-  /**
-   * @minLength 1
-   * @maxLength 200
-   */
+  /** @minLength 1 */
   sub_goal: string;
   /** @minimum 0 */
   passed: number;
