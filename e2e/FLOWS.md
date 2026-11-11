@@ -259,7 +259,7 @@
 
 **Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe
 
-**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:31`
 
 **Tags:** —
 
@@ -267,13 +267,15 @@
 
 1. complete first-run checks if required
 2. sign up with a unique email and a user-supplied password
-3. complete role and organization onboarding
-4. see both demo datasets
-5. open the Observe demo project
-6. open its single demo trace and inspect the span tree
+3. wait for the held initial profile read before role and goal controls become interactive
+4. select a role and click one goal once, then save and complete organization onboarding
+5. see both demo datasets
+6. open the Observe demo project
+7. open its single demo trace and inspect the span tree
 
 **Backend state verified:**
 
+- the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
