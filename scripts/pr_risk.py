@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 from functools import lru_cache
 import html
+import http.client
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,20 @@ class PolicyError(Exception):
 
 class NeedsPerson(PolicyError):
     """Review history is truncated, unreadable or edited: a person decides."""
+
+
+class ApiError(PolicyError):
+    """A failed GitHub request. `status` is the HTTP code, or None when no valid
+    response arrived (timeout, reset, unparsable body, GraphQL errors)."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+# Only a run or jobs listing GitHub reports as gone goes to a person. Any other
+# failure (5xx, rate limit, timeout) fails the run, and the next one retries.
+GONE = frozenset({404, 410})
 
 
 def load_policy(path=POLICY_PATH):
@@ -330,13 +345,14 @@ class GitHub:
                 result = json.loads(raw) if raw else None
         except urllib.error.HTTPError as exc:
             # Do not print API response bodies, diffs, tokens or production data.
-            raise PolicyError(
-                f"GitHub API denied or failed a request (HTTP {exc.code})"
+            raise ApiError(
+                f"GitHub API denied or failed a request (HTTP {exc.code})", exc.code
             ) from None
-        except (urllib.error.URLError, ValueError, TimeoutError):
-            raise PolicyError("GitHub API response unavailable or invalid") from None
+        except (OSError, http.client.HTTPException, ValueError):
+            # URLError and timeouts are OSErrors; a cut-off read is an HTTPException.
+            raise ApiError("GitHub API response unavailable or invalid") from None
         if isinstance(result, dict) and result.get("errors"):
-            raise PolicyError("GitHub GraphQL evidence unavailable")
+            raise ApiError("GitHub GraphQL evidence unavailable")
         return result
 
     def pages(self, route, key=None):
@@ -392,31 +408,82 @@ def bot_comment(comment):
     return user.get("login") == "github-actions[bot]" and user.get("type") == "Bot"
 
 
-def trusted_run(api, run_id, number, base):
-    """A dispatch run of dev's copy of this workflow for PR `number`, reviewing `base`.
+def fetch(cache, key, read, what):
+    """Read once per run of the controller. Gone (404/410) goes to a person:
+    anyone with write access can delete a run, and skipping its record would
+    drop an attempt. Any other failure fails this run without an escalation."""
+    if key not in cache:
+        try:
+            cache[key] = read()
+        except ApiError as exc:
+            if exc.status not in GONE:
+                raise
+            raise NeedsPerson(
+                f"{what} cannot be found; it may have been deleted. "
+                "A person must review this PR."
+            ) from None
+    return cache[key]
+
+
+def fetch_run(api, run_id, cache):
+    return fetch(
+        cache,
+        ("run", int(run_id)),
+        lambda: api.request("GET", f"actions/runs/{int(run_id)}"),
+        "The workflow run cited by a review record",
+    )
+
+
+def fetch_jobs(api, run_id, cache):
+    """Attempt 1 explicitly: the default listing shows only the latest attempt,
+    and the publish step can run only in attempt 1."""
+    return fetch(
+        cache,
+        ("jobs", int(run_id)),
+        lambda: api.pages(f"actions/runs/{int(run_id)}/attempts/1/jobs", "jobs"),
+        "The jobs of a review run",
+    )
+
+
+RUN_TITLE = re.compile(r"PR autopilot #([1-9][0-9]*)")
+
+
+def run_pr(run, repository):
+    """The PR a dispatch run of dev's copy of this workflow evaluated, else None.
 
     Only workflow_dispatch runs on dev review. A pull_request_target run takes
     the workflow file from the PR's base branch, which any writer can create,
-    and its run object does not name that branch. A dispatch run's head_sha is
-    the dev commit whose workflow file it ran; prepare stops unless that commit
-    is also the base it reviews against, so the two must be equal.
+    and its run object does not name that branch. The run-name binds each run
+    to one PR.
     """
-    run = api.request("GET", f"actions/runs/{int(run_id)}")
-    return (
-        run.get("event") == "workflow_dispatch"
+    title = run.get("display_title") if isinstance(run, dict) else None
+    match = RUN_TITLE.fullmatch(title) if isinstance(title, str) else None
+    if (
+        match
+        and run.get("event") == "workflow_dispatch"
         and run.get("head_branch") == "dev"
         and run.get("path") == f".github/workflows/{WORKFLOW}"
-        # The run-name binds each run to one PR.
-        and run.get("display_title") == f"PR autopilot #{int(number)}"
-        and (run.get("head_repository") or {}).get("full_name") == api.repository
-        and run.get("head_sha") == base
-    )
+        and (run.get("head_repository") or {}).get("full_name") == repository
+    ):
+        return int(match[1])
+    return None
+
+
+def trusted_run(api, run_id, number, base, cache=None):
+    """A dispatch run of dev's copy of this workflow for PR `number`, reviewing `base`.
+
+    A dispatch run's head_sha is the dev commit whose workflow file it ran;
+    prepare stops unless that commit is also the base it reviews against, so
+    the two must be equal.
+    """
+    run = fetch_run(api, run_id, {} if cache is None else cache)
+    return run_pr(run, api.repository) == int(number) and run.get("head_sha") == base
 
 
 # The gate job has one marker step per outcome, named from the trusted prepare
 # context; only the step for the published outcome runs. A finished run's step
-# names and conclusions cannot be changed, unlike a check run's conclusion or
-# external_id, which any Actions token in the repository can edit.
+# names and conclusions cannot be changed, unlike a check run's conclusion,
+# name or external_id, which any Actions token in the repository can edit.
 OUTCOME_STEPS = {
     "passed": "Review passed: head {head} base {base} patch {patch}",
     "blocked": "Review blocked: head {head} base {base} patch {patch}",
@@ -428,24 +495,23 @@ OUTCOME_STEPS = {
 # diff.
 RESERVATION = "head {head} base {base} patch {patch}"
 RESERVED_STEP = "Review reserved: " + RESERVATION
+RESERVED_NAME = re.compile(
+    RESERVED_STEP.format(head="([0-9a-f]{40})", base="([0-9a-f]{40})", patch="([0-9a-f]{32})")
+)
 
 
-def run_outcome(api, record):
+def succeeded_steps(jobs):
+    return [
+        step["name"]
+        for job in jobs
+        for step in job.get("steps") or []
+        if step.get("conclusion") == "success" and isinstance(step.get("name"), str)
+    ]
+
+
+def run_outcome(api, record, cache):
     """The outcome the cited run itself recorded for this attempt, or None if it
-    reserved this review but never published an outcome (cancelled or failed).
-
-    Attempt 1 is read explicitly: the default listing shows only the latest
-    attempt, and the publish step can run only in attempt 1.
-    """
-    try:
-        jobs = api.pages(
-            f"actions/runs/{int(record['run_id'])}/attempts/1/jobs", "jobs"
-        )
-    except PolicyError:
-        raise NeedsPerson(
-            "The jobs of a review run cannot be read; the run may have been "
-            "deleted. A person must review this PR."
-        ) from None
+    reserved this review but never published an outcome (cancelled or failed)."""
     attempt = {"head": record["head"], "base": record["base"], "patch": record["patch"]}
     names = {
         template.format(**attempt): outcome
@@ -455,21 +521,17 @@ def run_outcome(api, record):
     templates = (*OUTCOME_STEPS.values(), RESERVED_STEP)
     prefixes = tuple(template.split("{", 1)[0] for template in templates)
     found, reserved = set(), False
-    for job in jobs:
-        for step in job.get("steps") or []:
-            name = step.get("name")
-            if step.get("conclusion") != "success" or not isinstance(name, str):
-                continue
-            if name == reserved_name:
-                reserved = True
-            elif name in names:
-                found.add(names[name])
-            elif name.startswith(prefixes):
-                raise NeedsPerson(
-                    "A review run recorded a different revision or diff than its "
-                    "reservation record says, so the record was edited. A person "
-                    "must review this PR."
-                )
+    for name in succeeded_steps(fetch_jobs(api, record["run_id"], cache)):
+        if name == reserved_name:
+            reserved = True
+        elif name in names:
+            found.add(names[name])
+        elif name.startswith(prefixes):
+            raise NeedsPerson(
+                "A review run recorded a different revision or diff than its "
+                "reservation record says, so the record was edited. A person "
+                "must review this PR."
+            )
     if not reserved:
         raise NeedsPerson(
             "A review record cites a run that did not reserve that review, so the "
@@ -481,6 +543,13 @@ def run_outcome(api, record):
 
 
 RECORD_KEYS = ("pr", "head", "base", "run_id", "round", "patch")
+# What identifies an attempt. A reservation status carries no round, so records
+# from comments, checks and statuses are compared on these keys only.
+ATTEMPT_KEYS = ("pr", "head", "base", "run_id", "patch")
+# A commit status cannot be edited or deleted, so this context indexes every
+# reservation even when its comment is deleted or its check renamed.
+STATUS_CONTEXT = "pr-autopilot/reservation"
+RUN_URL = "https://github.com/{repository}/actions/runs/{run_id}"
 # Re-reviews of an unchanged diff (after merging dev in) are not charged a round;
 # this caps the AI calls they can make at this multiple of the round limit.
 ATTEMPTS_PER_ROUND = 3
@@ -503,27 +572,17 @@ def parse_record(text):
 
 
 def record_run_trusted(api, record, cache):
-    key = (record["run_id"], record["pr"], record["base"])
-    if key not in cache:
-        try:
-            cache[key] = trusted_run(api, record["run_id"], record["pr"], record["base"])
-        except PolicyError:
-            # Anyone with write access can delete a run; a record whose run is
-            # gone cannot be checked, and skipping it would drop an attempt.
-            raise NeedsPerson(
-                "The workflow run cited by a review record cannot be read; it may "
-                "have been deleted. A person must review this PR."
-            ) from None
-    return cache[key]
+    return trusted_run(api, record["run_id"], record["pr"], record["base"], cache)
 
 
-def review_ledger(api, number, comments, runs=None):
+def review_ledger(api, number, comments, cache=None):
     """Validated reservation records from the bot's ledger comments.
 
     Comments can be deleted or edited by anyone with write access, so
-    review_attempts also reads the review check runs on every head.
+    review_attempts also reads the reservation statuses and review check runs
+    on every head.
     """
-    runs = {} if runs is None else runs
+    cache = {} if cache is None else cache
     rounds = []
     for comment in comments:
         body = comment.get("body") or ""
@@ -535,7 +594,7 @@ def review_ledger(api, number, comments, runs=None):
             raise NeedsPerson(
                 "A review-round ledger comment is malformed. A person must review this PR."
             ) from None
-        if record["pr"] != number or not record_run_trusted(api, record, runs):
+        if record["pr"] != number or not record_run_trusted(api, record, cache):
             raise NeedsPerson(
                 "A review-round ledger comment cites a run that is not this PR's "
                 "trusted dev run. A person must review this PR."
@@ -566,8 +625,10 @@ def pr_heads(api, pr, pushes):
     """
     owner, repo = api.repository.split("/")
     variables = {"owner": owner, "repo": repo, "number": pr["number"]}
+    # A failed request propagates and fails this run; only an answer with the
+    # wrong shape goes to a person.
+    data = api.request("POST", "", {"query": HEADS_QUERY, "variables": variables}, graphql=True)
     try:
-        data = api.request("POST", "", {"query": HEADS_QUERY, "variables": variables}, graphql=True)
         pull = data["data"]["repository"]["pullRequest"]
         commits, forced = pull["commits"], pull["timelineItems"]
         if commits["pageInfo"]["hasNextPage"] is not False or forced["pageInfo"]["hasNextPage"] is not False:
@@ -578,9 +639,7 @@ def pr_heads(api, pr, pushes):
         heads = {node["commit"]["oid"] for node in commits["nodes"]}
         for node in forced["nodes"]:
             heads |= {node["beforeCommit"]["oid"], node["afterCommit"]["oid"]}
-    except NeedsPerson:
-        raise
-    except (PolicyError, KeyError, TypeError):
+    except (KeyError, TypeError):
         raise NeedsPerson(
             "This PR's commit or force-push history is unavailable. A person must review this PR."
         ) from None
@@ -603,30 +662,92 @@ def review_checks_on(api, head, policy):
     ]
 
 
-def attempt_outcome(api, record, context):
+def own_run(context):
+    """The reservation this very run made, when it made one."""
+    return (
+        context is not None
+        and "check_id" in context
+        and str(context.get("run_id")) == os.environ.get("GITHUB_RUN_ID")
+    )
+
+
+def reservation_statuses(api, head):
+    return [
+        status
+        for status in api.pages(f"commits/{head}/statuses")
+        if status.get("context") == STATUS_CONTEXT
+    ]
+
+
+def status_record(api, head, status, cache, context=None):
+    """The attempt a reservation status on `head` indexes, rebuilt from its run.
+
+    The status carries only a run link. The PR comes from the run's title, and
+    the head, base and diff from its "Review reserved" step, so a status (which
+    anyone with write access can post) can add an attempt but never shape one.
+    """
+    prefix = RUN_URL.format(repository=api.repository, run_id="")
+    match = re.fullmatch(re.escape(prefix) + r"([1-9][0-9]*)", str(status.get("target_url")))
+    if not match:
+        raise NeedsPerson(
+            "A review reservation status on this PR's history does not link to a "
+            "workflow run of this repository. A person must review this PR."
+        )
+    run_id = int(match[1])
+    if own_run(context) and run_id == context["run_id"]:
+        # This run's own reservation; the jobs API can lag behind its steps.
+        record = {key: context[key] for key in ATTEMPT_KEYS}
+    else:
+        number = run_pr(fetch_run(api, run_id, cache), api.repository)
+        steps = []
+        if number is not None:
+            names = succeeded_steps(fetch_jobs(api, run_id, cache))
+            steps = [found for found in map(RESERVED_NAME.fullmatch, names) if found]
+        if len(steps) != 1:
+            raise NeedsPerson(
+                "A review reservation status cites a run that is not a trusted dev "
+                "run with one reservation. A person must review this PR."
+            )
+        head_sha, base, patch = steps[0].groups()
+        record = {"pr": number, "head": head_sha, "base": base, "run_id": run_id, "patch": patch}
+    if record["head"] != head:
+        raise NeedsPerson(
+            "A review reservation status sits on a revision its run did not "
+            "reserve. A person must review this PR."
+        )
+    if not record_run_trusted(api, record, cache):
+        raise NeedsPerson(
+            "A review reservation status cites a run that is not the trusted dev "
+            "run for its revision. A person must review this PR."
+        )
+    return record
+
+
+def attempt_outcome(api, record, context, cache):
     # In the run that reserved this attempt, the merge step runs only after its
     # publish step reported "passed"; the jobs API can lag behind its own steps.
     if (
-        context is not None
-        and "check_id" in context
-        and str(record["run_id"]) == os.environ.get("GITHUB_RUN_ID")
-        and record == {key: context.get(key) for key in RECORD_KEYS}
+        own_run(context)
+        and record == {key: context.get(key) for key in ATTEMPT_KEYS}
         and os.environ.get("REVIEW_OUTCOME") == "passed"
     ):
         return "passed"
-    return run_outcome(api, record)
+    return run_outcome(api, record, cache)
 
 
 def review_attempts(api, pr, comments, pushes, policy, context=None):
     """Every review attempt on this PR's heads, with the outcome its own run recorded.
 
-    The ledger comments UNION the review check runs on every head the PR has
-    had: comments can be deleted or edited, check runs cannot be deleted. A
+    The ledger comments UNION the reservation statuses and review check runs on
+    every head the PR has had. Comments can be deleted or edited and a check
+    can be renamed, but a commit status can be neither edited nor deleted. A
     check's conclusion is never read, because any Actions token can change it.
     """
-    runs = {}
-    records = review_ledger(api, pr["number"], comments, runs)
+    cache = {}
+    records = review_ledger(api, pr["number"], comments, cache)
     for head in pr_heads(api, pr, pushes):
+        for status in reservation_statuses(api, head):
+            records.append(status_record(api, head, status, cache, context))
         for check in review_checks_on(api, head, policy):
             try:
                 record = parse_record(check.get("external_id"))
@@ -635,7 +756,7 @@ def review_attempts(api, pr, comments, pushes, policy, context=None):
                     "A review check on this PR's history has an unreadable record, "
                     "which means it was edited. A person must review this PR."
                 ) from None
-            if record["head"] != head or not record_run_trusted(api, record, runs):
+            if record["head"] != head or not record_run_trusted(api, record, cache):
                 raise NeedsPerson(
                     "A review check on this PR's history cites a run that is not "
                     "the trusted dev run for its revision. A person must review this PR."
@@ -643,14 +764,15 @@ def review_attempts(api, pr, comments, pushes, policy, context=None):
             records.append(record)
     attempts = {}
     for record in records:
-        if attempts.setdefault(record["run_id"], record) != record:
+        attempt = {key: record[key] for key in ATTEMPT_KEYS}
+        if attempts.setdefault(attempt["run_id"], attempt) != attempt:
             raise NeedsPerson(
                 "Two review records for one run disagree, so one was edited. "
                 "A person must review this PR."
             )
     return [
-        {**record, "outcome": attempt_outcome(api, record, context)}
-        for record in attempts.values()
+        {**attempt, "outcome": attempt_outcome(api, attempt, context, cache)}
+        for attempt in attempts.values()
     ]
 
 
@@ -820,7 +942,8 @@ def branch_pushes(api, pr, trusted):
 
     Who opened the PR is not enough: anyone with write access can push to its
     branch. One request, because this endpoint is cursor-paginated and ignores
-    page=; a full page may hide older pushes, so it goes to a person.
+    page=; a full page may hide older pushes, so it goes to a person, and so
+    does a page whose oldest row is not the branch's creation.
     """
     ref = urllib.parse.quote("refs/heads/" + pr["head"]["ref"], safe="")
     rows = api.request("GET", f"activity?ref={ref}&per_page=100")
@@ -837,6 +960,11 @@ def branch_pushes(api, pr, trusted):
                 "A push to this branch came from an account that is not a trusted "
                 "author. A person must review this PR."
             )
+    if rows[-1].get("activity_type") != "branch_creation":
+        raise NeedsPerson(
+            "This branch's push history does not reach back to the branch's "
+            "creation, so earlier pushes cannot be checked. A person must review this PR."
+        )
     return rows
 
 
@@ -852,9 +980,8 @@ def comment(api, number, body):
     return api.request("POST", f"issues/{number}/comments", {"body": body})
 
 
-def escalate(api, number, comments, head, reason):
-    body = f"{ESCALATION_MARKER}\n{reason}\n\nHead: `{head}`. No automatic approval or merge was performed."
-    previous = next(
+def standing_escalation(comments):
+    return next(
         (
             c
             for c in comments
@@ -862,11 +989,38 @@ def escalate(api, number, comments, head, reason):
         ),
         None,
     )
+
+
+def escalate(api, number, comments, head, reason):
+    body = f"{ESCALATION_MARKER}\n{reason}\n\nHead: `{head}`. No automatic approval or merge was performed."
+    previous = standing_escalation(comments)
     if previous and previous["body"] != body:
         api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
     elif not previous:
         comment(api, number, body)
     summary(reason)
+
+
+RESOLVED = ESCALATION_MARKER + "\n**No longer applies.**"
+
+
+def resolve_escalation(api, comments, context):
+    """Mark a standing escalation as superseded once a later run finds no reason
+    for a person, so the PR never shows "a person must review" beside a merge.
+    Fixed text only: anyone with write access can edit the bot's comment, so
+    its current body is never posted again."""
+    previous = standing_escalation(comments)
+    if previous and not previous["body"].startswith(RESOLVED):
+        api.request(
+            "PATCH",
+            f"issues/comments/{previous['id']}",
+            {
+                "body": f"{RESOLVED} A later evaluation of head `{context['head']}` "
+                f"on dev `{context['base']}` found no reason for a person to take "
+                "over, so automation continues. The comment's edit history keeps "
+                "the earlier escalation."
+            },
+        )
 
 
 def ensure_labels(api, names):
@@ -1109,6 +1263,9 @@ def prepare(api, policy, settings, event, event_name):
     except NeedsPerson as exc:
         escalate(api, number, comments, context["head"], str(exc))
         return
+    if plan in ("reuse", "retry-later", "new"):
+        # Before any reservation, so a failed write here cannot bar the diff.
+        resolve_escalation(api, comments, context)
     if plan == "reuse":
         emit("context", context)
         summary(
@@ -1149,6 +1306,19 @@ def prepare(api, policy, settings, event, event_name):
         number,
         f"{ROUND_MARKER}{record} -->\nAI review attempt {context['round']} reserved for head `{context['head']}`, base `{context['base']}`; different diffs reviewed: {len(charged_diffs(own) | {context['patch']})}/{policy['max_review_rounds']}. Every attempt counts toward a cap of nine. A diff whose review found blocking issues or did not finish is not reviewed again; a review that went stale or whose AI job failed is retried after the branch changes, and re-reviewing an unchanged diff after merging dev costs no round. A person takes over after three different diffs.",
     )
+    run_url = RUN_URL.format(repository=api.repository, run_id=context["run_id"])
+    # The append-only index of this attempt; later runs rebuild the record from
+    # this run's "Review reserved" step. Its state is never read.
+    api.request(
+        "POST",
+        f"statuses/{context['head']}",
+        {
+            "state": "success",
+            "context": STATUS_CONTEXT,
+            "target_url": run_url,
+            "description": f"AI review attempt {context['round']} reserved. A record, not a verdict.",
+        },
+    )
     check = api.request(
         "POST",
         "check-runs",
@@ -1157,7 +1327,7 @@ def prepare(api, policy, settings, event, event_name):
             "head_sha": context["head"],
             "external_id": record,
             "status": "in_progress",
-            "details_url": f"https://github.com/{api.repository}/actions/runs/{context['run_id']}",
+            "details_url": run_url,
             "output": {
                 "title": "Diff-only automated review",
                 "summary": "The verdict is pending; no automatic approval is allowed.",

@@ -3,6 +3,7 @@
 
 import copy
 import datetime as dt
+import http.client
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import urllib.error
 import urllib.parse
 from unittest.mock import patch
 
@@ -133,7 +135,9 @@ class FakeGitHub:
         self.comments = []
         self.reviews = []
         self.labels = []
+        # Legacy statuses on the head, and statuses posted per commit (newest first).
         self.statuses = []
+        self.commit_statuses = {}
         self.rules = [
             {
                 "type": "required_status_checks",
@@ -212,7 +216,7 @@ class FakeGitHub:
 
     def known_run(self, run_id):
         if int(run_id) not in self.runs:
-            raise risk.PolicyError("GitHub API denied or failed a request (HTTP 404)")
+            raise risk.ApiError("GitHub API denied or failed a request (HTTP 404)", 404)
         return int(run_id)
 
     def pages(self, route, key=None):
@@ -241,7 +245,8 @@ class FakeGitHub:
         if base.endswith("/statuses"):
             if self.permissions.get("statuses") not in {"read", "write"}:
                 raise risk.PolicyError("commit-status evidence permission denied")
-            return copy.deepcopy(self.statuses)
+            # Statuses can only be added: GitHub has no edit or delete endpoint.
+            return copy.deepcopy(self.commit_statuses.get(base.split("/")[1], []) + self.statuses)
         if base == "rules/branches/dev":
             return copy.deepcopy(self.rules)
         if base == "pulls":
@@ -309,7 +314,8 @@ class FakeGitHub:
             if self.activity is not None:
                 return copy.deepcopy(self.activity)
             return [
-                {"before": before, "after": after, "actor": {"login": actor}, "activity_type": "push"}
+                {"before": before, "after": after, "actor": {"login": actor},
+                 "activity_type": "branch_creation" if before == risk.ZERO_SHA else "push"}
                 for before, after, actor in reversed(self.push_log)
             ]
         if method == "GET" and re.fullmatch(r"actions/runs/\d+", route):
@@ -341,6 +347,10 @@ class FakeGitHub:
             # Comments can be deleted, so look them up by ID, not position.
             next(c for c in self.comments if c["id"] == int(route.split("/")[-1])).update(data)
             return None
+        if method == "POST" and route.startswith("statuses/"):
+            self.commit_statuses.setdefault(route.split("/")[1], []).insert(0, {
+                **data, "creator": {"login": "github-actions[bot]", "type": "Bot"}})
+            return data
         if method == "POST" and route == "check-runs":
             result = {
                 "id": len(self.checks) + 1,
@@ -779,9 +789,10 @@ class EvidenceTests(unittest.TestCase):
             risk.protection(api, POLICY)
 
     def test_non_admin_protection_query_and_exact_job_permissions(self):
-        for job in ("prepare", "review-gate-and-merge"):
+        # prepare posts the reservation status; the gate job only reads statuses.
+        for job, statuses in (("prepare", "write"), ("review-gate-and-merge", "read")):
             permissions = workflow_permissions(job)
-            self.assertEqual(permissions["statuses"], "read")
+            self.assertEqual(permissions["statuses"], statuses)
             self.assertNotIn("administration", permissions)
             api = FakeGitHub(permissions=permissions)
             self.assertTrue(risk.ci_evidence(api, pr(), POLICY)[0])
@@ -878,6 +889,37 @@ class EvidenceTests(unittest.TestCase):
         escaped = risk.safe_text("<script>@someone</script>")
         self.assertNotIn("<script>", escaped)
         self.assertNotIn("@someone", escaped)
+
+    def test_github_request_keeps_the_http_status(self):
+        api = risk.GitHub(REPO, "synthetic-token")
+        failures = (
+            (urllib.error.HTTPError("https://api.github.com", 404, "Not Found", {}, None), 404),
+            (urllib.error.HTTPError("https://api.github.com", 410, "Gone", {}, None), 410),
+            (urllib.error.HTTPError("https://api.github.com", 502, "Bad Gateway", {}, None), 502),
+            (urllib.error.HTTPError("https://api.github.com", 429, "Too Many", {}, None), 429),
+            (urllib.error.URLError("unreachable"), None),
+            (TimeoutError(), None),
+            (ConnectionResetError(), None),
+            (http.client.IncompleteRead(b""), None),
+        )
+        for error, status in failures:
+            with self.subTest(error=type(error).__name__, status=status):
+                with patch.object(risk.urllib.request, "urlopen", side_effect=error):
+                    with self.assertRaises(risk.ApiError) as caught:
+                        api.request("GET", "actions/runs/1")
+                self.assertEqual(caught.exception.status, status)
+                self.assertNotIsInstance(caught.exception, risk.NeedsPerson)
+        # An unparsable body and GraphQL errors are answers without evidence.
+        for body in (b"<html>busy</html>", b'{"errors": [{"type": "RATE_LIMITED"}]}'):
+            with self.subTest(body=body):
+                with patch.object(risk.urllib.request, "urlopen") as urlopen:
+                    urlopen.return_value.__enter__.return_value.read.return_value = body
+                    with self.assertRaises(risk.ApiError) as caught:
+                        api.request("POST", "", {"query": "{}"}, graphql=True)
+                self.assertIsNone(caught.exception.status)
+        with patch.object(risk.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b'{"id": 1}'
+            self.assertEqual(api.request("GET", "actions/runs/1"), {"id": 1})
 
     def test_pagination_collects_all_pages(self):
         api = risk.GitHub(REPO, "synthetic")
@@ -1341,36 +1383,48 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.reservations()), 1)
         self.assertTrue(any("did not reserve" in body for body in self.escalations()))
 
-    def foreign_attempt(self, run_id, outcome, head, base, patch, number=7):
-        """A review of PR `number` whose check sits on one of this PR's heads."""
+    def foreign_attempt(self, run_id, outcome, head, base, patch, number=7, via="check"):
+        """A review of PR `number` whose check or reservation status sits on one
+        of this PR's heads."""
         self.api.runs[run_id] = self.api.dispatch_run(base, number)
         record = {"pr": number, "head": head, "base": base, "run_id": run_id, "round": 1, "patch": patch}
         self.api.reserve(run_id, risk.RESERVATION.format(head=head, base=base, patch=patch))
         self.api.mark(run_id, outcome, record)
-        self.api.checks.append({"id": 800 + run_id, "name": POLICY["review_check"], "head_sha": head,
-                                "status": "completed", "conclusion": "success",
-                                "app": {"slug": "github-actions"}, "external_id": json.dumps(record)})
+        if via == "check":
+            self.api.checks.append({"id": 800 + run_id, "name": POLICY["review_check"], "head_sha": head,
+                                    "status": "completed", "conclusion": "success",
+                                    "app": {"slug": "github-actions"}, "external_id": json.dumps(record)})
+        else:
+            self.forge_status(head, risk.RUN_URL.format(repository=REPO, run_id=run_id))
+
+    def forge_status(self, sha, target_url):
+        """A reservation status posted on `sha` by any token with statuses: write."""
+        self.api.commit_statuses.setdefault(sha, []).insert(
+            0, {"context": risk.STATUS_CONTEXT, "state": "success", "target_url": target_url})
 
     def test_records_naming_another_pr_only_bar(self):
-        own_patch = risk.patch_digest(risk.review_patches(self.api.files, POLICY))
-        # Three passing reviews of other diffs on this head, for PR 7: they do
-        # not use this PR's three-diff budget.
-        for index, patch_id in enumerate(("1" * 32, "2" * 32, "3" * 32)):
-            self.foreign_attempt(501 + index, "passed", HEAD, OTHER, patch_id)
-        self.prepare()
-        self.assertEqual(self.outputs["review"], "true")
-        # A pass of this exact revision for PR 7 is not reused for PR 42.
-        self.api = FakeGitHub()
-        self.foreign_attempt(501, "passed", HEAD, BASE, own_patch)
-        self.prepare()
-        self.assertEqual((self.outputs["review"], self.outputs["context"]), ("false", ""))
-        self.assertFalse(self.reservations())
-        # A blocked review of this diff for PR 7 bars it here too.
-        self.api = FakeGitHub()
-        self.foreign_attempt(501, "blocked", HEAD, OTHER, own_patch)
-        self.prepare()
-        self.assertFalse(self.reservations())
-        self.assertTrue(any("found blocking issues" in body for body in self.escalations()))
+        for via in ("check", "status"):
+            with self.subTest(via=via):
+                self.api = FakeGitHub()
+                own_patch = risk.patch_digest(risk.review_patches(self.api.files, POLICY))
+                # Three passing reviews of other diffs on this head, for PR 7:
+                # they do not use this PR's three-diff budget.
+                for index, patch_id in enumerate(("1" * 32, "2" * 32, "3" * 32)):
+                    self.foreign_attempt(501 + index, "passed", HEAD, OTHER, patch_id, via=via)
+                self.prepare()
+                self.assertEqual(self.outputs["review"], "true")
+                # A pass of this exact revision for PR 7 is not reused for PR 42.
+                self.api = FakeGitHub()
+                self.foreign_attempt(501, "passed", HEAD, BASE, own_patch, via=via)
+                self.prepare()
+                self.assertEqual((self.outputs["review"], self.outputs["context"]), ("false", ""))
+                self.assertFalse(self.reservations())
+                # A blocked review of this diff for PR 7 bars it here too.
+                self.api = FakeGitHub()
+                self.foreign_attempt(501, "blocked", HEAD, OTHER, own_patch, via=via)
+                self.prepare()
+                self.assertFalse(self.reservations())
+                self.assertTrue(any("found blocking issues" in body for body in self.escalations()))
 
     def test_human_forged_ledger_and_untrusted_runs_are_not_trusted(self):
         self.api.comments.append(
@@ -1420,9 +1474,11 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(self.review_passes(later))
             self.api.drop_outcome(context["run_id"])
             self.assertFalse(self.review_passes(later))
-            # Not even the reservation step: the record does not fit its run.
+            # Not even the reservation step: the record does not fit its run. The
+            # reservation status is checked first (a record-only case is in
+            # test_record_moved_to_a_run_without_that_reservation_goes_to_a_person).
             self.api.run_jobs.pop((context["run_id"], 1))
-            with self.assertRaisesRegex(risk.NeedsPerson, "did not reserve"):
+            with self.assertRaisesRegex(risk.NeedsPerson, "one reservation"):
                 self.review_passes(later)
 
     def test_reuse_needs_the_same_diff(self):
@@ -1441,10 +1497,18 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.escalations())
 
     def test_same_run_merge_does_not_wait_for_the_jobs_api(self):
-        context = self.passing_review()
-        self.api.drop_outcome(context["run_id"])
-        risk.merge(self.api, POLICY, settings(), context)
-        self.assertTrue(self.api.writes("pulls/42/merge"))
+        for lag in ("outcome", "every job"):
+            with self.subTest(lag=lag):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                if lag == "outcome":
+                    self.api.drop_outcome(context["run_id"])
+                else:
+                    # Not even this run's "Review reserved" step is listed yet;
+                    # its own reservation status is read from the context.
+                    self.api.run_jobs.pop((context["run_id"], 1))
+                risk.merge(self.api, POLICY, settings(), context)
+                self.assertTrue(self.api.writes("pulls/42/merge"))
         # Without the publish step's "passed" the same run has no evidence.
         self.api = FakeGitHub()
         context = self.passing_review()
@@ -1584,6 +1648,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.reservations()), 9)
         self.assertTrue(any("budget is exhausted" in body for body in self.escalations()))
 
+    def test_a_later_run_that_proceeds_marks_the_escalation_as_no_longer_applying(self):
+        context = self.prepare()
+        self.assertEqual(self.publish(context, verdict(blocking_findings=True)), "blocked")
+        self.catch_up("1" * 40, OTHER)
+        self.prepare()
+        [escalation] = [c for c in self.api.comments if c["body"].startswith(risk.ESCALATION_MARKER)]
+        self.assertIn("found blocking issues", escalation["body"])
+        # While the reason holds, later runs keep the escalation.
+        self.prepare()
+        self.assertIn("found blocking issues", escalation["body"])
+        # Anyone with write access can edit the bot's comment; that text is
+        # never posted again.
+        escalation["body"] += " @someone injected"
+        # The author fixes the finding: a new diff, reviewed again.
+        self.new_head("2" * 40, "fixed")
+        context = self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertTrue(escalation["body"].startswith(risk.RESOLVED))
+        self.assertIn("2" * 40, escalation["body"])
+        self.assertNotIn("found blocking issues", escalation["body"])
+        self.assertNotIn("injected", escalation["body"])
+        requests = self.api.requests
+        resolved = next(i for i, r in enumerate(requests)
+                        if r[:2] == ("PATCH", f"issues/comments/{escalation['id']}")
+                        and r[2]["body"].startswith(risk.RESOLVED))
+        ledger = [i for i, r in enumerate(requests) if r[:2] == ("POST", "issues/42/comments")
+                  and r[2]["body"].startswith(risk.ROUND_MARKER)][-1]
+        self.assertLess(resolved, ledger)
+        # Not rewritten on every later run.
+        self.assertEqual(self.publish(context), "passed")
+        edits = len(self.api.writes(f"issues/comments/{escalation['id']}"))
+        self.prepare()
+        self.assertEqual(len(self.api.writes(f"issues/comments/{escalation['id']}")), edits)
+        risk.merge(self.api, POLICY, settings(), self.outputs["context"])
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        self.assertEqual(len(self.escalations()), 1)
+
     # --- Attempt history survives comment deletion (finding 18) ---
 
     def drop_ledger(self):
@@ -1643,6 +1744,108 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.reservations()), 3)
         self.assertTrue(any("budget is exhausted" in body for body in self.escalations()))
 
+    # --- Reservation statuses: a renamed check (round-2 review) ---
+
+    def rename_review_checks(self):
+        """PATCH check-runs/{id} accepts `name`; any Actions token can send it."""
+        for item in self.api.checks:
+            if item["name"] == POLICY["review_check"]:
+                item["name"] = POLICY["review_check"] + " (old)"
+
+    def test_each_reservation_posts_an_append_only_status_on_the_head(self):
+        context = self.prepare()
+        [status] = self.api.commit_statuses[HEAD]
+        self.assertEqual(status["context"], risk.STATUS_CONTEXT)
+        self.assertEqual(status["target_url"], f"https://github.com/{REPO}/actions/runs/{context['run_id']}")
+        self.assertEqual(status["state"], "success")
+        self.assertLessEqual(len(status["description"]), 140)
+        requests = self.api.requests
+        ledger = next(i for i, r in enumerate(requests) if r[:2] == ("POST", "issues/42/comments")
+                      and r[2]["body"].startswith(risk.ROUND_MARKER))
+        posted = next(i for i, r in enumerate(requests) if r[:2] == ("POST", f"statuses/{HEAD}"))
+        check_run = next(i for i, r in enumerate(requests) if r[:2] == ("POST", "check-runs"))
+        self.assertLess(ledger, posted)
+        self.assertLess(posted, check_run)
+        self.assertEqual(self.outputs["review"], "true")
+
+    def test_renamed_check_and_deleted_comment_do_not_re_roll_a_block(self):
+        context = self.prepare()
+        self.assertEqual(self.publish(context, verdict(blocking_findings=True)), "blocked")
+        self.rename_review_checks()
+        self.drop_ledger()
+        # git commit --amend --no-edit, force-pushed: same diff, new SHA.
+        self.new_head("1" * 40, force=True)
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "false")
+        self.assertEqual(len(self.reservations()), 1)
+        self.assertTrue(any("found blocking issues" in body for body in self.escalations()))
+
+    def test_budget_survives_renamed_checks_and_deleted_comments(self):
+        for index in range(3):
+            self.new_head(str(index + 1) * 40, f"change {index}", force=True)
+            context = self.prepare()
+            self.assertEqual(self.publish(context), "passed")
+        self.rename_review_checks()
+        self.drop_ledger()
+        self.new_head("4" * 40, "change 3", force=True)
+        self.prepare()
+        self.assertEqual(len(self.reservations()), 3)
+        self.assertTrue(any("budget is exhausted" in body for body in self.escalations()))
+
+    def test_a_pass_indexed_only_by_its_status_is_still_reused(self):
+        self.passing_review()
+        self.rename_review_checks()
+        self.drop_ledger()
+        context = self.prepare()
+        self.assertEqual(context["head"], HEAD)
+        self.assertEqual(len(self.reservations()), 1)
+        risk.merge(self.api, POLICY, settings(), context)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+
+    def test_forged_or_misplaced_reservation_status_goes_to_a_person(self):
+        def url(run_id, repository=REPO):
+            return risk.RUN_URL.format(repository=repository, run_id=run_id)
+
+        def reserving_run(api, run_id, run, *reserved):
+            api.runs[run_id] = run
+            for head, base in reserved:
+                api.reserve(run_id, risk.RESERVATION.format(head=head, base=base, patch="e" * 32))
+
+        cases = {
+            "no run link": (None, "does not link"),
+            "another repository": (url(500, "fork/project"), "does not link"),
+            "a job link": (url(500) + "/job/1", "does not link"),
+            "an untrusted run": (url(500), "one reservation"),
+            "a run without a reservation": (url(501), "one reservation"),
+            "a run with two reservations": (url(502), "one reservation"),
+            "a deleted run": (url(599), "deleted"),
+            "a run on another dev commit": (url(503), "not the trusted dev run"),
+            "another revision": (url(504), "did not reserve"),
+        }
+        for name, (target_url, reason) in cases.items():
+            with self.subTest(name=name):
+                self.api = FakeGitHub()
+                reserving_run(self.api, 500, {**FakeGitHub.dispatch_run(BASE), "event": "pull_request_target"},
+                              (HEAD, BASE))
+                reserving_run(self.api, 501, FakeGitHub.dispatch_run(BASE))
+                reserving_run(self.api, 502, FakeGitHub.dispatch_run(BASE), (HEAD, BASE), (HEAD, OTHER))
+                reserving_run(self.api, 503, FakeGitHub.dispatch_run(OTHER), (HEAD, BASE))
+                reserving_run(self.api, 504, FakeGitHub.dispatch_run(BASE), (OTHER, BASE))
+                self.forge_status(HEAD, target_url)
+                self.prepare()
+                self.assertFalse(self.reservations())
+                self.assertEqual(self.outputs["context"], "")
+                self.assertTrue(any(reason in body for body in self.escalations()), self.escalations())
+
+    def test_status_citing_this_run_on_another_head_stops_the_merge(self):
+        self.api.commits = [OTHER, HEAD]
+        context = self.passing_review()
+        self.forge_status(OTHER, risk.RUN_URL.format(repository=REPO, run_id=context["run_id"]))
+        with self.assertRaisesRegex(risk.NeedsPerson, "did not reserve"):
+            risk.merge(self.api, POLICY, settings(), context)
+        self.assertFalse(self.api.writes("pulls/42/reviews"))
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+
     def test_unreadable_review_check_record_goes_to_a_person(self):
         for external_id in ("garbage", None, json.dumps({"pr": 42})):
             with self.subTest(external_id=external_id):
@@ -1674,7 +1877,7 @@ class ControllerTests(unittest.TestCase):
 
                     def pages(route, key=None):
                         if route.endswith("/jobs"):
-                            raise risk.PolicyError("GitHub API denied or failed a request (HTTP 404)")
+                            raise risk.ApiError("GitHub API denied or failed a request (HTTP 404)", 404)
                         return original(route, key)
 
                     self.api.pages = pages
@@ -1682,6 +1885,68 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(self.outputs["context"], "")
                 self.assertEqual(len(self.reservations()), 1)
                 self.assertTrue(any("deleted" in body for body in self.escalations()))
+
+    def fail_reads(self, where, status):
+        """Make one kind of history read fail with HTTP `status` (None: no answer)."""
+        error = risk.ApiError(f"GitHub API denied or failed a request (HTTP {status})", status)
+        pages, request = self.api.pages, self.api.request
+
+        def failing_pages(route, key=None):
+            if where == "jobs" and route.endswith("/jobs"):
+                raise error
+            return pages(route, key)
+
+        def failing_request(method, route, data=None, **kwargs):
+            if where == "run" and method == "GET" and re.fullmatch(r"actions/runs/\d+", route):
+                raise error
+            if where == "heads" and kwargs.get("graphql") and "HeadRefForcePushedEvent" in data["query"]:
+                raise error
+            return request(method, route, data, **kwargs)
+
+        self.api.pages, self.api.request = failing_pages, failing_request
+
+        def restore():
+            self.api.pages, self.api.request = pages, request
+
+        return restore
+
+    def test_gone_run_or_jobs_go_to_a_person(self):
+        for where in ("run", "jobs"):
+            for status in (404, 410):
+                with self.subTest(where=where, status=status):
+                    self.api = FakeGitHub()
+                    self.passing_review()
+                    self.fail_reads(where, status)
+                    self.prepare()
+                    self.assertEqual(self.outputs["context"], "")
+                    self.assertTrue(any("deleted" in body for body in self.escalations()))
+
+    def test_transient_api_failures_fail_the_run_without_escalating(self):
+        # 5xx, rate limits, timeouts and GraphQL errors are not evidence that
+        # anything was deleted or edited: the run fails, the next one retries.
+        for where in ("jobs", "run", "heads"):
+            for status in (502, 503, 429, 403, None):
+                with self.subTest(where=where, status=status):
+                    self.api = FakeGitHub()
+                    context = self.passing_review()
+                    reused = {key: context[key] for key in ("pr", "head", "base", "patch", "checks")}
+                    restore = self.fail_reads(where, status)
+                    with self.assertRaises(risk.ApiError) as caught:
+                        self.prepare()
+                    self.assertNotIsInstance(caught.exception, risk.NeedsPerson)
+                    self.assertEqual(self.outputs["context"], "")
+                    with self.assertRaises(risk.ApiError) as caught:
+                        risk.merge(self.api, POLICY, settings(), reused)
+                    self.assertNotIsInstance(caught.exception, risk.NeedsPerson)
+                    self.assertFalse(self.api.writes("pulls/42/reviews"))
+                    self.assertFalse(self.escalations())
+                    # After recovery the pass is reused and merged, with no
+                    # contradictory escalation on the PR.
+                    restore()
+                    self.assertEqual(self.prepare()["head"], HEAD)
+                    risk.merge(self.api, POLICY, settings(), self.outputs["context"])
+                    self.assertTrue(self.api.writes("pulls/42/merge"))
+                    self.assertFalse(self.escalations())
 
     def test_truncated_or_unavailable_head_history_goes_to_a_person(self):
         for change in (
@@ -1750,14 +2015,16 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(any("not a trusted author" in body for body in self.escalations()))
 
     def test_push_history_that_has_not_recorded_the_head_waits(self):
-        self.api.activity = [{"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "trusted-author"}}]
+        self.api.activity = [{"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "trusted-author"},
+                              "activity_type": "branch_creation"}]
         self.prepare()
         self.assertFalse(self.reservations())
         self.assertFalse(self.escalations())
         self.assertEqual(self.outputs["review"], "false")
 
     def test_full_empty_or_anonymous_push_history_goes_to_a_person(self):
-        row = {"before": risk.ZERO_SHA, "after": HEAD, "actor": {"login": "trusted-author"}}
+        row = {"before": risk.ZERO_SHA, "after": HEAD, "actor": {"login": "trusted-author"},
+               "activity_type": "branch_creation"}
         for activity in ([row] * 100, [], [{**row, "actor": None}]):
             with self.subTest(rows=len(activity)):
                 self.api = FakeGitHub()
@@ -1765,6 +2032,28 @@ class ControllerTests(unittest.TestCase):
                 self.prepare()
                 self.assertFalse(self.reservations())
                 self.assertTrue(self.escalations())
+
+    def test_push_history_must_reach_back_to_the_branch_creation(self):
+        newest = {"before": OTHER, "after": HEAD, "actor": {"login": "trusted-author"}, "activity_type": "push"}
+        created = {"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "trusted-author"},
+                   "activity_type": "branch_creation"}
+        self.api.activity = [newest, created]
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        # The feed starts after the branch was created (aged out, or a renamed
+        # branch whose feed started over): earlier pushes cannot be checked.
+        self.api = FakeGitHub()
+        self.api.activity = [newest]
+        self.prepare()
+        self.assertFalse(self.reservations())
+        self.assertTrue(any("creation" in body for body in self.escalations()))
+        # The same check runs again before approval.
+        self.api = FakeGitHub()
+        context = self.passing_review()
+        self.api.activity = [newest, {**created, "activity_type": "push"}]
+        with self.assertRaisesRegex(risk.NeedsPerson, "creation"):
+            risk.merge(self.api, POLICY, settings(), context)
+        self.assertFalse(self.api.writes("pulls/42/reviews"))
 
     def test_unavailable_push_history_fails_closed(self):
         self.api.activity = {"message": "unavailable"}
@@ -1775,8 +2064,9 @@ class ControllerTests(unittest.TestCase):
     def test_untrusted_push_after_the_pass_stops_the_merge(self):
         context = self.passing_review()
         self.api.activity = [
-            {"before": OTHER, "after": HEAD, "actor": {"login": "trusted-author"}},
-            {"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "someone-else"}},
+            {"before": OTHER, "after": HEAD, "actor": {"login": "trusted-author"}, "activity_type": "push"},
+            {"before": risk.ZERO_SHA, "after": OTHER, "actor": {"login": "someone-else"},
+             "activity_type": "branch_creation"},
         ]
         with self.assertRaisesRegex(risk.NeedsPerson, "not a trusted author"):
             risk.merge(self.api, POLICY, settings(), context)

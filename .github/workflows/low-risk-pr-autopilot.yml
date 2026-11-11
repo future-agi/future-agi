@@ -70,7 +70,9 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
-      statuses: read # legacy commit-status evidence is a separate permission
+      # Posts the append-only reservation status (a check run can be renamed,
+      # a status cannot be edited or deleted) and reads legacy status evidence.
+      statuses: write
       actions: write # schedule and pull_request_target -> workflow_dispatch on dev; no PR code runs here
     outputs:
       review: ${{ steps.policy.outputs.review }}
