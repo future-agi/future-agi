@@ -285,11 +285,12 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    the key can need a copy in more than one. `docs/release-autopilot.md` here
    lists this repository's three holders and the jobs, and
    `docs/auto-deploy.md` in `future-agi/deployment` (Administrator setup
-   step 1) lists the jobs in every repository. The same custody is a
-   precondition of that repository's deploy identity. Once every such job
-   names an environment, delete the organisation secrets, generate a new
-   private key for the release-bot App and delete the old one, because any
-   branch workflow could read the old key. Step 6 waits for this.
+   step 1) lists the jobs in every repository, and the other remedy there: a
+   separate App for deployment bumps under the same custody. The same
+   custody is a precondition of that repository's deploy identity. Once
+   every such job names an environment, delete the organisation secrets,
+   generate a new private key for the release-bot App and delete the old one,
+   because any branch workflow could read the old key. Step 6 waits for this.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
