@@ -89,6 +89,7 @@ def server_policy(scope):
             scope.allow_unredacted_media_with_text_pii
         ),
         record_audio=bool(scope.record_audio),
+        allow_import=bool(scope.allow_import),
     )
 
 

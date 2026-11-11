@@ -30,6 +30,11 @@ class Migration(migrations.Migration):
             field=models.PositiveIntegerField(default=0),
         ),
         migrations.AddField(
+            model_name="attachmentscope",
+            name="allow_import",
+            field=models.BooleanField(default=False),
+        ),
+        migrations.AddField(
             model_name="attachmentrecording",
             name="sample_rate",
             field=models.PositiveIntegerField(null=True),
@@ -236,6 +241,8 @@ class Migration(migrations.Migration):
                 ("reserved_bytes", models.PositiveBigIntegerField()),
                 ("released_at", models.DateTimeField(null=True)),
                 ("finished_at", models.DateTimeField(null=True)),
+                ("lease_token", models.UUIDField(null=True)),
+                ("lease_until", models.DateTimeField(null=True)),
                 (
                     "scope",
                     models.ForeignKey(

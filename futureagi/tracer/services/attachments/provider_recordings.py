@@ -34,7 +34,7 @@ import jwt
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from tracer.models.attachment import AttachmentScope
+from tracer.models.attachment import AttachmentScope, CaptureSession
 from tracer.models.attachment_recording import (
     TERMINAL_PROVIDER_STATES,
     AttachmentProviderConnection,
@@ -126,6 +126,31 @@ def _live_connection(connection_id, scope_id=None):
     return connection
 
 
+def _registrar_session(registrar, scope_id, association):
+    """The registrar must own the live capture session it names, at register time.
+
+    Checking only when the import is enqueued would let anyone holding an
+    egress id park a registration against another writer's session.
+    """
+    from tracer.services.attachments.bootstrap import check_session
+
+    try:
+        client_id = uuid.UUID(association["capture_session_id"])
+        nonce = uuid.UUID(association["correlation_nonce"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise AttachmentError("validation_failed", 422) from None
+    session = CaptureSession.objects.filter(
+        scope_id=scope_id,
+        client_id=client_id,
+        correlation_nonce=nonce,
+        writer_kind=registrar.kind,
+        writer_id=registrar.id,
+    ).first()
+    if session is None:
+        raise AttachmentError("not_found", 404)
+    check_session(session)
+
+
 def register(
     registrar,
     *,
@@ -152,6 +177,7 @@ def register(
     ):
         raise AttachmentError("validation_failed", 422)
     parent = association["parent"]
+    _registrar_session(registrar, scope_id, association)
     try:
         return AttachmentProviderRecording.objects.create(
             scope_id=scope_id,

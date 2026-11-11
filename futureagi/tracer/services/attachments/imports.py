@@ -27,6 +27,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.attachment import (
@@ -57,6 +58,10 @@ from tracer.services.attachments.contract import (
 from tracer.services.attachments.uploads import _lock_budgets
 
 MAX_ATTEMPTS = 3
+# One worker owns a job at a time. The lease is renewed at every staged segment
+# and checked again under the job row lock before publication, so a worker that
+# lost its lease (crash, pause, overlapping tick) can never publish or finish.
+LEASE_SECONDS = 15 * 60
 IMPORTED_SOURCE_KIND = "imported_recording"
 JOB_HOURS = 3
 IMPORT_MIME_TYPES = {
@@ -129,6 +134,10 @@ PUBLIC_REASONS = {
     "capability_expired": "expired",
     "permission_denied": "credential_scope_unsupported",
 }
+
+
+# F01 ``Reason`` values a stored job may carry as-is ("queued" while waiting).
+STATUS_REASONS = frozenset(PUBLIC_REASONS.values()) | {"queued", "ready"}
 
 
 def public_reason(code):
@@ -399,8 +408,11 @@ def _apply(rows, amounts, sign):
 
 
 def _session(scope, importer, recording):
-    # A capture session has no parent of its own: the recording's parent
-    # comes from the request, exactly as every upload names its own parent.
+    """The importer's own capture session named by the request ``association``.
+
+    A capture session has no parent of its own: the recording's parent comes
+    from the request, exactly as every upload names its own parent.
+    """
     session = CaptureSession.objects.filter(
         scope=scope,
         client_id=recording["capture_session_id"],
@@ -416,7 +428,9 @@ def _session(scope, importer, recording):
 
 def _admit_policy(scope, session, direction):
     policy = session_policy(session)
-    if not getattr(policy, "allow_import", False):
+    # Both the session's snapshot and the LIVE scope switch must allow it, so
+    # turning ``allow_import`` off takes effect at once (deny wins).
+    if not scope.allow_import or not getattr(policy, "allow_import", False):
         # Import needs its own explicit source permission; recording opt-in
         # (record_audio) is a different switch and never implies it.
         raise AttachmentError("source_unavailable", 403)
@@ -429,6 +443,9 @@ def submit(importer, *, scope_id, body):
     """Admit one completed recording import; returns RecordingImportResponse."""
     recording, source = parse_request(body)
     scope = AttachmentScope.objects.get(pk=scope_id)
+    if not scope.allow_import:
+        # Uniform refusal before any session, envelope or provider lookup.
+        raise AttachmentError("source_unavailable", 403)
     session = _session(scope, importer, recording)
     digest = fingerprint(
         {"importer": [importer.kind, importer.id], "recording": recording, **source}
@@ -537,7 +554,8 @@ def status(importer, *, scope_id, job_id):
     ).first()
     if job is None:
         raise AttachmentError("not_found", 404)
-    return {"job_id": str(job.id), "state": job.state, "reason": job.reason}
+    reason = job.reason if job.reason in STATUS_REASONS else public_reason(job.reason)
+    return {"job_id": str(job.id), "state": job.state, "reason": reason}
 
 
 # --------------------------------------------------------------------------
@@ -548,6 +566,36 @@ def status(importer, *, scope_id, job_id):
 class _Retry(Exception):
     def __init__(self, code):
         self.code = code
+
+
+class _LeaseLost(Exception):
+    """Another worker claimed this job; stop without touching shared state."""
+
+
+def _claim(job):
+    """Take the job's lease. Returns (token, None) or (None, why)."""
+    with transaction.atomic():
+        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
+        now = timezone.now()
+        if locked.state in TERMINAL_RECORDING_STATES:
+            return None, "terminal"
+        if locked.lease_until is not None and locked.lease_until > now:
+            return None, "busy"
+        if locked.attempts >= MAX_ATTEMPTS:
+            return None, "exhausted"
+        token = uuid.uuid4()
+        locked.attempts += 1
+        locked.lease_token = token
+        locked.lease_until = now + timedelta(seconds=LEASE_SECONDS)
+        locked.save(update_fields=["attempts", "lease_token", "lease_until"])
+        return token, None
+
+
+def _hold(locked, token):
+    """Under the job row lock: fail unless ``token`` still owns the lease."""
+    if token is not None and locked.lease_token != token:
+        raise _LeaseLost()
+    locked.lease_until = timezone.now() + timedelta(seconds=LEASE_SECONDS)
 
 
 def _fence(job):
@@ -566,12 +614,13 @@ def _fence(job):
     return scope, recording
 
 
-def _reserve_segment(job, size):
+def _reserve_segment(job, size, token=None):
     """Cover a staged segment's bytes before producing it (moving window)."""
     with transaction.atomic():
         scope = AttachmentScope.objects.get(pk=job.scope_id)
         rows = _lock_budgets(scope)
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
+        _hold(locked, token)
         if locked.released_at is not None:
             raise AttachmentError("conflict", 409)
         headroom = _headroom(rows)
@@ -579,7 +628,7 @@ def _reserve_segment(job, size):
             raise _Retry("throttled")
         _apply(rows, {"bytes": size}, +1)
         locked.reserved_bytes += size
-        locked.save(update_fields=["reserved_bytes"])
+        locked.save(update_fields=["reserved_bytes", "lease_until"])
         job.reserved_bytes = locked.reserved_bytes
 
 
@@ -606,14 +655,18 @@ def _erase_staged(job, storage):
         segment.save(update_fields=["state"])
 
 
-def _finish(job, *, state, reason, storage):
+def _finish(job, *, state, reason, storage, token=None):
+    """Terminal transition. A worker passes its lease token; the sweep doesn't."""
     with transaction.atomic():
         locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
         if locked.state in TERMINAL_RECORDING_STATES:
             return locked
+        if token is not None and locked.lease_token != token:
+            return locked
         locked.state, locked.reason = state, reason
         locked.finished_at = timezone.now()
-        locked.save(update_fields=["state", "reason", "finished_at"])
+        locked.lease_until = None
+        locked.save(update_fields=["state", "reason", "finished_at", "lease_until"])
         if state != RecordingState.READY:
             AttachmentRecording.objects.filter(pk=job.recording_id).exclude(
                 state__in=TERMINAL_RECORDING_STATES
@@ -668,7 +721,7 @@ def _fetch(job, source, snapshot, limits):
     return reads
 
 
-def _segments(job, recording, snapshot_path, facts, limits, storage):
+def _segments(job, recording, snapshot_path, facts, limits, storage, token=None):
     plans = recordings.plan_segments(
         frame_count=facts["frame_count"],
         rate=facts["sample_rate"],
@@ -686,7 +739,7 @@ def _segments(job, recording, snapshot_path, facts, limits, storage):
         if existing is not None:
             raise AttachmentError("conflict", 409)
         _fence(job)
-        _reserve_segment(job, plan.byte_length)
+        _reserve_segment(job, plan.byte_length, token)
         with tempfile.NamedTemporaryFile(dir=_work_dir()) as part:
             result = sandbox.run(
                 "segment",
@@ -739,10 +792,13 @@ def _segments(job, recording, snapshot_path, facts, limits, storage):
     return plans, [staged[plan.index] for plan in plans]
 
 
-def _publish(job, recording, facts, manifest, rows):
+def _publish(job, recording, facts, manifest, rows, token=None):
     """Atomically create segment occurrences and the manifest under fences."""
     with transaction.atomic():
         scope = AttachmentScope.objects.select_for_update().get(pk=job.scope_id)
+        # Lock order everywhere: scope, job, recording (``_finish``: job, recording).
+        held = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
+        _hold(held, token)
         locked = AttachmentRecording.objects.select_for_update().get(pk=recording.pk)
         if locked.state in TERMINAL_RECORDING_STATES:
             raise AttachmentError("conflict", 409)
@@ -789,6 +845,8 @@ def _publish(job, recording, facts, manifest, rows):
                 trace_id=locked.trace_id,
                 span_id=locked.span_id,
                 direction=locked.direction,
+                recording=locked,
+                purpose="conversation_recording",
                 # Unbound until ingestion observes the parent and binds retention.
                 expires_at=now + timedelta(hours=24),
                 capture_complete=True,
@@ -815,7 +873,7 @@ def _publish(job, recording, facts, manifest, rows):
             ]
         )
         AttachmentImportJob.objects.filter(pk=job.pk).update(
-            state=RecordingState.READY, reason="ready", finished_at=now
+            state=RecordingState.READY, reason="ready", finished_at=now, lease_until=None
         )
 
 
@@ -834,14 +892,13 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         recording_duration_ms=7_200_000,
         reserved_bytes=job.reserved_bytes,
     )
-    with transaction.atomic():
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        if locked.attempts >= MAX_ATTEMPTS:
-            locked = None
-        else:
-            locked.attempts += 1
-            locked.save(update_fields=["attempts"])
-    if locked is None:
+    token, why = _claim(job)
+    if why == "terminal":
+        job.refresh_from_db()
+        return job.state
+    if why == "busy":
+        return RecordingState.IMPORTING
+    if why == "exhausted":
         return _finish(
             job,
             state=RecordingState.FAILED,
@@ -861,7 +918,7 @@ def run(job_id, *, scope_id, storage, source_factory=None):
                 # Reject a duration mismatch before producing any segment.
                 raise AttachmentError("validation_failed", 422)
             plans, rows = _segments(
-                job, recording, snapshot.name, facts, limits, storage
+                job, recording, snapshot.name, facts, limits, storage, token
             )
         track_ids = [
             uuid.uuid5(recording.client_id, f"track:{index}")
@@ -897,13 +954,17 @@ def run(job_id, *, scope_id, storage, source_factory=None):
                 "segment_bytes": [row.byte_length for row in rows],
             },
         )
-        _publish(job, recording, facts, manifest, rows)
+        _publish(job, recording, facts, manifest, rows, token)
         _release(job)
         if job.envelope_id:
             envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
         return RecordingState.READY
+    except _LeaseLost:
+        return RecordingState.IMPORTING
     except _Retry as retry:
-        AttachmentImportJob.objects.filter(pk=job.pk).update(reason=retry.code)
+        AttachmentImportJob.objects.filter(pk=job.pk, lease_token=token).update(
+            reason=retry.code, lease_until=None
+        )
         return RecordingState.IMPORTING
     except AttachmentError as error:
         transient = error.status in {429, 503} and error.code in {
@@ -913,8 +974,8 @@ def run(job_id, *, scope_id, storage, source_factory=None):
         }
         job.refresh_from_db()
         if transient and job.attempts < MAX_ATTEMPTS:
-            AttachmentImportJob.objects.filter(pk=job.pk).update(
-                reason=public_reason(error.code)
+            AttachmentImportJob.objects.filter(pk=job.pk, lease_token=token).update(
+                reason=public_reason(error.code), lease_until=None
             )
             return RecordingState.IMPORTING
         state = {
@@ -925,14 +986,18 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             RecordingState.FAILED if transient else RecordingState.REJECTED,
         )
         return _finish(
-            job, state=state, reason=public_reason(error.code), storage=storage
+            job,
+            state=state,
+            reason=public_reason(error.code),
+            storage=storage,
+            token=token,
         ).state
     except Exception:
         # Never persist exception text (it may contain a URL or a path).
         job.refresh_from_db()
         if job.attempts < MAX_ATTEMPTS:
-            AttachmentImportJob.objects.filter(pk=job.pk).update(
-                reason="source_unavailable"
+            AttachmentImportJob.objects.filter(pk=job.pk, lease_token=token).update(
+                reason="source_unavailable", lease_until=None
             )
             return RecordingState.IMPORTING
         return _finish(
@@ -940,6 +1005,7 @@ def run(job_id, *, scope_id, storage, source_factory=None):
             state=RecordingState.FAILED,
             reason="source_unavailable",
             storage=storage,
+            token=token,
         ).state
 
 
@@ -956,9 +1022,12 @@ def sweep(*, storage, limit=100):
 
 def pending(*, limit=100):
     """Job ids a dispatcher should (re)run; ids and scopes only."""
+    now = timezone.now()
     return list(
         AttachmentImportJob.objects.filter(
-            state=RecordingState.IMPORTING, deadline__gt=timezone.now()
+            Q(lease_until__isnull=True) | Q(lease_until__lte=now),
+            state=RecordingState.IMPORTING,
+            deadline__gt=now,
         ).values_list("pk", "scope_id")[:limit]
     )
 

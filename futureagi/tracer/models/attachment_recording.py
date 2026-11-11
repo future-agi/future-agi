@@ -250,6 +250,9 @@ class AttachmentImportJob(ScopedAttachmentRecord):
     reserved_bytes = models.PositiveBigIntegerField()
     released_at = models.DateTimeField(null=True)
     finished_at = models.DateTimeField(null=True)
+    # Single-worker lease (imports._claim); the token fences late writers.
+    lease_token = models.UUIDField(null=True)
+    lease_until = models.DateTimeField(null=True)
 
     class Meta:
         constraints = [

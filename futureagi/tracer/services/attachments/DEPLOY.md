@@ -17,12 +17,19 @@ Compose service is needed. Two Temporal schedules
 Jobs are durable database rows. A lost tick or a worker restart only delays
 progress. Each job gets at most 3 attempts and a deadline of at most 3 hours.
 
-Each schedule has the default `ScheduleOverlapPolicy.SKIP`, so at most one
-tick of a schedule runs at a time. That is the only thing stopping two
-workers from running the same job at once: there is no per-job lease yet.
-Never trigger these activities by hand next to the schedule. If a second
-`run()` did start, the `(recording, index)` unique constraint would make it
-fail instead of duplicating a segment.
+Each schedule has the default `ScheduleOverlapPolicy.SKIP`. On top of that,
+each job has a 15-minute lease (`imports.LEASE_SECONDS`): `run()` claims it
+with a fresh token, renews it at every staged segment and re-checks it under
+the job row lock before publication. A second worker skips a leased job, and a
+worker that lost its lease (crash, pause, a tick started by hand) cannot
+reserve, publish or finish; after the lease lapses the next tick retries.
+
+Imports are a per-project opt-in: `AttachmentScope.allow_import` (default
+off). Admission needs it on the scope AND in the capture session's policy
+snapshot, so switching it off denies live sessions and queued jobs at once.
+`record_audio` (creating new recordings) is a separate switch and never
+implies it. F01 `Policy` has no field for it yet, so bootstrap does not
+advertise it.
 
 When attachments are enabled, each tick first runs `readiness.check()`. If any
 requirement below is missing, the tick does nothing and logs

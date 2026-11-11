@@ -46,6 +46,7 @@ from tracer.services.attachments import (
 )
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.storage import ObjectIdentity
+from tracer.tests.test_attachment_api import api  # noqa: F401  (HTTP fixture)
 
 pytestmark = [
     pytest.mark.django_db,
@@ -133,10 +134,14 @@ def env(project, user, settings, tmp_path):
 def session(env, **policy):
     """A live capture session of the env writer, bootstrapped through F01.
 
-    The stored policy snapshot carries the requested restrictions so the
-    server's deny-wins re-check is exercised on every later step.
+    ``allow_import`` is the scope switch. Other keys are client-side
+    restrictions (hide/PII); a session snapshot carrying them is stored as-is
+    so the server's deny-wins re-check is exercised on every later step.
     """
     scope, writer, _, _ = env
+    AttachmentScope.objects.filter(pk=scope.pk).update(
+        allow_import=policy.pop("allow_import", True)
+    )
     current, _ = broker.bootstrap(
         writer,
         {
@@ -147,13 +152,15 @@ def session(env, **policy):
             "correlation_nonce": str(uuid.uuid4()),
         },
     )
+    if not policy:
+        return current
     return CaptureSession.objects.create(
         scope_id=current.scope_id,
         client_id=uuid.uuid4(),
         correlation_nonce=uuid.uuid4(),
         writer_kind=current.writer_kind,
         writer_id=current.writer_id,
-        capture_policy={**current.capture_policy, "allow_import": True, **policy},
+        capture_policy={**current.capture_policy, **policy},
         policy_version=current.policy_version,
         deletion_generation=current.deletion_generation,
         expires_at=current.expires_at,
@@ -762,3 +769,237 @@ def test_published_segments_survive_read_path_readmission_once_bound(env, user):
             viewer, Authority(), row.client_id, parent, ready=True
         )
         assert found.pk == row.pk
+
+
+# ------------------------------------------------------- lease / ownership
+
+
+def test_lease_keeps_one_worker_per_job_and_fences_a_stale_one(env):
+    data = wav_bytes(seconds=2)
+    current = session(env)
+    store = Store()
+    _, job = imports.submit(
+        env[2],
+        scope_id=env[0].id,
+        body=body(current, data=data, envelope_id=envelope(env, data)),
+    )
+    stale, why = imports._claim(job)
+    assert why is None and imports.pending() == []
+    # A second worker while the lease is live does nothing at all.
+    assert drive(job, store, data) == "importing"
+    job.refresh_from_db()
+    assert job.attempts == 1
+    assert not AttachmentRecordingSegment.objects.exists()
+    # The holder vanished: once its lease lapses another worker takes over.
+    AttachmentImportJob.objects.filter(pk=job.pk).update(
+        lease_until=timezone.now() - timedelta(seconds=1)
+    )
+    assert imports.pending() == [(job.pk, job.scope_id)]
+    assert drive(job, store, data) == "ready"
+    # The stale worker can neither finish, reserve nor publish any more.
+    finished = imports._finish(
+        job, state="failed", reason="source_unavailable", storage=store, token=stale
+    )
+    assert finished.state == "ready"
+    with pytest.raises(imports._LeaseLost):
+        imports._reserve_segment(job, 1, stale)
+    assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
+
+
+def test_worker_that_loses_its_lease_mid_run_publishes_nothing(env):
+    data = wav_bytes(seconds=35)
+    current = session(env)
+    _, job = imports.submit(
+        env[2],
+        scope_id=env[0].id,
+        body=body(current, data=data, envelope_id=envelope(env, data)),
+    )
+
+    def stolen(j, limits):
+        # Another worker claims the job while this one is still fetching.
+        AttachmentImportJob.objects.filter(pk=j.pk).update(lease_token=uuid.uuid4())
+        return MemorySource(data, limits.window)
+
+    state = imports.run(
+        job.id, scope_id=job.scope_id, storage=Store(), source_factory=stolen
+    )
+    assert state == "importing"
+    job.refresh_from_db()
+    assert job.state == "importing" and job.finished_at is None
+    assert not AttachmentOccurrence.objects.exists()
+    assert AttachmentRecording.objects.get(pk=job.recording_id).manifest is None
+
+
+def test_turning_import_off_denies_live_sessions_and_queued_jobs(env):
+    data = wav_bytes(seconds=2)
+    current = session(env)
+    _, job = imports.submit(
+        env[2],
+        scope_id=env[0].id,
+        body=body(current, data=data, envelope_id=envelope(env, data)),
+    )
+    AttachmentScope.objects.filter(pk=env[0].pk).update(allow_import=False)
+    with pytest.raises(AttachmentError, match="source_unavailable"):
+        imports.submit(
+            env[2],
+            scope_id=env[0].id,
+            body=body(current, data=data, envelope_id=envelope(env, data)),
+        )
+    assert drive(job, Store(), data) == "rejected"
+    assert not AttachmentOccurrence.objects.exists()
+    assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
+
+
+def test_registration_needs_the_registrars_own_live_session(env):
+    connection = livekit(env)
+    current = session(env)
+    association = {
+        "capture_session_id": str(current.client_id),
+        "correlation_nonce": str(current.correlation_nonce),
+        "parent": {"trace_id": TRACE, "span_id": SPAN},
+    }
+    for registrar, changes in (
+        (imports.Importer("user", uuid.uuid4()), {}),  # someone else's session
+        (env[2], {"correlation_nonce": str(uuid.uuid4())}),  # wrong nonce
+    ):
+        with pytest.raises(AttachmentError, match="not_found"):
+            provider_recordings.register(
+                registrar,
+                scope_id=env[0].id,
+                connection_id=connection.id,
+                egress_id="EG_abc123",
+                room_name="room-1",
+                recording_id=uuid.uuid4(),
+                association={**association, **changes},
+                direction="mixed",
+            )
+    assert not AttachmentProviderRecording.objects.exists()
+
+
+# ------------------------------------------------------------- HTTP routes
+
+
+def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_path):
+    from tracer.tests import test_attachment_api as http
+
+    settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{KEY}"
+    settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("media.example.com",)
+    settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
+    scope = api.scope
+    imports_path = f"{http.base(api)}/imports"
+    data = wav_bytes(seconds=35)
+
+    # Imports are off by default: a uniform refusal, nothing recorded.
+    reply, session_body = http.bootstrap(api)
+    http.ok(reply, 200, "BootstrapResponse")
+    current = CaptureSession.objects.get(
+        scope=scope, client_id=session_body["capture_session_id"]
+    )
+    sealed = envelopes.seal(
+        scope=scope,
+        url=f"https://cdn.media.example.com/rec.wav?sig={CANARY}",
+        creator_kind="user",
+        creator_id=api.user.pk,
+        direction="mixed",
+        source_bytes=len(data),
+    )
+    request = body(current, data=data, envelope_id=sealed)
+    http.assert_error(
+        http.post(api, imports_path, request, {**http.auth(api.token), **http.key()}),
+        403,
+        "policy_denied",
+    )
+    assert not AttachmentImportJob.objects.exists()
+
+    # Opt in, then bootstrap a session that carries the switch.
+    AttachmentScope.objects.filter(pk=scope.pk).update(allow_import=True)
+    reply, session_body = http.bootstrap(api)
+    http.ok(reply, 200, "BootstrapResponse")
+    current = CaptureSession.objects.get(
+        scope=scope, client_id=session_body["capture_session_id"]
+    )
+    request = body(current, data=data, envelope_id=sealed)
+    headers = {**http.auth(api.token), **http.key("im")}
+    accepted = http.ok(
+        http.post(api, imports_path, request, headers), 202, "ImportResponse"
+    )
+    assert accepted["mode"] == "completed_recording"
+    assert accepted["state"] == "importing"
+    replay = http.ok(
+        http.post(api, imports_path, request, headers), 202, "ImportResponse"
+    )
+    assert replay == accepted
+    changed = json.loads(json.dumps(request))
+    changed["recording"]["direction"] = "output"
+    http.assert_error(http.post(api, imports_path, changed, headers), 409, "conflict")
+    malformed = json.loads(json.dumps(request))
+    malformed["recording"]["declared_duration_ms"] += 1
+    malformed["recording"]["recording_id"] = str(uuid.uuid4())
+    malformed["recording"]["mime_type"] = "audio/ogg"
+    http.assert_error(
+        http.post(api, imports_path, malformed, headers), 400, "unsupported_version"
+    )
+
+    status_path = f"{imports_path}/{accepted['job_id']}/status"
+    queued = http.ok(
+        api.client.get(status_path, **http.auth(api.token)),
+        200,
+        "ImportStatusResponse",
+    )
+    assert queued == {
+        "job_id": accepted["job_id"],
+        "state": "importing",
+        "reason": "queued",
+    }
+    http.assert_error(
+        api.client.get(f"{imports_path}/{uuid.uuid4()}/status", **http.auth(api.token)),
+        404,
+        "not_found",
+    )
+
+    job = AttachmentImportJob.objects.get(pk=accepted["job_id"])
+    assert drive(job, Store(), data) == "ready"
+    done = http.ok(
+        api.client.get(status_path, **http.auth(api.token)),
+        200,
+        "ImportStatusResponse",
+    )
+    assert (done["state"], done["reason"]) == ("ready", "ready")
+
+    # The viewer manifest lists the server-made segments, not gaps.
+    manifest_path = (
+        f"{http.base(api)}/recordings/{accepted['recording_id']}/manifest"
+    )
+    parent = {"trace_id": TRACE, "span_id": SPAN}
+    manifest = http.ok(
+        api.client.get(manifest_path, parent, **http.auth(api.token)),
+        200,
+        "RecordingManifest",
+    )
+    assert manifest["capture_complete"] is True
+    assert [s["duration_ms"] for s in manifest["segments"]] == [30000, 5000]
+    assert all(gap["reason"] != "incomplete" for gap in manifest["gaps"])
+    linked = AttachmentOccurrence.objects.filter(recording__client_id=accepted["recording_id"])
+    assert {str(o.client_id) for o in linked} == {
+        s["occurrence_id"] for s in manifest["segments"]
+    }
+    assert {o.purpose for o in linked} == {"conversation_recording"}
+    # A deleted segment occurrence is never served: it becomes a gap.
+    first = manifest["segments"][0]["occurrence_id"]
+    AttachmentOccurrence.objects.filter(scope=scope, client_id=first).update(
+        deleted_at=timezone.now()
+    )
+    after = http.ok(
+        api.client.get(manifest_path, parent, **http.auth(api.token)),
+        200,
+        "RecordingManifest",
+    )
+    assert [s["occurrence_id"] for s in after["segments"]] == [
+        manifest["segments"][1]["occurrence_id"]
+    ]
+    assert after["capture_complete"] is False
+    assert {"start_ms": 0, "duration_ms": 30000, "reason": "incomplete"} in [
+        {k: g[k] for k in ("start_ms", "duration_ms", "reason")} for g in after["gaps"]
+    ]
+    dump = _dump_attachment_tables()
+    assert CANARY not in dump

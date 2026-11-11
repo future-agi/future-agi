@@ -32,6 +32,8 @@ class AttachmentScope(models.Model):
     allow_unredacted_media_with_text_pii = models.BooleanField(default=False)
     # Creating NEW recordings is a separate opt-in from capturing attachments.
     record_audio = models.BooleanField(default=False)
+    # Importing an already-completed recording is its own opt-in (default off).
+    allow_import = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
