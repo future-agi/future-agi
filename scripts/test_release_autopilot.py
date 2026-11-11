@@ -450,6 +450,8 @@ class GitEvidenceTests(unittest.TestCase):
         text = self.release()
         self.assertIn("environment=production-auto\n", text)
         self.assertIn("migrations=0\n", text)
+        # The previous shipped release is the baseline the bump commit carries.
+        self.assertIn("baseline=v1.0.0\n", text)
         self.assertIn(f"tag_sha={self.sha}\n", text)
 
     def test_non_main_tag_is_refused_even_when_manual(self):
@@ -1246,13 +1248,14 @@ class WorkflowContractTests(unittest.TestCase):
     RELEASE = Path(__file__).resolve().parents[1] / ".github/workflows/release-images.yml"
     LINE = re.compile(r"Migrations: (?:[0-9]+|unknown) new files")
 
-    def run_bump_step(self, migrations):
+    def run_bump_step(self, migrations, baseline="v1.2.2"):
         """Run the real "Open bump PR" script against stub git and gh; nothing leaves the machine."""
         import yaml
 
         steps = yaml.safe_load(self.RELEASE.read_text())["jobs"]["bump-deployment"]["steps"]
         step = next(step for step in steps if step.get("name") == "Open bump PR")
         self.assertEqual(step["env"]["MIGRATIONS"], "${{ needs.guard.outputs.migrations }}")
+        self.assertEqual(step["env"]["MIGRATION_BASELINE"], "${{ needs.guard.outputs.migration-baseline }}")
         self.assertNotIn("${{", step["run"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1269,7 +1272,7 @@ class WorkflowContractTests(unittest.TestCase):
                 (root / "bin" / name).chmod(0o755)
             env = {"PATH": f"{root / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": temp,
                    "STUB_LOG": str(log), "GH_CONFIG_DIR": str(root / "gh-config"), "GH_TOKEN": "synthetic",
-                   "VERSION": "v1.2.3", "MIGRATIONS": migrations, "SDK_VERSION": "",
+                   "VERSION": "v1.2.3", "MIGRATIONS": migrations, "MIGRATION_BASELINE": baseline, "SDK_VERSION": "",
                    "WORKER_SOURCE_SHA": SHA, "WORKER_DIGEST": "sha256:" + "0" * 64}
             subprocess.run(["bash", "-c", step["run"]], env=env, check=True, capture_output=True, text=True)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -1284,10 +1287,26 @@ class WorkflowContractTests(unittest.TestCase):
                                 ("unknown", "Migrations: unknown new files")):
             with self.subTest(value=value):
                 message, paragraphs, body = self.run_bump_step(value)
-                self.assertEqual(paragraphs, ["chore(release): bump platform images to v1.2.3", expected])
+                self.assertEqual(paragraphs, ["chore(release): bump platform images to v1.2.3", expected,
+                                              "Migration baseline: v1.2.2"])
                 self.assertEqual([line for line in message.splitlines() if self.LINE.fullmatch(line)], [expected])
                 # The PR body keeps the same line for readers.
                 self.assertEqual([line for line in body.splitlines() if self.LINE.fullmatch(line)], [expected])
+
+    def test_bump_commit_names_the_baseline_or_unknown(self):
+        message, paragraphs, body = self.run_bump_step("0", "v1.58.0")
+        self.assertEqual(paragraphs[2], "Migration baseline: v1.58.0")
+        self.assertIn("Migration baseline: v1.58.0", body.splitlines())
+        # Anything but a plain release tag is written as unknown, so the deployment
+        # autopilot cannot match it against the version main runs.
+        for value in ("", "unknown", "v1.58.0-rc.1", "1.58.0", "v1.58", "v1.58.0\nMigration baseline: v1.57.0",
+                      "v1.58.0 "):
+            with self.subTest(value=value):
+                message, paragraphs, body = self.run_bump_step("0", value)
+                self.assertEqual(paragraphs[2], "Migration baseline: unknown")
+                for text in (message, body):
+                    self.assertEqual([line for line in text.splitlines() if line.startswith("Migration baseline:")],
+                                     ["Migration baseline: unknown"])
 
     def test_a_missing_or_malformed_count_is_written_as_unknown_never_as_zero(self):
         for value in ("", "-1", "0 ", "1.0", "none", "1\nMigrations: 0 new files", "0\n\nMigrations: 0 new files"):

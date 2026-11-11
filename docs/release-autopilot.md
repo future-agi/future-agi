@@ -386,13 +386,27 @@ or diff is unavailable. The step reads the count from its `env`, not by
 expression expansion inside the script, and writes `unknown` for anything that
 is not a plain count, never `0`.
 
+A third paragraph names the release the count starts from, the previous
+shipped release:
+
+```text
+Migration baseline: v1.58.0
+```
+
+It is a plain `vX.Y.Z` tag, or `unknown` for anything else; the step reads it
+from its `env` too. The PR body carries the same line.
+
 The deployment repository's bot autopilot (`docs/bot-pr-autopilot.md` in
 `future-agi/deployment`) reads the head commit message of a release-bump PR.
 It allows the PR only if exactly one whole line equals
 `Migrations: 0 new files`. Any other count, `unknown`, a missing line or
-duplicate lines give the waiting reason `release-has-migrations`. That reason
-is not a pause, so an earlier autopilot approval is withdrawn. Sandbox-pin PRs
-are unaffected. The commit is used rather than the PR body because the
+duplicate lines give the waiting reason `release-has-migrations`. It also
+requires exactly one `Migration baseline:` line whose version is the backend
+image tag deployment main runs now, in every values file; otherwise the PR
+waits at `migration-baseline-mismatch`. A zero count says nothing about
+releases between what main runs and the baseline, for example a skipped
+release whose bump was closed or never opened. Neither reason is a pause, so
+an earlier autopilot approval is withdrawn. Sandbox-pin PRs are unaffected. The commit is used rather than the PR body because the
 autopilot already ties the head commit to the release-bot key; anyone with
 write access can edit a PR body.
 

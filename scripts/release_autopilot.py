@@ -743,8 +743,10 @@ def release_environment(version, expected_sha=None, approved_environment=None):
             summary("Release refused: automatic approval no longer applies to this run. "
                     "Use Re-run all jobs so the guard selects Production review.")
             raise RuntimeError("automatic approval is no longer safe; re-run all jobs for human review")
+    # The baseline goes into the deployment bump commit, whose autopilot merges a
+    # zero-count bump only when main still runs exactly this release.
     outputs(environment=environment, migrations=count if count is not None else "unknown",
-            tag_sha=sha)
+            baseline=last if last and version_tuple(last) is not None else "unknown", tag_sha=sha)
 
 
 def main():

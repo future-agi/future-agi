@@ -90,6 +90,7 @@ jobs:
       components: ${{ steps.v.outputs.components }}
       environment: ${{ steps.policy.outputs.environment }}
       migrations: ${{ steps.policy.outputs.migrations }}
+      migration-baseline: ${{ steps.policy.outputs.baseline }}
       tag-sha: ${{ steps.policy.outputs.tag_sha }}
     steps:
       - id: v
@@ -1252,6 +1253,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           MIGRATIONS: ${{ needs.guard.outputs.migrations }}
+          MIGRATION_BASELINE: ${{ needs.guard.outputs.migration-baseline }}
         run: |
           set -eu
           # The deployment autopilot reads this count from the head commit
@@ -1261,6 +1263,9 @@ jobs:
             unknown) ;;
             "" | *[!0-9]*) MIGRATIONS=unknown ;;
           esac
+          # The release the count starts from. The autopilot also requires that
+          # main runs exactly this version, so a skipped release cannot hide.
+          [[ "$MIGRATION_BASELINE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || MIGRATION_BASELINE=unknown
           branch="chore/bump-platform-${VERSION}"
           git config user.name "futureagi-release-bot"
           git config user.email "release-bot@futureagi.com"
@@ -1268,7 +1273,8 @@ jobs:
           git switch -c "$branch" 2>/dev/null || git switch "$branch"
           git add eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
           git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
-          git commit -m "chore(release): bump platform images to ${VERSION}" -m "Migrations: ${MIGRATIONS} new files"
+          git commit -m "chore(release): bump platform images to ${VERSION}" -m "Migrations: ${MIGRATIONS} new files" \
+            -m "Migration baseline: ${MIGRATION_BASELINE}"
           # Plain --force: the bump branch is bot-owned and regenerated from main
           # each run; a single-branch checkout never fetches its remote ref, so
           # --force-with-lease has no base to compare and is rejected as "stale
@@ -1284,7 +1290,9 @@ jobs:
               --title "chore(release): bump platform to ${VERSION}" \
               --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide.
 
-          Migrations: ${MIGRATIONS} new files"
+          Migrations: ${MIGRATIONS} new files
+
+          Migration baseline: ${MIGRATION_BASELINE}"
           else
             echo "bump PR already open"
           fi
