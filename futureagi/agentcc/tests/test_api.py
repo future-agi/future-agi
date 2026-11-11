@@ -156,7 +156,11 @@ class TestAgentccGatewayAPI:
         data = response.json()
         assert data["status"] is False
         assert data["details"]["status"] == ["unreachable"]
-        assert "Connection refused" in data["detail"]
+        # TH-3947 A-1: users get a fixed message; the raw client error is logged.
+        from agentcc.views.gateway import HEALTH_CHECK_UNREACHABLE
+
+        assert data["detail"] == HEALTH_CHECK_UNREACHABLE
+        assert "Connection refused" not in response.content.decode()
 
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_get_config(self, mock_get_client, auth_client, gateway_id):
