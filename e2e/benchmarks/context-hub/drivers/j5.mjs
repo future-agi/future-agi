@@ -770,6 +770,8 @@ class CampaignJourney {
   async prepareConfigured() {
     const measured = { ledger: this.ledger, stage: this.stage };
     this.setup = true;
+    // The setup ledger is the first file a configured run writes; its directory may not exist yet.
+    await mkdir(this.config.evidence_dir, { recursive: true });
     const setupLedger = new ActionLedger({ runId: `${this.runId}-setup`, job: 'J5', mode: 'product',
       path: join(this.config.evidence_dir, `${this.runId}-setup.jsonl`) });
     this.ledger = setupLedger; this.stage = { id: 'configured-precondition', phase: 'cold' };
