@@ -74917,6 +74917,15 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "expected_span_id",
+                        "in": "query",
+                        "description": "Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
                     }
                 ],
                 "responses": {
@@ -74933,6 +74942,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -126393,7 +126408,8 @@
                 "span_id": {
                     "title": "Span id",
                     "type": "string",
-                    "format": "uuid",
+                    "maxLength": 255,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "retryable": {

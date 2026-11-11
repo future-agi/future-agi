@@ -13616,6 +13616,10 @@ export interface EvalLogSourceNavigationApi {
   kind: EvalLogSourceNavigationApiKind;
   project_id: string;
   trace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
   span_id: string;
   retryable: boolean;
 }
@@ -41483,6 +41487,12 @@ export type TracerTraceVoiceCallDetailParams = {
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
    */
   project_id?: string;
+  /**
+   * Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.
+   * @minLength 1
+   * @maxLength 255
+   */
+  expected_span_id?: string;
 };
 
 export type TracerTraceReadParams = {

@@ -42427,6 +42427,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          expected_span_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
         },
         responses: {
           200: {
@@ -42436,6 +42444,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorResponse",
           },
           500: {
@@ -118970,7 +118981,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         span_id: {
           title: "Span id",
           type: "string",
-          format: "uuid",
+          maxLength: 255,
+          minLength: 1,
           "x-nullable": true,
         },
         retryable: {

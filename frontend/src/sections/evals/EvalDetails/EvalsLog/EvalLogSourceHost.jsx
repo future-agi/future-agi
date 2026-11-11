@@ -8,6 +8,7 @@ import React, {
 import PropTypes from "prop-types";
 import { Box, Button, Modal, Portal, Typography } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { flattenArray } from "src/utils/flatten-array";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
@@ -27,30 +28,82 @@ const isReady = (nav) =>
     (id) => typeof id === "string" && id.length > 0,
   );
 
-function VoiceBody({ pinned, onClose, onState }) {
+function useSourceRevalidation(query, changed, revalidate, stillReady) {
+  const [validation, setValidation] = useState(null);
+  useEffect(() => {
+    if (!changed) return undefined;
+    let active = true;
+    setValidation(null);
+    revalidate().then(
+      (fresh) => {
+        if (active)
+          setValidation(fresh.status === "ready" ? stillReady : fresh);
+      },
+      () => {
+        if (active) setValidation(temporary);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [
+    changed,
+    query.errorUpdatedAt,
+    query.dataUpdatedAt,
+    revalidate,
+    stillReady,
+  ]);
+  return validation;
+}
+
+function VoiceBody({ pinned, onClose, revalidate, onState }) {
   const query = useVoiceCallDetail(pinned.trace_id, {
     enabled: true,
     projectId: pinned.project_id,
+    expectedSpanId: pinned.span_id,
   });
+  // The optional expected_span_id makes the server prove unique-root ancestry
+  // using the same bounded snapshot it renders, including on Retry. Also check
+  // the public payload before painting: no missing/cross-source span is usable.
   const mismatched =
-    (!!query.data?.trace_id && query.data.trace_id !== pinned.trace_id) ||
-    (!!query.data?.project_id && query.data.project_id !== pinned.project_id);
+    !!query.data &&
+    (query.data.trace_id !== pinned.trace_id ||
+      query.data.project_id !== pinned.project_id ||
+      query.data.observation_span?.filter(
+        (span) =>
+          span.id === pinned.span_id && span.trace_id === pinned.trace_id,
+      ).length !== 1);
+  const changed =
+    (query.isError && errorStatus(query.error) === 409) || mismatched;
+  const validation = useSourceRevalidation(query, changed, revalidate, invalid);
   useEffect(() => {
     if (query.isPending) return;
     onState(
-      query.isError
-        ? { isError: true, error: query.error }
-        : { nav: mismatched ? invalid : query.data ? pinned : temporary },
+      changed
+        ? { nav: validation || temporary }
+        : query.isError
+          ? { isError: true, error: query.error }
+          : { nav: query.data ? pinned : temporary },
     );
   }, [
     query.isPending,
     query.isError,
     query.error,
     query.data,
-    mismatched,
+    changed,
+    validation,
     pinned,
     onState,
   ]);
+  if (changed)
+    return (
+      <SourceNavigationRow
+        nav={validation}
+        isPending={!validation}
+        onRetry={() => query.refetch({ cancelRefetch: false })}
+        disabled={query.isFetching}
+      />
+    );
   if (query.isError)
     return (
       <SourceNavigationRow
@@ -61,7 +114,6 @@ function VoiceBody({ pinned, onClose, onState }) {
       />
     );
   if (query.isPending) return <SourceNavigationRow isPending />;
-  if (mismatched) return <SourceNavigationRow nav={invalid} />;
   if (!query.data)
     return (
       <SourceNavigationRow
@@ -92,51 +144,30 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
   const query = useGetTraceDetail(pinned.trace_id, {
     projectId: pinned.project_id,
   });
-  const [validation, setValidation] = useState(null);
   const status = errorStatus(query.error);
+  const spans = flattenArray(query.data?.observation_spans) || [];
   const mismatched =
     query.isSuccess &&
     !!query.data &&
     (query.data.trace?.id !== pinned.trace_id ||
       query.data.trace?.project !== pinned.project_id ||
-      !query.data.observation_spans?.some(
+      spans.filter(
         ({ observation_span: span }) =>
-          span?.id === pinned.span_id && span.trace === pinned.trace_id,
-      ) ||
-      query.data.observation_spans?.some(
+          span?.id === pinned.span_id &&
+          span.trace === pinned.trace_id &&
+          span.project === pinned.project_id,
+      ).length !== 1 ||
+      spans.some(
         ({ observation_span: span }) =>
           span?.observation_type === "conversation" && !span.parent_span_id,
       ));
-  useEffect(() => {
-    if (!(query.isError && status === 400) && !mismatched) return undefined;
-    let active = true;
-    setValidation(null);
-    revalidate().then(
-      (fresh) => {
-        if (active)
-          setValidation(
-            fresh.status === "ready"
-              ? mismatched
-                ? invalid
-                : temporary
-              : fresh,
-          );
-      },
-      () => {
-        if (active) setValidation(temporary);
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [
-    query.isError,
-    query.errorUpdatedAt,
-    query.dataUpdatedAt,
-    status,
-    mismatched,
+  const changed = (query.isError && status === 400) || mismatched;
+  const validation = useSourceRevalidation(
+    query,
+    changed,
     revalidate,
-  ]);
+    mismatched ? invalid : temporary,
+  );
 
   useEffect(() => {
     if (query.isPending) return;
@@ -156,9 +187,12 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
     onState,
   ]);
 
+  const viewerVisible = query.isSuccess && !!query.data && !mismatched;
   useLayoutEffect(() => {
+    // A successful refresh can remove the viewer too. Drop any portal target
+    // in its detached paper before paint, not just on success/error changes.
     onViewerReady();
-  }, [query.isSuccess, query.isError, onViewerReady]);
+  }, [viewerVisible, onViewerReady]);
 
   if ((query.isError && status === 400) || mismatched) {
     return (
@@ -305,7 +339,12 @@ function SourceDialog({ pinned, onClose, revalidate, onState }) {
                 onState={onState}
               />
             ) : (
-              <VoiceBody pinned={pinned} onClose={onClose} onState={onState} />
+              <VoiceBody
+                pinned={pinned}
+                onClose={onClose}
+                revalidate={revalidate}
+                onState={onState}
+              />
             )}
           </QueryClientProvider>
         </Box>
@@ -340,8 +379,7 @@ function ScopedSourceHost({ logId, onLogUnavailable }) {
     // returns those codes for a source failure, and a source failure must not
     // discard an evaluation the base query already loaded (PRD preserve-the-
     // evaluation rule). The row renders the source-unavailable state itself.
-    if (query.isError && errorStatus(query.error) === 401)
-      onLogUnavailable?.();
+    if (query.isError && errorStatus(query.error) === 401) onLogUnavailable?.();
   }, [query.isError, query.error, onLogUnavailable]);
   useEffect(() => {
     if (!pinned && restoreFocus.current) {
@@ -431,7 +469,10 @@ const bodyPropTypes = {
   onClose: PropTypes.func.isRequired,
   onState: PropTypes.func.isRequired,
 };
-VoiceBody.propTypes = bodyPropTypes;
+VoiceBody.propTypes = {
+  ...bodyPropTypes,
+  revalidate: PropTypes.func.isRequired,
+};
 TraceBody.propTypes = {
   ...bodyPropTypes,
   revalidate: PropTypes.func.isRequired,

@@ -350,3 +350,22 @@ def test_unexpected_project_lookup_error_is_isolated(resolve):
     resolve.manager.filter.side_effect = RuntimeError("database unavailable")
     assert resolve().status == "temporarily_unavailable"
     resolve.reader.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "span_id", ["abcdef0123456789", "ABCDEF0123456789", "span_child-1", "s" * 255]
+)
+def test_collector_and_observe_string_ids_preserve_exact_identity(resolve, span_id):
+    resolve.reader.return_value = _detail(_span(span_id))
+    result = resolve(_config(span_id=span_id))
+    assert result.status == "ready"
+    assert result.span_id == span_id
+
+
+@pytest.mark.parametrize(
+    "span_id",
+    [" abcdef0123456789", "abcdef0123456789 ", "a\nb", "a\x00b", "s" * 256, 123],
+)
+def test_invalid_span_string_is_not_repaired(resolve, span_id):
+    assert resolve(_config(span_id=span_id)).status == "invalid_reference"
+    resolve.reader.assert_not_called()

@@ -27179,6 +27179,8 @@ export const ModelHubGetEvalLogsListQueryParams = zod.object({
   include_source_navigation: zod.enum(["true", "false"]).optional(),
 });
 
+export const modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdMax = 255;
+
 export const ModelHubGetEvalLogsListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
@@ -27215,7 +27217,10 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
         kind: zod.enum(["trace", "voice_call"]),
         project_id: zod.string().uuid(),
         trace_id: zod.string().uuid(),
-        span_id: zod.string().uuid(),
+        span_id: zod
+          .string()
+          .min(1)
+          .max(modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdMax),
         retryable: zod.boolean(),
       })
       .optional(),
@@ -74942,6 +74947,8 @@ export const tracerTraceListVoiceCallsCreateResponseQueryAppliedFilterCountMin =
 export const TracerTraceListVoiceCallsCreateResponse =
   TracerTraceListVoiceCallsResponse;
 
+export const tracerTraceVoiceCallDetailQueryExpectedSpanIdMax = 255;
+
 export const TracerTraceVoiceCallDetailQueryParams = zod.object({
   test_execution_id: zod
     .string()
@@ -74977,6 +74984,14 @@ export const TracerTraceVoiceCallDetailQueryParams = zod.object({
     .optional()
     .describe(
       "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+    ),
+  expected_span_id: zod
+    .string()
+    .min(1)
+    .max(tracerTraceVoiceCallDetailQueryExpectedSpanIdMax)
+    .optional()
+    .describe(
+      "Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.",
     ),
 });
 

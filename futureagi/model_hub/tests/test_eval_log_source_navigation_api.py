@@ -184,55 +184,58 @@ def test_i04_dataset_enrichment_preserves_payload(auth_client, log_factory):
 
 
 @pytest.fixture
-def uuid_tree(observation_span, child_span, ch_seed, settings):
+def collector_tree(observation_span, child_span, ch_seed, settings):
     # The isolated stack ships the direct-write eval table, not the CDC table.
     settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
-    # Shared fixtures use span_* IDs. Seed distinct UUID identities to exercise
-    # this endpoint's strict UUID contract without changing shared fixtures.
+    # Collector converter.go preserves the 16-character OTel SpanID string.
+    # Keep that wire identity through ClickHouse, usage config and navigation.
     root = _pg_row_from_django_span(observation_span)
     child = _pg_row_from_django_span(child_span)
-    root["id"], child["id"] = str(uuid4()), str(uuid4())
+    root["id"], child["id"] = uuid4().hex[:16], uuid4().hex[:16]
     child["parent_span_id"] = root["id"]
     seed_ch_span(root)
     seed_ch_span(child)
     return root, child
 
 
-def _tree_log(log_factory, uuid_tree, **kwargs):
-    root, child = uuid_tree
+def _tree_log(log_factory, collector_tree, **kwargs):
+    root, child = collector_tree
     return log_factory(
         extra={"trace_id": str(root["trace_id"]), "span_id": child["id"]}, **kwargs
     )
 
 
-def test_i05_real_clickhouse_trace(auth_client, log_factory, uuid_tree, project):
-    nav = _nav(_get(auth_client, _tree_log(log_factory, uuid_tree)))
+def test_i05_real_clickhouse_trace(auth_client, log_factory, collector_tree, project):
+    nav = _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))
     assert nav["kind"] == "trace"
     assert nav["project_id"] == str(project.id)
-    assert nav["span_id"] == uuid_tree[1]["id"]
+    assert nav["span_id"] == collector_tree[1]["id"]
 
 
 def test_i06_clickhouse_only_without_postgres_trace(
-    auth_client, log_factory, uuid_tree
+    auth_client, log_factory, collector_tree
 ):
-    root, child = uuid_tree
+    root, child = collector_tree
     trace_id = str(uuid4())
     for row in (root, child):
         row["trace_id"] = trace_id
         seed_ch_span(row)
     assert not Trace.no_workspace_objects.filter(id=trace_id).exists()
-    assert _nav(_get(auth_client, _tree_log(log_factory, uuid_tree)))["kind"] == "trace"
+    assert (
+        _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))["kind"]
+        == "trace"
+    )
 
 
-def test_i07_real_voice_destination(auth_client, log_factory, uuid_tree, project):
-    root, _ = uuid_tree
+def test_i07_real_voice_destination(auth_client, log_factory, collector_tree, project):
+    root, _ = collector_tree
     root["observation_type"] = "conversation"
     root["parent_span_id"] = ""
     provider_id = "provider-id-distinct-from-trace-and-log"
     root["provider"] = "vapi"
     root["span_attributes"] = {"raw_log": {"id": provider_id}}
     seed_ch_span(root)
-    log = _tree_log(log_factory, uuid_tree)
+    log = _tree_log(log_factory, collector_tree)
     nav = _nav(_get(auth_client, log))
     assert nav["kind"] == "voice_call"
     assert nav["trace_id"] == str(root["trace_id"])
@@ -252,9 +255,62 @@ def test_i07_real_voice_destination(auth_client, log_factory, uuid_tree, project
     assert provider_id not in (nav["trace_id"], str(log.log_id))
     assert not any("simulation" in key for key in result)
 
+    # The host's destination read proves the evaluated collector span in the
+    # same snapshot it renders (R1-04/R2-03), through the real serializer.
+    proven = auth_client.get(
+        "/tracer/trace/voice_call_detail/",
+        {
+            "trace_id": nav["trace_id"],
+            "project_id": nav["project_id"],
+            "expected_span_id": nav["span_id"],
+        },
+    )
+    assert proven.status_code == 200, proven.content
+    spans = proven.json()["result"]["observation_span"]
+    assert [span["id"] for span in spans if span["id"] == nav["span_id"]] == [
+        collector_tree[1]["id"]
+    ]
+
+
+def test_i07b_voice_destination_refuses_unproven_expected_span(
+    auth_client, log_factory, collector_tree
+):
+    root, child = collector_tree
+    root["observation_type"] = "conversation"
+    root["parent_span_id"] = ""
+    seed_ch_span(root)
+    nav = _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))
+    url = "/tracer/trace/voice_call_detail/"
+    base = {"trace_id": nav["trace_id"], "project_id": nav["project_id"]}
+
+    # A span that is not in this call's tree never yields call content.
+    missing = auth_client.get(url, {**base, "expected_span_id": "0" * 16})
+    assert missing.status_code == 409, missing.content
+    assert "observation_span" not in missing.json().get("result", {})
+
+    # A second conversation root makes the call ambiguous for this span.
+    seed_ch_span(
+        {
+            **child,
+            "id": uuid4().hex[:16],
+            "parent_span_id": "",
+            "observation_type": "conversation",
+        }
+    )
+    ambiguous = auth_client.get(url, {**base, "expected_span_id": nav["span_id"]})
+    assert ambiguous.status_code == 409, ambiguous.content
+
+    # The proof is pinned to an Observe project and malformed IDs are rejected.
+    unpinned = auth_client.get(
+        url, {"trace_id": nav["trace_id"], "expected_span_id": nav["span_id"]}
+    )
+    assert unpinned.status_code == 400, unpinned.content
+    padded = auth_client.get(url, {**base, "expected_span_id": f" {nav['span_id']}"})
+    assert padded.status_code == 400, padded.content
+
 
 def test_i08_colliding_newer_project_is_never_selected(
-    auth_client, log_factory, uuid_tree, project, monkeypatch
+    auth_client, log_factory, collector_tree, project, monkeypatch
 ):
     from model_hub.services import eval_log_source_navigation as navigation
 
@@ -265,7 +321,7 @@ def test_i08_colliding_newer_project_is_never_selected(
         model_type=project.model_type,
         trace_type=project.trace_type,
     )
-    for row in uuid_tree:
+    for row in collector_tree:
         seed_ch_span(
             {
                 **row,
@@ -275,7 +331,7 @@ def test_i08_colliding_newer_project_is_never_selected(
         )
     reader = Mock(wraps=navigation.read_trace_detail)
     monkeypatch.setattr(navigation, "read_trace_detail", reader)
-    nav = _nav(_get(auth_client, _tree_log(log_factory, uuid_tree)))
+    nav = _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))
     assert nav["project_id"] == str(project.id)
     assert reader.call_args.kwargs["project_ids"] == [str(project.id)]
     assert reader.call_count == 1
@@ -489,7 +545,7 @@ def test_i24_resolution_and_retry_create_no_rows(auth_client, log_factory, fake_
 
 
 def test_i25_bounded_pg_and_ch_queries(
-    auth_client, log_factory, uuid_tree, monkeypatch, django_assert_num_queries
+    auth_client, log_factory, collector_tree, monkeypatch, django_assert_num_queries
 ):
     from model_hub.services import eval_log_source_navigation as navigation
 
@@ -497,7 +553,7 @@ def test_i25_bounded_pg_and_ch_queries(
     query = Mock(wraps=analytics.execute_ch_query)
     monkeypatch.setattr(analytics, "execute_ch_query", query)
     monkeypatch.setattr(navigation, "V2AnalyticsQueryService", lambda: analytics)
-    log = _tree_log(log_factory, uuid_tree, stamp=False)
+    log = _tree_log(log_factory, collector_tree, stamp=False)
     # Warm URL imports before measuring; the API fixture adds one workspace read.
     _get(auth_client, log, None)
     with django_assert_num_queries(5), CaptureQueriesContext(connection) as pg:
@@ -513,7 +569,7 @@ def test_i25_bounded_pg_and_ch_queries(
 
 @pytest.mark.parametrize("role", ["viewer", "workspace_viewer"])
 def test_i26_read_only_roles_can_open_trace(
-    auth_client, log_factory, uuid_tree, user, workspace, role
+    auth_client, log_factory, collector_tree, user, workspace, role
 ):
     from accounts.models.organization_membership import OrganizationMembership
     from tfc.constants.levels import Level
@@ -532,7 +588,7 @@ def test_i26_read_only_roles_can_open_trace(
     WorkspaceMembership.no_workspace_objects.filter(
         user=user, workspace=workspace
     ).update(role=OrganizationRoles.WORKSPACE_VIEWER, level=Level.WORKSPACE_VIEWER)
-    nav = _nav(_get(auth_client, _tree_log(log_factory, uuid_tree)))
+    nav = _nav(_get(auth_client, _tree_log(log_factory, collector_tree)))
     response = auth_client.get(
         f"/tracer/trace/{nav['trace_id']}/", {"project_id": nav["project_id"]}
     )

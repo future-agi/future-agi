@@ -1,7 +1,6 @@
 """Resolve an eval log's exact, currently authorized Observe source."""
 
 from dataclasses import dataclass, replace
-from typing import Literal
 from uuid import UUID
 
 import structlog
@@ -13,45 +12,13 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.trace_source_navigation import (
+    SourceNavigation,
+    classify_trace_source,
+    is_span_id,
+)
 
 logger = structlog.get_logger(__name__)
-
-Status = Literal[
-    "ready",
-    "no_reference",
-    "unsupported_source",
-    "unsupported_target",
-    "incomplete_reference",
-    "invalid_reference",
-    "ambiguous_reference",
-    "unavailable",
-    "temporarily_unavailable",
-]
-Kind = Literal["trace", "voice_call"]
-
-
-@dataclass(frozen=True)
-class SourceNavigation:
-    status: Status
-    kind: Kind | None = None
-    project_id: str | None = None
-    trace_id: str | None = None
-    span_id: str | None = None
-
-    @property
-    def retryable(self) -> bool:
-        return self.status == "temporarily_unavailable"
-
-    def as_dict(self) -> dict:
-        ready = self.status == "ready"
-        return {
-            "status": self.status,
-            "kind": self.kind if ready else None,
-            "project_id": self.project_id if ready else None,
-            "trace_id": self.trace_id if ready else None,
-            "span_id": self.span_id if ready else None,
-            "retryable": self.retryable,
-        }
 
 
 @dataclass(frozen=True)
@@ -111,7 +78,7 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
         return SourceNavigation("no_reference")
     if trace_absent != span_absent:
         return SourceNavigation("incomplete_reference")
-    if not (_is_uuid(trace_id) and _is_uuid(span_id)):
+    if not (_is_uuid(trace_id) and is_span_id(span_id)):
         return SourceNavigation("invalid_reference")
     config_id = config.get("custom_eval_config_id")
     if config_id in (None, ""):
@@ -123,7 +90,7 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
         return SourceNavigation("invalid_reference")
     return _Candidate(
         trace_id.lower(),
-        span_id.lower(),
+        span_id,
         config_id.lower(),
         project_id.lower() if project_id else None,
     )
@@ -160,57 +127,6 @@ def _resolve_project(
     ):
         return None, SourceNavigation("invalid_reference")
     return str(project.id), None
-
-
-def _read_and_classify(detail, candidate) -> SourceNavigation:
-    project_id, trace_id, span_id = (
-        candidate.project_id,
-        candidate.trace_id,
-        candidate.span_id,
-    )
-    if str(detail.project_id) != project_id:
-        return SourceNavigation("invalid_reference")
-    spans = list(detail.spans)
-    by_id = {}
-    for row in spans:
-        if (
-            str(row.get("trace_id") or "") != trace_id
-            or str(row.get("project_id") or "") != project_id
-        ):
-            return SourceNavigation("invalid_reference")
-        by_id.setdefault(str(row.get("id") or ""), []).append(row)
-    matches = by_id.get(span_id, [])
-    if not matches:
-        return SourceNavigation("unavailable")
-    if len(matches) > 1:
-        return SourceNavigation("ambiguous_reference")
-    roots = [
-        row
-        for row in spans
-        if row.get("parent_span_id") in (None, "")
-        and str(row.get("observation_type") or "").lower() == "conversation"
-    ]
-    if not roots:
-        return SourceNavigation("ready", "trace", project_id, trace_id, span_id)
-    if len(roots) > 1:
-        return SourceNavigation("ambiguous_reference")
-    root_id = str(roots[0].get("id"))
-    seen, current = set(), span_id
-    while True:
-        if current == root_id:
-            return SourceNavigation(
-                "ready", "voice_call", project_id, trace_id, span_id
-            )
-        if current in seen:
-            return SourceNavigation("ambiguous_reference")
-        seen.add(current)
-        rows = by_id.get(current, [])
-        if len(rows) != 1:
-            return SourceNavigation("ambiguous_reference")
-        parent = rows[0].get("parent_span_id")
-        if parent in (None, ""):
-            return SourceNavigation("ambiguous_reference")
-        current = str(parent)
 
 
 def _map_read_error(exc) -> SourceNavigation:
@@ -251,7 +167,12 @@ def resolve_eval_log_source_navigation(
                     include_annotations=False,
                     deadline_ms=deadline_ms,
                 )
-                result = _read_and_classify(detail, candidate)
+                result = classify_trace_source(
+                    detail,
+                    project_id=candidate.project_id,
+                    trace_id=candidate.trace_id,
+                    span_id=candidate.span_id,
+                )
     except (TraceDetailNotFound, TraceDetailReadUnavailable) as exc:
         error_code = getattr(exc, "code", None)
         result = _map_read_error(exc)

@@ -2192,7 +2192,9 @@ class EvalLogSourceNavigationSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("trace", "voice_call"), allow_null=True)
     project_id = serializers.UUIDField(allow_null=True)
     trace_id = serializers.UUIDField(allow_null=True)
-    span_id = serializers.UUIDField(allow_null=True)
+    span_id = serializers.CharField(
+        max_length=255, trim_whitespace=False, allow_null=True
+    )
     retryable = serializers.BooleanField()
 
 

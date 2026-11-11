@@ -108,7 +108,7 @@ vi.mock("../../EvalsFeedback/AddEvalsFeedbackDrawer", () => ({
 const LOG = "11111111-1111-4111-8111-111111111111";
 const TRACE = "22222222-2222-4222-8222-222222222222";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
-const SPAN = "44444444-4444-4444-8444-444444444444";
+const SPAN = "abcdef0123456789";
 const ready = {
   status: "ready",
   kind: "trace",
@@ -121,10 +121,14 @@ const envelope = (result) => ({ data: { result } });
 const enriched = (nav) => envelope({ source_navigation: nav });
 const traceData = {
   trace: { id: TRACE, project: PROJECT },
-  observation_spans: [{ observation_span: { id: SPAN, trace: TRACE } }],
+  observation_spans: [
+    { observation_span: { id: SPAN, trace: TRACE, project: PROJECT } },
+  ],
 };
 const voiceData = {
   trace_id: TRACE,
+  project_id: PROJECT,
+  observation_span: [{ id: SPAN, trace_id: TRACE }],
   id: "provider-is-not-trace",
   provider_call_id: "different-provider-id",
 };
@@ -242,7 +246,13 @@ describe("eval-owned source host", () => {
     destination = {
       trace: { id: TRACE, project: fresh.project_id },
       observation_spans: [
-        { observation_span: { id: fresh.span_id, trace: TRACE } },
+        {
+          observation_span: {
+            id: fresh.span_id,
+            trace: TRACE,
+            project: fresh.project_id,
+          },
+        },
       ],
     };
     await act(async () => resolve(enriched(fresh)));
@@ -273,7 +283,13 @@ describe("eval-owned source host", () => {
     expect(destinationCalls()).toEqual([
       [
         endpoints.project.getVoiceCallDetail,
-        { params: { trace_id: TRACE, project_id: PROJECT } },
+        {
+          params: {
+            trace_id: TRACE,
+            project_id: PROJECT,
+            expected_span_id: SPAN,
+          },
+        },
       ],
     ]);
     expect(mocks.voice.mock.lastCall[0]).toMatchObject({
@@ -285,6 +301,93 @@ describe("eval-owned source host", () => {
     expect(
       axios.get.mock.calls.some(([url]) => /simulate|provider/.test(url)),
     ).toBe(false);
+  });
+
+  it("R1-02 opens the exact evaluated non-root collector span in a nested trace", async () => {
+    destination = {
+      ...traceData,
+      observation_spans: [
+        {
+          observation_span: {
+            id: "0123456789abcdef",
+            trace: TRACE,
+            project: PROJECT,
+          },
+          children: [
+            {
+              observation_span: {
+                id: "fedcba9876543210",
+                trace: TRACE,
+                project: PROJECT,
+              },
+              children: traceData.observation_spans,
+            },
+          ],
+        },
+      ],
+    };
+    mount();
+    await activate();
+    await screen.findByTestId("trace-body");
+    expect(mocks.trace.mock.lastCall[0].initialSpanId).toBe(SPAN);
+  });
+
+  it("R2-05 retains reachable host chrome when a successful refresh loses the span", async () => {
+    mount();
+    await activate();
+    await screen.findByTestId("trace-body");
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Back to evaluation" })
+          .closest(".MuiDrawer-paper"),
+      ).not.toBeNull(),
+    );
+    const destinationClient = mocks.trace.mock.lastCall[1];
+    destination = { ...traceData, observation_spans: [] };
+    await act(async () => destinationClient.refetchQueries());
+    await screen.findByText("This log's source reference is invalid.");
+    expect(
+      screen.getByRole("button", { name: "Back to evaluation" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Close", exact: true }),
+    ).toBeVisible();
+    expect(getComputedStyle(screen.getByRole("dialog")).pointerEvents).not.toBe(
+      "none",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Back to evaluation" }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("R1-04 never paints a voice response missing the evaluated span after Retry", async () => {
+    nav = { ...ready, kind: "voice_call" };
+    destination = { statusCode: 503 };
+    mount();
+    await activate("voice_call");
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    destination = {
+      ...voiceData,
+      observation_span: [{ id: "surviving-root", trace_id: TRACE }],
+    };
+    nav = { status: "unavailable" };
+    await user.click(retry);
+    await screen.findByText(unavailable);
+    expect(mocks.voice).not.toHaveBeenCalled();
+    expect(destinationCalls()).toHaveLength(2);
+    expect(destinationCalls()[1][1].params.expected_span_id).toBe(SPAN);
+  });
+
+  it("R2-03 never paints a call whose destination read reports changed root membership", async () => {
+    nav = { ...ready, kind: "voice_call" };
+    destination = { statusCode: 409 };
+    mount();
+    await activate("voice_call");
+    await screen.findByText("This log's source reference is invalid.");
+    expect(mocks.voice).not.toHaveBeenCalled();
+    expect(enrichmentCalls()).toHaveLength(3);
   });
 
   it("S03 refuses a revoked ready action and focuses the fresh status", async () => {
@@ -587,7 +690,9 @@ describe("eval-owned source host", () => {
     await screen.findByText(unavailable);
     expect(screen.getByTestId("eval-output")).toBeInTheDocument();
     expect(screen.getByText("Stored input")).toBeInTheDocument();
-    expect(screen.queryByText("Evaluation log is unavailable.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Evaluation log is unavailable."),
+    ).not.toBeInTheDocument();
     expect(destinationCalls()).toHaveLength(0);
   });
 
