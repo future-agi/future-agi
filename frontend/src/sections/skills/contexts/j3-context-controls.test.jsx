@@ -7,7 +7,7 @@ import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextConsumersView from './ContextConsumersView';
 import ContextDetailView from './ContextDetailView';
 
-const state = vi.hoisted(() => ({ identity: 'org:workspace:author', prepare: vi.fn(), create: vi.fn(), previewLabel: vi.fn(), submitLabel: vi.fn(), dependents: null }));
+const state = vi.hoisted(() => ({ identity: 'org:workspace:author', prepare: vi.fn(), create: vi.fn(), previewLabel: vi.fn(), submitLabel: vi.fn(), dependents: null, history: { data: { count: 0, as_of: 'now', total_pages: 1, results: [] }, refetch: () => {} } }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ identity: state.identity, scope: { userId: '00000000-0000-4000-8000-000000000001' } }),
   useSkillTestingOptions: () => ({ data: { enabled: true, models: [{ modelId: 'gpt-4o-mini', canRun: true }], limits: { profiles: { quick: { maxTotalTokens: 150000 } } } } }),
@@ -21,7 +21,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useContextTestRun: () => ({}), useContextTestResults: () => ({}), useContextTestAttempt: () => ({}), useCancelContextTest: () => ({}),
 }));
 vi.mock('src/api/skills/context-release-request', () => ({ usePreviewContextLabelRequest: () => ({ mutateAsync: state.previewLabel }), useSubmitContextLabelRequest: () => ({ mutateAsync: state.submitLabel }) }));
-vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: () => state.dependents }));
+vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: (_skill, { view }) => (view === 'history' ? state.history : state.dependents) }));
 const digest = `sha256:${'a'.repeat(64)}`;
 const version = { id: 'parent-v2', number: 2, digest };
 const preview = { fingerprint: 'preview', attemptCount: 2, estimate: { upperBoundUsd: '0.01' }, providerDisclosure: { taskProvider: 'openai' }, inventory: [], outboundFindings: [] };

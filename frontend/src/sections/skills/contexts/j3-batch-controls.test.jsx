@@ -1,17 +1,19 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextDependentsPanel from './ContextDependentsPanel';
 import ContextLinksPanel from './ContextLinksPanel';
 
-const state = vi.hoisted(() => ({ dependents: null, prepare: vi.fn(), apply: vi.fn() }));
+const empty = { data: { count: 0, as_of: 'now', total_pages: 1, results: [] }, refetch: () => {} };
+const state = vi.hoisted(() => ({ dependents: null, history: null, prepare: vi.fn(), apply: vi.fn() }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:ws:author' }) }));
-vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: () => state.dependents }));
+vi.mock('src/api/skills/context-dependents', () => ({ useContextDependents: (_skill, { view }) => (view === 'history' ? state.history : state.dependents) }));
 vi.mock('src/api/skills/context-follower-update', () => ({ useFollowerUpdates: () => ({ prepare: state.prepare, apply: state.apply }) }));
 const row = (id, update_state, name = id) => ({ context_id: id, name, context_version: 1, labels: [], requested: update_state === 'pinned_as_intended' ? { version: 7 } : { label: 'production' }, locked_version: 7, update_state });
 const plan = (id, fingerprint = `plan-${id}`) => ({ target: { contextId: id, name: id, version: 1 }, status: 'ready', links: [], plan: { revision: 1, fingerprint, candidateDigest: `sha256:${id}`, checks: { summary: { errors: 0 } }, changes: [{ skillId: 'child', mount: 'skills/policy/', change: 'updated', before: { version: 7 }, after: { version: 8 } }] } });
 beforeEach(() => {
   vi.clearAllMocks();
+  state.history = { data: { count: 1, as_of: 'now', total_pages: 1, results: [{ ...row('old', 'current', 'retired'), context_version: 0 }] }, refetch: vi.fn() };
   state.dependents = { data: { count: 3, as_of: 'now', total_pages: 1, results: [row('a', 'update_available'), row('b', 'update_available'), row('c', 'pinned_as_intended')] }, refetch: vi.fn() };
 });
 afterEach(cleanup);
@@ -54,6 +56,15 @@ it('shows a different-origin draft as an exception and never selects an unavaila
   await screen.findByText(/already has a draft started from another release/);
   expect(screen.getByRole('button', { name: 'Apply selected updates to 1 context draft' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Preview again for 1 context that did not update' })).toBeVisible();
+});
+
+it('shows active references and every historical reference in one view, with no scope to switch', () => {
+  mount();
+  expect(screen.queryByRole('combobox', { name: /Reference scope/ })).not.toBeInTheDocument();
+  expect(within(screen.getByRole('table', { name: 'Published context dependents' })).getByText('a · v1')).toBeVisible();
+  const history = screen.getByRole('table', { name: 'Historical context references' });
+  expect(within(history).getByText('retired · v0')).toBeVisible();
+  expect(within(history).queryByRole('checkbox')).not.toBeInTheDocument();
 });
 
 const available = [{ id: 'one', name: 'one', kind: 'skill', latestVersion: 7 }, { id: 'two', name: 'two', kind: 'skill', latestVersion: 7 }, { id: 'three', name: 'three', kind: 'skill', latestVersion: 7 }];

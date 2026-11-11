@@ -182,15 +182,14 @@ export async function createDriver({ jobId, runId, registration }) {
             const row = active.results.find((item) => item.context_id === parent.id);
             requireValue(row && row.locked_version === 7 && row.update_state === (index === 2 ? 'pinned_as_intended' : 'update_available'), 'Wrong dependent lock or selector');
           }
-          // One review covers the whole inventory; the deliberate pin is the shown exception.
-          await operator.review('inspect-dependent-inventory', input.parents.map((_, index) => `parent-${index}`), ['parent-2'], async () => {
-            for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` })).toBeVisible();
+          // One review covers the whole inventory, active and historical on one screen; the deliberate pin is the shown exception.
+          await operator.review('inspect-dependent-inventory', [...input.parents.map((_, index) => `parent-${index}`), 'historical-references'], ['parent-2'], async () => {
+            for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` }).first()).toBeVisible();
             for (const parent of followers) await expect(page.getByRole('checkbox', { name: `Select ${parent.name} v1 for update` })).toBeChecked();
             await expect(page.getByRole('checkbox', { name: `Select ${input.parents[2].name} v1 for update` })).toBeDisabled();
+            await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
           });
           await snapshot('dependent-inventory', page);
-          await operator.click(page.getByRole('combobox', { name: /Reference scope/ }), 'choose-reference-scope');
-          await click('All published history', 'inspect-history', 'option');
           observations.dependents = { active, history: await read(`${child.id}/context-dependents/?view=history`, signal) };
           await receipt(stage, ledger, observations.dependents); return;
         }
