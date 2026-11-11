@@ -2196,11 +2196,17 @@ def evaluate_observation_span_observe(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
-    if EvalLogger.objects.filter(
-        observation_span_id=observation_span_id,
-        custom_eval_config_id=custom_eval_config_id,
-        eval_task_id=eval_task_id,
-    ).exists():
+    # Primary: feedback re-evaluation retires the old result just before
+    # calling this; the replica may still show it live.
+    if (
+        EvalLogger.objects.using("default")
+        .filter(
+            observation_span_id=observation_span_id,
+            custom_eval_config_id=custom_eval_config_id,
+            eval_task_id=eval_task_id,
+        )
+        .exists()
+    ):
         # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
         # already excluded, so an explicit ``deleted=False`` would be a
         # tautology.
