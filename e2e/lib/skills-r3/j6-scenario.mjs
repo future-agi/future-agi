@@ -82,7 +82,7 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   const catalog = libraryFixture({ unsupportedMember: false });
   for (const [index, member] of catalog.skills.entries()) {
     const name = `${prefix}-${index}`;
-    leaves.push(await api(reviewer, 'POST', 'publish/', { files: member.files.map((file) => ({ ...file, content: file.content.replaceAll(member.name, name) })), labels: [], expected_release_revision: 0, acknowledge_warnings: true }));
+    leaves.push(await api(author, 'POST', 'publish/', { files: member.files.map((file) => ({ ...file, content: file.content.replaceAll(member.name, name) })), labels: [], expected_release_revision: 0, acknowledge_warnings: true }));
   }
   const created = await api(author, 'POST', 'contexts/', { name: prefix, description: 'Synthetic J6 incident recovery context', tags: [], files: [{ path: 'AGENTS.md', content: GOOD_ROOT(1) }] });
   const contextId = created.context_id;
@@ -101,7 +101,7 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   // Checked-in project: v1 is the last reviewed commit. Local work stays untracked.
   const project = resolve(projectDir);
   await mkdir(resolve(project, 'docs'), { recursive: true });
-  const projectCredential = await credential(api, reviewer, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: ['production'], version_ids: [] }], binding_ids: [], expires_at: hours(8) });
+  const projectCredential = await credential(api, author, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: ['production'], version_ids: [] }], binding_ids: [], expires_at: hours(8) });
   const cli = async (args, env = {}) => {
     try {
       return await exec(python, ['-m', 'fi.context', ...args], { cwd: project, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, FI_CONTEXT_ORIGIN: apiUrl, FI_CONTEXT_ORGANIZATION_ID: author.organizationId, FI_CONTEXT_WORKSPACE_ID: author.workspaceId, FI_CONTEXT_CREDENTIAL: projectCredential.secret, ...env }, maxBuffer: 8 * 1024 * 1024 });
@@ -134,10 +134,10 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   for (const key of ['o0', 'o1', 'o2', 'o3']) { orders[key] = `synthetic-${key}-${randomUUID()}`; await guest.seedOrder(orders[key]); }
   for (const key of ['t0', 't1', 't2', 't3']) threads[key] = randomUUID();
   const reports = {};
-  for (const key of ['A', 'E', 'L']) reports[key] = await credential(api, reviewer, { purpose: 'report', grants: [], binding_ids: [bindings[key].id], expires_at: hours(8) });
-  const consume = (pins, expires, labels = []) => credential(api, reviewer, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels, version_ids: pins.map((pin) => pin.id) }], binding_ids: [], expires_at: expires });
-  const guestRun = async (key, binding, creds, thread, order) => {
-    const envFile = await guest.envFile(`${key}-${Date.now()}`, guestEnvironment({ consume: creds.consume.secret, report: reports[binding].secret, bindingId: bindings[binding].id }));
+  for (const key of ['A', 'E', 'L']) reports[key] = await credential(api, author, { purpose: 'report', grants: [], binding_ids: [bindings[key].id], expires_at: hours(8) });
+  const consume = (pins, expires, labels = []) => credential(api, author, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels, version_ids: pins.map((pin) => pin.id) }], binding_ids: [], expires_at: expires });
+  const guestRun = async (key, binding, creds, thread, order, { reported = true } = {}) => {
+    const envFile = await guest.envFile(`${key}-${Date.now()}`, guestEnvironment({ consume: creds.consume.secret, report: reported ? reports[binding].secret : undefined, bindingId: bindings[binding].id }));
     await guest.put(`/state/requests/${key}.json`, JSON.stringify(requestFor(thread, order)) + '\n');
     return guest.execute(envFile, entrypoint(`/state/requests/${key}.json`, `/state/${key}.sqlite`, `/state/out/${key}-prep.json`));
   };
@@ -165,7 +165,8 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   // T3: same, then the application state volume holding its session mapping is lost.
   const cL = { consume: await consume([versions[0]], hours(8)) };
   await guest.faults({ available: true, arm_after_business: true });
-  const t3 = await guestRun('t3', 'L', cL, threads.t3, orders.o3);
+  // The lost thread never reported delivery: the product can only ever see an open, unobserved session.
+  const t3 = await guestRun('t3', 'L', cL, threads.t3, orders.o3, { reported: false });
   requireValue(t3.code === 2, `T3 must pause after its persisted refund: ${t3.code} ${String(t3.stderr).slice(-700)}`);
   await guest.faults({ available: true, arm_after_business: false });
   await guest.remove('/state/t3.sqlite');
@@ -174,10 +175,10 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   log('paused threads prepared');
 
   // Retire the refund child and quarantine the alternative after all identities exist.
-  const refundState = await api(reviewer, 'GET', `${leaves[0].skill.id}/`);
-  await api(reviewer, 'DELETE', `${leaves[0].skill.id}/`, { expected_release_revision: refundState.release_revision });
-  const safety = await api(reviewer, 'GET', `version-safety/${versions[1].id}/`);
-  await api(reviewer, 'PUT', `version-safety/${versions[1].id}/`, { revision: safety.revision, quarantined: true, reason: 'Synthetic unsafe recovery alternative', replacement_version_id: versions[0].id });
+  const refundState = await api(author, 'GET', `${leaves[0].skill.id}/`);
+  await api(author, 'DELETE', `${leaves[0].skill.id}/`, { expected_release_revision: refundState.release_revision });
+  const safety = await api(author, 'GET', `version-safety/${versions[1].id}/`);
+  await api(author, 'PUT', `version-safety/${versions[1].id}/`, { revision: safety.revision, quarantined: true, reason: 'Synthetic unsafe recovery alternative', replacement_version_id: versions[0].id });
 
   return { contextId, contextName: prefix, versions, leaves: leaves.map((leaf) => ({ skillId: leaf.skill.id, versionId: leaf.version.id })), bindings: Object.fromEntries(Object.entries(bindings).map(([key, value]) => [key, { id: value.id, name: value.name }])),
     orders, threads, goodCommit, project, projectCredential: { id: projectCredential.id },

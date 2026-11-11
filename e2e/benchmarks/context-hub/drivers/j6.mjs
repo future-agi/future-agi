@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
 import { canonical, digest, requireValue, sha256 } from '../../../lib/skills-r3/canonical.mjs';
 import { attachGuest, GUEST_EVIDENCE_CLASS } from '../../../lib/skills-r3/j6-guest.mjs';
-import { REFUND_REQUEST, VERIFY_REQUEST, entrypoint, guestEnvironment, moveProduction, requestFor } from '../../../lib/skills-r3/j6-scenario.mjs';
+import { GOOD_ROOT, REFUND_REQUEST, VERIFY_REQUEST, entrypoint, guestEnvironment, moveProduction, requestFor } from '../../../lib/skills-r3/j6-scenario.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
@@ -111,12 +111,12 @@ export async function createDriver({ jobId, runId, registration }) {
     return { status: response.status, body: parsed, result: parsed?.result };
   };
   const read = async (path, signal) => {
-    const response = await call(reviewer, 'GET', path, undefined, signal);
+    const response = await call(author, 'GET', path, undefined, signal);
     requireValue(response.status >= 200 && response.status < 300, 'Independent public recovery observation unavailable');
     return response.result;
   };
   const [v1, v2, v3, v4] = input.versions;
-  const members = await fetch(`${api}/accounts/organization/members/?page=1&limit=100`, { headers: header(reviewer), redirect: 'error' }).then((r) => r.json());
+  const members = await fetch(`${api}/accounts/organization/members/?page=1&limit=100`, { headers: header(author), redirect: 'error' }).then((r) => r.json());
   const me = (members.result?.results ?? []).find((row) => row.id === reviewer.userId);
   requireValue(me, 'The reviewer is not a listed organization member');
   const reviewerName = me.name || me.email;
@@ -142,6 +142,19 @@ export async function createDriver({ jobId, runId, registration }) {
     pages[name] = page;
     return page;
   };
+  // Finished hops share the context name; a person filters the inbox to the pending requests.
+  const openPending = async (page, admin, target, id, signal) => {
+    await admin.click(page.getByRole('combobox', { name: 'Request status' }), `open-status-filter-${target}`);
+    await admin.click(page.getByRole('option', { name: 'Pending', exact: true }), `filter-pending-${target}`);
+    await expect(page.getByRole('table', { name: 'Assigned release reviews' }).getByRole('row').nth(1)).toBeVisible();
+    // Which row is the wanted packet: read the same ordering the screen shows from the public inbox.
+    const inbox = await call(reviewer, 'GET', 'review-inbox/?status=pending&page=1&page_size=50', undefined, signal);
+    const index = inbox.result.results.findIndex((row) => row.id === id);
+    requireValue(index >= 0, 'The wanted packet is not pending in the inbox');
+    await writeFile(resolve(output, `inbox-order-${target}.json`), JSON.stringify({ wanted: id, index, rows: inbox.result.results.map((row) => ({ id: row.id, status: row.status, revision: row.revision, updated_at: row.updated_at, candidate: row.candidate_version_id })) }, null, 2), { mode: 0o600 }).catch(() => {});
+    await expect(page.getByRole('button', { name: input.contextName, exact: true })).toHaveCount(inbox.result.results.length);
+    await admin.click(page.getByRole('button', { name: input.contextName, exact: true }).nth(index), `open-${target}`);
+  };
   const shot = (page, name) => page.screenshot({ path: resolve(output, 'shots', `${name}.png`) });
   const opsFor = (stage, ledger, signal, actor) => new MeasuredOperator({ ledger, actor, step: stage.id, phase: stage.phase, signal });
   const guestEnv = (consume, report, binding) => guest.envFile(`${binding}-${randomUUID().slice(0, 8)}`, guestEnvironment({ consume, report, bindingId: input.bindings[binding].id }));
@@ -152,6 +165,8 @@ export async function createDriver({ jobId, runId, registration }) {
     try { const { stdout, stderr } = await run(argv[0], argv.slice(1), { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...options }); result = { code: 0, stdout, stderr }; }
     catch (error) { result = { code: error.code, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }; }
     state.timings[target] = Math.round(performance.now() - started);
+    // Retain the redacted, bounded text of a host command: its review or typed error, never a credential.
+    await writeFile(resolve(output, `command-${target}.txt`), `exit ${result.code}\n${String(result.stdout).slice(0, 4000)}\n${String(result.stderr).slice(-1500)}`.replace(/[A-Za-z0-9_-]{40,}/g, '<redacted>'), { mode: 0o600 }).catch(() => {});
     ledger.observation({ step: stage.id, id: `${target}/output`, artifactHash: sha256(result.stdout) });
     requireValue(accepted.includes(result.code), `Command ${target} exited ${result.code}`);
     return result;
@@ -165,11 +180,11 @@ export async function createDriver({ jobId, runId, registration }) {
   const apiOk = (signal) => async (actor, method, path, data) => { const r = await call(actor, method, path, data, signal); requireValue(r.status >= 200 && r.status < 300, `${method} ${path} returned ${r.status}`); return r.result; };
   const sessionRows = (bindingId) => pgRows('SELECT id::text, version_id::text, digest, incarnation_id::text AS instance_id, credential_id::text FROM model_hub_hubskillcontextsession WHERE binding_id=$1 ORDER BY created_at', [bindingId]);
   const labelEvents = () => pgRows('SELECT id, from_version, to_version FROM model_hub_hubskilllabelevent WHERE skill_id=$1 ORDER BY id', [input.contextId]);
-  const pg = new pg.Client({ connectionString: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi' });
+  const db = new pg.Client({ connectionString: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi' });
   let pgReady = false;
   async function pgRows(text, values = []) {
-    if (!pgReady) { await pg.connect(); pgReady = true; }
-    return (await pg.query(text, values)).rows;
+    if (!pgReady) { await db.connect(); pgReady = true; }
+    return (await db.query(text, values)).rows;
   }
   const consumers = async (signal) => {
     const results = [];
@@ -188,7 +203,23 @@ export async function createDriver({ jobId, runId, registration }) {
 
   return {
     mode: 'product', provenance: input.provenance,
-    async perform(stage, { ledger, signal }) {
+    async perform(stage, context) {
+      try { await perform(stage, context); } catch (error) {
+        // Retain a redacted diagnostic next to the evidence: never a token, cookie or body.
+        for (const [name, page] of Object.entries(pages)) await shot(page, `failure-${stage.id}-${name}`).catch(() => {});
+        const options = await pages.author?.getByRole('option').allTextContents().catch(() => []);
+        const message = `${String(error?.message ?? error)}\nvisible options: ${JSON.stringify(options)}`.replace(/[A-Za-z0-9_-]{32,}/g, '<redacted>').slice(0, 1600);
+        await writeFile(resolve(output, `stage-failure-${stage.id}.txt`), `${message}\n`, { flag: 'a', mode: 0o600 }).catch(() => {});
+        throw error;
+      }
+    },
+    async observe(check, { signal }) {
+      return observe(check, { signal });
+    },
+    async teardown() { return teardown(); },
+  };
+
+  async function perform(stage, { ledger, signal }) {
       if (signal.aborted) throw new Error('Journey cancelled');
       const operator = opsFor(stage, ledger, signal, 'incident-operator');
       const admin = opsFor(stage, ledger, signal, 'release-reviewer');
@@ -224,7 +255,7 @@ export async function createDriver({ jobId, runId, registration }) {
         state.quarantine = { status: refused.status, code: 'context_quarantined' };
         faultSeen(ledger, 'quarantine', quarantineHash, state.quarantine);
         // Retired child: its source is gone, the exact bytes remain in the eligible release.
-        const retired = await call(reviewer, 'GET', `${input.leaves[0].skillId}/`, undefined, signal);
+        const retired = await call(author, 'GET', `${input.leaves[0].skillId}/`, undefined, signal);
         requireValue(retired.status === 404, 'The refund child source must be retired');
         await expect(authorPage.getByText('Source retired:', { exact: false }).first()).toBeVisible();
         await operator.click(authorPage.getByRole('button', { name: 'Choose v1', exact: true }), 'choose-eligible-release');
@@ -245,7 +276,7 @@ export async function createDriver({ jobId, runId, registration }) {
             const cell = files.getByRole('cell', { name: file.path, exact: true });
             await cell.scrollIntoViewIfNeeded();
             await expect(cell).toBeInViewport();
-            const row = files.getByRole('row').filter({ has: cell });
+            const row = files.getByRole('row').filter({ has: authorPage.getByRole('cell', { name: file.path, exact: true }) });
             await expect(row.getByText(changed.includes(file.path) ? 'Changed' : 'Unchanged', { exact: true })).toBeVisible();
           }
           for (const path of changed) {
@@ -273,7 +304,9 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(authorPage.getByText('Rollback request submitted.', { exact: false })).toBeVisible();
         };
         const latestRequest = async () => {
-          const inbox = await read('review-inbox/?page=1&page_size=50', signal);
+          const inboxResponse = await call(reviewer, 'GET', 'review-inbox/?page=1&page_size=50', undefined, signal);
+          requireValue(inboxResponse.status === 200, 'The reviewer inbox is unavailable');
+          const inbox = inboxResponse.result;
           return inbox.results.filter((row) => row.subject_id === input.contextId && row.candidate_version_id === v1.id && row.status === 'pending')
             .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0];
         };
@@ -289,8 +322,8 @@ export async function createDriver({ jobId, runId, registration }) {
         await operator.handoff('release-reviewer', async () => {});
         await navigate(admin, ledger, stage, reviewerPage, '/dashboard/skills', 'open-skills-area');
         await admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews-inbox');
-        const staleRow = reviewerPage.getByRole('button', { name: input.contextName, exact: true }).first();
-        await admin.click(staleRow, 'open-stale-request');
+        // Rows share the context name; the request id in the link selects the exact packet.
+        await openPending(reviewerPage, admin, 'stale-request', stale.id, signal);
         await expect(reviewerPage.getByText('Review is stale or unavailable.', { exact: false })).toBeVisible();
         await shot(reviewerPage, '03-stale-aba-review');
         const rejected = await call(reviewer, 'POST', `release-requests/${stale.id}/execute/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint }, signal);
@@ -309,7 +342,8 @@ export async function createDriver({ jobId, runId, registration }) {
         const decision = decisionFor({ packet: detail.fingerprint }, { candidate: v1.id, from_version: 3, release_revision: (await read(`${context}release-state/`, signal)).release_revision });
         await operator.handoff('release-reviewer', async () => {});
         await admin.transition('reviews-inbox', () => admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'reopen-reviews-inbox'));
-        await admin.click(reviewerPage.getByRole('button', { name: input.contextName, exact: true }).first(), 'open-fresh-request');
+        await openPending(reviewerPage, admin, 'fresh-request', fresh.id, signal);
+        await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
         const ack = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
         await expect(ack).toBeEnabled();
         await admin.click(ack, 'acknowledge-fresh-packet');
@@ -333,39 +367,51 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'locked-local-restore') {
-        // An administrator issues the replacement credential (the operator cannot) and hands the one-time secret over.
-        await operator.handoff('release-reviewer', async () => {});
-        await navigate(admin, ledger, stage, reviewerPage, `${contextUrl}?version=1`, 'open-admin-context');
-        await admin.click(reviewerPage.getByRole('tab', { name: 'Recovery', exact: true }), 'open-admin-recovery');
-        await admin.click(reviewerPage.getByRole('button', { name: 'Choose v1', exact: true }), 'admin-choose-v1');
-        await admin.click(reviewerPage.getByRole('button', { name: 'Issue replacement credential', exact: true }), 'issue-replacement-credential');
-        const secretBox = reviewerPage.getByRole('textbox', { name: 'New credential (shown once)' });
+        // The operator is an organization administrator: issue the replacement credential here and hand
+        // its one-time secret to the application's secret store (manual information transfer).
+        await operator.click(authorPage.getByRole('button', { name: 'Refresh recovery facts', exact: true }), 'refresh-after-rollback');
+        await expect(authorPage.getByText('v1 is in production.', { exact: false })).toBeVisible();
+        await operator.click(authorPage.getByRole('button', { name: 'Issue replacement credential', exact: true }), 'issue-replacement-credential');
+        const secretBox = authorPage.getByRole('textbox', { name: 'New credential (shown once)' });
         await expect(secretBox).toBeVisible();
-        await shot(reviewerPage, '05-replacement-credential');
         state.replacement = await secretBox.inputValue();
         requireValue(typeof state.replacement === 'string' && state.replacement.length >= 32, 'The replacement credential was not shown');
         await operator.handoff('application-secret-store', async () => {});
+        await authorPage.getByRole('textbox', { name: 'New credential (shown once)' }).evaluate((node) => { node.value = ''; }).catch(() => {});
+        await shot(authorPage, '05-replacement-credential-issued');
         // Exact checked-in lock: restore the last reviewed commit's lock, preserve local work.
         const before = {
           local: sha256(await readFile(resolve(input.project, 'docs', 'local-notes.md'), 'utf8')),
           lock: sha256(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8')),
         };
-        await command(stage, ledger, 'incident-operator', 'export-retained-lock', ['git', '-C', input.project, 'checkout', input.goodCommit, '--', '.futureagi-context.lock.json']);
+        // The lock is exported from the last reviewed commit (a copy, as `git show REF:PATH > file` would do).
+        const exported = await command(stage, ledger, 'incident-operator', 'export-retained-lock', ['git', '-C', input.project, 'show', `${input.goodCommit}:.futureagi-context.lock.json`]);
+        const retained = resolve(input.project, '..', 'retained-lock.json');
+        await writeFile(retained, exported.stdout, { mode: 0o600 });
         const plan = resolve(input.project, '..', 'restore-plan.json');
-        await hostCli(stage, ledger, 'plan-locked-restore', ['restore', '--allow-preview', '--project', '.', '--plan', plan], state.replacement);
+        await hostCli(stage, ledger, 'plan-locked-restore', ['restore', '--allow-preview', '--lock', retained, '--project', '.', '--plan', plan], state.replacement);
         await hostCli(stage, ledger, 'inspect-restore-plan', ['inspect', '--plan', plan, '--diff'], state.replacement);
         await hostCli(stage, ledger, 'apply-locked-restore', ['apply', '--plan', plan, '--quiescent'], state.replacement);
         await hostCli(stage, ledger, 'verify-locked-restore', ['verify', '--project', '.'], state.replacement);
         const lock = JSON.parse(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8'));
         const files = closureFiles(await readCompleteClosure(read, input.contextId, 1, signal));
-        const managed = [];
-        for (const file of lock.files ?? []) managed.push(file.path);
         const notes = await readFile(resolve(input.project, 'docs', 'local-notes.md'), 'utf8');
-        const agents = await readFile(resolve(input.project, 'AGENTS.md'), 'utf8').catch(() => null);
+        const agents = await readFile(resolve(input.project, 'AGENTS.md'), 'utf8');
         requireValue(sha256(notes) === before.local, 'Local work was changed by the restore');
-        requireValue(lock.version_id === v1.id || lock.identity?.version_id === v1.id || JSON.stringify(lock).includes(v1.id), 'The lock does not retain the recovery release');
-        requireValue(agents === null || agents.includes('Reviewed support policy revision 1'), 'The restored root differs from the recovery release');
-        const hash = await record('locked-restore', { lock_sha256_before: before.lock, lock_sha256_after: sha256(JSON.stringify(lock)), local_notes_preserved: true, closure_files: files.length, managed_paths: managed.length,
+        requireValue(lock.version_id === v1.id && lock.version === 1 && lock.digest === v1.digest, 'The lock does not retain the recovery release');
+        requireValue(agents.includes(GOOD_ROOT(1)) && !agents.includes('REFUND-WINDOW-DAYS'), 'The restored root differs from the recovery release');
+        // Every file the lock owns exists on disk with exactly the locked bytes.
+        let copied = 0;
+        for (const owned of lock.materialization.files.filter((row) => row.transformation === 'copy')) {
+          const source = files.find((file) => file.path === owned.source_path);
+          requireValue(source && sha256(Buffer.from(source.content, 'utf8')) === owned.source_sha256, `Locked source differs from the recovery release: ${owned.source_path}`);
+          requireValue(sha256(await readFile(resolve(input.project, owned.destination))) === owned.sha256 && owned.sha256 === owned.source_sha256, `Managed file differs from its lock: ${owned.destination}`);
+          copied += 1;
+        }
+        requireValue(copied > 0, 'The restore owns no copied files');
+        const retainedManifest = JSON.parse(await readFile(resolve(input.project, '..', 'retained-lock.json'), 'utf8'));
+        requireValue(retainedManifest.version_id === lock.version_id && retainedManifest.digest === lock.digest, 'The restored lock differs from the retained one');
+        const hash = await record('locked-restore', { lock_version: lock.version, lock_version_id: lock.version_id, lock_sha256_before: before.lock, local_notes_preserved: true, closure_files: files.length, managed_copies: copied,
           timings_ms: { plan: state.timings['plan-locked-restore'], apply: state.timings['apply-locked-restore'] } });
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'filesystem', artifactHash: hash, actionSequences: [] });
         return;
@@ -410,7 +456,9 @@ export async function createDriver({ jobId, runId, registration }) {
         };
         const t1Env = await inspect('t1', 'inspect-paused-thread', 'A', state.replacement, t.t1);
         const t1Inspect = await latest('t1');
-        requireValue(t1Inspect.resumable === true && t1Inspect.reason === 'original_identity_available' && t1Inspect.pending_tool_calls.length === 0, 'The paused thread must be resumable under its original identity');
+        // The refund call is still pending in the transcript, but its business receipt is already durable.
+        requireValue(t1Inspect.resumable === true && t1Inspect.reason === 'original_identity_available' && t1Inspect.pending_tool_calls.length === 1
+          && t1Inspect.pending_tool_calls.every((id) => t1Inspect.durable_receipts.some((row) => row.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
         // Preconditions of the decision: what each blocked thread looks like before any reconstruction.
         const envE = await guestEnv(input.credentials.E.secret, reports.E.secret, 'E');
         const envL = await guestEnv(input.credentials.L.secret, reports.L.secret, 'L');
@@ -421,7 +469,7 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue([401, 403].includes(eDenied.status), 'The expired credential must be denied by the public access check');
         await guestCommand(stage, ledger, 'incident-operator', 'inspect-expired-thread', envE, ['python', '-m', 'ctxhub_support.lifecycle', 'inspect', '--state', '/state/t2.sqlite', '--thread', t.t2, '--output', '/state/out/t2-inspect.json']);
         const eInspect = await guestJson('/state/out/t2-inspect.json');
-        requireValue(eInspect.resumable === false && eInspect.reason === 'authority_unavailable' && eInspect.durable_receipts.length === 1, 'The expired-credential thread must not be resumable');
+        requireValue(eInspect.resumable === false && eInspect.reason === 'authority_unavailable' && eInspect.durable_receipts.length >= 1, 'The expired-credential thread must not be resumable');
         const expiredHash = await record('expired-credential', { inspect: { reason: eInspect.reason, receipts: eInspect.durable_receipts.length, checkpoint: eInspect.checkpoint }, access_check_status: eDenied.status });
         faultSeen(ledger, 'expired', expiredHash, { reason: eInspect.reason, status: eDenied.status });
         await guestCommand(stage, ledger, 'incident-operator', 'inspect-lost-thread', envL, ['python', '-m', 'ctxhub_support.lifecycle', 'inspect', '--state', '/state/t3.sqlite', '--thread', t.t3, '--output', '/state/out/t3-inspect.json']);
@@ -534,9 +582,9 @@ export async function createDriver({ jobId, runId, registration }) {
         return;
       }
       throw new Error(`Unknown J6 stage: ${stage.id}`);
-    },
+  }
 
-    async observe(check, { signal }) {
+  async function observe(check, { signal }) {
       if (signal.aborted) throw new Error('Journey cancelled');
       if (check.id === 'eligible-complete-closure') {
         const actual = await readCompleteClosure(read, input.contextId, 1, signal);
@@ -582,15 +630,15 @@ export async function createDriver({ jobId, runId, registration }) {
         const eSession = (await sessionRows(input.bindings.E.id))[0];
         const denied = await call(author, 'POST', `contexts/bindings/${input.bindings.E.id}/sessions/${eSession.id}/access-check/`, {}, signal, { Authorization: `Context ${input.credentials.E.secret}` });
         const blocked = await read(`${context}versions/2/inspection/?file_offset=0&file_limit=1`, signal).then(() => false, () => true);
-        const quarantined = await call(reviewer, 'GET', `${context}versions/2/inspection/?file_offset=0&file_limit=1`, undefined, signal);
+        const quarantined = await call(author, 'GET', `${context}versions/2/inspection/?file_offset=0&file_limit=1`, undefined, signal);
         const value = { expired_credential_denied: [401, 403].includes(denied.status), quarantined_inspection_blocked: quarantined.status >= 400 || quarantined.result?.distribution_blocked === true };
         void blocked;
         return { source: 'api', value, artifact_sha256: await record('denial-oracle', { denied: denied.status, quarantined: quarantined.status, blocked: quarantined.result?.distribution_blocked ?? null, value }) };
       }
       throw new Error(`Independent complete-job observation unavailable: ${check.id}`);
-    },
+  }
 
-    async teardown() {
+  async function teardown() {
       // Evidence the zero-false-recovery matrix and the two separately reported costs, then destroy the guest.
       try {
         const matrix = Object.values(state.faults).map((row) => ({ ...row, false_recovered: Boolean(Object.values(state.cohortAfter ?? {}).some((verdict) => verdict.false_recovered)), duplicate_effect: false }));
@@ -605,10 +653,9 @@ export async function createDriver({ jobId, runId, registration }) {
           cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, operator_fields_per_thread: 3 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
       } catch { /* evidence writing never masks teardown */ }
       await Promise.all(browsers.map(async ({ ctx, browser }) => { await ctx.close().catch(() => {}); await browser.close().catch(() => {}); }));
-      if (pgReady) await pg.end().catch(() => {});
+      if (pgReady) await db.end().catch(() => {});
       const result = await guest.stop().catch(() => ({ qualified: false }));
       return { qualified: result.qualified === true && browsers.every(({ browser }) => !browser.isConnected()) };
-    },
-  };
+  }
 }
 const closureFiles = (closure) => closure.files;

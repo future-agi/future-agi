@@ -40,8 +40,10 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
   const python = process.env.J6_APP_PYTHON;
   const wheels = process.env.J6_WHEELS;
   expect(python && wheels, 'Install the pinned SDK and application wheels on the cloud VM').toBeTruthy();
-  const author = actorOf(scopeActors.member);
-  const reviewer = actorOf(scopeActors.ownerA);
+  const author = actorOf(scopeActors.ownerA); // organization admin: lists reviewers and issues credentials
+  // A second organization administrator: moving the protected production label needs a current administrator other than the author.
+  const releaser = await (scopeActors as any).invite('releaser', 8, [scopeActors.ownerA.workspaceId]);
+  const reviewer = actorOf(releaser);
   const prefix = `e2e-j6-${Date.now().toString(36)}`;
   const dir = testInfo.outputPath('j6');
   await mkdir(dir, { recursive: true });
@@ -79,6 +81,17 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     const matrix = JSON.parse(await readFile(resolve(outputDir, runId, 'fault-matrix.json'), 'utf8'));
     expect(matrix.rows).toHaveLength(8);
     expect(matrix.rows.every((row: any) => row.false_recovered === false && row.duplicate_effect === false)).toBe(true);
+    // One-sided fallibility: J6_ORACLE_FAULT changes only the expectation, never the observed system.
+    const fault = process.env.J6_ORACLE_FAULT;
+    const observed = async (name: string) => JSON.parse(await readFile(resolve(outputDir, runId, `${name}.json`), 'utf8'));
+    const business = await observed('business-oracle');
+    expect(business.business.request_count, 'independent business request oracle').toBe(fault === 'duplicate' ? 5 : 4);
+    expect(business.business.operations).toHaveLength(4);
+    expect((await observed('checkpoint-oracle')).value.same_session, 'original session identity').toBe(fault === 'session' ? false : true);
+    expect((await observed('original-case')).retired_child_bytes_delivered, 'retired child bytes at the model boundary').toBe(fault === 'child' ? false : true);
+    expect((await observed('final-cohort')).verdicts.U.states, 'unobserved consumer').toEqual(fault === 'unknown' ? ['matches_target'] : ['unknown']);
+    expect((await observed('denial-oracle')).value.expired_credential_denied, 'expired credential denial').toBe(fault === 'denied' ? false : true);
+    expect((await observed('aba-rejection')).status, 'stale ABA execute').toBe(fault === 'aba' ? 200 : 409);
     const events = await probe.pg<any>('SELECT from_version, to_version FROM model_hub_hubskilllabelevent WHERE skill_id=$1 ORDER BY id', [seed.contextId]);
     const rollbacks = events.filter((row: any) => row.from_version === 3 && row.to_version === 1);
     expect(rollbacks, 'one lower-number rollback event').toHaveLength(process.env.J6_ORACLE_FAULT === 'rollback' ? 2 : 1);
