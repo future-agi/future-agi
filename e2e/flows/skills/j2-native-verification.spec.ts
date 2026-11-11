@@ -161,11 +161,11 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByRole('tab', { name: 'Tests', exact: true }).click();
     await page.getByRole('row', { name: /Original refund failure/ }).getByRole('button', { name: 'Review example' }).click();
     const editor = page.getByRole('dialog');
-    await editor.getByRole('button', { name: 'Add text fixture' }).click();
-    const fixtureIndex = (await editor.getByRole('textbox', { name: /Fixture \d+ name/ }).count());
-    const expectation = expectationFixture(skills.refund, ACTION.refund);
-    await editor.getByRole('textbox', { name: `Fixture ${fixtureIndex} name` }).fill(expectation.name);
-    await editor.getByRole('textbox', { name: `Fixture ${fixtureIndex} text` }).fill(expectation.text);
+    // The reviewer chooses the required skill and business action; no identity or JSON is typed.
+    await editor.getByLabel('Required skill', { exact: true }).click();
+    await page.getByRole('option', { name: /refund-policy$/ }).click();
+    await editor.getByLabel('Required business action', { exact: true }).click();
+    await page.getByRole('option', { name: 'Issue a refund', exact: true }).click();
     await editor.getByRole('checkbox', { name: /I reviewed the request/ }).check();
     await editor.getByRole('button', { name: 'Save example' }).click();
     await expect(editor).toBeHidden();

@@ -16,7 +16,7 @@ import ContextNativePanel from './ContextNativePanel';
 // Hierarchy: viewed release, native limitation, then reviewed requests.
 // Palette/depth/surfaces: neutral, flat table with the shared warning role.
 // Typography/spacing: m3/s1/s3, 12px groups and standard dense table rows.
-function Tests({ contextId, version, versions = [], canWrite }) {
+function Tests({ contextId, version, versions = [], canWrite, skills = [] }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
@@ -39,7 +39,7 @@ function Tests({ contextId, version, versions = [], canWrite }) {
           </TableRow>)}</TableBody></Table>
       </TableContainer>}
     </Section>
-    {editor && <TestCaseEditor open initialCase={editor.value} canSave={canWrite && !changed} isSaving={save.isPending}
+    {editor && <TestCaseEditor open initialCase={editor.value} applicationBehavior={skills.length ? { skills } : null} canSave={canWrite && !changed} isSaving={save.isPending}
       error={changed ? 'The suite changed. Close and reopen the example after reviewing the latest cases; your edits were not submitted.' : error}
       onClose={() => { if (!save.isPending) setEditor(null); }}
       onSave={async (value) => {
@@ -51,7 +51,7 @@ function Tests({ contextId, version, versions = [], canWrite }) {
       }} />}
   </Stack>;
 }
-Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, canWrite: PropTypes.bool.isRequired };
+Tests.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, skills: PropTypes.array, canWrite: PropTypes.bool.isRequired };
 export default function ContextTestsPanel(props) {
   const access = useSkillV11Scope();
   return <Tests key={`${access.identity}:${props.contextId}`} {...props} />;

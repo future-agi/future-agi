@@ -541,6 +541,43 @@ describe("reviewed examples", () => {
     expect(onSave.mock.calls[0][0]).not.toHaveProperty("reviewedBy");
     expect(onSave.mock.calls[0][0]).not.toHaveProperty("origin");
   });
+  it("chooses the required skill and business action instead of typing the reserved fixture", () => {
+    const onSave = vi.fn();
+    mount(
+      <TestCaseEditor
+        open
+        initialCase={{ ...testCase, fixtures: [] }}
+        applicationBehavior={{
+          skills: [
+            { id: "4e7d55e9-7da5-4a2b-94bc-b19f63257709", label: "skills/refund" },
+            { id: "8acacf60-c238-4a5e-af7d-806d7617c0ee", label: "skills/chargeback" },
+          ],
+        }}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.queryByLabelText("Fixture 1 name")).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText("Required skill"));
+    fireEvent.click(screen.getByRole("option", { name: "skills/refund" }));
+    // A skill without an action is not a complete expectation.
+    expect(screen.getByRole("button", { name: "Save example" })).toBeDisabled();
+    expect(screen.getByText("Choose both the skill and the action, or neither.")).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText("Required business action"));
+    fireEvent.click(screen.getByRole("option", { name: "Issue a refund" }));
+    fireEvent.click(
+      screen.getByLabelText("I reviewed the request, supplied facts and expected behavior"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save example" }));
+    const fixtures = onSave.mock.calls[0][0].fixtures;
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].name).toBe("fi.application.expectations");
+    expect(JSON.parse(fixtures[0].text)).toEqual({
+      schema: 1,
+      skill_id: "4e7d55e9-7da5-4a2b-94bc-b19f63257709",
+      action: "issue_refund",
+    });
+  });
   it("cannot save malformed JSON using a previously valid assertion", () => {
     mount(
       <TestCaseEditor

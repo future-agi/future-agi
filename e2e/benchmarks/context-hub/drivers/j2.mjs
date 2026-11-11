@@ -165,10 +165,11 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
           await op.click(page.getByRole('row', { name: new RegExp(TITLE.refund) }).getByRole('button', { name: 'Review example' }), 'review-captured-example');
           const editor = page.getByRole('dialog');
-          await op.click(editor.getByRole('button', { name: 'Add text fixture' }), 'add-expectation-fixture');
-          const index = await editor.getByRole('textbox', { name: /Fixture \d+ name/ }).count();
-          await edit('expectation-name', () => editor.getByRole('textbox', { name: `Fixture ${index} name` }).fill('fi.application.expectations'));
-          await edit('expectation-text', () => editor.getByRole('textbox', { name: `Fixture ${index} text` }).fill(JSON.stringify({ schema: 1, skill_id: input.skills.refund, action: 'issue_refund' })));
+          // Chosen from the context's own skills and the application's actions; nothing is typed.
+          await op.click(editor.getByLabel('Required skill', { exact: true }), 'open-required-skill');
+          await op.click(page.getByRole('option', { name: /refund-policy$/ }), 'choose-required-skill');
+          await op.click(editor.getByLabel('Required business action', { exact: true }), 'open-required-action');
+          await op.click(page.getByRole('option', { name: 'Issue a refund', exact: true }), 'choose-required-action');
           await op.click(editor.getByRole('checkbox', { name: /I reviewed the request/ }), 'confirm-expectation-review');
           const suiteSaved = page.waitForResponse((res) => res.url().endsWith(`${root}tests/`) && res.request().method() === 'PUT');
           await op.click(editor.getByRole('button', { name: 'Save example' }), 'save-expectation');
