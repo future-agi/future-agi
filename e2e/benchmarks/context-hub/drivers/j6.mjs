@@ -601,6 +601,18 @@ export async function createDriver({ jobId, runId, registration }) {
         await table.scrollIntoViewIfNeeded();
         await authorPage.evaluate(() => window.scrollBy(0, -80));
         await shot(authorPage, '06-final-cohort');
+        // Dark-mode evidence of the same view (capture only; no operator action, no product state change).
+        await authorPage.evaluate(() => {
+          const settings = JSON.parse(localStorage.getItem('settings') || '{}');
+          localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'dark' }));
+        });
+        await authorPage.reload();
+        await authorPage.getByRole('tab', { name: 'Recovery', exact: true }).click();
+        const darkTable = authorPage.getByRole('table', { name: 'Recovery cohort' });
+        await expect(darkTable).toBeVisible();
+        await darkTable.scrollIntoViewIfNeeded();
+        await authorPage.evaluate(() => window.scrollBy(0, -80));
+        await shot(authorPage, '07-final-cohort-dark');
         requireValue(Object.values(verdicts).every((verdict) => verdict.false_recovered === false), 'A consumer is shown as recovered without observed delivery of the recovery release');
         requireValue(verdicts.U.sessions === 0 && verdicts.U.states.length === 1 && verdicts.U.states[0] === 'unknown', 'The unobserved consumer must stay unknown');
         requireValue(verdicts.L.states.includes('unknown') && !verdicts.L.states.includes('matches_target'), 'The lost-mapping consumer must stay unknown');
