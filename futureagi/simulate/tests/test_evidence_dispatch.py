@@ -522,11 +522,15 @@ def test_a_simulator_projects_calls_are_never_called_production(cases, user, sch
     with patch(
         "simulate.selectors.evidence_import.observe_evidence", return_value=found
     ):
+        # A production project's session.
         production = import_bundle(evidence_import)
         production_text = evidence_document(evidence_import, case_ids)
+        # A Simulator project's call.
         project = evidence_import.project
         project.source = "simulator"
         project.save(update_fields=["source"])
+        evidence_import.source_kind = "call"
+        evidence_import.save(update_fields=["source_kind"])
         simulated = import_bundle(evidence_import)
         simulated_text = evidence_document(evidence_import, case_ids)
 
@@ -537,15 +541,16 @@ def test_a_simulator_projects_calls_are_never_called_production(cases, user, sch
     assert "Simulator project" not in production_text
     assert simulated["simulated"] is True
     assert (
-        "These sessions come from a Simulator project: simulated, not production."
+        "These calls come from a Simulator project: simulated, not production."
         in simulated_text
     )
-    assert "production sessions" not in simulated_text
+    assert "production calls" not in simulated_text
 
     # The builder is told the same.
+    cases[0].evidence_import.refresh_from_db()
     conversation = _start(cases, user)
     content = _command(conversation).content
-    assert "from the simulated sessions" in content
+    assert "from the simulated calls" in content
     assert "not production" in content
     assert "production evidence" not in content
 

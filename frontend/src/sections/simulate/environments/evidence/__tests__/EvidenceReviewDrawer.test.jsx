@@ -106,6 +106,9 @@ describe("EvidenceReviewDrawer", () => {
       within(card).getByText("Starting state: missing"),
     ).toBeInTheDocument();
     expect(screen.getByText(/2 values of personal data/)).toBeInTheDocument();
+    // Production evidence carries no simulated label.
+    expect(screen.queryByTestId("evidence-simulated")).toBeNull();
+    expect(within(card).queryByText(/^Simulated /)).toBeNull();
   });
 
   it("warns when only basic redaction ran", async () => {
