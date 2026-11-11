@@ -331,6 +331,33 @@ describe("Unit: Workbench save-before-run", () => {
     expect(sentVersions()).toEqual(["v1"]);
   });
 
+  it("keeps flushing edits typed during each save until none is left", async () => {
+    await mount();
+    const saves = Array.from({ length: 7 }, deferred);
+    axios.post.mockImplementation(
+      () => saves[axios.post.mock.calls.length - 1].promise,
+    );
+    editModel("edit-0");
+    const { run } = await startRun(0);
+    for (let edit = 1; edit < saves.length; edit += 1) {
+      editModel(`edit-${edit}`);
+      await act(async () => {
+        saves[edit - 1].resolve({});
+      });
+    }
+    expect(sockets).toHaveLength(0);
+    await act(async () => {
+      saves[saves.length - 1].resolve({});
+      await run;
+    });
+    expect(
+      axios.post.mock.calls.map(
+        ([, payload]) => payload.prompt_config[0].configuration.model,
+      ),
+    ).toEqual(saves.map((_, edit) => `edit-${edit}`));
+    expect(sentVersions()).toEqual(["v1"]);
+  });
+
   it("Stop on one column during Run all clears every column's spinner", async () => {
     await mount();
     act(() => context.applyCompare([savedVersion("v2", true)]));
@@ -346,6 +373,70 @@ describe("Unit: Workbench save-before-run", () => {
     });
     expect(sockets).toHaveLength(0);
     expect(context.promptGeneratingStatus).toEqual([false, false]);
+  });
+
+  it("Run, Stop, Run during one save dispatches once and keeps the spinner", async () => {
+    await mount();
+    const save = deferred();
+    axios.post.mockReturnValue(save.promise);
+    editModel("selected");
+    const { run: stopped } = await startRun(0);
+    act(() => {
+      context.closeSocketByIndex("compare-0");
+      context.closeSocketByIndex("run-0");
+    });
+    const { run: rerun } = await startRun(0);
+    await act(async () => {
+      save.resolve({});
+      await Promise.all([stopped, rerun]);
+    });
+    expect(sentVersions()).toEqual(["v1"]);
+    expect(context.promptGeneratingStatus).toEqual([true]);
+  });
+
+  it("a column Run after Stop on Run all dispatches only that column", async () => {
+    await mount();
+    act(() => context.applyCompare([savedVersion("v2", true)]));
+    const save = deferred();
+    axios.post.mockReturnValue(save.promise);
+    editModel("selected", 0);
+    const { run: all } = await startRun();
+    act(() => {
+      [0, 1].forEach((column) => {
+        context.closeSocketByIndex(`compare-${column}`);
+        context.closeSocketByIndex(`run-${column}`);
+      });
+    });
+    const { run: single } = await startRun(0);
+    await act(async () => {
+      save.resolve({});
+      await Promise.all([all, single]);
+    });
+    expect(sentVersions()).toEqual(["v1"]);
+    expect(context.promptGeneratingStatus).toEqual([true, false]);
+  });
+
+  it("does not run a column that moved during the save wait", async () => {
+    await mount();
+    act(() => context.applyCompare([savedVersion("v2", true)]));
+    const save = deferred();
+    axios.post.mockReturnValue(save.promise);
+    editModel("selected", 1);
+    const { run } = await startRun(1);
+    act(() => context.removeFromCompare(0));
+    await act(async () => {
+      save.resolve({});
+      await run;
+    });
+    expect(sockets).toHaveLength(0);
+    expect(context.selectedVersions.map(({ version }) => version)).toEqual([
+      "v2",
+    ]);
+    expect(context.promptGeneratingStatus).toEqual([false]);
+    expect(mocks.notify).toHaveBeenCalledWith(
+      "The prompt changed while saving. Run it again.",
+      { variant: "info" },
+    );
   });
 
   it("toasts a rate-limited save that the app handler leaves silent", async () => {
