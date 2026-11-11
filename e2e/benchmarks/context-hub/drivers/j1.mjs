@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
+import { unzipSync } from 'fflate';
 import { chromium, expect as playwrightExpect } from '@playwright/test';
 import { MeasuredOperator } from '../../../lib/skills-r3/measured-operator.mjs';
-import { digest, requireValue } from '../../../lib/skills-r3/canonical.mjs';
+import { digest, requireValue, sha256 } from '../../../lib/skills-r3/canonical.mjs';
 import { performUpdate } from './j1-update.mjs';
+import { deriveDelivery, observeCodexDelivery } from './j1-native.mjs';
 
 const expect = playwrightExpect.configure({ timeout: 60_000 });
+const canonicalEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Live J1 attempt. J1_DRIVER_INPUT is private VM-local configuration. No writes
  * use an API fixture as a substitute for public UI/CLI. Not a qualification
@@ -28,6 +31,13 @@ export async function createDriver({ jobId, runId, registration }) {
   let contextId;
   let candidate;
   let lastPage;
+  let credentialId;
+  let secret;
+  let credentialBefore;
+  let credentialRevoked = false;
+  let sdkEnv;
+  let install;
+  let boundaryArtifact;
   const plans = [];
   const imported = [];
   const attempts = [];
@@ -71,6 +81,31 @@ export async function createDriver({ jobId, runId, registration }) {
       cwd: input.productRoot, env: { PATH: process.env.PATH, SKILLS_INVENTORY_PYTHON: input.python },
     });
     return JSON.parse(result.stdout);
+  };
+  const supportedNames = () => input.names.slice(0, 14);
+  const sourceHash = async () => {
+    const tree = async root => (await Promise.all((await readdir(root, { withFileTypes: true })).map(async entry => {
+      const path = resolve(root, entry.name);
+      return entry.isDirectory() ? tree(path) : [[relative(input.folder, path), sha256(await readFile(path))]];
+    }))).flat();
+    return digest({ exchange: sha256(await readFile(input.exchange)), update: sha256(await readFile(input.update.exchange)), folder: (await tree(input.folder)).sort() });
+  };
+  const sourceAtStart = await sourceHash();
+  // SDK CLI as a developer runs it: the credential travels only in the environment.
+  const sdk = (operator, target, args) => operator.command(target, input.sdkPython, ['-I', '-m', 'fi.context', ...args],
+    { cwd: input.project, env: sdkEnv, timeoutMs: 180_000 });
+  const walk = async (root, base = root) => (await Promise.all((await readdir(root, { withFileTypes: true })).map(async entry => {
+    const path = resolve(root, entry.name);
+    return entry.isDirectory() ? walk(path, base) : [relative(base, path)];
+  }))).flat().sort();
+  const projectFiles = async () => Promise.all((await walk(input.project)).map(async path => ({ path, content: await readFile(resolve(input.project, path), 'utf8') })));
+  // Plans and diffs carry private text and authorization leases; retain only hashes.
+  const redactPlan = value => ({ sha256: digest(value), keys: Object.keys(value ?? {}).sort() });
+  const resolveWithCredential = async signal => {
+    const response = await fetch(`${input.apiUrl}/model-hub/skills/contexts/resolve/?name=${encodeURIComponent(input.contextName)}&version=1`,
+      { headers: { Authorization: `Context ${secret}` }, signal, redirect: 'error' });
+    const body = await response.json().catch(() => ({}));
+    return { status: response.status, code: body?.error?.code ?? body?.code ?? body?.result?.code ?? null, version_id: body?.result?.version_id ?? body?.result?.manifest?.version_id ?? null };
   };
   return {
     mode: 'product', provenance: input.provenance,
@@ -285,14 +320,109 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'credential-and-install') {
+          requireValue(candidate && contextId, 'Published immutable context must precede installation');
           const page = await newPage();
-          await go(page, `/dashboard/skills/contexts/${contextId}`, 'exact-context');
+          await go(page, `/dashboard/skills/contexts/${contextId}?version=1`, 'exact-context');
           await click(page, 'tab', 'Use');
+          // The handoff stays honest: no released package or verified profile is
+          // claimed, so the operator uses the SDK CLI's explicit preview opt-in.
           await expect(page.getByText(/A released package and a verified host\/version profile are required/)).toBeVisible();
-          await page.screenshot({ path: resolve(output, 'shots', 'unqualified-delivery.png') });
-          const capabilities = await read('contexts/capabilities/', signal);
-          await record('delivery-blocker', { contextId, candidate, capabilities, reason: 'Public Use handoff has no released package/verified host profile. This driver cannot replace real discovery/model-boundary evidence with a synthetic success.', qualified: false });
-          throw new Error('Public immutable candidate delivery is not qualified');
+          const issued = page.waitForResponse(res => res.url().endsWith('/contexts/credentials/') && res.request().method() === 'POST');
+          await click(page, 'button', 'Issue pilot credential');
+          const issuedResponse = await issued;
+          assert.equal(issuedResponse.status(), 201);
+          credentialId = (await issuedResponse.json()).result.id;
+          await click(page, 'button', 'Copy credential secret');
+          await expect(page.getByText('Copied. Store it in your secret manager.', { exact: true })).toBeVisible();
+          secret = await page.evaluate(() => navigator.clipboard.readText());
+          requireValue(/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{40,}$/.test(secret), 'One-time credential secret required');
+          await page.evaluate(() => navigator.clipboard.writeText(''));
+          await expect(page.getByRole('row').filter({ hasText: credentialId.slice(0, 8) })).toBeVisible();
+          await page.screenshot({ path: resolve(output, 'shots', 'pilot-credential.png') });
+          const listed = (await read('contexts/credentials/?page_size=100', signal)).results.find(row => row.id === credentialId);
+          assert.deepEqual(listed.grants, [{ kind: 'agent_context', resource_id: contextId, labels: [], version_ids: [candidate.manifest.version_id] }]);
+          assert.equal(listed.purpose, 'consume');
+          credentialBefore = await resolveWithCredential(signal);
+          assert.equal(credentialBefore.status, 200);
+          await page.close();
+          await operator.configurationEdit('sdk-credential-environment', async () => {
+            sdkEnv = { PATH: process.env.PATH, HOME: process.env.HOME, FI_CONTEXT_ORIGIN: input.apiUrl, FI_CONTEXT_ORGANIZATION_ID: input.actor.organizationId,
+              FI_CONTEXT_WORKSPACE_ID: input.actor.workspaceId, FI_CONTEXT_CREDENTIAL: secret };
+          });
+          const plan = resolve(output, 'install-plan.json');
+          await sdk(operator, 'sdk-plan-install', ['plan', '--name', input.contextName, '--version', '1', '--client', 'codex', '--project', input.project,
+            '--adopt-local', '--allow-preview', '--out', plan]);
+          const inspected = JSON.parse((await sdk(operator, 'sdk-inspect-install', ['inspect', '--plan', plan, '--diff'])).stdout);
+          const planBytes = await readFile(plan);
+          const decision = { packet_sha256: sha256(planBytes), preconditions_sha256: digest(await projectFiles()) };
+          await operator.review('install-plan', inspected.changes?.map((_, i) => `change-${i}`) ?? ['install-plan'], [], async () => {
+            requireValue(JSON.stringify(inspected).includes('Preview profile'), 'Reviewed plan must state that installation is not delivery evidence');
+          }, decision);
+          await sdk(operator, 'sdk-apply-install', ['apply', '--plan', plan, '--quiescent']);
+          install = { plan_sha256: sha256(planBytes), inspected: redactPlan(inspected) };
+          await receipt('filesystem', { credential: { id: credentialId, grants: listed.grants, expires_at: listed.expires_at }, install });
+          return;
+        }
+        if (stage.id === 'verify-delivery') {
+          requireValue(install && sdkEnv, 'Reviewed install must precede delivery verification');
+          const verified = JSON.parse((await sdk(operator, 'sdk-verify-bytes', ['verify', '--project', input.project])).stdout);
+          // Bytes: compare the installed tree with the immutable API manifest, not the SDK's own verdict.
+          const lock = JSON.parse(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8'));
+          assert.equal(lock.version_id, candidate.manifest.version_id);
+          assert.equal(lock.digest, candidate.manifest.digest);
+          const skills = [];
+          for (const name of supportedNames()) {
+            const path = `.agents/skills/${name}/SKILL.md`;
+            const content = await readFile(resolve(input.project, path), 'utf8');
+            assert.equal(content, input.files[name][0].content);
+            assert.equal(await readFile(resolve(input.project, `.agents/skills/${name}/references/policy.md`), 'utf8'), input.files[name][1].content);
+            skills.push({ name, path, content });
+          }
+          // One host session in the developer's project; the CLI run is the action.
+          const boundary = await ledger.measure({ dimension: 'A', primitive: 'command', actor: 'owner', step: stage.id, phase: stage.phase, target: 'native-host-load' },
+            () => observeCodexDelivery({ executable: input.codex.executable, executableSha256: input.codex.sha256, project: input.project, skills, signal }));
+          boundaryArtifact = resolve(output, 'native-boundary.json');
+          await writeFile(boundaryArtifact, JSON.stringify(boundary), { mode: 0o600, flag: 'wx' });
+          const derived = deriveDelivery(boundary.requests, { names: skills.map(skill => skill.name) });
+          assert.equal(derived.discovered.length, 14);
+          await operator.review('delivery-evidence', ['bytes', 'discovery', 'delivery'], [], async () => {
+            assert.ok(verified);
+          });
+          // The developer keeps working locally during the pilot: an unowned note
+          // inside a managed tree and one edited managed file. Counted, not hidden.
+          for (const [key, [path, content]] of Object.entries(input.localWork)) {
+            await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'owner', step: stage.id, phase: stage.phase, target: `local-work-${key}` },
+              () => writeFile(resolve(input.project, path), content));
+          }
+          await receipt('model_boundary', { verified, derived, boundary_sha256: sha256(await readFile(boundaryArtifact)) });
+          return;
+        }
+        if (stage.id === 'remove-and-revoke') {
+          requireValue(update.exports?.length === 14 && sdkEnv && credentialId, 'Export and an installed credential must precede exit');
+          const plan = resolve(output, 'removal-plan.json');
+          await sdk(operator, 'sdk-plan-removal', ['remove', '--project', input.project, '--out', plan]);
+          const inspected = JSON.parse((await sdk(operator, 'sdk-inspect-removal', ['inspect', '--plan', plan, '--diff'])).stdout);
+          const planBytes = await readFile(plan);
+          const decision = { packet_sha256: sha256(planBytes), preconditions_sha256: digest(await projectFiles()) };
+          await operator.review('removal-plan', ['managed-files', 'managed-root-segment', 'retained-local-work'], ['retained-local-work'], async () => {
+            const text = JSON.stringify(inspected);
+            for (const [path] of Object.values(input.localWork)) requireValue(text.includes(path), 'Removal review must name every retained local path');
+          }, decision);
+          await sdk(operator, 'sdk-apply-removal', ['apply', '--plan', plan, '--quiescent']);
+          const page = await newPage();
+          await go(page, `/dashboard/skills/contexts/${contextId}?version=1`, 'exact-context-exit');
+          await click(page, 'tab', 'Use');
+          await operator.click(page.getByRole('button', { name: `Actions for credential ${credentialId.slice(0, 8)}`, exact: true }), 'credential-actions');
+          await operator.click(page.getByRole('menuitem', { name: 'Revoke', exact: true }), 'choose-revoke');
+          const revoked = page.waitForResponse(res => res.url().endsWith(`/contexts/credentials/${credentialId}/`) && res.request().method() === 'DELETE');
+          await operator.approve('revoke-pilot-credential', [`credential-${credentialId.slice(0, 8)}`], () => page.getByRole('dialog').getByRole('button', { name: 'Revoke', exact: true }).click());
+          assert.equal((await revoked).status(), 204);
+          credentialRevoked = true;
+          await expect(page.getByRole('row').filter({ hasText: credentialId.slice(0, 8) }).getByText('Revoked', { exact: true })).toBeVisible();
+          await page.screenshot({ path: resolve(output, 'shots', 'credential-revoked.png') });
+          await page.close();
+          await receipt('filesystem', { removal_plan_sha256: sha256(planBytes), inspected: redactPlan(inspected), credential: credentialId }, decision);
+          return;
         }
         if (await performUpdate(stage, { input, imported, plans, output, operator, ledger, signal, expect, read, record, receipt, newPage, click, choose, go }, update)) return;
         throw new Error(`No completed public-interface stage evidence: ${stage.id}`);
@@ -304,14 +434,92 @@ export async function createDriver({ jobId, runId, registration }) {
     },
     async observe(check, { signal }) {
       requireValue(!signal.aborted, 'Journey cancelled');
-      if (check.id === 'complete-inventory' && inventory) return { source: 'filesystem', value: inventory.members.map(member => member.name), artifact_sha256: await record('inventory-observation', inventory) };
-      // Never promote a prerequisite receipt to whole-job evidence.
-      throw new Error(`Whole-job independent evidence has not completed: ${check.id}`);
+      // Every observation re-reads state after the final stage; stage-local
+      // receipts and product toasts are never promoted to whole-job evidence.
+      const observed = async (source, value, raw = value) => ({ source, value, artifact_sha256: await record(`observe-${check.id}`, { source, value, raw }) });
+      const initial = await Promise.all(plans.map(({ plan }) => read(`intake/${plan.id}/`, signal)));
+      requireValue(initial.length === 2 && update.fresh, 'Complete-job intake plans are required');
+      const second = await read(`intake/${update.fresh.id}/`, signal);
+      const receiptsOf = async id => (await read(`intake/${id}/receipts/?page_size=100`, signal)).results;
+      if (check.id === 'complete-inventory') {
+        requireValue(inventory, 'Local inventory report required');
+        const apiNames = initial.flatMap(plan => plan.inventory.items.map(item => item.name)).sort();
+        const localNames = inventory.members.map(member => member.name).sort();
+        // Local preflight and the reviewed intake must list the same whole collection.
+        return observed('api', canonicalEqual(apiNames, localNames) ? apiNames : { local: localNames, api: apiNames }, { inventory: digest(inventory), apiNames });
+      }
+      if (check.id === 'migration-mappings') {
+        const rows = [];
+        for (const plan of initial) {
+          const receipts = await receiptsOf(plan.id);
+          for (const row of receipts) {
+            const item = plan.inventory.items.find(candidate => candidate.key === row.item_key);
+            rows.push({ source: `${item.source.origin}|${item.source.project}|${item.source.resource}`, destination: row.result.resource_id });
+          }
+        }
+        const updates = await receiptsOf(second.id);
+        const same = updates.filter(row => {
+          const item = second.inventory.items.find(candidate => candidate.key === row.item_key);
+          const key = `${item.source.origin}|${item.source.project}|${item.source.resource}`;
+          return rows.some(entry => entry.source === key && entry.destination === row.result.resource_id && entry.destination === item.destination_id);
+        }).length;
+        return observed('api', { members: rows.length, sources: rows.map(row => row.source).sort(),
+          destinations_distinct: new Set(rows.map(row => row.destination)).size, second_import_same_destinations: same }, rows);
+      }
+      const leaves = imported.map(row => ({ id: row.result.resource_id, name: row.name }));
+      if (check.id === 'source-production-unchanged') {
+        let labels = 0;
+        for (const leaf of leaves) labels += (await read(`${leaf.id}/labels/`, signal)).length;
+        labels += (await read(`contexts/${contextId}/`, signal)).release_state.labels.length;
+        const mappings = await Promise.all(update.exports.map(item => item.mapping));
+        const sourceModified = mappings.some(mapping => mapping.exit.source_modified !== false);
+        // The retained sources themselves must be byte-identical to the job's start.
+        assert.equal(await sourceHash(), sourceAtStart, 'retained_source_changed');
+        return observed('api', { resources: leaves.length + 1, labels, source_modified: sourceModified });
+      }
+      if (check.id === 'no-duplicate-import') {
+        const library = await read('?page_size=100', signal);
+        const ours = library.results.filter(row => input.names.includes(row.name));
+        const versions = {};
+        for (const row of ours) versions[row.name] = (await read(`${row.id}/versions/`, signal)).count;
+        const initialReceipts = (await Promise.all(initial.map(plan => receiptsOf(plan.id)))).flat();
+        return observed('api', { skills: ours.length, versions, initial_receipts: initialReceipts.length, update_receipts: (await receiptsOf(second.id)).length },
+          { library_count: library.count, ids: ours.map(row => row.id) });
+      }
+      if (check.id === 'roundtrip-bytes') {
+        const files = [];
+        for (let index = 0; index < update.exports.length; index++) {
+          const entries = unzipSync(await readFile(resolve(output, `export-${index}.zip`)));
+          for (const [path, bytes] of Object.entries(entries)) if (path !== '.futureagi-skills.lock.json') files.push({ path, content: Buffer.from(bytes).toString('utf8') });
+        }
+        return observed('filesystem', files.sort((a, b) => (a.path < b.path ? -1 : 1)));
+      }
+      if (check.id === 'local-work-preserved') return observed('filesystem', await projectFiles());
+      if (check.id === 'delivered-identity') {
+        requireValue(boundaryArtifact, 'Native boundary artifact required');
+        const boundary = JSON.parse(await readFile(boundaryArtifact, 'utf8'));
+        return observed('model_boundary', { host: boundary.host, ...deriveDelivery(boundary.requests, { names: supportedNames() }) }, { boundary_sha256: sha256(await readFile(boundaryArtifact)) });
+      }
+      if (check.id === 'credential-revoked') {
+        requireValue(credentialBefore && secret, 'Credential use before revocation must be observed');
+        const after = await resolveWithCredential(signal);
+        const listed = (await read('contexts/credentials/?page_size=100', signal)).results.find(row => row.id === credentialId);
+        return observed('api', { before_status: credentialBefore.status, after_status: after.status, after_code: after.code, listed_revoked: Boolean(listed?.revoked_at) });
+      }
+      throw new Error(`Unknown J1 check: ${check.id}`);
     },
     async teardown() {
+      // Failure paths still revoke the pilot credential; the secret never leaves memory.
+      let revokedOrNone = !credentialId || credentialRevoked;
+      if (!revokedOrNone) {
+        const response = await fetch(`${input.apiUrl}/model-hub/skills/contexts/credentials/${credentialId}/`, { method: 'DELETE', headers, redirect: 'error' }).catch(() => null);
+        revokedOrNone = response?.status === 204;
+      }
+      secret = undefined;
+      sdkEnv = undefined;
       await context?.close();
       await browser?.close();
-      return { qualified: !browser || !browser.isConnected() };
+      return { qualified: revokedOrNone && (!browser || !browser.isConnected()) };
     },
   };
 }

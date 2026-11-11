@@ -143,6 +143,7 @@ export async function performUpdate(stage, tools, state) {
       await publish(page, item.id, item.id === id ? 3 : 2);
     }
     state.updated = updated;
+    state.fresh = fresh;
     state.receipts = receipts;
     await receipt('api', { fresh, updated, receipts, personal_download_sha256: digest(state.downloaded) }, decision);
     return true;
