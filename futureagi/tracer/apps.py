@@ -10,6 +10,7 @@ class SdkConfig(AppConfig):
         # Required for cross-app FK resolution (model_hub → tracer).
         from tracer.models import (
             attachment,  # noqa: F401
+            attachment_recording,  # noqa: F401
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401

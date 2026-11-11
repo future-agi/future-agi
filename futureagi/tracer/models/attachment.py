@@ -215,6 +215,10 @@ class AttachmentBudget(models.Model):
     validation_jobs = models.PositiveIntegerField(default=0)
     window_started_at = models.DateTimeField()
     initialization_attempts = models.PositiveIntegerField(default=0)
+    # Completed-recording imports: in-flight recording jobs, objects and links.
+    active_recordings = models.PositiveIntegerField(default=0)
+    object_count = models.PositiveIntegerField(default=0)
+    link_count = models.PositiveIntegerField(default=0)
 
 
 class AttachmentMediaSession(ScopedAttachmentRecord):

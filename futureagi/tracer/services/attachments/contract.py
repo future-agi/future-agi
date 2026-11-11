@@ -57,6 +57,9 @@ class CapturePolicy:
     allow_unredacted_media_with_text_pii: bool = False
     # There is no qualified local media sanitizer in Wave A.
     record_audio: bool = False
+    # Importing an already-completed recording is its own explicit permission;
+    # record_audio (starting a recorder) never implies it, nor the reverse.
+    allow_import: bool = False
 
     def validate(self):
         if any(type(value) is not bool for value in asdict(self).values()):

@@ -4,11 +4,8 @@ A ready blob is not a readable occurrence. Ingestion binding, source retention,
 viewer authorization and authenticated playback are independent later gates.
 """
 
-import json
-import os
-import subprocess
+import subprocess  # noqa: F401 - tests patch validation.subprocess.run
 import tempfile
-from pathlib import Path
 
 from django.db import transaction
 from django.utils import timezone
@@ -20,6 +17,7 @@ from tracer.models.attachment import (
     AttachmentState,
     AttachmentUpload,
 )
+from tracer.services.attachments import sandbox
 from tracer.services.attachments.bootstrap import check_session, session_policy
 from tracer.services.attachments.contract import AttachmentError, admit_audio
 from tracer.services.attachments.storage import ObjectIdentity
@@ -27,80 +25,12 @@ from tracer.services.attachments.uploads import settle
 
 
 def sandbox_probe(path):
-    """Linux bubblewrap with no network, credentials, app tree or writable host FS.
+    """Probe in the seccomp-confined media worker; no in-process fallback.
 
-    No permissive fallback if user namespaces/bubblewrap are unavailable. The
-    only writable filesystem is a private /tmp, with output limited by RLIMIT.
+    The earlier bubblewrap runner could not create a network namespace on GCP
+    VMs or in default containers (RTM_NEWADDR EPERM). See sandbox.py/SANDBOX.md.
     """
-    command = [
-        "/usr/bin/prlimit",
-        "--as=536870912",
-        "--cpu=10",
-        "--fsize=8192",
-        "--nofile=32",
-        "--nproc=16",
-        "--",
-        "/usr/bin/bwrap",
-        "--unshare-all",
-        "--die-with-parent",
-        "--new-session",
-        "--clearenv",
-        "--ro-bind",
-        "/usr",
-        "/usr",
-        "--ro-bind",
-        "/lib",
-        "/lib",
-    ]
-    if os.path.exists("/lib64"):
-        command += ["--ro-bind", "/lib64", "/lib64"]
-    command += [
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--tmpfs",
-        "/tmp",
-        "--ro-bind",
-        str(Path(__file__).with_name("probe.py")),
-        "/probe.py",
-        "--ro-bind",
-        str(path),
-        "/input",
-        "--chdir",
-        "/tmp",
-        "/usr/bin/python3",
-        "-I",
-        "-S",
-        "/probe.py",
-        "/input",
-    ]
-    try:
-        with tempfile.TemporaryFile() as output:
-            completed = subprocess.run(
-                command,
-                env={},
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.DEVNULL,
-                timeout=15,
-                check=False,
-                close_fds=True,
-            )
-            if completed.returncode != 0:
-                raise AttachmentError("validation_rejected", 422)
-            output.seek(0)
-            result = json.loads(output.read(8193))
-        if (
-            set(result) != {"mime_type", "sample_rate", "channels", "frame_count"}
-            or result["mime_type"] != "audio/wav"
-        ):
-            raise ValueError
-        return result
-    except AttachmentError:
-        raise
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        raise AttachmentError("validation_unavailable", 503) from None
+    return sandbox.probe(path)
 
 
 def _check(upload):
