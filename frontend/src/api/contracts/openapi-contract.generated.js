@@ -49777,6 +49777,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 255,
           minLength: 1,
         },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          pattern: "^[0-9a-fA-F]{40}$",
+          minLength: 1,
+        },
         subfolder: {
           title: "Subfolder",
           type: "string",
@@ -92626,6 +92632,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         subfolder: {
           title: "Subfolder",
+          type: "string",
+          minLength: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
           type: "string",
           minLength: 1,
         },

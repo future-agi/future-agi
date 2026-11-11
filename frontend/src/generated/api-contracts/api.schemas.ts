@@ -16283,6 +16283,8 @@ export interface AgentVersionSourceApi {
   commit_sha?: string;
   /** @minLength 1 */
   subfolder?: string;
+  /** @minLength 1 */
+  archive_artifact_id?: string;
 }
 
 export interface AgentVersionListResponseApi {
@@ -17089,6 +17091,11 @@ export interface AgentConnectRequestApi {
    * @maxLength 255
    */
   name: string;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-fA-F]{40}$
+   */
+  commit_sha?: string;
   /**
    * @maxLength 512
    * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$

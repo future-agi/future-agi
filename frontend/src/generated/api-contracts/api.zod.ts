@@ -32495,6 +32495,7 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
       ref: zod.string().min(1).optional(),
       commit_sha: zod.string().min(1).optional(),
       subfolder: zod.string().min(1).optional(),
+      archive_artifact_id: zod.string().min(1).optional(),
     })
     .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
@@ -32626,6 +32627,7 @@ export const SimulateAgentDefinitionsVersionsChangeCreateResponse = zod.object({
           ref: zod.string().min(1).optional(),
           commit_sha: zod.string().min(1).optional(),
           subfolder: zod.string().min(1).optional(),
+          archive_artifact_id: zod.string().min(1).optional(),
         })
         .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -32781,6 +32783,7 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
       ref: zod.string().min(1).optional(),
       commit_sha: zod.string().min(1).optional(),
       subfolder: zod.string().min(1).optional(),
+      archive_artifact_id: zod.string().min(1).optional(),
     })
     .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
@@ -32873,6 +32876,7 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
             ref: zod.string().min(1).optional(),
             commit_sha: zod.string().min(1).optional(),
             subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
@@ -33537,6 +33541,7 @@ export const SimulateAgentDefinitionsVersionsProductionCreateResponse =
             ref: zod.string().min(1).optional(),
             commit_sha: zod.string().min(1).optional(),
             subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
@@ -33631,6 +33636,7 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
             ref: zod.string().min(1).optional(),
             commit_sha: zod.string().min(1).optional(),
             subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
           })
           .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
@@ -33666,6 +33672,9 @@ export const simulateAgentsConnectCreateBodyInstallationIdMax = 255;
 
 export const simulateAgentsConnectCreateBodyNameMax = 255;
 
+export const simulateAgentsConnectCreateBodyCommitShaRegExp = new RegExp(
+  "^[0-9a-fA-F]{40}$",
+);
 export const simulateAgentsConnectCreateBodySubfolderMax = 512;
 
 export const simulateAgentsConnectCreateBodySubfolderRegExp = new RegExp(
@@ -33696,6 +33705,11 @@ export const SimulateAgentsConnectCreateBody = zod.object({
   repository_id: zod.number().min(1).optional(),
   archive_artifact_id: zod.string().uuid().optional(),
   name: zod.string().min(1).max(simulateAgentsConnectCreateBodyNameMax),
+  commit_sha: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyCommitShaRegExp)
+    .optional(),
   subfolder: zod
     .string()
     .max(simulateAgentsConnectCreateBodySubfolderMax)

@@ -49,6 +49,7 @@ class AgentConnectRequestSerializer(AgentSourceRequestSerializer):
     environment values its code reads (names and values, kept as its credentials)."""
 
     name = serializers.CharField(max_length=255)
+    commit_sha = serializers.RegexField(r"^[0-9a-fA-F]{40}$", required=False)
     subfolder = serializers.RegexField(
         SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
     )
@@ -73,5 +74,9 @@ class AgentConnectRequestSerializer(AgentSourceRequestSerializer):
         if attrs.get("subfolder") and attrs["kind"] != "github":
             raise serializers.ValidationError(
                 {"subfolder": "only a github source names a folder"}
+            )
+        if attrs.get("commit_sha") and attrs["kind"] != "github":
+            raise serializers.ValidationError(
+                {"commit_sha": "only a github source names a commit"}
             )
         return attrs

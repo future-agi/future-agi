@@ -12,7 +12,7 @@ logger = structlog.get_logger(__name__)
 
 # The non-secret facts a code version's source carries; anything else the
 # runtime recorded (installation ids, access hints) stays server-side.
-SOURCE_FACTS = ("repository", "ref", "commit_sha", "subfolder")
+SOURCE_FACTS = ("repository", "ref", "commit_sha", "subfolder", "archive_artifact_id")
 
 
 class AgentVersionSourceSerializer(serializers.Serializer):
@@ -21,6 +21,7 @@ class AgentVersionSourceSerializer(serializers.Serializer):
     ref = serializers.CharField(required=False)
     commit_sha = serializers.CharField(required=False)
     subfolder = serializers.CharField(required=False)
+    archive_artifact_id = serializers.CharField(required=False)
 
 
 class AgentVersionCheckFailureSerializer(serializers.Serializer):
