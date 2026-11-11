@@ -41,6 +41,8 @@ export function deriveCandidates({ versions, productionVersionId, rows }) {
       isProduction: version.id === productionVersionId,
       lowerThanProduction: Boolean(production) && version.number < production.number,
       eligible: reasons.length === 0,
+      // The release in production cannot be rolled back to, but its locks and applications can still be recovered.
+      selectable: reasons.every((reason) => reason === 'current_production'),
       reasons,
     };
   });

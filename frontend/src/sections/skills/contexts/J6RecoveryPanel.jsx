@@ -227,7 +227,7 @@ function Candidates({ candidates, chosen, onChoose }) {
                   <Button
                     size="small"
                     variant={chosen === row.id ? "contained" : "outlined"}
-                    disabled={!row.eligible}
+                    disabled={!row.selectable}
                     onClick={() => onChoose(row.id)}
                   >
                     Choose v{row.number}
@@ -556,7 +556,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
   const closure = useRecoveryClosure(
     contextId,
-    chosenCandidate,
+    chosenCandidate && !chosenCandidate.isProduction ? chosenCandidate : undefined,
     data?.candidates.find((row) => row.isProduction),
   );
   const numbers = useMemo(
@@ -585,12 +585,19 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         chosen={chosen}
         onChoose={setChosen}
       />
-      {candidate && (
+      {candidate?.isProduction && (
+        <Alert severity="info">
+          v{candidate.number} is in production. Nothing is left to roll back;
+          recover local locks and applications below.
+        </Alert>
+      )}
+      {candidate && !candidate.isProduction && (
         <ClosureReview candidate={candidate} production={production} closure={closure} />
       )}
-      {candidate && (
+      {candidate && !candidate.isProduction && (
         <RollbackRequest
-          key={candidate.id}
+          // A moved release revision makes an earlier packet stale: start a fresh review.
+          key={`${candidate.id}:${data.releaseRevision}`}
           contextId={contextId}
           candidate={candidate}
           production={production}

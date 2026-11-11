@@ -15,6 +15,7 @@ export const API = '/model-hub/skills/';
 // as operator work: the measured journey starts at the retained incident.
 // ---------------------------------------------------------------------------
 export const GOOD_ROOT = (n) => `Reviewed support policy revision ${n}. Select only relevant skills. Never repeat a completed refund; reconcile completed business operations first.\n`;
+export const HOTFIX_ROOT = 'Reviewed support policy revision 4 (unreviewed hotfix candidate). Never repeat a completed refund.\n';
 export const REGRESSED_ROOT = 'Reviewed support policy revision 3.\nREFUND-WINDOW-DAYS: 7\nNever repeat a completed refund; reconcile completed business operations first.\n';
 export const RUNTIME_DIGEST = `sha256:${createHash('sha256').update('j6-synthetic-runtime-v1').digest('hex')}`;
 export const REFUND_REQUEST = 'Refund 25 units for an order purchased 30 days ago.';
@@ -92,7 +93,7 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   const versions = [await publishContextVersion({ api, author, contextId, draft, base: null })];
   const bindings = {};
   for (const [key, label] of [['A', 'application'], ['E', 'expired-credential'], ['L', 'lost-mapping'], ['U', 'unobserved']]) {
-    bindings[key] = await api(author, 'POST', `${root}bindings/`, { name: `${prefix}-${label}`, kind: 'runtime', selector: { label: 'production' }, update_mode: 'new_thread', profile: 'ctxhub-support', profile_version: '0.1.0', repository: null, expected_report_interval_seconds: 3600 });
+    bindings[key] = await api(author, 'POST', `${root}bindings/`, { name: `${prefix}-${label}`, kind: 'runtime', selector: key === 'E' || key === 'L' ? { version: 1 } : { label: 'production' }, update_mode: 'new_thread', profile: 'ctxhub-support', profile_version: '0.1.0', repository: null, expected_report_interval_seconds: 3600 });
   }
   await moveProduction({ api, author, reviewer, contextId, version: versions[0] });
   log('v1 in production');
@@ -100,25 +101,29 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   // Checked-in project: v1 is the last reviewed commit. Local work stays untracked.
   const project = resolve(projectDir);
   await mkdir(resolve(project, 'docs'), { recursive: true });
-  const projectCredential = await credential(api, author, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: ['production'], version_ids: [] }], binding_ids: [], expires_at: hours(8) });
-  const cli = (args, env = {}) => exec(python, ['-m', 'fi.context', ...args], { cwd: project, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, FI_CONTEXT_ORIGIN: apiUrl, FI_CONTEXT_ORGANIZATION_ID: author.organizationId, FI_CONTEXT_WORKSPACE_ID: author.workspaceId, FI_CONTEXT_CREDENTIAL: projectCredential.secret, ...env }, maxBuffer: 8 * 1024 * 1024 });
+  const projectCredential = await credential(api, reviewer, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: ['production'], version_ids: [] }], binding_ids: [], expires_at: hours(8) });
+  const cli = async (args, env = {}) => {
+    try {
+      return await exec(python, ['-m', 'fi.context', ...args], { cwd: project, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, FI_CONTEXT_ORIGIN: apiUrl, FI_CONTEXT_ORGANIZATION_ID: author.organizationId, FI_CONTEXT_WORKSPACE_ID: author.workspaceId, FI_CONTEXT_CREDENTIAL: projectCredential.secret, ...env }, maxBuffer: 8 * 1024 * 1024 });
+    } catch (error) { throw new Error(`fi.context ${args[0]} failed: ${String(error.stdout).slice(0, 600)}`); }
+  };
   const git = (...args) => exec('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd: project, encoding: 'utf8' });
   await exec('git', ['init', '-q', '-b', 'main', project]);
   await writeFile(resolve(project, 'README.md'), 'Synthetic support application checkout.\n');
   await git('add', '-A'); await git('commit', '-q', '-m', 'initial checkout');
-  await cli(['plan', '--name', prefix, '--label', 'production', '--client', 'codex', '--project', '.', '--out', '/tmp/' + prefix + '-install-plan.json']);
+  await cli(['plan', '--name', prefix, '--label', 'production', '--client', 'codex', '--allow-preview', '--project', '.', '--out', '/tmp/' + prefix + '-install-plan.json']);
   await cli(['apply', '--plan', '/tmp/' + prefix + '-install-plan.json', '--quiescent']);
   await git('add', '-A'); await git('commit', '-q', '-m', 'reviewed context v1');
   const goodCommit = (await git('rev-parse', 'HEAD')).stdout.trim();
 
-  for (const number of [2, 3]) {
+  for (const number of [2, 3, 4]) {
     draft = await api(author, 'POST', `${root}draft/start/`, { revision: 0, from_version: number - 1 });
-    draft = await api(author, 'PUT', `${root}draft/`, { revision: draft.revision, base_version: number - 1, description: 'Synthetic J6 incident recovery context', note: '', files: [{ path: 'AGENTS.md', content: number === 3 ? REGRESSED_ROOT : GOOD_ROOT(2) }] });
+    draft = await api(author, 'PUT', `${root}draft/`, { revision: draft.revision, base_version: number - 1, description: 'Synthetic J6 incident recovery context', note: '', files: [{ path: 'AGENTS.md', content: number === 3 ? REGRESSED_ROOT : number === 4 ? HOTFIX_ROOT : GOOD_ROOT(2) }] });
     versions.push(await publishContextVersion({ api, author, contextId, draft, base: number - 1 }));
   }
   await moveProduction({ api, author, reviewer, contextId, version: versions[2] });
   log('regressed v3 in production');
-  await cli(['update', '--project', '.', '--plan', '/tmp/' + prefix + '-update-plan.json']);
+  await cli(['update', '--allow-preview', '--project', '.', '--plan', '/tmp/' + prefix + '-update-plan.json']);
   await cli(['apply', '--plan', '/tmp/' + prefix + '-update-plan.json', '--quiescent']);
   await writeFile(resolve(project, 'docs', 'local-notes.md'), 'Local on-call notes that must survive restore.\n');
   await git('add', '-A'); await git('commit', '-q', '-m', 'update context to v3 (regression)');
@@ -129,17 +134,18 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   for (const key of ['o0', 'o1', 'o2', 'o3']) { orders[key] = `synthetic-${key}-${randomUUID()}`; await guest.seedOrder(orders[key]); }
   for (const key of ['t0', 't1', 't2', 't3']) threads[key] = randomUUID();
   const reports = {};
-  for (const key of ['A', 'E', 'L']) reports[key] = await credential(api, author, { purpose: 'report', grants: [], binding_ids: [bindings[key].id], expires_at: hours(8) });
-  const consume = (pins, expires) => credential(api, author, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: [], version_ids: pins.map((pin) => pin.id) }], binding_ids: [], expires_at: expires });
+  for (const key of ['A', 'E', 'L']) reports[key] = await credential(api, reviewer, { purpose: 'report', grants: [], binding_ids: [bindings[key].id], expires_at: hours(8) });
+  const consume = (pins, expires, labels = []) => credential(api, reviewer, { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels, version_ids: pins.map((pin) => pin.id) }], binding_ids: [], expires_at: expires });
   const guestRun = async (key, binding, creds, thread, order) => {
     const envFile = await guest.envFile(`${key}-${Date.now()}`, guestEnvironment({ consume: creds.consume.secret, report: reports[binding].secret, bindingId: bindings[binding].id }));
     await guest.put(`/state/requests/${key}.json`, JSON.stringify(requestFor(thread, order)) + '\n');
     return guest.execute(envFile, entrypoint(`/state/requests/${key}.json`, `/state/${key}.sqlite`, `/state/out/${key}-prep.json`));
   };
   // T0: the incident. The regressed release declines a refund its own policy allows.
-  const cV3 = { consume: await consume([versions[2]], hours(8)) };
+  const cV3 = { consume: await consume([], hours(8), ['production']) };
   const t0 = await guestRun('t0', 'A', cV3, threads.t0, orders.o0);
-  requireValue(t0.code === 0, 'The incident thread must complete (declined)');
+  const t0Reason = await guest.read('/state/out/t0-prep.json').then((text) => JSON.stringify({ status: JSON.parse(text).status, reason: JSON.parse(text).reason }), () => 'no output');
+  requireValue(t0.code === 0, `The incident thread must complete (declined): ${t0.code} ${t0Reason}`);
   const t0Out = JSON.parse(await guest.read('/state/out/t0-prep.json'));
   requireValue(/outside the 7-day refund window/.test(t0Out.output), 'The regression must decline the refund');
   const t0Session = (await probe.pg('SELECT id::text, incarnation_id::text AS instance_id, version_id::text, digest FROM model_hub_hubskillcontextsession WHERE binding_id=$1', [bindings.A.id]))[0];
@@ -154,13 +160,13 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   const cE = { consume: await consume([versions[0]], new Date(Date.now() + expireSeconds * 1000).toISOString()) };
   await guest.faults({ available: true, arm_after_business: true });
   const t2 = await guestRun('t2', 'E', cE, threads.t2, orders.o2);
-  requireValue(t2.code === 2, 'T2 must pause after its persisted refund');
+  requireValue(t2.code === 2, `T2 must pause after its persisted refund: ${t2.code} ${String(t2.stderr).slice(-700)}`);
   await guest.faults({ available: true, arm_after_business: false });
   // T3: same, then the application state volume holding its session mapping is lost.
   const cL = { consume: await consume([versions[0]], hours(8)) };
   await guest.faults({ available: true, arm_after_business: true });
   const t3 = await guestRun('t3', 'L', cL, threads.t3, orders.o3);
-  requireValue(t3.code === 2, 'T3 must pause after its persisted refund');
+  requireValue(t3.code === 2, `T3 must pause after its persisted refund: ${t3.code} ${String(t3.stderr).slice(-700)}`);
   await guest.faults({ available: true, arm_after_business: false });
   await guest.remove('/state/t3.sqlite');
   await guest.remove('/state/t3.sqlite-wal');

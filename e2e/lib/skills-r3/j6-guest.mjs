@@ -55,58 +55,68 @@ export async function startGuest({ runId, wheelsDir, fixtureDir, upstream = 'htt
       '-v', `${names.volume}:/state`, '--entrypoint', 'sleep', names.image, 'infinity']);
     const port = (await docker(['port', names.sidecar, '8090/tcp'])).trim().split(':').at(-1);
     const control = `http://127.0.0.1:${port}`;
-    const call = async (method, path, body) => {
-      const response = await fetch(`${control}${path}`, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(15_000) });
-      requireValue(response.ok, `Guest control ${path} failed`);
-      return response.json();
-    };
+    const guest = attachGuest({ names, control, token, build });
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      try { await call('GET', '/control/business'); break; } catch { await new Promise((done) => setTimeout(done, 200)); }
+      try { await guest.business(); break; } catch { await new Promise((done) => setTimeout(done, 200)); }
       requireValue(attempt < 49, 'The sidecar did not become ready');
     }
-    const guest = {
-      names, evidenceClass: GUEST_EVIDENCE_CLASS,
-      // Environment for a command: written to a private env-file, never to argv.
-      async envFile(name, values) {
-        const path = resolve(build, `${name}.env`);
-        await writeFile(path, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
-        return path;
-      },
-      execArgs(envFile, command) { return ['exec', '--env-file', envFile, names.guest, ...command]; },
-      async put(path, content) {
-        requireValue(path.startsWith('/state/'), 'Guest files live under /state');
-        await new Promise((done, reject) => {
-          const child = spawn('docker', ['exec', '-i', names.guest, 'sh', '-c', `cat > ${path} && chmod 600 ${path}`], { stdio: ['pipe', 'ignore', 'pipe'] });
-          let diagnostics = '';
-          child.stderr.on('data', (chunk) => { diagnostics = (diagnostics + String(chunk)).slice(-2048); });
-          child.once('error', reject);
-          child.once('exit', (code) => (code === 0 ? done() : reject(new Error(`guest write failed: ${diagnostics}`))));
-          child.stdin.end(content);
-        });
-      },
-      async read(path) { requireValue(path.startsWith('/state/'), 'Guest files live under /state'); return docker(['exec', names.guest, 'cat', path]); },
-      async exists(path) { try { await docker(['exec', names.guest, 'test', '-e', path]); return true; } catch { return false; } },
-      async remove(path) { requireValue(path.startsWith('/state/'), 'Guest files live under /state'); await docker(['exec', names.guest, 'rm', '-f', path]); },
-      async execute(envFile, command) {
-        try { const { stdout } = await run('docker', guest.execArgs(envFile, command), { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }); return { code: 0, stdout }; }
-        catch (error) { return { code: error.code, stdout: error.stdout ?? '' }; }
-      },
-      // Independent controls and ledgers (control token, not an application credential).
-      seedOrder: (orderId, age = 30, amount = 25) => call('POST', '/control/orders', { order_id: orderId, age, amount }),
-      faults: (body) => call('POST', '/control/faults', body),
-      ledger: () => call('GET', '/control/ledger'),
-      business: () => call('GET', '/control/business'),
-      // Egress attestation: only the sidecar answers; the public internet does not.
-      async egress() {
-        const probe = `import socket,sys\nfor host,port in (('skills-fakes',8081),('1.1.1.1',443),('8.8.8.8',53)):\n    s=socket.socket(); s.settimeout(3)\n    try: s.connect((host,port)); print(host,'open')\n    except Exception as e: print(host,'closed')\n    finally: s.close()\n`;
-        const out = await docker(['exec', names.guest, 'python', '-c', probe]);
-        return Object.fromEntries(out.trim().split('\n').map((line) => line.split(' ')));
-      },
-      async stop() { await stopGuestResources(names); await rm(build, { recursive: true, force: true }); return verifyGone(names); },
-    };
     return guest;
   } catch (error) { return fail(error); }
+}
+
+/** Connect to a guest another process created (for example the registered driver). */
+export function attachGuest({ names, control, token, build = null }) {
+  requireValue(typeof control === 'string' && /^http:\/\/127\.0\.0\.1:\d+$/.test(control) && typeof token === 'string' && token.length >= 32, 'Guest control is the VM loopback only');
+  let envDir = build;
+  const call = async (method, path, body) => {
+    const response = await fetch(`${control}${path}`, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(15_000) });
+    requireValue(response.ok, `Guest control ${path} failed`);
+    return response.json();
+  };
+  const guest = {
+    names, evidenceClass: GUEST_EVIDENCE_CLASS,
+    // Environment for a command: written to a private env-file, never to argv.
+    async envFile(name, values) {
+      envDir ??= await mkdtemp(resolve(tmpdir(), 'j6-guest-env-'));
+      const path = resolve(envDir, `${name}.env`);
+      await writeFile(path, Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
+      return path;
+    },
+    execArgs(envFile, command) { return ['exec', '--env-file', envFile, names.guest, ...command]; },
+    async put(path, content) {
+      requireValue(path.startsWith('/state/'), 'Guest files live under /state');
+      await new Promise((done, reject) => {
+        const child = spawn('docker', ['exec', '-i', names.guest, 'sh', '-c', `cat > ${path} && chmod 600 ${path}`], { stdio: ['pipe', 'ignore', 'pipe'] });
+        let diagnostics = '';
+        child.stderr.on('data', (chunk) => { diagnostics = (diagnostics + String(chunk)).slice(-2048); });
+        child.once('error', reject);
+        child.once('exit', (code) => (code === 0 ? done() : reject(new Error(`guest write failed: ${diagnostics}`))));
+        child.stdin.end(content);
+      });
+    },
+    async read(path) { requireValue(path.startsWith('/state/'), 'Guest files live under /state'); return docker(['exec', names.guest, 'cat', path]); },
+    async exists(path) { try { await docker(['exec', names.guest, 'test', '-e', path]); return true; } catch { return false; } },
+    async remove(path) { requireValue(path.startsWith('/state/'), 'Guest files live under /state'); await docker(['exec', names.guest, 'rm', '-f', path]); },
+    async execute(envFile, command) {
+      try { const { stdout, stderr } = await run('docker', guest.execArgs(envFile, command), { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }); return { code: 0, stdout, stderr }; }
+      catch (error) { return { code: error.code, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }; }
+    },
+    // Independent controls and ledgers (control token, not an application credential).
+    seedOrder: (orderId, age = 30, amount = 25) => call('POST', '/control/orders', { order_id: orderId, age, amount }),
+    faults: (body) => call('POST', '/control/faults', body),
+    ledger: () => call('GET', '/control/ledger'),
+    business: () => call('GET', '/control/business'),
+    // Egress attestation: only the sidecar answers; the public internet does not.
+    async egress() {
+      const probe = `import socket,sys\nfor host,port in (('skills-fakes',8081),('1.1.1.1',443),('8.8.8.8',53)):\n    s=socket.socket(); s.settimeout(3)\n    try: s.connect((host,port)); print(host,'open')\n    except Exception as e: print(host,'closed')\n    finally: s.close()\n`;
+      const out = await docker(['exec', names.guest, 'python', '-c', probe]);
+      return Object.fromEntries(out.trim().split('\n').map((line) => line.split(' ')));
+    },
+    describe: () => ({ names, control, token }),
+    async stop() { await stopGuestResources(names); if (envDir) await rm(envDir, { recursive: true, force: true }); return verifyGone(names); },
+  };
+    return guest;
 }
 
 async function stopGuestResources(names) {

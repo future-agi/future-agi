@@ -18,3 +18,14 @@ declare module '*skills-r3/programmable-provider.mjs' {
   }
   export function completion(message: { content: string | null; tool_calls?: object[] }, options?: { finishReason?: string }): object;
 }
+declare module '*skills-r3/j6-guest.mjs' {
+  export function startGuest(options: { runId: string; wheelsDir: string; fixtureDir: string }): Promise<any>;
+  export function attachGuest(options: unknown): any;
+}
+declare module '*skills-r3/j6-scenario.mjs' {
+  export function actorOf(actor: unknown): any;
+  export function prepareJ6Scenario(options: Record<string, unknown>): Promise<any>;
+}
+declare module '*skills-r3/j6-registration.mjs' {
+  export function buildJ6Registration(options: Record<string, unknown>): Promise<{ registration: any; provenance: any }>;
+}
