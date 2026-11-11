@@ -458,6 +458,10 @@ def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):
         dict.fromkeys(("bound", "pending", "rejected", "expired", "conflict"), 0),
         bound=1,
     )
-    assert AttachmentOccurrence.objects.filter(
-        pk__in=[aborted.occurrence_id, expired.occurrence_id], bound_at__isnull=False
-    ).count() == 0
+    assert (
+        AttachmentOccurrence.objects.filter(
+            pk__in=[aborted.occurrence_id, expired.occurrence_id],
+            bound_at__isnull=False,
+        ).count()
+        == 0
+    )
