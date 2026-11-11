@@ -195,12 +195,21 @@ reasons. There is no string-to-boolean coercion. Binary, missing, inconsistent
 or oversized patches require a person; the model never certifies a truncated
 diff. Review findings and the decision are recorded, without logging raw diffs.
 
-A bot-authored PR comment reserves each round **before** the AI call. The
-reservation survives force pushes and workflow reruns. At most **three rounds
-per PR**, including failed and cancelled attempts, are allowed. A previously
-attempted head/base pair is not automatically re-reviewed. A changed head or
-base may consume the next round; after three, the controller posts a human
-escalation. The bot does not modify code or dismiss findings. The author fixes
+A bot-authored PR comment reserves each attempt **before** the AI call. The
+reservation survives force pushes and workflow reruns. The budget counts
+**different diffs**, not commits: each attempt records a digest of the exact
+patches the model reviews (hunk line numbers ignored). At most **three different
+diffs per PR** are reviewed, including failed and cancelled attempts.
+
+- A previously attempted head/base pair is never re-reviewed.
+- A diff whose earlier attempt did not pass is never re-reviewed, even on a new
+  base, so a blocking verdict cannot be re-rolled by merging dev in.
+- Merging dev into the branch without changing the author's own diff gets a
+  fresh review on the new base at no cost to the budget. This matters because
+  `dev` requires branches to be up to date and moves often. These re-reviews are
+  capped at nine attempts per PR in total.
+
+After the budget is spent, the controller posts a human escalation. The bot does not modify code or dismiss findings. The author fixes
 blocking findings with a reason and submits a new revision; a person takes over
 if the budget or automated path cannot complete. Do not delete/edit reservation
 comments to bypass the cap: check runs cannot be deleted, so a review check
@@ -215,7 +224,7 @@ any AI action. This includes “Re-run failed jobs”, a specific AI-job rerun, 
 full workflow reruns. They cannot reuse the successful prepare job's saved
 reservation to buy extra invocations. Use a **new** dispatch on `dev` or the next
 scheduled evaluation instead; the durable ledger still rejects a previously
-attempted head/base pair and still caps the whole PR at three rounds. A failed
+attempted head/base pair and still caps the whole PR at three different diffs. A failed
 or cancelled first attempt is not refunded. The verdict publisher checks the
 original run identity and pending check record before writing. Completed
 verdicts cannot be overwritten by replay, even within the original attempt.
@@ -330,7 +339,7 @@ Suggested rollout:
    This emits audit labels/comments but cannot run AI review or merge.
 4. Provision the review key, set a weekday window and a very small approved trust
    list. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
-   pending/failed checks, three-round escalation, and post-merge dispatches.
+   pending/failed checks, three-diff escalation, a dev catch-up with an unchanged diff, and post-merge dispatches.
    Confirm the medium/high human path and every relevant dev push consumer.
 5. Expand only after the audit trail, post-merge verification and revert/incident
    guardrails behave as expected. Policy widening is itself HIGH-risk.

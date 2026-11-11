@@ -1048,10 +1048,16 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(self.api.writes("pulls/42/reviews"))
             self.assertFalse(self.api.writes("pulls/42/merge"))
 
+    def new_head(self, sha, text=None):
+        """A pushed revision: new head SHA, CI green on it, optionally a new diff."""
+        self.api.pr["head"]["sha"] = sha
+        self.api.checks[0]["head_sha"] = sha
+        if text is not None:
+            self.api.files[0]["patch"] = "@@ -1 +1 @@\n+" + text
+
     def test_three_rounds_across_force_pushes_then_human(self):
         for index in range(4):
-            self.api.pr["head"]["sha"] = str(index + 1) * 40
-            self.api.checks[0]["head_sha"] = self.api.pr["head"]["sha"]
+            self.new_head(str(index + 1) * 40, f"change {index}")
             self.prepare()
         self.assertEqual(len(self.api.writes("check-runs")), 3)
         self.assertEqual(self.outputs["review"], "false")
@@ -1075,6 +1081,51 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(
             risk.review_check_passes(self.api, self.api.checks, context, POLICY)
         )
+
+    def catch_up(self, sha, tip):
+        """The author merges dev into the branch: new head and base, same own diff,
+        with shifted hunk line numbers."""
+        self.api.dev_tip = tip
+        self.api.pr["base"]["sha"] = tip
+        self.new_head(sha)
+        self.api.files[0]["patch"] = self.api.files[0]["patch"].replace("@@ -1 +1 @@", "@@ -9 +9 @@")
+        os.environ["POLICY_SHA"] = tip
+
+    def test_catch_up_with_the_same_diff_costs_no_round(self):
+        self.passing_review()
+        self.catch_up("1" * 40, OTHER)
+        context = self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual((context["head"], context["base"]), ("1" * 40, OTHER))
+        self.assertEqual(len(risk.charged_diffs(risk.review_ledger(self.api, 42, self.api.comments))), 1)
+        self.assertIn("different diffs reviewed: 1/3", self.api.comments[-1]["body"])
+
+    def test_same_diff_that_failed_is_not_reviewed_again_after_a_catch_up(self):
+        context = self.prepare()
+        self.assertFalse(risk.publish_verdict(self.api, POLICY, context, verdict(blocking_findings=True), "success"))
+        reviews = len(self.api.writes("check-runs"))
+        self.catch_up("1" * 40, OTHER)
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "false")
+        self.assertEqual(len(self.api.writes("check-runs")), reviews)
+        self.assertTrue(any("already had a review attempt" in c["body"] for c in self.api.comments))
+
+    def test_a_changed_diff_is_charged_a_new_round(self):
+        self.passing_review()
+        self.new_head("1" * 40, "a real change")
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual(len(risk.charged_diffs(risk.review_ledger(self.api, 42, self.api.comments))), 2)
+
+    def test_free_re_reviews_are_capped(self):
+        for index in range(12):
+            self.catch_up(f"{index + 1:x}" * 40, f"{index + 2:x}" * 40)
+            context = self.prepare()
+            if self.outputs["review"] == "true":
+                raw = verdict(head_sha=context["head"], base_sha=context["base"])
+                self.assertTrue(risk.publish_verdict(self.api, POLICY, context, raw, "success"))
+        self.assertEqual(len([w for w in self.api.writes("check-runs") if w[0] == "POST"]), 9)
+        self.assertTrue(any("budget is exhausted" in c["body"] for c in self.api.comments))
 
     def forged_check(self, head):
         record = {"pr": 42, "head": head, "base": BASE, "run_id": 10, "round": 1}
@@ -1133,7 +1184,7 @@ class ControllerTests(unittest.TestCase):
         self.prepare()
         self.assertEqual(len(self.api.writes("check-runs")), reviews)
         self.assertEqual(self.outputs["review"], "false")
-        self.assertTrue(any("already consumed a review attempt" in c["body"] for c in self.api.comments))
+        self.assertTrue(any("already had a review attempt" in c["body"] for c in self.api.comments))
 
     def test_stale_recorded_base_but_current_branch_proceeds(self):
         self.api.pr["base"]["sha"] = OTHER
@@ -1301,7 +1352,7 @@ class ControllerTests(unittest.TestCase):
         external_id = self.api.writes("check-runs")[0][2]["external_id"]
         self.assertLess(len(external_id), 255)
         self.assertEqual(
-            set(json.loads(external_id)), {"pr", "head", "base", "run_id", "round"}
+            set(json.loads(external_id)), {"pr", "head", "base", "run_id", "round", "patch"}
         )
 
     def test_schedule_dispatches_dev_without_evaluating_or_executing_pr_code(self):
