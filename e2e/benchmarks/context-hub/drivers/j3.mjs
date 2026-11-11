@@ -68,7 +68,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const receipt = async (stage, ledger, value, decision = null, source = 'api') => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: await record(stage.id, value), actionSequences: [], ...(decision ? { decision } : {}) });
   const runtimeArgs = (operation, index) => [resolve('e2e/harness/skills-r3/j3-runtime.py'), operation, inputPath, String(index)];
   const operationsArgs = (operation, value) => [resolve('e2e/harness/skills-r3/j3-operations.py'), operation, inputPath, String(value)];
-  const snapshot = (name, page) => page.screenshot({ path: resolve(output, 'shots', `${name}.png`) });
+  const snapshot = (name, page) => page.screenshot({ path: resolve(output, 'shots', `${name}.png`), animations: 'disabled' });
   return {
     mode: 'product', provenance: input.provenance,
     async perform(stage, { ledger, signal }) {
@@ -300,6 +300,8 @@ export async function createDriver({ jobId, runId, registration }) {
             await click('I know of no bundled answer keys or evaluation material', `parent-${index}-no-answer-keys`, 'checkbox');
             await operator.review(`parent-${index}-outbound-inventory`, ['standing-root', ...input.leaves.map((_, n) => `linked-skill-${n}`), 'case', 'reference'], [], () => page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check());
             await click('I acknowledge provider processing of this reviewed context and test request.', `parent-${index}-provider-consent`, 'checkbox');
+            // Retain the button's real state beside the picture so a grey frame is never ambiguous.
+            await record(`parent-${index}-run-button-state`, { enabled: await page.getByRole('button', { name: 'Run whole-context test', exact: true }).isEnabled() });
             await snapshot(`parent-${index}-test-preview`, page);
             const started = watch(res => res.url().endsWith('/test-runs/') && res.request().method() === 'POST');
             await click('Run whole-context test', `parent-${index}-run`);
