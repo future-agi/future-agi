@@ -87,7 +87,7 @@ export const mapAgentDetail = (raw) => ({
   activeVersionNumber: raw.active_version?.version_number ?? null,
   versionCount: raw.version_count,
   agentKind: raw.agent_kind ?? null,
-  source: raw.source ?? null,
+  source: raw.source ?? raw.active_version?.source?.kind ?? null,
   environmentCount: raw.environment_count,
   observabilityEnabled: raw.observability_enabled,
   observeProject: raw.observe_project
@@ -321,6 +321,7 @@ export function useSetProduction(agentId) {
       (
         await axios.post(
           endpoints.agentDefinitions.productionVersion(agentId, versionId),
+          {},
         )
       ).data,
     onSuccess: () =>
@@ -337,7 +338,10 @@ export function useRetryVersion(agentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ versionId }) =>
-      axios.post(endpoints.agentDefinitions.retryVersion(agentId, versionId)),
+      axios.post(
+        endpoints.agentDefinitions.retryVersion(agentId, versionId),
+        {},
+      ),
     onSuccess: () => invalidateVersions(queryClient, agentId),
   });
 }
@@ -346,7 +350,10 @@ export function useDiscardVersion(agentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ versionId }) =>
-      axios.post(endpoints.agentDefinitions.discardVersion(agentId, versionId)),
+      axios.post(
+        endpoints.agentDefinitions.discardVersion(agentId, versionId),
+        {},
+      ),
     onSuccess: () => invalidateVersions(queryClient, agentId),
   });
 }

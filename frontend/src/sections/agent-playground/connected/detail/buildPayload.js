@@ -13,10 +13,12 @@ export const buildFromAgentPayload = ({
   version,
   name,
   scenarioCount,
+  parallelism = 1,
 }) => ({
   schema_version: SCHEMA_VERSION,
   scenario_count: scenarioCount,
-  artifacts: { level: "standard" },
+  ...(parallelism > 1 ? { runtime: { parallelism } } : {}),
+  artifacts: { level: "traces-and-recordings" },
   source:
     version.source?.kind === "archive"
       ? {

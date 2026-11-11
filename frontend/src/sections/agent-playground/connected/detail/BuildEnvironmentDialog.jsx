@@ -24,10 +24,20 @@ import {
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { MAX_SCENARIO_COUNT } from "src/pages/dashboard/harness/requestMapper";
+import ParallelismField from "src/sections/simulate/environments/panels/ParallelismField";
+import { clampParallelism } from "src/sections/simulate/environments/parallelism.constants";
 import { MONO } from "./format";
 import { buildFromAgentPayload, readyToBuild } from "./buildPayload";
 
-const SCENARIO_COUNTS = [10, 25, 50, 100];
+const DEFAULT_SCENARIO_COUNT = 10;
+
+const scenarioCountOf = (text) => {
+  const count = Number(text);
+  return Number.isInteger(count) && count >= 1 && count <= MAX_SCENARIO_COUNT
+    ? count
+    : null;
+};
 
 function Check({ check }) {
   const ok = check.status === "ok";
@@ -66,7 +76,12 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   );
   const [versionId, setVersionId] = useState(agent.activeVersionId || "");
   const [name, setName] = useState(`${agent.name} environment`);
-  const [scenarioCount, setScenarioCount] = useState(25);
+  const [scenarioText, setScenarioText] = useState(
+    String(DEFAULT_SCENARIO_COUNT),
+  );
+  const scenarioCount = scenarioCountOf(scenarioText);
+  const [parallelismInput, setParallelismInput] = useState("1");
+  const parallelism = clampParallelism(parallelismInput);
   const [building, setBuilding] = useState(false);
   const chosen = versionId || versions[0]?.id || "";
   // The chosen version may be past the first page of the list: its own read
@@ -88,15 +103,17 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const blocked = !preflight.data?.ok;
   const reason = !name.trim()
     ? "Name it first"
-    : !version
-      ? "Pick a version to build from"
-      : preflight.isLoading
-        ? "Checking the version"
-        : preflight.isError
-          ? errorMessage(preflight.error)
-          : preflight.data && !preflight.data.ok
-            ? "Fix what the preflight found first"
-            : "";
+    : !scenarioCount
+      ? `Scenarios must be between 1 and ${MAX_SCENARIO_COUNT}`
+      : !version
+        ? "Pick a version to build from"
+        : preflight.isLoading
+          ? "Checking the version"
+          : preflight.isError
+            ? errorMessage(preflight.error)
+            : preflight.data && !preflight.data.ok
+              ? "Fix what the preflight found first"
+              : "";
 
   const build = async () => {
     setBuilding(true);
@@ -107,6 +124,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
           version,
           name: name.trim(),
           scenarioCount,
+          parallelism,
         }),
         harnessIdempotencyKey(),
       );
@@ -153,18 +171,27 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
             ))}
           </TextField>
           <TextField
-            select
             fullWidth
+            type="number"
             label="Scenarios"
-            value={scenarioCount}
-            onChange={(e) => setScenarioCount(Number(e.target.value))}
-          >
-            {SCENARIO_COUNTS.map((n) => (
-              <MenuItem key={n} value={n}>
-                {n}
-              </MenuItem>
-            ))}
-          </TextField>
+            value={scenarioText}
+            onChange={(e) => setScenarioText(e.target.value)}
+            error={!scenarioCount}
+            helperText={
+              scenarioCount ? undefined : `Between 1 and ${MAX_SCENARIO_COUNT}`
+            }
+            inputProps={{
+              min: 1,
+              max: MAX_SCENARIO_COUNT,
+              step: 1,
+              "data-testid": "build-env-scenarios",
+            }}
+          />
+          <ParallelismField
+            value={parallelism}
+            input={parallelismInput}
+            onChange={setParallelismInput}
+          />
           {preflight.isLoading && (
             <Typography
               sx={{ typography: "s2", color: "text.secondary" }}
@@ -208,7 +235,9 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={building || !version || !name.trim() || blocked}
+          disabled={
+            building || !version || !name.trim() || !scenarioCount || blocked
+          }
           onClick={build}
         >
           Build environment

@@ -47,7 +47,7 @@ function NewVersionButton({ agent }) {
           const label = data.version.version_name_display;
           enqueueSnackbar(
             data.up_to_date
-              ? `${label} is already up to date`
+              ? `${label} is already at the latest commit`
               : `${label} created; it is being checked`,
             { variant: data.up_to_date ? "info" : "success" },
           );
