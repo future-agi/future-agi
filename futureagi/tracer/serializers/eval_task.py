@@ -376,6 +376,15 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "progress",
         ]
 
+    def create(self, validated_data):
+        # Lifecycle timestamps are server-owned. A new continuous task's
+        # coverage floor is its creation time; a client start_time would
+        # backfill history from before the task existed, or skip arrivals
+        # until a future time.
+        validated_data.pop("start_time", None)
+        validated_data.pop("end_time", None)
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
         return update_task_configuration(instance, validated_data)
 
