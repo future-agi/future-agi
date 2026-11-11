@@ -140,7 +140,10 @@ function envelope(draft, name) {
     // to the default when a draft predates the field.
     scenario_count: draft.scenarioCount ?? SCENARIO_COUNT,
     artifacts: { ...ARTIFACTS },
-    metadata: { name, authoring_key: name },
+    metadata: {
+      name: String(draft.displayName || "").trim() || name,
+      authoring_key: name,
+    },
   };
   const parallelism = Math.min(
     MAX_PARALLELISM,
