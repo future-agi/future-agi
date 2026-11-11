@@ -98,3 +98,23 @@ export function useNativeRun(contextId, evidenceId) {
     terminalParts: [[...nativeParts(contextId), 'runs']],
   });
 }
+
+const shareEndpoint = (contextId, evidenceId) => apiPath('/model-hub/skills/contexts/{context_id}/native/runs/{evidence_id}/share/', { context_id: contextId, evidence_id: evidenceId });
+/** Shares the exact native evidence, then previews the version-bound release packet for the separate review job. */
+export function usePrepareReleasePacket(contextId) {
+  return useSkillV11Mutation({
+    send: async ({ run, target, label, pipeline, userId }, config) => {
+      await axios.post(shareEndpoint(contextId, run.id), { acknowledge_snapshot_sharing: true }, config);
+      const reference = skillV11Result(await axios.get(apiPath('/model-hub/skills/evidence/{source}/{source_id}/', { source: 'simulation_native', source_id: run.id }), config));
+      const candidate = run.arms.find((arm) => arm.variant === 'candidate');
+      const packet = skillV11Result(await axios.post(apiPath('/model-hub/skills/release-requests/preview/'), {
+        resource_id: contextId, kind: 'agent_context', candidate_version_id: candidate.versionId, label,
+        target: { binding_id: target.bindingId, environment_id: null, revision: target.revision, configuration_digest: target.configurationDigest },
+        evidence: [{ source: 'simulation_native', source_id: run.id, annotation_revision: reference.annotation_revision }],
+        external_pipeline: { url: pipeline.url, configuration_identity: pipeline.configurationIdentity, decision: pipeline.decision, trust: 'operator_recorded_unimported', recorded_by: userId },
+      }, config));
+      return { fingerprint: packet.fingerprint, candidateVersion: candidate.version, evidence: packet.packet.evidence.length, targetDigest: packet.packet.target.configuration_digest, pipelineUrl: packet.packet.external_pipeline.url };
+    },
+    invalidate: () => [nativeParts(contextId)],
+  });
+}

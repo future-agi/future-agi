@@ -23,7 +23,9 @@ def control(action="issue_refund"):
     }
 
 
-def observed(selected=SKILL, operations=(), answer="Your receipt is on its way.", delivered=ROOT):
+def observed(
+    selected=SKILL, operations=(), answer="Your receipt is on its way.", delivered=ROOT
+):
     return {
         "application": {
             "status": "completed",
@@ -33,7 +35,11 @@ def observed(selected=SKILL, operations=(), answer="Your receipt is on its way."
                 {"kind": "child_selection", "body": {"skill_id": selected}},
                 {
                     "kind": "file_delivery",
-                    "body": {"skill_id": selected, "path": "SKILL.md", "content_digest": _digest(delivered)},
+                    "body": {
+                        "skill_id": selected,
+                        "path": "SKILL.md",
+                        "content_digest": _digest(delivered),
+                    },
                 },
             ],
         },
@@ -43,12 +49,20 @@ def observed(selected=SKILL, operations=(), answer="Your receipt is on its way."
 
 CASE = {
     "id": "case",
-    "checks": [{"id": "c1", "kind": "contains", "config": {"text": "receipt", "case_sensitive": False}}],
+    "checks": [
+        {
+            "id": "c1",
+            "kind": "contains",
+            "config": {"text": "receipt", "case_sensitive": False},
+        }
+    ],
 }
 
 
 def grade(body, ctl=None):
-    result = grade_observation(control=ctl or control(), case=CASE, variant="candidate", body=body)
+    result = grade_observation(
+        control=ctl or control(), case=CASE, variant="candidate", body=body
+    )
     return {check.family: check.verdict for check in result["checks"]}
 
 
@@ -57,7 +71,10 @@ APPLIED = {"action": "issue_refund", "status": "applied"}
 
 def test_correct_application_run_passes_every_family():
     assert grade(observed(operations=[APPLIED])) == {
-        "selection": "pass", "delivery": "pass", "tools": "pass", "answer": "pass",
+        "selection": "pass",
+        "delivery": "pass",
+        "tools": "pass",
+        "answer": "pass",
     }
 
 
@@ -79,7 +96,10 @@ def test_a_second_business_action_is_not_a_repair():
 
 
 def test_delivery_requires_the_exact_bytes_of_the_frozen_arm():
-    assert grade(observed(operations=[APPLIED], delivered=ROOT + "tampered"))["delivery"] == "fail"
+    assert (
+        grade(observed(operations=[APPLIED], delivered=ROOT + "tampered"))["delivery"]
+        == "fail"
+    )
 
 
 def test_none_expectation_requires_no_business_operation():
@@ -91,5 +111,7 @@ def test_none_expectation_requires_no_business_operation():
 def test_an_incomplete_application_has_no_checks_to_pass():
     body = observed(operations=[APPLIED])
     body["application"]["status"] = "paused"
-    result = grade_observation(control=control(), case=CASE, variant="candidate", body=body)
+    result = grade_observation(
+        control=control(), case=CASE, variant="candidate", body=body
+    )
     assert result["status"] == "incomplete" and result["checks"] == []

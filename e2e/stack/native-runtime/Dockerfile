@@ -5,7 +5,7 @@ ARG CTXHUB_APP_COMMIT
 ENV CTXHUB_APP_COMMIT=${CTXHUB_APP_COMMIT} PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY wheels/ /tmp/wheels/
 RUN pip install --no-cache-dir /tmp/wheels/futureagi-*.whl 'httpx>=0.27,<1' && rm -rf /tmp/wheels
-COPY measure.py runtime.py /opt/ctxhub/
+COPY measure.py runtime.py app_cell.py retained_ci.py production_request.py ci_dataset.json /opt/ctxhub/
 WORKDIR /opt/ctxhub
 USER 10001:10001
 ENTRYPOINT ["python", "/opt/ctxhub/runtime.py"]

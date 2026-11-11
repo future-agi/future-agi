@@ -24,7 +24,10 @@ CONTEXT = Path(os.environ.get("CTXHUB_CONTEXT_MOUNT", "/fi_context"))
 STATE = Path(os.environ.get("CTXHUB_STATE_MOUNT", "/fi_state"))
 OUTPUT = Path(os.environ.get("CTXHUB_OUTPUT_MOUNT", "/fi_output"))
 sys.path.insert(0, str(SOURCE / "src"))  # the mounted, read-only application source
-RUNTIME_FILES = (Path(__file__).resolve(), Path(__file__).resolve().with_name("runtime.py"))
+RUNTIME_FILES = tuple(
+    Path(__file__).resolve().with_name(name)
+    for name in ("measure.py", "runtime.py", "app_cell.py", "retained_ci.py", "production_request.py", "ci_dataset.json")
+)
 PROTOCOL = "skills-native-v1"
 ADAPTER = "fi.context.adapters.simulation_entrypoint"
 PROVIDER_URL = os.environ.get("CTXHUB_PROVIDER_URL", "http://skills-fakes:8080/v1")

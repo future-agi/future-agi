@@ -7,8 +7,9 @@ import {
 } from '@mui/material';
 import {
   useCreateNativeRun, useCreateNativeTarget, useNativeRun, useNativeRuns, useNativeTargets, usePreviewNativeRun,
-  useQualifyNativeTarget, useRuntimeConfiguration,
+  usePrepareReleasePacket, useQualifyNativeTarget, useRuntimeConfiguration,
 } from 'src/api/skills/context-native';
+import { useAuthContext } from 'src/auth/hooks';
 import { useAppendEvidenceAnnotation, useEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
@@ -123,7 +124,26 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
 }
 CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, canWrite: PropTypes.bool.isRequired };
 
-function RunDetail({ contextId, evidenceId, canWrite }) {
+function ReleasePacket({ contextId, run, target, canWrite }) {
+  const { user } = useAuthContext();
+  const prepare = usePrepareReleasePacket(contextId);
+  const [pipeline, setPipeline] = useState({ url: '', configurationIdentity: '', decision: '' });
+  const set = (key) => (event) => setPipeline({ ...pipeline, [key]: event.target.value });
+  const valid = pipeline.url.trim() && pipeline.configurationIdentity.trim() && pipeline.decision.trim();
+  return <Section title="Release packet" description="Prepares the exact version, runtime target and shared evidence for the separate release review. Nothing is released here.">
+    <Stack spacing={1.5} sx={{ maxWidth: 560 }}>
+      <TextField size="small" label="Retained pipeline run URL" value={pipeline.url} onChange={set('url')} />
+      <TextField size="small" label="Pipeline configuration identity" value={pipeline.configurationIdentity} onChange={set('configurationIdentity')} />
+      <TextField size="small" label="Pipeline decision" value={pipeline.decision} onChange={set('decision')} />
+      {prepare.isError && <Alert severity="error">{prepare.error?.response?.data?.error?.message || 'The packet could not be prepared. Check the shared evidence, target and pipeline record.'}</Alert>}
+      {prepare.data && <Alert severity="success">Packet ready · v{prepare.data.candidateVersion} · {prepare.data.evidence} shared evidence · target {short(prepare.data.targetDigest)} · {short(prepare.data.fingerprint)}</Alert>}
+      <Box><Button variant="outlined" size="small" disabled={!canWrite || !target || !valid || prepare.isPending} onClick={() => prepare.mutate({ run, target, label: 'production', pipeline, userId: user?.id })}>Share evidence and prepare packet</Button></Box>
+    </Stack>
+  </Section>;
+}
+ReleasePacket.propTypes = { contextId: PropTypes.string.isRequired, run: PropTypes.object.isRequired, target: PropTypes.object, canWrite: PropTypes.bool.isRequired };
+
+function RunDetail({ contextId, evidenceId, canWrite, target }) {
   const query = useNativeRun(contextId, evidenceId);
   const [open, setOpen] = useState(null);
   if (query.isLoading) return <ContentSkeleton label="Loading verification result" />;
@@ -152,10 +172,11 @@ function RunDetail({ contextId, evidenceId, canWrite }) {
         {FAMILIES.map(([key]) => <TableCell key={key}><Verdict value={cell[key]} /></TableCell>)}
       </TableRow>)}</TableBody></Table>
     </TableContainer>}
+    {run.decision?.state === 'release_ready' && !active && <ReleasePacket contextId={contextId} run={run} target={target} canWrite={canWrite} />}
     {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => setOpen(null)} />}
   </Stack>;
 }
-RunDetail.propTypes = { contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired };
+RunDetail.propTypes = { contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object };
 
 function PlanSection({ contextId, versions, viewed, cases, target, canWrite, onStarted }) {
   const preview = usePreviewNativeRun(contextId);
@@ -236,7 +257,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
         <TextField select size="small" label="Verification" value={focus || ''} onChange={(event) => setSelected(event.target.value)} sx={{ maxWidth: 360 }}>
           {runs.data.map((run) => <MenuItem key={run.id} value={run.id}>{short(run.executionFingerprint)} · {run.status} · {new Date(run.createdAt).toLocaleString()}</MenuItem>)}
         </TextField>
-        {focus && <RunDetail key={focus} contextId={contextId} evidenceId={focus} canWrite={canWrite} />}
+        {focus && <RunDetail key={focus} contextId={contextId} evidenceId={focus} canWrite={canWrite} target={target} />}
       </Stack> : <Typography variant="s1">No application verification has run for this context.</Typography>}
     </Section>
   </Stack>;

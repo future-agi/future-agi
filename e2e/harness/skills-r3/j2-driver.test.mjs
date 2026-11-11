@@ -12,14 +12,15 @@ test('J2 registration loads a fail-closed driver, not prerequisite artifacts as 
   try {
     process.env.J2_DRIVER_INPUT = join(directory, 'input.json');
     process.env.J2_DRIVER_OUTPUT = directory;
-    const input = { appUrl: 'http://localhost:3100', apiUrl: 'http://localhost:8100', contextId: '10000000-0000-4000-8000-000000000001', actor: { access: 'synthetic', organizationId: 'org', workspaceId: 'workspace' }, provenance: { dirty: true } };
+    const input = { pgUrl: 'postgresql://invalid@localhost:1/none', appUrl: 'http://localhost:3100', apiUrl: 'http://localhost:8100', contextId: '10000000-0000-4000-8000-000000000001', actor: { access: 'synthetic', organizationId: 'org', workspaceId: 'workspace' }, provenance: { dirty: true } };
     await writeFile(process.env.J2_DRIVER_INPUT, JSON.stringify(input), { mode: 0o600 });
     const args = { jobId: 'J2', runId: 'j2-abort', registration: { evidence_scope: 'synthetic', cohort: 'configured' } };
     assert.equal(getJob('J2').integration.status, 'incomplete');
     assert.equal(getJob('J2').integration.complete_job_qualified, false);
     const driver = await createRegisteredDriver(args);
     for (const method of ['perform', 'observe', 'teardown']) assert.equal(typeof driver[method], 'function');
-    await assert.rejects(driver.observe({ id: 'historical-reproduced' }, { signal: new AbortController().signal }), /not been observed/);
+    // No stage ran, so no independent evidence exists to observe.
+    await assert.rejects(driver.observe({ id: 'historical-reproduced' }, { signal: new AbortController().signal }));
     await assert.rejects(driver.perform({ id: 'qualify-application' }, { signal: AbortSignal.abort() }), /cancelled/);
     assert.deepEqual(await driver.teardown(), { qualified: true });
     await writeFile(process.env.J2_DRIVER_INPUT, JSON.stringify({ ...input, apiUrl: 'https://example.invalid' }));

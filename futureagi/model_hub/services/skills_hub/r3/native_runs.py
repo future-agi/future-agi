@@ -526,9 +526,7 @@ def _plan(*, principal: SkillPrincipal, context_id: UUID, request: dict) -> dict
         {
             **case,
             "fixtures": [
-                item
-                for item in case["fixtures"]
-                if item["name"] != EXPECTATION_FIXTURE
+                item for item in case["fixtures"] if item["name"] != EXPECTATION_FIXTURE
             ],
         }
         for case in cases
@@ -595,9 +593,9 @@ def _plan_output(plan: dict) -> dict:
                     if case["id"] in plan["expectations"]
                     else None
                 ),
-                "expected_action": plan["expectations"].get(case["id"], {}).get(
-                    "action"
-                ),
+                "expected_action": plan["expectations"]
+                .get(case["id"], {})
+                .get("action"),
             }
             for case in plan["cases"]
         ],
@@ -914,7 +912,10 @@ def record_guest_health(*, attempt: HostedHarnessAttempt, health: dict) -> dict:
         verify_guest_health(spec=_spec(attempt.job), health=health)
         attempt.state = HostedHarnessAttempt.State.RUNNING
         attempt.heartbeat_at = timezone.now()
-        attempt.sandbox_runtime = {"health": health, "verified_at": timezone.now().isoformat()}
+        attempt.sandbox_runtime = {
+            "health": health,
+            "verified_at": timezone.now().isoformat(),
+        }
         attempt.save(update_fields=["state", "heartbeat_at", "sandbox_runtime"])
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             pk=attempt.job_id
@@ -947,9 +948,7 @@ def grade_observation(*, control: dict, case: dict, variant: str, body: dict) ->
         if event.get("kind") == "child_selection"
     ]
     member = catalog.get(expected["skill_id"])
-    root = (
-        control["_roots"].get(variant, {}).get(member["mount"]) if member else None
-    )
+    root = control["_roots"].get(variant, {}).get(member["mount"]) if member else None
     delivered = [
         event["body"]
         for event in events
@@ -984,7 +983,9 @@ def grade_observation(*, control: dict, case: dict, variant: str, body: dict) ->
                 verdict(
                     root is not None
                     and bool(delivered)
-                    and all(row.get("content_digest") == _digest(root) for row in delivered)
+                    and all(
+                        row.get("content_digest") == _digest(root) for row in delivered
+                    )
                 ),
             )
         )
@@ -1175,7 +1176,9 @@ def _finish(job_id: UUID, attempt_id: UUID, *, failure: str | None) -> None:
         )
         now = timezone.now()
         job.state = (
-            HostedHarnessJob.State.FAILED if failure else HostedHarnessJob.State.COMPLETED
+            HostedHarnessJob.State.FAILED
+            if failure
+            else HostedHarnessJob.State.COMPLETED
         )
         job.current_stage = "failed" if failure else "completed"
         job.terminal_at = now
@@ -1234,7 +1237,7 @@ def _reduce(job: HostedHarnessJob) -> tuple[dict, dict[str, dict]]:
         )
         for row in receipts.values()
     ]
-    reproduction = {case_id: "tools" for case_id in control["historical"]}
+    reproduction = dict.fromkeys(control["historical"], "tools")
     reduced = reduce_native_results(
         matrix=spec.matrix,
         trials=trials,
@@ -1248,9 +1251,11 @@ def _decision(job: HostedHarnessJob, reduced: dict) -> dict:
     if job.state != HostedHarnessJob.State.COMPLETED:
         return {
             "state": "pending" if not job.terminal_at else "hold",
-            "reasons": ["Native work is not complete."]
-            if not job.terminal_at
-            else ["Native work failed; no outcome is inferred."],
+            "reasons": (
+                ["Native work is not complete."]
+                if not job.terminal_at
+                else ["Native work failed; no outcome is inferred."]
+            ),
         }
     reasons = []
     cells = [cell for cell in reduced["cells"] if cell["variant"] == "candidate"]
@@ -1300,7 +1305,10 @@ def _evidence_output(evidence: HubSkillNativeEvidence, *, detail: bool) -> dict:
         "annotation_revision": evidence.annotation_revision,
         "application_binding_id": control.get("application_binding_id"),
         "arms": [
-            {"variant": variant, **{k: arm[k] for k in ("version", "version_id", "digest")}}
+            {
+                "variant": variant,
+                **{k: arm[k] for k in ("version", "version_id", "digest")},
+            }
             for variant, arm in (control.get("arms") or {}).items()
         ],
         "planned": job.scenario_count,
@@ -1326,14 +1334,18 @@ def _evidence_output(evidence: HubSkillNativeEvidence, *, detail: bool) -> dict:
                 )
             },
             "decision": _decision(job, reduced),
-            "runtime": (attempt.sandbox_runtime or {}).get("health") if attempt else None,
+            "runtime": (
+                (attempt.sandbox_runtime or {}).get("health") if attempt else None
+            ),
             "cases": [
                 {
                     "id": case_id,
                     "title": cases[case_id]["title"],
                     "historical": case_id in control["historical"],
                 }
-                for case_id in dict.fromkeys(cell["case_id"] for cell in reduced["cells"])
+                for case_id in dict.fromkeys(
+                    cell["case_id"] for cell in reduced["cells"]
+                )
             ],
             "cells": [
                 {
@@ -1352,12 +1364,16 @@ def _evidence_output(evidence: HubSkillNativeEvidence, *, detail: bool) -> dict:
                             "incomplete",
                         )
                     },
-                    "attempt_id": str(receipts[_cell_key(cell)].pk)
-                    if _cell_key(cell) in receipts
-                    else None,
-                    "observed": receipts[_cell_key(cell)].body["summary"]
-                    if _cell_key(cell) in receipts
-                    else None,
+                    "attempt_id": (
+                        str(receipts[_cell_key(cell)].pk)
+                        if _cell_key(cell) in receipts
+                        else None
+                    ),
+                    "observed": (
+                        receipts[_cell_key(cell)].body["summary"]
+                        if _cell_key(cell) in receipts
+                        else None
+                    ),
                 }
                 for cell in reduced["cells"]
             ],
@@ -1393,7 +1409,10 @@ def get_native_run(
 
 
 def native_attempt_observation(
-    *, principal: SkillPrincipal | None, evidence: HubSkillNativeEvidence, attempt_id: UUID
+    *,
+    principal: SkillPrincipal | None,
+    evidence: HubSkillNativeEvidence,
+    attempt_id: UUID,
 ) -> dict | None:
     """Qualified reader for annotation validation: one stored cell result."""
     row = HostedHarnessReceipt.no_workspace_objects.filter(

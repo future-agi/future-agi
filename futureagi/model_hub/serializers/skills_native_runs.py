@@ -135,3 +135,7 @@ class GuestAccepted(ContextSerializer):
     accepted = s.BooleanField()
     received = Integer(min_value=0, required=False)
     planned = Integer(min_value=0, required=False)
+
+
+class ShareNativeInput(ContextSerializer):
+    acknowledge_snapshot_sharing = s.BooleanField()

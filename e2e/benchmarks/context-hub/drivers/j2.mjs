@@ -308,7 +308,65 @@ export async function createDriver({ jobId, runId, registration }) {
           receipt('api', await record('annotation', { evidenceClass: 'synthetic fixture', annotations: list.results, decision }), decision);
           return;
         }
-        throw new Error(`Retained regression pipeline, release packet and retained trace identity are not implemented: ${stage.id}`);
+        if (stage.id === 'retained-regression-pipeline') {
+          // The incumbent CI is pointed at the exact candidate: one exact-version binding and a context-only credential.
+          const label = `ci-${runId}`.toLowerCase();
+          const access = await ledger.measure({ dimension: 'A', primitive: 'command', actor: 'incident-responder', step: stage.id, phase: stage.phase, target: 'issue-exact-candidate-access' }, async () => {
+            const binding = await api('POST', `${root}bindings/`, { name: `retained-ci ${label}`.slice(0, 120), kind: 'runtime', selector: { version: state.repaired.number }, update_mode: 'manual', profile: 'retained-ci', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 });
+            const credential = await api('POST', 'contexts/credentials/', { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: input.contextId, labels: [], version_ids: [state.repaired.id] }], binding_ids: [], expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+            return { bindingId: binding.id, secret: credential.secret };
+          });
+          // Handing the exact candidate identity and its credential to the separate CI system is a counted handoff.
+          const ci = await op.handoff('retained-ci', () => op.command('run-retained-ci', 'docker', ['exec', '-e', `CTXHUB_CONTEXT_CREDENTIAL=${access.secret}`, '-e', 'CTXHUB_REGISTRY_URL=http://app:8000',
+            input.runtimeContainer, 'python', '/opt/ctxhub/retained_ci.py', '--binding-id', access.bindingId, '--context-id', input.contextId, '--label', label], { timeoutMs: 280_000 }));
+          const summary = JSON.parse(ci.stdout.trim().split('\n').at(-1));
+          const read = await op.command('read-retained-ci-result', 'docker', ['exec', input.runtimeContainer, 'cat', `/fi_output/ci/${label}.json`]);
+          state.ci = { label, summary, report: JSON.parse(read.stdout) };
+          requireValue(state.ci.report.passed === true, 'The retained pipeline did not pass');
+          receipt('external_pipeline', await record('retained-ci-report', { evidenceClass: 'synthetic fixture', report: state.ci.report }));
+          return;
+        }
+        if (stage.id === 'release-ready-packet') {
+          await go('matched-run-result', `/dashboard/skills/contexts/${input.contextId}?version=${state.repaired.number}`);
+          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
+          await expect(page.getByText('Release packet')).toBeVisible({ timeout: 120_000 });
+          // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
+          await op.reconcile('pipeline-identity-into-packet', async () => {
+            await page.getByLabel('Retained pipeline run URL').fill(state.ci.summary.url);
+            await page.getByLabel('Pipeline configuration identity').fill(state.ci.report.configuration_identity);
+            await page.getByLabel('Pipeline decision').fill(state.ci.report.passed ? 'passed' : 'failed');
+          });
+          await op.click(page.getByRole('button', { name: 'Share evidence and prepare packet', exact: true }), 'prepare-release-packet');
+          await expect(page.getByText(/Packet ready/)).toBeVisible();
+          await shot('08-release-packet');
+          const evidence = await api('GET', `evidence/simulation_native/${state.matchedId}/`);
+          const preview = await api('POST', 'release-requests/preview/', { resource_id: input.contextId, kind: 'agent_context', candidate_version_id: state.repaired.id, label: 'production',
+            target: (({ binding_id, revision, configuration_digest }) => ({ binding_id, environment_id: null, revision, configuration_digest }))((await api('GET', `${root}native/targets/`)).targets[0]),
+            evidence: [{ source: 'simulation_native', source_id: state.matchedId, annotation_revision: evidence.annotation_revision }],
+            external_pipeline: { url: state.ci.summary.url, configuration_identity: state.ci.report.configuration_identity, decision: 'passed', trust: 'operator_recorded_unimported', recorded_by: input.userId } });
+          requireValue(evidence.visibility === 'workspace' && preview.packet.candidate_version_id === state.repaired.id && preview.packet.evidence.length === 1, 'Independent packet observation differs');
+          state.packet = preview;
+          receipt('api', await record('release-packet', { evidenceClass: 'synthetic fixture', fingerprint: preview.fingerprint, packet: preview.packet }));
+          return;
+        }
+        if (stage.id === 'retained-trace-conformance') {
+          // The separately measured J4 job releases the candidate. The harness stands in for it outside this ledger.
+          const transition = state.packet.packet.transition;
+          await api('PUT', `${input.contextId}/labels/production/`, { version: state.repaired.number, expected_release_revision: transition.expected_release_revision, note: 'Release performed by the separate J4 job (harness stand-in)' });
+          const produced = JSON.parse(execFileSync('docker', ['exec', '-e', `CTXHUB_CONTEXT_CREDENTIAL=${input.production.credential}`, '-e', 'CTXHUB_REGISTRY_URL=http://app:8000', '-e', `TRACE_URL=${input.collectorInternalUrl}`,
+            '-e', `TRACE_API_KEY=${input.apiKey}`, '-e', `TRACE_SECRET_KEY=${input.secretKey}`, '-e', `TRACE_PROJECT=${input.projectName}`, input.runtimeContainer, 'python', '/opt/ctxhub/production_request.py',
+            '--binding-id', input.production.bindingId, '--context-id', input.contextId], { encoding: 'utf8' }).trim().split('\n').at(-1));
+          state.production = produced;
+          await go('retained-tracing', '/dashboard/observe');
+          await op.click(page.getByText(input.projectName, { exact: true }), 'open-incident-project');
+          await op.transition('production-trace', () => op.click(page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Production refund request' }).first(), 'open-production-trace'));
+          await shot('09-production-trace');
+          const trace = await api('GET', `../../tracer/trace/${produced.trace_id}/?project_id=${input.projectId}`);
+          state.trace = JSON.stringify(trace);
+          receipt('external_trace', await record('production-trace', { evidenceClass: 'synthetic fixture', trace: produced, observed: state.trace.length }));
+          return;
+        }
+        throw new Error(`Unknown stage: ${stage.id}`);
       } catch (error) {
         // Operator-visible diagnostics for a failed stage; never request bodies or credentials.
         await page.screenshot({ path: resolve(output, 'shots', `failed-${stage.id}.png`), animations: 'disabled' }).catch(() => {});
@@ -368,6 +426,18 @@ export async function createDriver({ jobId, runId, registration }) {
         const titles = Object.fromEntries(run.cases.map((item) => [item.id, item.title]));
         const ok = (title, action) => operations.some((row) => titles[row.cell.case_id] === title && row.action === action && row.status === 'applied');
         return make('guest', { chargebackPreserved: ok(TITLE.chargeback, 'open_chargeback'), shippingPreserved: ok(TITLE.shipping, 'track_shipment') });
+      }
+      if (check.id === 'external-identity') {
+        const mentions = (id) => state.trace.includes(id);
+        const old = state.repaired && input.v4Id;
+        return make('external_trace', { changedHubIdentity: mentions(state.repaired.id) && mentions(state.repaired.digest) && state.production.version_id === state.repaired.id,
+          oldExternalVersionReused: mentions(input.v4Id) }, { traceId: state.production.trace_id, old });
+      }
+      if (check.id === 'retained-pipeline-result') {
+        const read = execFileSync('docker', ['exec', runtime, 'cat', `/fi_output/ci/${state.ci.label}.json`], { encoding: 'utf8' });
+        const report = JSON.parse(read);
+        return make('external_pipeline', { exactApplicationPipelineInspected: report.version_ids.length === 1 && report.version_ids[0] === state.repaired.id && report.cases.length === 3 && report.cases.every((row) => row.context_digest === state.repaired.digest),
+          passed: report.passed === true }, { report });
       }
       throw new Error(`Whole-job independent evidence is not implemented: ${check.id}`);
     },

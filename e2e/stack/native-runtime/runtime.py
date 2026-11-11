@@ -21,6 +21,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+from app_cell import run_cell
 import measure  # puts the read-only application source on sys.path
 from ctxhub_support.business import Business
 from ctxhub_support.business import server as business_server
@@ -97,40 +98,16 @@ class Job:
             disputed=bool(state.get("disputed", False)),
         )
         self.last_order = order_id
-        workdir = measure.STATE / self.launch["attempt_id"]
-        workdir.mkdir(parents=True, exist_ok=True)
-        stem = hashlib.sha256(order_id.encode()).hexdigest()[:16]
-        thread = str(uuid4())
-        request = {
-            "schema": 1,
-            "thread": thread,
-            "case": {"case_id": task["id"], "order_id": order_id, "request": task["prompt"]},
-        }
-        request_path = workdir / f"{stem}.request.json"
-        request_path.write_text(json.dumps(request))
-        output = workdir / f"{stem}.result.json"
-        env = {
-            "PATH": os.environ["PATH"],
-            "HOME": str(workdir),
-            "PYTHONPATH": str(measure.SOURCE / "src"),
-            "CTXHUB_REGISTRY_URL": self.launch["registry_url"],
-            "CTXHUB_CONTEXT_CREDENTIAL": arm["credential"],
-            "CTXHUB_BINDING_ID": arm["binding_id"],
-            "CTXHUB_RUNTIME_DIGEST": self.payload["configuration_digest"],
-            "CTXHUB_PROVIDER_URL": measure.PROVIDER_URL,
-            "CTXHUB_PROVIDER_KEY": PROVIDER_KEY,
-            "CTXHUB_BUSINESS_URL": f"http://127.0.0.1:{BUSINESS_PORT}",
-            "CTXHUB_MODEL": configuration["model"]["model_id"],
-        }
-        proc = subprocess.run(
-            [sys.executable, "-m", "ctxhub_support.entrypoint", str(request_path),
-             "--state", str(workdir / f"{stem}.sqlite"), "--output", str(output)],
-            env=env, capture_output=True, text=True, timeout=180, check=False,
-        )
-        if proc.returncode not in {0, 2} or not output.exists():
-            log("cell_crashed", rc=proc.returncode, stderr=proc.stderr[-400:])
-            raise RuntimeError("application_crashed")
-        return json.loads(output.read_text())
+        try:
+            return run_cell(
+                registry_url=self.launch["registry_url"], credential=arm["credential"], binding_id=arm["binding_id"],
+                runtime_digest=self.payload["configuration_digest"], order_id=order_id, case_id=task["id"],
+                request_text=task["prompt"], workdir=measure.STATE / self.launch["attempt_id"],
+                model=configuration["model"]["model_id"],
+            )
+        except RuntimeError as exc:
+            log("cell_crashed", detail=str(exc)[:300])
+            raise RuntimeError("application_crashed") from exc
 
     def business_view(self) -> dict:
         ledger = self.business.ledger()
@@ -175,6 +152,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self.reply(200, {"ready": True, "protocol": measure.PROTOCOL})
+        if self.path.startswith("/ci/"):
+            name = self.path.removeprefix("/ci/")
+            report = measure.OUTPUT / "ci" / f"{name}.json"
+            if not name.replace("-", "").isalnum() or not report.is_file():
+                return self.reply(404, {})
+            return self.reply(200, json.loads(report.read_text()))
         if self.path == "/config":
             if not self.authorized():
                 return self.reply(401, {"error": "unauthorized"})

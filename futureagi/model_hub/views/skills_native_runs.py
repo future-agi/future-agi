@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 from model_hub.selectors.skills_hub_v12 import get_resource
 from model_hub.serializers import skills_native_runs as s
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.r3 import native_runs
+from model_hub.services.skills_hub.r3 import native_evidence, native_runs
 from model_hub.services.skills_hub.v11.principals import require_private_principal
 from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, header_uuid
 from model_hub.views.skills_hub import SkillsView
@@ -47,7 +47,6 @@ class NativeTargetsView(NativeContextView):
                 principal=request.skill_principal, context_id=context_id
             ),
         )
-
 
     @contract(s.ApplicationTarget, body=s.CreateTargetInput, status=201)
     def post(self, request: Request, context_id: UUID) -> Response:
@@ -139,6 +138,29 @@ class NativeRunView(NativeContextView):
         return self.output(
             request,
             s.NativeRunDetail,
+            native_runs.get_native_run(
+                principal=request.skill_principal,
+                context_id=context_id,
+                evidence_id=evidence_id,
+            ),
+        )
+
+
+class NativeRunShareView(NativeContextView):
+    @contract(s.NativeRunSummary, body=s.ShareNativeInput)
+    def post(self, request: Request, context_id: UUID, evidence_id: UUID) -> Response:
+        native_evidence.share_native_evidence(
+            principal=request.skill_principal,
+            resource_id=context_id,
+            kind="agent_context",
+            evidence_id=evidence_id,
+            acknowledge_snapshot_sharing=request.validated_data[
+                "acknowledge_snapshot_sharing"
+            ],
+        )
+        return self.output(
+            request,
+            s.NativeRunSummary,
             native_runs.get_native_run(
                 principal=request.skill_principal,
                 context_id=context_id,

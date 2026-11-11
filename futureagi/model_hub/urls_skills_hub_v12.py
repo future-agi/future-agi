@@ -49,7 +49,9 @@ urlpatterns = [
     ),
     # J2: matched native runs of one qualified application, and the authenticated
     # guest channel of the hosted native runtime (attempt bearer + fence).
-    path("contexts/<uuid:context_id>/native/targets/", native.NativeTargetsView.as_view()),
+    path(
+        "contexts/<uuid:context_id>/native/targets/", native.NativeTargetsView.as_view()
+    ),
     path(
         "contexts/<uuid:context_id>/native/runtime-configuration/",
         native.NativeRuntimeConfigurationView.as_view(),
@@ -65,6 +67,10 @@ urlpatterns = [
     path(
         "contexts/<uuid:context_id>/native/runs/<uuid:evidence_id>/",
         native.NativeRunView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/native/runs/<uuid:evidence_id>/share/",
+        native.NativeRunShareView.as_view(),
     ),
     path(
         "native/attempts/<uuid:attempt_id>/health/",

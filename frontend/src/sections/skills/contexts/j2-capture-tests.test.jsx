@@ -18,9 +18,10 @@ vi.mock('src/api/skills/context-testing', () => ({
 vi.mock('src/api/skills/context-native', () => ({
   useNativeTargets: () => ({ data: { runtime: { available: state.runtime, runtime: 'test-runtime', evidenceClass: 'synthetic fixture' }, targets: [] } }),
   useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({ data: undefined }), useRuntimeConfiguration: () => ({ data: undefined }),
-  useCreateNativeTarget: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle,
+  useCreateNativeTarget: idle, usePrepareReleasePacket: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle,
 }));
 vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
+vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
 vi.mock('./ContextCaptureController', () => ({ default: (props) => { state.capture(props); return <div>Source review</div>; } }));
 const projectId = '10000000-0000-4000-8000-000000000001';
 const span = { trace: 'trace', id: 'span', start_time: '2026-11-10T00:00:00.123456Z' };
