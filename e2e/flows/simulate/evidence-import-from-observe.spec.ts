@@ -110,8 +110,9 @@ test(
 
     await test.step('select the seeded sessions', async () => {
       await page.goto(`/dashboard/observe/${projectId}/sessions`);
-      for (const session of sessions) {
-        const row = page.locator('.ag-center-cols-container .ag-row').filter({ hasText: session });
+      // A row shows the session's UUID, not its external id; its first message is the minted ask.
+      for (const ask of asks) {
+        const row = page.locator('.ag-center-cols-container .ag-row').filter({ hasText: ask });
         await expect(row).toHaveCount(1, { timeout: UI_READY });
         const index = await row.getAttribute('row-index');
         await page.locator(`.ag-row[row-index="${index}"] .ag-checkbox-input`).first().check({ force: true });
