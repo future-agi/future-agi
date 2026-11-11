@@ -732,6 +732,12 @@ GCP_MARKETPLACE_DOUBLE_METRICS = {
     "enterprise_voice_simulation",
 }
 
+# Optional read-only public status mount. No updater/control access in the app.
+# Only /run/futureagi-host-update/status.json is accepted by the reader; an empty
+# value leaves existing installations healthy with reporting unconfigured.
+FI_HOST_UPDATE_STATUS_FILE = os.environ.get("FI_HOST_UPDATE_STATUS_FILE", "")
+FI_HOST_UPDATE_STATUS_SLOT = os.environ.get("FI_HOST_UPDATE_STATUS_SLOT", "")
+
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
 EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
@@ -1106,7 +1112,8 @@ AGENT_FIX_ENGINE_COMMAND = os.getenv(
 # for each check run side by side). Two claims can race past a cap by a few fixes.
 AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
 AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
-# How long a fix may wait for room before it fails, free to retry.
+# How long a fix may wait for room before it fails, free to retry; a fix whose time limit
+# plus AGENT_FIX_TOKEN_GRACE_SECONDS is longer waits that long instead.
 AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))

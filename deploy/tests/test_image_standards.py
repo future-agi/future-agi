@@ -21,7 +21,12 @@ import subprocess
 import sys
 import tempfile
 import threading
-import tomllib
+# images-ci uses Python 3.11's stdlib parser. Full deploy discovery also
+# supports the updater's Python 3.9 floor with test-only tomli==2.2.1.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 import types
 import unittest
 from pathlib import Path
@@ -1446,6 +1451,11 @@ class NginxCaching(unittest.TestCase):
         """Each location's matcher -> its expires, Cache-Control and Pragma."""
         (server,) = nginx_blocks(nginx_config(name), "server")
         matchers = re.findall(r"(?m)^\s*location\b([^{;]*)\{", server)
+        locations = nginx_blocks(server, "location")
+        # Preserve zip(strict=True)'s guard on Python 3.9, where that keyword
+        # does not exist; do not silently truncate a malformed parsed config.
+        if len(matchers) != len(locations):
+            raise ValueError("nginx location matchers and bodies differ in length")
         return {
             " ".join(matcher.split()): [
                 " ".join(directive.split())
@@ -1454,9 +1464,7 @@ class NginxCaching(unittest.TestCase):
                     body,
                 )
             ]
-            for matcher, body in zip(
-                matchers, nginx_blocks(server, "location"), strict=True
-            )
+            for matcher, body in zip(matchers, locations)
         }
 
     def test_standalone_and_the_chart_cache_as_the_frontend_image_does(self):
@@ -1503,6 +1511,12 @@ class Workflows(unittest.TestCase):
         # images it deploys are published.
         chart = jobs.pop("helm-chart")
         self.assertEqual(chart["uses"], "./.github/workflows/helm-release.yml")
+        # Round 5 (T56): the signed update manifest bin/update reads is published
+        # once the images it names are.
+        manifest = jobs.pop("update-manifest")
+        self.assertEqual(
+            manifest["uses"], "./.github/workflows/release-update-manifest.yml"
+        )
         for name, job in jobs.items():
             if "uses" in job:
                 with self.subTest(job=name):
@@ -1683,11 +1697,28 @@ class Workflows(unittest.TestCase):
         # A matrix image is selected by its matrix name.
         legs = {leg["name"] for leg in jobs["build"]["strategy"]["matrix"]["include"]}
         self.assertEqual(selected_by(jobs["build"]["if"]), legs)
+        selection = "contains(needs.guard.outputs.components, format('\"{0}\"', matrix.name))"
+        enabled = jobs["build"]["with"]["enabled"]
         self.assertEqual(
-            jobs["build"]["with"]["enabled"],
-            "${{ contains(needs.guard.outputs.components,"
-            " format('\"{0}\"', matrix.name)) }}",
+            enabled,
+            "${{ " + selection + " && (needs.guard.outputs.channel == 'stable' || github.run_attempt == 1) }}",
         )
+        # Evaluate the asserted expression for each standalone selection, not
+        # just for an all-components release. Both beta and rc tags are mapped
+        # to channel=beta by the guard; only stable images may rebuild on rerun.
+        expression = enabled[3:-2].replace(selection, "selected").replace(
+            "needs.guard.outputs.channel", "channel").replace("github.run_attempt", "attempt")
+        expression = expression.replace("&&", "and").replace("||", "or")
+        for leg in legs:
+            for component in [*components, ""]:
+                for suffix, channel in (("", "stable"), ("-beta.1", "beta"), ("-rc.1", "beta")):
+                    for attempt in (1, 2, 9):
+                        with self.subTest(leg=leg, component=component, suffix=suffix, attempt=attempt):
+                            selected = json.dumps(leg) in json.dumps([component])
+                            actual = eval(expression, {"__builtins__": {}}, {
+                                "selected": selected, "channel": channel, "attempt": attempt,
+                            })
+                            self.assertEqual(actual, component == leg and (not suffix or attempt == 1))
         reusable = yaml_jobs(WORKFLOWS / "build-image-multiarch.yml")
         self.assertEqual(reusable["prepare"]["if"], "inputs.enabled")
         component_of = {
@@ -1705,6 +1736,8 @@ class Workflows(unittest.TestCase):
             "release-worker": "bump",
             "dispatch-docs": "docs",
             "helm-chart": "helm-chart",
+            "build-digests": "update-manifest",
+            "update-manifest": "update-manifest",
         }
         for job, component in component_of.items():
             with self.subTest(job=job):
@@ -1719,6 +1752,8 @@ class Workflows(unittest.TestCase):
             "dispatch-ee",
             "dispatch-docs",
             "helm-chart",
+            "build-digests",
+            "update-manifest",
         ):
             with self.subTest(job=job):
                 condition = " ".join(str(jobs[job]["if"]).split())
@@ -1798,7 +1833,8 @@ class Workflows(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(selected[0], "frontend")
         self.assertEqual(selected[-1], "bump")
-        self.assertEqual(len(selected), 14)
+        self.assertEqual(len(selected), 15)
+        self.assertIn("update-manifest", selected)
         self.assertEqual(urls, [])
         # A dispatch without a list is the deployment bump retry, from any ref
         # and for any version.

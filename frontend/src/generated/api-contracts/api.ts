@@ -569,6 +569,7 @@ import type {
   GatewayConfigPatchRequestApi,
   GatewayConfigResponseApi,
   GatewayDetailResponseApi,
+  GatewayHealthErrorResponseApi,
   GatewayHealthResponseApi,
   GatewayListResponseApi,
   GatewayMCPGuardrailsUpdateRequestApi,
@@ -679,10 +680,15 @@ import type {
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
+  HarnessVerifyCreateApi,
+  HarnessVerifyCreateResponseApi,
+  HarnessVerifyResultApi,
   HarnessVersionDiffApi,
   HarnessVersionsApi,
   HealthCheckResponseApi,
   HeartbeatApi,
+  HostUpdateStatusErrorApi,
+  HostUpdateStatusResponseApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
   HuggingFaceDatasetConfigResponseApi,
@@ -842,6 +848,7 @@ import type {
   ModelHubAnnotationsList200,
   ModelHubAnnotationsListParams,
   ModelHubApiKeysListParams,
+  ModelHubApiModelsListListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
   ModelHubDevelopsGetDatasetTableListParams,
@@ -930,6 +937,7 @@ import type {
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
   ModelHubTtsVoicesListParams,
+  ModelListResponseApi,
   ModelParametersResponseApi,
   NodeExecutionDetailResponseApi,
   NodeReadApi,
@@ -13724,7 +13732,7 @@ export type agentccGatewaysHealthCheckResponse200 = {
 };
 
 export type agentccGatewaysHealthCheckResponse400 = {
-  data: AgentccErrorResponseApi;
+  data: GatewayHealthErrorResponseApi;
   status: 400;
 };
 
@@ -19058,6 +19066,82 @@ export const apiHealthClickhouseList = async (
 ): Promise<apiHealthClickhouseListResponse> => {
   return apiMutator<apiHealthClickhouseListResponse>(
     getApiHealthClickhouseListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type apiHostUpdateStatusListResponse200 = {
+  data: HostUpdateStatusResponseApi;
+  status: 200;
+};
+
+export type apiHostUpdateStatusListResponse400 = {
+  data: HostUpdateStatusErrorApi;
+  status: 400;
+};
+
+export type apiHostUpdateStatusListResponse401 = {
+  data: HostUpdateStatusErrorApi;
+  status: 401;
+};
+
+export type apiHostUpdateStatusListResponse403 = {
+  data: HostUpdateStatusErrorApi;
+  status: 403;
+};
+
+export type apiHostUpdateStatusListResponse404 = {
+  data: HostUpdateStatusErrorApi;
+  status: 404;
+};
+
+export type apiHostUpdateStatusListResponse405 = {
+  data: HostUpdateStatusErrorApi;
+  status: 405;
+};
+
+export type apiHostUpdateStatusListResponse503 = {
+  data: HostUpdateStatusErrorApi;
+  status: 503;
+};
+
+export type apiHostUpdateStatusListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 405 | 503>;
+};
+
+export type apiHostUpdateStatusListResponseSuccess =
+  apiHostUpdateStatusListResponse200 & {
+    headers: Headers;
+  };
+export type apiHostUpdateStatusListResponseError = (
+  | apiHostUpdateStatusListResponse400
+  | apiHostUpdateStatusListResponse401
+  | apiHostUpdateStatusListResponse403
+  | apiHostUpdateStatusListResponse404
+  | apiHostUpdateStatusListResponse405
+  | apiHostUpdateStatusListResponse503
+  | apiHostUpdateStatusListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type apiHostUpdateStatusListResponse =
+  | apiHostUpdateStatusListResponseSuccess
+  | apiHostUpdateStatusListResponseError;
+
+export const getApiHostUpdateStatusListUrl = () => {
+  return `/api/host-update-status/`;
+};
+
+export const apiHostUpdateStatusList = async (
+  options?: RequestInit,
+): Promise<apiHostUpdateStatusListResponse> => {
+  return apiMutator<apiHostUpdateStatusListResponse>(
+    getApiHostUpdateStatusListUrl(),
     {
       ...options,
       method: "GET",
@@ -28817,7 +28901,7 @@ export const modelHubApiModelVoicesList = async (
 };
 
 export type modelHubApiModelsListListResponse200 = {
-  data: ModelHubPaginatedResponseApi;
+  data: ModelListResponseApi;
   status: 200;
 };
 
@@ -28870,15 +28954,34 @@ export type modelHubApiModelsListListResponse =
   | modelHubApiModelsListListResponseSuccess
   | modelHubApiModelsListListResponseError;
 
-export const getModelHubApiModelsListListUrl = () => {
-  return `/model-hub/api/models_list/`;
+export const getModelHubApiModelsListListUrl = (
+  params?: ModelHubApiModelsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/api/models_list/?${stringifiedParams}`
+    : `/model-hub/api/models_list/`;
 };
 
 export const modelHubApiModelsListList = async (
+  params?: ModelHubApiModelsListListParams,
   options?: RequestInit,
 ): Promise<modelHubApiModelsListListResponse> => {
   return apiMutator<modelHubApiModelsListListResponse>(
-    getModelHubApiModelsListListUrl(),
+    getModelHubApiModelsListListUrl(params),
     {
       ...options,
       method: "GET",
@@ -60837,7 +60940,8 @@ export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
 
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
-yet is null, so the client renders "building" rather than an empty pane.
+yet is null, so the client renders "building" rather than an empty pane. A
+coding agent's read leaves out the held-back cases.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const simulateApiHarnessEnvironmentsRead = async (
@@ -61839,6 +61943,101 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsVerifyResponse202 = {
+  data: HarnessVerifyCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVerifyResponseError =
+  simulateApiHarnessEnvironmentsVerifyResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyResponse =
+  | simulateApiHarnessEnvironmentsVerifyResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/verify/`;
+};
+
+/**
+ * Verify an agent version on the held-back cases, in a run no user read shows.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
+ */
+export const simulateApiHarnessEnvironmentsVerify = async (
+  id: string,
+  harnessVerifyCreateApi: HarnessVerifyCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessVerifyCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse200 = {
+  data: HarnessVerifyResultApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyDetailResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseError =
+  simulateApiHarnessEnvironmentsVerifyDetailResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse =
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyDetailUrl = (
+  id: string,
+  verifyId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/verify/${verifyId}/`;
+};
+
+/**
+ * How the verified version did on the held-back cases, as counts only.
+ */
+export const simulateApiHarnessEnvironmentsVerifyDetail = async (
+  id: string,
+  verifyId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyDetailResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyDetailResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyDetailUrl(id, verifyId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsResponse200 = {
   data: HarnessVersionsApi;
   status: 200;
@@ -61915,7 +62114,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsCreateAgentVersionUrl = (
 
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
-checked next, then made this environment's default.
+checked next, then made this environment's default unless make_default is
+false. A coding agent key pushes only an upload, never made the default.
  */
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersion = async (
   id: string,
@@ -62076,7 +62276,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
 };
 
 /**
- * The scenarios in one suite version, by number.
+ * The scenarios in one suite version, by number; a coding agent's read leaves
+out the held-back cases.
  */
 export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
   id: string,
@@ -62603,10 +62804,11 @@ export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const simulateApiHarnessJobsRead = async (
   id: string,
@@ -93196,6 +93398,12 @@ export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
   return `/usage/update-auto-reload-settings/`;
 };
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
 export const usageUpdateAutoReloadSettingsCreate = async (
   autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi,
   options?: RequestInit,
