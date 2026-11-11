@@ -14,6 +14,11 @@ from urllib.parse import quote
 
 REPOSITORY = "future-agi/future-agi"
 AUTHOR = "futureagi-release-bot[bot]"
+# Comments and labels use the workflow token (this login). Approvals never do:
+# they come from a dedicated approver App, whose login the workflow passes in.
+ACTIONS_BOT = "github-actions[bot]"
+# Login of a GitHub App's bot user: the App slug plus "[bot]".
+APP_LOGIN = re.compile(r"[a-z0-9][a-z0-9-]{0,99}\[bot\]\Z")
 BRANCH = "release-please--branches--main"
 LABEL = "autopilot-merged"
 APPROVED_LABEL = "autopilot-approved"
@@ -425,6 +430,11 @@ def outputs(**values):
                 stream.write(f"{key}={text}\n")
 
 
+def approver_login_ok(login):
+    """An App bot login that is neither the PR author nor the workflow token."""
+    return isinstance(login, str) and bool(APP_LOGIN.match(login)) and login not in (AUTHOR, ACTIONS_BOT)
+
+
 def autopilot(merge=False):
     if os.environ.get("RELEASE_AUTOPILOT") != "on":
         summary("Release autopilot: off.")
@@ -435,6 +445,13 @@ def autopilot(merge=False):
         expected_sha = os.environ.get("EXPECTED_HEAD_SHA", "")
         if not re.fullmatch(r"[1-9][0-9]*", number) or not SHA.fullmatch(expected_sha):
             raise ValueError("missing validated PR number or SHA")
+        # Never fall back to the workflow token: with Actions approvals off GitHub
+        # refuses it, and with them on any writer's branch workflow could approve too.
+        approver_token = os.environ.get("APPROVER_TOKEN", "")
+        approver = os.environ.get("APPROVER_LOGIN", "")
+        if not approver_token or not approver_login_ok(approver):
+            summary("Release autopilot: the approver App token or login is missing or invalid; nothing was written.")
+            raise ValueError("approver identity is missing or invalid")
     else:
         prs = pages(f"pulls?state=open&base=main&head=future-agi:{BRANCH}")
         if len(prs) != 1:
@@ -474,13 +491,15 @@ def autopilot(merge=False):
     for label in (APPROVED_LABEL, LABEL):
         api(f"labels/{quote(label, safe='')}")
     comments = pages(f"issues/{number}/comments")
-    if not any(row.get("user", {}).get("login") == "github-actions[bot]"
+    if not any(row.get("user", {}).get("login") == ACTIONS_BOT
                and row.get("body", "").startswith(marker) for row in comments):
         api(f"issues/{number}/comments", method="POST", data={"body": marker + "\n" + audit})
     if not any(row["name"].casefold() == APPROVED_LABEL for row in pr["labels"]):
         api(f"issues/{number}/labels", method="POST", data={"labels": [APPROVED_LABEL]})
+    # Only the approver App's reviews are the autopilot's own. An approval or a
+    # dismissal under any other login is neither reused nor treated as a stop.
     reviews = [row for row in pages(f"pulls/{number}/reviews")
-               if row.get("user", {}).get("login") == "github-actions[bot]"
+               if row.get("user", {}).get("login") == approver and row.get("user", {}).get("type") == "Bot"
                and row.get("state") != "COMMENTED"]
     latest = max(reviews, key=lambda row: row["id"], default={})
     if latest.get("commit_id") == sha and latest.get("state") in {"DISMISSED", "CHANGES_REQUESTED"}:
@@ -488,8 +507,13 @@ def autopilot(merge=False):
         return
     if not (latest.get("state") == "APPROVED" and latest.get("commit_id") == sha
             and latest.get("body", "").startswith(marker)):
-        api(f"pulls/{number}/reviews", method="POST",
-            data={"event": "APPROVE", "commit_id": sha, "body": marker + "\n" + audit})
+        review = api(f"pulls/{number}/reviews", method="POST", token=approver_token,
+                     data={"event": "APPROVE", "commit_id": sha, "body": marker + "\n" + audit})
+        user = review.get("user") if isinstance(review, dict) else None
+        # A review recorded under another login would never be found as our own
+        # again: a new approval on every run and a person's dismissal ignored.
+        if not isinstance(user, dict) or user.get("login") != approver or user.get("type") != "Bot":
+            raise RuntimeError("the approval was not recorded under the approver App's login")
     summary(audit)
     final = snapshot(number)
     now = datetime.now(timezone.utc)
@@ -513,7 +537,7 @@ def autopilot(merge=False):
         # refusal can be transient (main just moved), so the next eligible run
         # retries. A second refusal of the same head fails the run, so a standing
         # refusal, such as main requiring up-to-date branches, is not silent.
-        if any(row.get("user", {}).get("login") == "github-actions[bot]"
+        if any(row.get("user", {}).get("login") == ACTIONS_BOT
                and row.get("body", "").startswith(refused) for row in comments):
             summary(f"Release autopilot: GitHub refused the merge of head `{sha}` again "
                     f"(HTTP {error.status}). A person must resolve it.")

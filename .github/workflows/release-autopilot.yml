@@ -16,7 +16,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # Read-only decision. It names no environment, so the frequent idle polls
+  # neither read a key nor record a deployment.
+  check:
     # Dispatches must use the default branch too. A workflow_run is only a
     # wake-up signal: no PR checkout, artifacts or event-supplied checks are used.
     if: >-
@@ -31,8 +33,11 @@ jobs:
       statuses: read
       # Reads the migrations-callout workflow run on the release head.
       actions: read
-      pull-requests: write
-      issues: write
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.policy.outputs.eligible }}
+      number: ${{ steps.policy.outputs.number }}
+      sha: ${{ steps.policy.outputs.sha }}
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_AUTOPILOT: ${{ vars.RELEASE_AUTOPILOT }}
@@ -41,12 +46,12 @@ jobs:
       RELEASE_AUTOPILOT_WEEKENDS: ${{ vars.RELEASE_AUTOPILOT_WEEKENDS }}
       AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: scripts
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install the metadata parser
@@ -60,9 +65,59 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/release_autopilot.py check
-      - uses: actions/create-github-app-token@v2
-        if: steps.policy.outputs.eligible == 'true'
+
+  merge:
+    needs: check
+    if: needs.check.outputs.eligible == 'true'
+    # Holds the approver App's client ID and key, and a copy of the release-bot
+    # App key. Its deployment branch rule allows only main, so a copy of this
+    # workflow on another branch cannot read either key.
+    environment: release-autopilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+      statuses: read
+      actions: read
+      # Comments and labels use the workflow token; it never approves.
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_AUTOPILOT: ${{ vars.RELEASE_AUTOPILOT }}
+      RELEASE_AUTOPILOT_REQUIRED_CHECKS: ${{ vars.RELEASE_AUTOPILOT_REQUIRED_CHECKS }}
+      RELEASE_AUTOPILOT_MIN_AGE_MINUTES: ${{ vars.RELEASE_AUTOPILOT_MIN_AGE_MINUTES }}
+      RELEASE_AUTOPILOT_WEEKENDS: ${{ vars.RELEASE_AUTOPILOT_WEEKENDS }}
+      AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install the metadata parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      # Approvals only. GitHub counts an App's approval by its installation's
+      # access, so the token needs no contents permission (docs/release-autopilot.md).
+      - name: Mint approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOPILOT_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write
+      # The release App merges: a merge made with the workflow token would not
+      # start release-please on main, so no release would be tagged.
+      - name: Mint release App token
         id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -70,12 +125,13 @@ jobs:
           repositories: future-agi
           permission-contents: write
           permission-pull-requests: write
-      - name: Recheck, approve with Actions, and merge with the release App
-        if: steps.policy.outputs.eligible == 'true'
+      - name: Recheck, approve with the approver App, and merge with the release App
         env:
+          APPROVER_TOKEN: ${{ steps.approver.outputs.token }}
+          APPROVER_LOGIN: ${{ steps.approver.outputs.app-slug }}[bot]
           RELEASE_APP_TOKEN: ${{ steps.app-token.outputs.token }}
-          EXPECTED_PR: ${{ steps.policy.outputs.number }}
-          EXPECTED_HEAD_SHA: ${{ steps.policy.outputs.sha }}
+          EXPECTED_PR: ${{ needs.check.outputs.number }}
+          EXPECTED_HEAD_SHA: ${{ needs.check.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail

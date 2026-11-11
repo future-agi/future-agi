@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,6 +32,7 @@ PR = {
     "updated_at": "2026-11-10T09:00:00Z", "mergeable": True,
 }
 FILES = [{"filename": path, "status": "modified"} for path in sorted(policy.RELEASE_FILES)]
+APPROVER = "futureagi-release-approver[bot]"
 CHECK = {"id": 1, "name": "Backend Tests Pass", "head_sha": SHA,
          "app": {"id": 1}, "status": "completed", "conclusion": "success"}
 
@@ -926,23 +928,28 @@ class ApiAdapterTests(unittest.TestCase):
 class ExecutionTests(unittest.TestCase):
     def run_merge(self, *, first=None, final=None, first_metadata=None, final_metadata=None,
                   already_approved=False, merge_result=True, prior_marker=None, merge_error=None,
-                  extra_comments=(), gates=(True, "synthetic gates passed")):
+                  extra_comments=(), gates=(True, "synthetic gates passed"), extra_reviews=(),
+                  approver=APPROVER, review_user=None):
         first = deepcopy(first or PR)
         final = deepcopy(final or first)
         marker = prior_marker or f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"
         comments = [{"user": {"login": "github-actions[bot]"}, "body": marker}] if already_approved else []
         comments += list(extra_comments)
-        reviews = [{"id": 1, "user": {"login": "github-actions[bot]"}, "body": marker,
+        reviews = [{"id": 1, "user": {"login": APPROVER, "type": "Bot"}, "body": marker,
                     "state": "APPROVED", "commit_id": SHA}] if already_approved else []
+        reviews += list(extra_reviews)
         if already_approved:
             first["labels"].append({"name": policy.APPROVED_LABEL})
             final["labels"].append({"name": policy.APPROVED_LABEL})
         env = {**CONFIG, "EXPECTED_PR": "42", "EXPECTED_HEAD_SHA": SHA,
-               "RELEASE_APP_TOKEN": "synthetic-app", "GH_TOKEN": "synthetic-actions"}
+               "RELEASE_APP_TOKEN": "synthetic-app", "GH_TOKEN": "synthetic-actions",
+               "APPROVER_TOKEN": "synthetic-approver", "APPROVER_LOGIN": approver}
 
         def fake_api(path, **kwargs):
             if path.endswith("/merge") and merge_error is not None:
                 raise merge_error
+            if path.endswith("/reviews"):
+                return {"id": 9, "user": {"login": APPROVER, "type": "Bot"} if review_user is None else review_user}
             return {"merged": merge_result}
         with patch.dict(os.environ, env, clear=True), patch.object(policy, "datetime", FrozenDatetime), \
                 patch.object(policy, "snapshot", side_effect=[evidence(first, first_metadata), evidence(final, final_metadata)]), \
@@ -955,11 +962,15 @@ class ExecutionTests(unittest.TestCase):
             policy.autopilot(merge=True)
             return api.call_args_list
 
-    def test_actions_approves_app_merges_with_expected_sha_and_audit(self):
+    def test_approver_app_approves_release_app_merges_with_expected_sha_and_audit(self):
         calls = self.run_merge()
         approval = next(call for call in calls if call.args[0] == "pulls/42/reviews")
         merge = next(call for call in calls if call.args[0] == "pulls/42/merge")
-        self.assertNotIn("token", approval.kwargs)
+        self.assertEqual(approval.kwargs["token"], "synthetic-approver")
+        # Comments and labels stay on the workflow token.
+        for call in calls:
+            if call.args[0].startswith("issues/") or call.args[0].startswith("labels/"):
+                self.assertNotIn("token", call.kwargs)
         self.assertEqual(approval.kwargs["data"]["event"], "APPROVE")
         self.assertEqual(approval.kwargs["data"]["commit_id"], SHA)
         self.assertEqual(merge.kwargs["token"], "synthetic-app")
@@ -967,6 +978,49 @@ class ExecutionTests(unittest.TestCase):
         labels = [call.kwargs["data"]["labels"] for call in calls if call.args[0] == "issues/42/labels"]
         self.assertEqual(labels, [[policy.APPROVED_LABEL], [policy.LABEL]])
         self.assertIn("Backend Tests Pass", approval.kwargs["data"]["body"])
+
+    def test_missing_or_unsafe_approver_identity_makes_no_request(self):
+        for login in ("", "github-actions[bot]", policy.AUTHOR, "someone", "Upper[bot]",
+                      "approver[bot]\n", "-approver[bot]", f"{APPROVER} "):
+            with self.subTest(login=login):
+                with self.assertRaises(ValueError):
+                    self.run_merge(approver=login)
+                self.assertEqual(self.calls, [])
+        env = {**CONFIG, "EXPECTED_PR": "42", "EXPECTED_HEAD_SHA": SHA, "APPROVER_LOGIN": APPROVER}
+        with patch.dict(os.environ, env, clear=True), patch.object(policy, "api") as api, \
+                patch.object(policy, "pages") as pages, patch("sys.stdout", new_callable=io.StringIO), \
+                self.assertRaises(ValueError):
+            policy.autopilot(merge=True)
+        api.assert_not_called()
+        pages.assert_not_called()
+
+    def test_approval_recorded_under_another_login_stops_before_merge(self):
+        for user in ({"login": "github-actions[bot]", "type": "Bot"}, {"login": APPROVER, "type": "User"}, {}, "x"):
+            with self.subTest(user=user), self.assertRaises(RuntimeError):
+                self.run_merge(review_user=user)
+            self.assertFalse(any(call.args[0].endswith("/merge") for call in self.calls))
+
+    def test_workflow_token_reviews_are_neither_reused_nor_a_stop(self):
+        marker = f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"
+        for state in ("APPROVED", "DISMISSED", "CHANGES_REQUESTED"):
+            with self.subTest(state=state):
+                other = {"id": 5, "user": {"login": "github-actions[bot]", "type": "Bot"}, "body": marker,
+                         "state": state, "commit_id": SHA}
+                calls = self.run_merge(extra_reviews=[other])
+                approval = next(call for call in calls if call.args[0] == "pulls/42/reviews")
+                self.assertEqual(approval.kwargs["token"], "synthetic-approver")
+                self.assertTrue(any(call.args[0] == "pulls/42/merge" for call in calls))
+
+    def test_a_dismissed_app_approval_on_this_head_waits_for_a_person(self):
+        dismissed = {"id": 7, "user": {"login": APPROVER, "type": "Bot"}, "state": "DISMISSED",
+                     "commit_id": SHA, "body": f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"}
+        calls = self.run_merge(extra_reviews=[dismissed])
+        self.assertFalse(any(call.args[0] == "pulls/42/reviews" for call in calls))
+        self.assertFalse(any(call.args[0].endswith("/merge") for call in calls))
+        # A dismissal on an older head (for example a stale review after a push) does not stop the new head.
+        calls = self.run_merge(extra_reviews=[{**dismissed, "commit_id": "c" * 40}])
+        self.assertTrue(any(call.args[0] == "pulls/42/reviews" for call in calls))
+        self.assertTrue(any(call.args[0].endswith("/merge") for call in calls))
 
     def test_update_cooldown_is_not_bypassed_for_own_audit(self):
         calls = self.run_merge(final={**PR, "updated_at": "2026-11-10T10:00:00Z"})
@@ -1164,8 +1218,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('--expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"', approve)
         self.assertIn("Migrations: ${{ needs.guard.outputs.migrations }} new files", text)
 
+    AUTOPILOT = Path(__file__).resolve().parents[1] / ".github/workflows/release-autopilot.yml"
+
     def test_autopilot_is_default_branch_only_and_has_required_triggers(self):
-        text = (Path(__file__).resolve().parents[1] / ".github/workflows/release-autopilot.yml").read_text()
+        text = self.AUTOPILOT.read_text()
         for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI"]', "workflow_dispatch:",
                          "github.event.repository.default_branch", "persist-credentials: false", "checks: read",
                          "statuses: read", "actions: read", "permission-contents: write", "permission-pull-requests: write",
@@ -1174,6 +1230,45 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("pull_request_target:", text)
         self.assertNotIn("github.event.workflow_run.head_sha", text)
         self.assertNotIn("download-artifact", text)
+
+    def test_only_the_eligible_merge_job_holds_keys_and_it_approves_as_the_approver_app(self):
+        import yaml
+
+        jobs = yaml.safe_load(self.AUTOPILOT.read_text())["jobs"]
+        self.assertEqual(set(jobs), {"check", "merge"})
+        check, merge = jobs["check"], jobs["merge"]
+        # The poll is read-only, names no environment and reads no secret.
+        self.assertNotIn("environment", check)
+        self.assertNotIn("write", check["permissions"].values())
+        self.assertNotIn("secrets.", yaml.safe_dump(check))
+        self.assertIn("github.event.repository.default_branch", check["if"])
+        self.assertIn("vars.RELEASE_AUTOPILOT == 'on'", check["if"])
+        self.assertEqual(merge["needs"], "check")
+        self.assertEqual(merge["if"], "needs.check.outputs.eligible == 'true'")
+        self.assertEqual(merge["environment"], "release-autopilot")
+        steps = {step.get("id"): step for step in merge["steps"]}
+        approver = steps["approver"]
+        self.assertTrue(approver["uses"].startswith("actions/create-github-app-token@"))
+        self.assertEqual(approver["with"], {
+            "client-id": "${{ vars.AUTOPILOT_APPROVER_CLIENT_ID }}",
+            "private-key": "${{ secrets.AUTOPILOT_APPROVER_PRIVATE_KEY }}",
+            "permission-pull-requests": "write"})
+        release_app = steps["app-token"]["with"]
+        self.assertEqual((release_app["permission-contents"], release_app["permission-pull-requests"]),
+                         ("write", "write"))
+        run = next(step for step in merge["steps"] if "release_autopilot.py merge" in step.get("run", ""))
+        self.assertEqual(run["env"]["APPROVER_TOKEN"], "${{ steps.approver.outputs.token }}")
+        self.assertEqual(run["env"]["APPROVER_LOGIN"], "${{ steps.approver.outputs.app-slug }}[bot]")
+        self.assertEqual(run["env"]["RELEASE_APP_TOKEN"], "${{ steps.app-token.outputs.token }}")
+        self.assertEqual(merge["env"]["GH_TOKEN"], "${{ github.token }}")
+
+    def test_autopilot_actions_are_pinned_to_commits_with_version_comments(self):
+        lines = [line.strip() for line in self.AUTOPILOT.read_text().splitlines()
+                 if re.match(r"\s*(- )?uses:", line)]
+        self.assertEqual(len(lines), 6)
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertRegex(line, r"^(- )?uses: [A-Za-z0-9-]+/[A-Za-z0-9-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 if __name__ == "__main__":

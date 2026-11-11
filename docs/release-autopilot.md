@@ -20,22 +20,102 @@ Only the exact value `on` enables a switch.
 | `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. |
 | `RELEASE_AUTOPILOT_WEEKENDS` | Off | Set `on` to allow Saturday/Sunday UTC. The day is the current UTC day, including for an overnight window. |
 
-An admin must also verify these existing settings before enabling either policy:
+An admin must also make these settings before enabling either policy. Code
+changes none of them.
 
-- `RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY` are the existing release-please
-  App secrets. The App installation needs Contents and Pull requests write on
-  this repository. Nothing reads or prints the secret values. The App merges;
-  the distinct `GITHUB_TOKEN` actor approves, because an author cannot approve
-  its own PR and merges made with `GITHUB_TOKEN` do not start push workflows.
-- Actions must be allowed to create and approve PRs. The workflow requests
-  Contents, Checks and Statuses read, plus Pull requests and Issues write on
-  `GITHUB_TOKEN`. GitHub supplies this token; no new PAT is needed.
-- Create the `autopilot-approved` and `autopilot-merged` labels. Missing labels
-  stop the policy before any approval. Create `release-hold` for the human stop.
-- Keep `Production`'s required reviewers and allowed release tags. Verify
-  `production-auto` exists, has **no reviewers**, and permits the intended tag
-  refs. GitHub treats environment names case-insensitively; `Production` is the
-  existing environment formerly written as `production` in this workflow.
+- **Labels.** Create the labels `autopilot-approved`, `autopilot-merged` and
+  `release-hold`. A missing `autopilot-approved` or `autopilot-merged` label
+  stops the policy before any approval. `release-hold` is the human stop.
+- **Actions approvals off.** Turn off "Allow GitHub Actions to create and
+  approve pull requests" on `future-agi/future-agi`. While it is on, any
+  writer's branch workflow can approve that writer's own PR as
+  `github-actions[bot]`, so main and dev are not review-gated. The autopilot
+  never approves with the workflow token. Turning the setting off stops
+  `frontend-auto-approve-hotfix.yml`, which approves with that token. `ee` and
+  `agent-learning-kit` also produce deployed images and had the setting on
+  (read-only check, 11 Nov); turn it off there too.
+- **Last-push approval.** On the ruleset that covers main and dev, require
+  approval of the most recent reviewable push. Without it, a writer can push
+  to someone else's PR branch and then approve that PR.
+- **Approver App.** The release PR is approved by a dedicated GitHub App, not
+  by the workflow token:
+  - The owner creates an App used only for autopilot approvals, distinct from
+    the release-bot App (a PR's author cannot approve it), and installs it on
+    `future-agi/future-agi` only. Reusing the deployment repository's approver
+    App would let either repository's key approve in the other.
+  - GitHub counts a required approval only from a reviewer with write access.
+    Reports say an App installed with only "Pull requests: write" gives
+    approvals that do not count, and that the same review counts once the
+    installation also has "Contents: write". Install the App with Pull
+    requests: Read and write and Contents: Read and write. This is not
+    verified live.
+  - The workflow mints the token with only `permission-pull-requests: write`.
+    Counting follows the installation's access, not the token's, so adding
+    `permission-contents: read` to the token would not make the approval count
+    (read access is not write access). The token is used only to post the
+    approval.
+  - With Contents: write the App key could push to unprotected branches and
+    merge PRs. Keep the key only in the main-only environment below, and keep
+    the App off every ruleset bypass list.
+  - **Live check before `RELEASE_AUTOPILOT=on`.** Mint a token exactly as the
+    workflow does. Approve a throwaway PR opened by the release-bot App with
+    it. `gh pr view <number> --json reviewDecision,mergeStateStatus` must show
+    `APPROVED` and `CLEAN`. Do not rely on the merge button: organisation
+    admins bypass the ruleset. If `reviewDecision` stays `REVIEW_REQUIRED`,
+    grant the installation Contents: write and read the same PR again. An
+    approval that does not count makes the merge fail with HTTP 405; the
+    second refusal of the same head fails the run.
+- **Environment `release-autopilot`.** Create it on `future-agi/future-agi`
+  with a deployment branch rule that allows only `main`, and with no required
+  reviewers or wait timer. Add the variable `AUTOPILOT_APPROVER_CLIENT_ID`
+  (the App's client ID) and the secret `AUTOPILOT_APPROVER_PRIVATE_KEY`, plus
+  copies of `RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY` as environment
+  secrets. Create the branch rule before adding any secret: GitHub creates a
+  missing environment, with no rules, the first time a job names it. Only the
+  `merge` job names this environment, and it runs only when the `check` job
+  finds an eligible release PR, so idle polls read no key and record no
+  deployment. Until the copies are added, the job still reads the
+  organisation secrets.
+- **Environment `pr-autopilot`.** The low-risk PR autopilot
+  (`low-risk-pr-autopilot.yml`, see `docs/pr-autopilot.md`) uses the same
+  approver variable and secret in its approving job, from an environment named
+  `pr-autopilot` whose deployment branch rule allows only `dev`.
+- **Release-bot App key custody.** `RELEASE_BOT_APP_ID` and
+  `RELEASE_BOT_PRIVATE_KEY` are organisation secrets today, readable by any
+  writer's branch workflow, which could then push or approve as the release
+  bot. Move them into environment secrets whose deployment branch rules allow
+  only protected branches and release tags. A job names one environment, so
+  this repository needs three holders:
+  - `production-auto`, for `release-worker` in `release-images.yml`, which
+    already names it. Restrict `production-auto` (next item) **before** adding
+    the copy; it has no branch rule today.
+  - `release-autopilot`, for this workflow's `merge` job (above).
+  - a third environment, for example `release-bot`, for `bump-deployment`,
+    `dispatch-ee` and `dispatch-docs` in `release-images.yml`, plus
+    `release-please.yml`, `sdk-sync.yml` and `refresh-disposable-domains.yml`.
+    These jobs name no environment yet, so the organisation secrets must stay
+    until they do.
+
+  The App merges the release PR, because a merge made with the workflow token
+  does not start push workflows, so release-please would not tag the release.
+  Its installation needs Contents and Pull requests write on this repository.
+  Comments and labels stay on the workflow token. Nothing reads or prints a
+  secret value.
+- **`Production` and `production-auto`.** Keep `Production`'s required
+  reviewers and allowed release tags. Verify that `production-auto` exists and
+  has **no reviewers**. Limit `production-auto` to `v*` tags plus the protected
+  `main` branch. `main` is needed because `release-worker` runs in
+  `production-auto` for the `components=bump` retry, which the guard allows
+  from any ref, and the dispatch form defaults to `main`. With a tags-only rule
+  GitHub would refuse `release-worker` on a dispatch from `main`, and the bump
+  would be skipped. This does not loosen approval: the guard selects
+  `production-auto` for `approve` only on an exact tag push by the release App,
+  and every dispatch gets `Production` review. GitHub treats environment names
+  case-insensitively; `Production` is the existing environment formerly
+  written as `production` in this workflow.
+- The workflow token gets Contents, Checks, Statuses, Actions and Pull requests
+  read in the `check` job, and Pull requests and Issues write in the `merge`
+  job, for comments and labels. GitHub supplies this token; no PAT is needed.
 - Keep main's required check and approval protections. The script does not
   bypass protection or enable GitHub auto-merge. Squash merging must be allowed
   for the release-please PR; dev-to-main's separate merge-commit rule is unchanged.
@@ -68,6 +148,11 @@ changed by this lane.
 on a dispatch from the default branch. Scheduled runs can be delayed by GitHub.
 A workflow completion is only a wake-up signal; its result and artifacts are not
 trusted as evidence. No PR code or artifacts are executed with a write token.
+The workflow has two jobs. `check` decides with a read-only token and no
+secrets. `merge` runs only when `check` found an eligible PR. It names the
+`release-autopilot` environment, mints the approver App and release App
+tokens, repeats the whole decision and then approves and merges. All actions
+are pinned to commit SHAs, with the version in a comment.
 
 The script requires exactly one open PR targeting `main` from the same-repository
 branch `release-please--branches--main`. API metadata must identify the author as
@@ -124,8 +209,15 @@ and approval. Policy-v2 approval and audit writes are idempotent per head/base S
 pair; older policy approvals are not reused as v2 evidence. If the writes reset
 GitHub's `updated_at`, the merge waits another
 configured cooldown; later runs reuse the existing approval/comment instead of
-resetting the clock forever. A dismissed or changes-requested Actions review on
-that head requires human resolution. The final merge uses the release App token
+resetting the clock forever. The autopilot's own reviews are those by the
+approver App's login, which the workflow passes in as `<app-slug>[bot]`. The
+autopilot never dismisses its own approval. A dismissed or changes-requested
+review by that App on the current head therefore waits for a person. Reviews
+by any other login, including `github-actions[bot]`, are neither reused nor a
+stop. A missing or invalid approver token or login, or a login equal to the
+release bot's or `github-actions[bot]`, stops the merge job before any request.
+An approval that GitHub records under another login stops the run before the
+merge. The final merge uses the release App token
 and supplies the exact verified head SHA to GitHub's merge API, so a concurrent
 push cannot substitute another commit. The final read cannot atomically lock
 labels, check reruns or settings; branch protection and tag protection remain
@@ -243,8 +335,11 @@ pending-migration check remains mandatory; migrations are never run by this bot.
   pre-merge audit/review, but an operator must repair the success annotation.
 - Before `RELEASE_AUTO_APPROVE=on`, add a tag ruleset on `v*` so only the release
   App (and named release managers) can create, update or delete release tags,
-  and limit the `production-auto` environment to `v*` tags. The in-code actor
-  check is defence in depth; the ruleset is the control that matters.
+  and limit the `production-auto` environment to `v*` tags plus `main` (see
+  the prerequisites for why `main`). The in-code actor check is defence in
+  depth; the ruleset is the control that matters. Also complete the approver
+  App, environment and Actions-approval settings above, so that no writer can
+  approve a change into main without a person.
 - Do not cut beta/rc tags from dev until this change has reached main: the policy
   runs from main, and both release-images steps stop with a clear error if the
   script is missing there. Keep the script's arguments and outputs backward
