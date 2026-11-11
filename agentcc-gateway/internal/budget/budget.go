@@ -47,6 +47,10 @@ type CheckResult struct {
 	Warnings  []string // Levels that exceeded warn threshold
 	BlockedBy string   // Level:key that blocked (empty if allowed)
 	BlockMsg  string   // Human-readable block message
+	// StoreUnavailable reports that the shared ledger could not be read and
+	// at least one level was checked against this replica's local counter.
+	// Ordinary requests proceed on that fallback; durable video fails closed.
+	StoreUnavailable bool
 }
 
 // NewTracker creates a Tracker from config.
@@ -147,18 +151,11 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 		return
 	}
 
-	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
-	lb.counter.maybeReset(lb.period, now)
-
-	// Check total budget.
-	total, modelSpend, ok := t.combinedSpend(lb, level, key)
-	if !ok {
-		result.Allowed = false
-		result.BlockedBy = "budget_store_unavailable"
-		result.BlockMsg = "budget accounting unavailable"
-		return
+	// Check total budget. The shared ledger, when attached, is read without
+	// holding the level lock; a failed read falls back to the local counter.
+	total, modelSpend, unavailable := t.spend(lb, level, key, now)
+	if unavailable {
+		result.StoreUnavailable = true
 	}
 	remaining := lb.limit - total
 	if remaining < 0 {
@@ -246,21 +243,22 @@ func (t *Tracker) recordLevel(lb *levelBudget, level, key, model string, cost fl
 		return
 	}
 
+	// The local counter always records this replica's spend, so checks have a
+	// meaningful fallback whenever the shared ledger cannot be read.
 	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
 	lb.counter.maybeReset(lb.period, now)
-	if t.durable != nil {
-		if _, ok := t.durable.RecordSpend("", "global_"+level, key, lb.period, model, cost); ok {
-			return
-		}
-	}
-	// Retain a conservative local fallback when an ordinary response could not
-	// be metered durably. Checks fail closed while the shared ledger is down.
 	lb.counter.totalSpend += cost
 	lb.counter.requests++
 	if model != "" {
 		lb.counter.modelSpend[model] += cost
+	}
+	lb.counter.mu.Unlock()
+
+	// Write through to the shared ledger outside the level lock. As with tenant
+	// budgets, a write Redis refuses is not retried: the local counter keeps it
+	// for fallback checks, and the ledger stays the authority while readable.
+	if t.durable != nil {
+		t.durable.RecordSpend("", "global_"+level, key, lb.period, model, cost)
 	}
 }
 
@@ -271,12 +269,7 @@ func (t *Tracker) GetSpend(level, key string) (total float64, perModel map[strin
 		return 0, nil
 	}
 
-	lb.counter.mu.Lock()
-	defer lb.counter.mu.Unlock()
-
-	lb.counter.maybeReset(lb.period, time.Now().UTC())
-
-	total, pm, _ := t.combinedSpend(lb, level, key)
+	total, pm, _ := t.spend(lb, level, key, time.Now().UTC())
 	return total, pm
 }
 

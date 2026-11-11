@@ -145,6 +145,7 @@ func TestReviewGlobalAndTenantSettlement(t *testing.T) {
 			tracker := budgettracker.NewTracker(cfg)
 			bp := budgetplugin.New(tracker, nil, true, nil)
 			bp.SetRedisBudget(f.budget)
+			bp.ShareGlobalBudgets() // video gateways share global levels with the ledger
 			f.s.engine = pipeline.NewEngine(costplugin.New(true, nil, nil, nil), bp)
 			rc := videoContext()
 			defer rc.Release()
@@ -215,6 +216,7 @@ func TestReviewGlobalAndTenantSettlement(t *testing.T) {
 			// A new process/tracker reads the shared ledger rather than resetting it.
 			fresh := budgetplugin.New(budgettracker.NewTracker(cfg), nil, true, nil)
 			fresh.SetRedisBudget(f.budget)
+			fresh.ShareGlobalBudgets() // video gateways share global levels with the ledger
 			if result := fresh.ProcessRequest(context.Background(), rc); result.Error == nil || result.Error.Status != 429 {
 				t.Errorf("next request allowed: %+v", result)
 			}

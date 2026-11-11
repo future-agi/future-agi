@@ -194,6 +194,7 @@ func TestReviewGlobalBudgetRejectsNextHTTPVideo(t *testing.T) {
 	tracker := budgettracker.NewTracker(config.BudgetsConfig{Enabled: true, DefaultPeriod: "total", Org: &config.BudgetLevelConfig{Limit: 2}})
 	bp := budgetplugin.New(tracker, nil, true, f.s.handlers.tenantStore)
 	bp.SetRedisBudget(redisstate.NewBudgetStore(f.client, f.prefix+"budget:"))
+	bp.ShareGlobalBudgets() // video gateways share global levels with the ledger
 	// The handler and service share this engine, exactly as production does.
 	*f.s.handlers.engine = *pipeline.NewEngine(authplugin.New(f.s.handlers.keyStore, true), costplugin.New(true, nil, nil, nil), bp)
 	id := f.submit(t)

@@ -45,12 +45,27 @@ type Plugin struct {
 // model names cannot grow it without limit.
 const maxUnpricedWarnings = 1024
 
-// SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
+// SetRedisBudget attaches a Redis-backed store for per-org (tenant) budgets
+// across replicas. Config-file global levels stay pod-local unless
+// ShareGlobalBudgets is also called.
 func (p *Plugin) SetRedisBudget(rb RedisBudgetBackend) {
 	p.redisBudget = rb
-	if p.tracker != nil {
-		p.tracker.SetGlobalBudgetBackend(rb)
+}
+
+// ShareGlobalBudgets makes the config-file global levels read and write the
+// Redis ledger that durable video reservations and settlements use, so
+// ordinary and video spend count against one ceiling across replicas. If a
+// ledger read fails, ordinary requests are checked against this replica's
+// local counters; video creation fails closed with 503. Startup-only, after
+// SetRedisBudget. The gateway calls it only when video generation is enabled.
+func (p *Plugin) ShareGlobalBudgets() {
+	if p.tracker != nil && p.redisBudget != nil {
+		p.tracker.SetGlobalBudgetBackend(p.redisBudget)
 	}
+}
+
+func budgetStoreUnavailable() pipeline.PluginResult {
+	return pipeline.ResultError(&models.APIError{Status: http.StatusServiceUnavailable, Type: models.ErrTypeServer, Code: "budget_store_unavailable", Message: "Durable video budget accounting required"})
 }
 
 // PricingLookup provides model pricing for independent cost calculation.
@@ -190,6 +205,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		if len(result.Warnings) > 0 {
 			rc.Metadata["budget_warning"] = "true"
 		}
+		// A store outage is never reported as an exhausted budget. Ordinary
+		// requests were checked against local counters; video needs the ledger.
+		if result.StoreUnavailable && rc.EndpointType == "video" {
+			return budgetStoreUnavailable()
+		}
 
 		if !result.Allowed {
 			rc.Metadata["budget_blocked_by"] = result.BlockedBy
@@ -205,7 +225,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	if rc.EndpointType == "video" && p.enabled && p.tracker != nil {
 		scopes := p.videoScopes(rc)
 		if len(scopes) > 0 && (p.redisBudget == nil || !p.redisBudget.Available()) {
-			return pipeline.ResultError(&models.APIError{Status: 503, Type: models.ErrTypeServer, Code: "budget_store_unavailable", Message: "Durable video budget accounting required"})
+			return budgetStoreUnavailable()
 		}
 		data, _ := json.Marshal(scopes)
 		rc.Metadata["video_global_scopes"] = string(data)
