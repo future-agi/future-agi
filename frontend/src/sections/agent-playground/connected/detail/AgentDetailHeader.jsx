@@ -71,7 +71,12 @@ function NewVersionButton({ agent }) {
   return (
     <>
       <CustomTooltip show={!!reason} title={reason} size="small" arrow>
-        <span>{button}</span>
+        <span
+          tabIndex={reason ? 0 : undefined}
+          aria-label={reason || undefined}
+        >
+          {button}
+        </span>
       </CustomTooltip>
       {adding && next.kind === "upload" && (
         <UploadVersionDialog

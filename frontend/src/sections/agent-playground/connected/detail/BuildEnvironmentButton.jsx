@@ -33,7 +33,9 @@ export default function BuildEnvironmentButton({
     <>
       {reason ? (
         <CustomTooltip show title={reason} size="small" arrow>
-          <span>{button}</span>
+          <span tabIndex={0} aria-label={reason}>
+            {button}
+          </span>
         </CustomTooltip>
       ) : (
         button

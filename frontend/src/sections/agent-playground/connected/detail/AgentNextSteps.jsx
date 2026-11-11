@@ -28,7 +28,6 @@ import {
 import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 import { useAuthContext } from "src/auth/hooks";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import { paths } from "src/routes/paths";
 import InstructionCodeCopy from "src/sections/project/NewProject/InstructionCodeCopy";
 import InstructionTitle from "src/sections/project/NewProject/InstructionTitle";
 import ObserveInstruments from "src/sections/project/NewProject/ObserveInstuments";
@@ -36,15 +35,13 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { sourceLabel } from "../connectedAgentLabels";
 import { agentDetailPath } from "./agentDetailTabs";
 import { LineSkeleton } from "./bits";
+import { observeProjectPath } from "./observeProject";
 import BuildEnvironmentButton from "./BuildEnvironmentButton";
 
 const LANGUAGES = [
   { label: "Python", value: "python", key: "Python" },
   { label: "TypeScript", value: "typescript", key: "TypeScript" },
 ];
-
-export const observeProjectPath = (projectId) =>
-  `${paths.dashboard.observe}/${projectId}/llm-tracing`;
 
 const snippetOf = (code) =>
   typeof code === "string"
@@ -184,7 +181,11 @@ export function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
       anchor="right"
       open={open}
       onClose={close}
-      PaperProps={{ sx: { width: { xs: "100%", md: 640 } } }}
+      PaperProps={{
+        role: "dialog",
+        "aria-labelledby": "connect-traces-title",
+        sx: { width: { xs: "100%", md: 640 } },
+      }}
       TransitionProps={{ onEnter: () => setPicked(linked) }}
     >
       <Stack
@@ -198,7 +199,10 @@ export function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
           borderColor: "divider",
         }}
       >
-        <Typography sx={{ typography: "s1_2", fontWeight: 600, flex: 1 }}>
+        <Typography
+          id="connect-traces-title"
+          sx={{ typography: "s1_2", fontWeight: 600, flex: 1 }}
+        >
           Connect production traces
         </Typography>
         <IconButton size="small" onClick={close} aria-label="Close">

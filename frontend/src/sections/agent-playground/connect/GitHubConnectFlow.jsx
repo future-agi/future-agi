@@ -192,6 +192,7 @@ function PickFromGitHub({
           renderInput={(params) => (
             <TextField
               {...params}
+              label="Repository"
               placeholder="Choose a repository"
               sx={{
                 "& .MuiInputBase-input": { typography: "s1", fontFamily: MONO },
@@ -206,6 +207,7 @@ function PickFromGitHub({
             <Select
               size="small"
               fullWidth
+              inputProps={{ "aria-label": "Branch" }}
               value={branch}
               onChange={(event) => {
                 onBranch(event.target.value);

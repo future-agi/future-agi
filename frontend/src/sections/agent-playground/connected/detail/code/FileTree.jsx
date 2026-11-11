@@ -123,6 +123,7 @@ function Folder({
                 {status && (
                   <Box
                     component="span"
+                    role="img"
                     aria-label={status}
                     sx={{
                       width: 6,

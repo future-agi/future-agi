@@ -19,12 +19,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
-
-export const deleteBlockedReason = (agent) => {
-  if (!agent.environmentCount) return null;
-  const n = agent.environmentCount;
-  return `Tested by ${n} environment${n === 1 ? "" : "s"}. Delete those environments first.`;
-};
+import { deleteBlockedReason } from "./agentDelete";
 
 /**
  * The header's More menu: Delete. A blocked delete says why in the item
@@ -73,6 +68,7 @@ export default function AgentMoreMenu({ agent }) {
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{ paper: { sx: { minWidth: 220, maxWidth: 300, mt: 0.5 } } }}
+        MenuListProps={{ disabledItemsFocusable: true }}
       >
         <MenuItem
           disabled={!!blocked}
