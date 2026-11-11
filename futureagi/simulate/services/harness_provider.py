@@ -1242,25 +1242,48 @@ def _rerun_credentials_agent(
     return version
 
 
-def _builds_connected_agent(organization, payload) -> bool:
+def _builds_connected_agent(organization, workspace, payload) -> bool:
     """Whether a creation binds to an agent connected on the Agents page, whose
-    version already passed its own check and lends the environment its credentials."""
+    version already passed its own check and lends the environment its credentials.
+    The agent must be the workspace's own and able to run the connector asked for,
+    the same test the bind itself applies."""
     from simulate.models import AgentDefinition
-    from simulate.services.harness_agent_versions import environment_owned
+    from simulate.services.harness_agent_versions import (
+        _connector_agent_type,
+        environment_owned,
+    )
 
     raw = ((payload.get("metadata") or {}).get("agent_definition_id")) or ""
     try:
         definition_id = uuid.UUID(str(raw))
     except ValueError:
         return False
-    found = AgentDefinition.no_workspace_objects.filter(
-        id=definition_id, organization=organization, deleted=False
-    ).exists()
-    return found and not environment_owned(definition_id)
+    definition = (
+        AgentDefinition.no_workspace_objects.filter(
+            id=definition_id,
+            organization=organization,
+            workspace_id=getattr(workspace, "id", None),
+            deleted=False,
+        )
+        .only("id", "agent_type")
+        .first()
+    )
+    if definition is None or environment_owned(definition_id):
+        return False
+    connector = str((payload.get("agent") or {}).get("connector") or "auto").lower()
+    return connector == "auto" or definition.agent_type == _connector_agent_type(
+        connector
+    )
 
 
 def _environment_agent_maker(
-    organization, payload, secret_values, analysis, user, repository_id=None
+    organization,
+    payload,
+    secret_values,
+    analysis,
+    user,
+    repository_id=None,
+    workspace=None,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
@@ -1276,7 +1299,7 @@ def _environment_agent_maker(
     )
     check = (
         CreationCheck(report={}, required_variable_names=[])
-        if _builds_connected_agent(organization, payload)
+        if _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis
         )
@@ -1454,6 +1477,7 @@ class HostedHarnessProvider:
                         source_analysis,
                         request.user,
                         repository_id,
+                        workspace=workspace,
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)

@@ -959,12 +959,14 @@ class TestConnectedAgentCreationCheck:
         monkeypatch.setattr(service, "check_creation_credentials", check)
         monkeypatch.setattr(service, "ensure_environment_agent", ensure)
 
-        def make(organization, agent_definition_id):
+        def make(organization, agent_definition_id, workspace, connector="auto"):
             payload = {
-                "agent": {"secret_refs": {}},
+                "agent": {"secret_refs": {}, "connector": connector},
                 "metadata": {"agent_definition_id": agent_definition_id},
             }
-            _environment_agent_maker(organization, payload, {}, None, None)(None)
+            _environment_agent_maker(
+                organization, payload, {}, None, None, workspace=workspace
+            )(None)
             return calls
 
         return make
@@ -980,16 +982,18 @@ class TestConnectedAgentCreationCheck:
         )
 
     def test_a_connected_agent_is_bound_without_a_creation_check(
-        self, maker, user, agent
+        self, maker, user, agent, workspace
     ):
         _connect(agent)
 
-        calls = maker(user.organization, str(agent.id))
+        calls = maker(user.organization, str(agent.id), workspace)
 
         assert calls.asked == []
         assert calls.made == [CreationCheck(report={}, required_variable_names=[])]
 
-    def test_an_agent_an_environment_made_is_checked(self, maker, user, agent):
+    def test_an_agent_an_environment_made_is_checked(
+        self, maker, user, agent, workspace
+    ):
         version = _connect(agent)
         runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
             agent_version=version
@@ -998,7 +1002,30 @@ class TestConnectedAgentCreationCheck:
             agent_payload={**runtime.agent_payload, "definition_owner": "environment"}
         )
 
-        calls = maker(user.organization, str(agent.id))
+        calls = maker(user.organization, str(agent.id), workspace)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_another_workspaces_agent_is_checked(self, maker, user, agent):
+        from accounts.models.workspace import Workspace
+
+        _connect(agent)
+        elsewhere = Workspace.objects.create(
+            name="Elsewhere", organization=user.organization
+        )
+
+        calls = maker(user.organization, str(agent.id), elsewhere)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_a_connector_the_agent_cannot_run_is_checked(
+        self, maker, user, agent, workspace
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id), workspace, connector="vapi")
 
         assert len(calls.asked) == 1
         assert calls.made == [self.CHECKED]
@@ -1018,7 +1045,7 @@ class TestConnectedAgentCreationCheck:
             ),
         }[case]
 
-        calls = maker(organization, agent_definition_id)
+        calls = maker(organization, agent_definition_id, agent.workspace)
 
         assert len(calls.asked) == 1
         assert calls.made == [self.CHECKED]
