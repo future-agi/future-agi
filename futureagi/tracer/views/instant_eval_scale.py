@@ -1199,9 +1199,12 @@ def ensure_rows(task, unit: str) -> None:
         key = {"traces": "trace_id", "spans": "observation_span_id"}.get(
             row_type, "trace_session_id"
         )
+        # Primary: the run is prepared once from these rows, so rows a
+        # replica has not applied yet would be left out of it for good.
         ids = [
             str(v)
-            for v in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+            for v in EvalLogger.objects.using("default")
+            .filter(eval_task_id=str(task.id), deleted=False)
             .exclude(**{f"{key}__isnull": True})
             .order_by()
             .values_list(key, flat=True)
@@ -1678,7 +1681,10 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     def _retry_failed(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
-        failed = EvalLogger.objects.filter(
+        # Primary for every use: the check, the credits, the ids whose answers
+        # are dropped and the update must all see the same failures (the
+        # update always runs on the primary).
+        failed = EvalLogger.objects.using("default").filter(
             eval_task_id=str(task.id),
             deleted=False,
             status__in=[EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED],

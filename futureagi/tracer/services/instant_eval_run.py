@@ -309,11 +309,20 @@ def _failure(task, view) -> dict | None:
     from tracer.ee_boundary import jev_key_messages
     from tracer.models.observation_span import EvalLogger
 
-    failed = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        deleted=False,
-        custom_eval_config_id__in=view.config_ids,
-    ).filter(Q(error=True) | (~Q(skipped_reason__isnull=True) & ~Q(skipped_reason="")))
+    # Primary: the summary counts these failures from the primary, and a
+    # finished run's payload is kept a day, so a replica that has not applied
+    # the last failures would leave the run saying nothing about why.
+    failed = (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            deleted=False,
+            custom_eval_config_id__in=view.config_ids,
+        )
+        .filter(
+            Q(error=True) | (~Q(skipped_reason__isnull=True) & ~Q(skipped_reason=""))
+        )
+    )
     found = (
         failed.annotate(
             reason=Left(
