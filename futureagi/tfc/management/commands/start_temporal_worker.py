@@ -60,6 +60,9 @@ async def _wait_for_namespace(client, shutdown_event, log, *, retry_seconds=5):
     A reachable Temporal frontend is not enough: its namespace lookup also
     needs PostgreSQL. SDK validation is fatal after its bounded RPC retries,
     unlike ordinary polling, so do not start workers during that outage.
+    A refused persistence connection surfaces as UNAVAILABLE, but a hung one
+    trips this probe's client timeout, which the SDK reports as CANCELLED
+    ("Timeout expired"); both are the same outage and both keep waiting.
     """
     from datetime import timedelta
 
@@ -79,9 +82,14 @@ async def _wait_for_namespace(client, shutdown_event, log, *, retry_seconds=5):
                 RPCStatusCode.UNAVAILABLE,
                 RPCStatusCode.DEADLINE_EXCEEDED,
                 RPCStatusCode.RESOURCE_EXHAUSTED,
+                RPCStatusCode.CANCELLED,
             ):
                 raise
-            log.warning("temporal_namespace_unavailable", status=exc.status.name)
+            log.warning(
+                "temporal_namespace_unavailable",
+                status=exc.status.name,
+                message=exc.message,
+            )
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=retry_seconds)
         except TimeoutError:
@@ -446,10 +454,16 @@ class Command(BaseCommand):
 
             log.info("all_workers_shutdown_complete")
 
+        # Any exit other than a clean shutdown must reach the supervisor as a
+        # failure (on-failure restart policies, crash alerts). Default to
+        # failure so an unexpected BaseException cannot be reported as clean.
+        exit_code = 1
         try:
             runner.run(run_worker())
+            exit_code = 0
         except KeyboardInterrupt:
             log.info("worker_interrupted", reason="keyboard")
+            exit_code = 0
         except Exception as e:
             log.exception("worker_error", error=str(e))
             raise
@@ -461,4 +475,4 @@ class Command(BaseCommand):
             log.info("shutdown_threads", active_threads=active_threads)
 
             # Force exit to avoid hanging on any remaining threads
-            os._exit(0)
+            os._exit(exit_code)
