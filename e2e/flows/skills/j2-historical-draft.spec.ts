@@ -106,11 +106,11 @@ test('SKILLS-E2E-020: preserve unrelated personal work before editing historical
     await page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }).check();
     await page.screenshot({ path: testInfo.outputPath('J2-preservation-review.png') });
     await page.getByRole('button', { name: 'Preserve and suspend draft', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Start preserved-origin draft', exact: true })).toBeVisible();
+    // The exact-origin start follows the explicit preservation by itself; no second confirmation.
+    await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
     const rows = await scopeProbe.pg<Checkpoint>('SELECT id, owner_id, digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id = $1 AND workspace_id = $2', [created.context_id, owner.workspaceId]);
     assertCheckpoint(rows, original, owner.userId);
     expect(() => assertCheckpoint([{ ...rows[0], payload: { ...rows[0].payload, files: [] } }], original, owner.userId)).toThrow();
-    await page.getByRole('button', { name: 'Start preserved-origin draft', exact: true }).click();
     await expect(async () => assertOrigin(await read<Draft>(`${root}draft/`), files(4))).toPass({ timeout: READY });
     const repaired = await read<Draft>(`${root}draft/`);
     assertOrigin(repaired, files(4));

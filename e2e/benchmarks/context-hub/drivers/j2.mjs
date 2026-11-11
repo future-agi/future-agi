@@ -88,20 +88,21 @@ export async function createDriver({ jobId, runId, registration }) {
         await op.click(page.getByRole('option', { name: option, exact: typeof option === 'string' }), `choose-${target}`);
       };
       const receipt = (source, hash, decision = null) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: hash, actionSequences: [], ...(decision ? { decision } : {}) });
-      /** Plan, accept the paid ceiling and run through the public Tests UI. Returns the evidence id. */
-      const runNative = async ({ candidate, reference, production, titles, historical, tag }) => {
-        if (candidate) await choose('Candidate version', `v${candidate}`, `${tag}-candidate`);
-        if (reference) await choose('Recorded reference version', `v${reference}`, `${tag}-reference`);
-        if (production) await choose('Production version', `v${production}`, `${tag}-production`);
-        const group = page.getByRole('group', { name: 'Examples to run' });
-        for (const title of titles) await op.click(group.getByRole('checkbox', { name: title, exact: true }), `${tag}-select-${title.split(' ')[1]}`);
-        if (historical) await op.click(group.getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last(), `${tag}-mark-historical`);
-        const preview = page.waitForResponse((res) => res.url().includes('/native/preview/') && res.request().method() === 'POST');
-        await op.click(page.getByRole('button', { name: 'Preview application run', exact: true }), `${tag}-preview`);
-        requireValue((await preview).ok(), 'Plan was refused');
-        await op.click(page.getByRole('checkbox', { name: /I accept up to/ }), `${tag}-accept-ceiling`);
+      const RUN_BUTTON = /^Run on the application · accept up to \$/;
+      const group = () => page.getByRole('group', { name: 'Examples to run' });
+      /** The plan is preselected from stored data. Each default is asserted visibly (never assumed) before the
+       * reviewer decides; the single counted gesture is the button that names the paid ceiling. */
+      const expectPlan = async ({ candidate, reference, titles }) => {
+        await expect(page.getByLabel('Candidate version', { exact: true })).toContainText(`v${candidate}`);
+        await expect(page.getByLabel('Recorded reference version', { exact: true })).toContainText(`v${reference}`);
+        for (const title of titles) await expect(group().getByRole('checkbox', { name: title, exact: true })).toBeChecked();
+        await expect(group().getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked();
+        await expect(page.getByRole('button', { name: RUN_BUTTON })).toBeEnabled({ timeout: 120_000 });
+      };
+      /** Accept the paid ceiling named on the button and start the run through the public Tests UI. Returns the evidence id. */
+      const startRun = async (tag) => {
         const created = page.waitForResponse((res) => res.url().endsWith('/native/runs/') && res.request().method() === 'POST');
-        await op.click(page.getByRole('button', { name: 'Run on the application', exact: true }), `${tag}-run`);
+        await op.click(page.getByRole('button', { name: RUN_BUTTON }), `${tag}-run`);
         const response = await created;
         requireValue(response.ok(), 'Native run was refused');
         return (await response.json()).result.evidence_id;
@@ -152,10 +153,8 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'capture-and-redact') {
           const before = await api('GET', `${root}tests/`);
           const sourceResponse = page.waitForResponse((res) => res.url().endsWith(`${root}captures/source/`) && res.request().method() === 'POST');
+          // The span names the context it was delivered from, so the review opens in it without choosing one.
           await op.click(page.getByRole('button', { name: 'Create context regression case', exact: true }), 'capture-selected-span');
-          await op.click(page.getByLabel('Regression context', { exact: true }), 'choose-regression-context');
-          await op.click(page.getByRole('option', { name: input.contextName, exact: true }), 'select-context');
-          await op.click(page.getByRole('button', { name: 'Review selected span', exact: true }), 'load-source-review');
           const response = await sourceResponse;
           requireValue(response.ok(), 'Selected source was not authorized');
           state.source = (await response.json()).result;
@@ -163,49 +162,48 @@ export async function createDriver({ jobId, runId, registration }) {
           const dialog = page.getByRole('dialog');
           const boxes = dialog.getByRole('checkbox');
           await expect(boxes).toHaveCount(state.source.segments.length);
-          for (let index = 0; index < state.source.segments.length; index++) await op.click(boxes.nth(index), `select-segment-${index}`);
+          // Every supported segment starts selected; the reviewer deselects exceptions.
+          for (let index = 0; index < state.source.segments.length; index++) await expect(boxes.nth(index)).toBeChecked();
+          await shot('02a-segments-preselected');
           await op.transition('redaction-review', () => op.click(dialog.getByRole('button', { name: 'Preview selected text', exact: true }), 'review-selected-text'));
           await edit('case-title', () => dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill(TITLE.refund));
           await edit('expected-answer', () => dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt'));
+          // The reviewer adds which skill and which business action the case requires, in the same review.
+          // Chosen from the context's own skills and the application's actions; nothing is typed.
+          await op.click(dialog.getByLabel('Required skill', { exact: true }), 'open-required-skill');
+          await op.click(page.getByRole('option', { name: /refund-policy$/ }), 'choose-required-skill');
+          await op.click(dialog.getByLabel('Required business action', { exact: true }), 'open-required-action');
+          await op.click(page.getByRole('option', { name: 'Issue a refund', exact: true }), 'choose-required-action');
+          await op.click(dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }), 'confirm-expected-behavior');
+          await op.click(dialog.getByRole('checkbox', { name: /workspace/ }), 'acknowledge-workspace-sharing');
           const decision = { packet_sha256: digest({ source: state.source, expected: 'receipt' }), preconditions_sha256: digest({ suiteRevision: before.revision, contextId: input.contextId }) };
-          await op.review('review-captured-case', state.source.segments.map((_, i) => `segment-${i}`), [], async () => {
-            await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
-            await dialog.getByRole('checkbox', { name: /workspace/ }).check();
-          }, decision);
+          await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
+          await op.review('review-captured-case', state.source.segments.map((_, i) => `segment-${i}`), [], async () => { await shot('02-captured-case-review'); }, decision);
           const saved = page.waitForResponse((res) => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
           await op.click(dialog.getByRole('button', { name: 'Save reviewed example', exact: true }), 'save-reviewed-case');
           requireValue((await saved).ok(), 'Capture acceptance failed');
-          // The reviewer adds which skill and which business action the case requires.
-          await go('context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}`);
-          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          await op.click(page.getByRole('row', { name: new RegExp(TITLE.refund) }).getByRole('button', { name: 'Review example' }), 'review-captured-example');
-          const editor = page.getByRole('dialog');
-          // Chosen from the context's own skills and the application's actions; nothing is typed.
-          await op.click(editor.getByLabel('Required skill', { exact: true }), 'open-required-skill');
-          await op.click(page.getByRole('option', { name: /refund-policy$/ }), 'choose-required-skill');
-          await op.click(editor.getByLabel('Required business action', { exact: true }), 'open-required-action');
-          await op.click(page.getByRole('option', { name: 'Issue a refund', exact: true }), 'choose-required-action');
-          await op.click(editor.getByRole('checkbox', { name: /I reviewed the request/ }), 'confirm-expectation-review');
-          const suiteSaved = page.waitForResponse((res) => res.url().endsWith(`${root}tests/`) && res.request().method() === 'PUT');
-          await op.click(editor.getByRole('button', { name: 'Save example' }), 'save-expectation');
-          requireValue((await suiteSaved).ok(), 'Expectation save failed');
+          await expect(dialog.getByRole('button', { name: 'Reproduce on the application', exact: true })).toBeVisible();
           const suite = await api('GET', `${root}tests/`);
           const captured = suite.cases.find((item) => item.title === TITLE.refund);
           requireValue(captured?.reviewed && captured.source_group_id === `trace:${state.source.source_fingerprint}` && captured.fixtures.some((f) => f.name === 'fi.application.expectations')
             && captured.fixtures.some((f) => f.text.includes('support-order')), 'Independent captured-case observation differs');
+          const behavior = JSON.parse(captured.fixtures.find((f) => f.name === 'fi.application.expectations').text);
+          requireValue(behavior.skill_id === input.skills.refund && behavior.action === 'issue_refund', 'The required behavior was not saved with the reviewed case');
           const rows = await pool.query('SELECT trace_ref, source_hashes, accepted_receipt, recorded_version_id FROM model_hub_hubskillcontextcapture WHERE context_id=$1 AND workspace_id=$2', [input.contextId, input.actor.workspaceId]);
           requireValue(rows.rows.length === 1, 'Exactly one retained capture expected');
           state.capture = { caseId: captured.id, row: rows.rows[0] };
-          await shot('02-captured-case');
           const hash = await record('capture-observation', { evidenceClass: 'synthetic fixture', suite, capture: rows.rows[0], decision });
           receipt('api', hash, decision);
           return;
         }
         if (stage.id === 'reproduce-historical') {
-          await go('context-tests-head', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.head}`);
-          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          // Head v6 stands as the candidate; recorded v4 is the reference that must show the failure.
-          const evidenceId = await runNative({ reference: input.versions.recorded, titles: [TITLE.refund], historical: true, tag: 'reproduce' });
+          // The saved example hands off to its reproduction: the recorded v4 reference, the head candidate and the
+          // historical flag are carried from stored data, so the only decision here is the paid run.
+          await op.transition('reproduction-plan', () => op.click(page.getByRole('button', { name: 'Reproduce on the application', exact: true }), 'open-reproduction'));
+          await expect(page).toHaveURL(new RegExp(`reproduce=${state.capture.caseId}`));
+          await expectPlan({ candidate: input.versions.head, reference: input.versions.recorded, titles: [TITLE.refund] });
+          await shot('03a-reproduction-plan');
+          const evidenceId = await startRun('reproduce');
           const run = await waitRun(evidenceId, signal);
           requireValue(run.status === 'completed' && run.result.reproduction === 'reproduced', `Historical failure was not reproduced (${run.result?.reproduction ?? run.failure})`);
           state.runs.reproduction = run;
@@ -215,12 +213,11 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'preserve-and-start-hotfix') {
-          await go('historical-context', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}`);
-          await op.click(page.getByRole('button', { name: 'Edit viewed v4', exact: true }), 'edit-viewed-v4');
-          await op.click(page.getByRole('button', { name: 'Review draft preservation', exact: true }), 'review-draft-preservation');
+          // A reproduced failure offers the repair from its recorded version; the preservation review follows.
+          await op.transition('historical-context', () => op.click(page.getByRole('button', { name: `Repair from recorded v${input.versions.recorded}`, exact: true }), 'repair-from-recorded'));
           await op.click(page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }), 'confirm-preservation');
           await op.click(page.getByRole('button', { name: 'Preserve and suspend draft', exact: true }), 'preserve-and-suspend');
-          await op.click(page.getByRole('button', { name: 'Start preserved-origin draft', exact: true }), 'start-v4-draft');
+          // The exact-origin start follows the explicit preservation by itself.
           await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
           const checkpoints = await pool.query('SELECT digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id=$1 AND workspace_id=$2', [input.contextId, input.actor.workspaceId]);
           const draft = await api('GET', `${root}draft/`);
@@ -262,9 +259,15 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'matched-native-comparison') {
-          await go('repaired-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${state.repaired.number}`);
+          // Publishing carries the responder to the repaired release; the Tests tab holds the plan.
+          await expect(page).toHaveURL(new RegExp(`version=${state.repaired.number}`));
           await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          const evidenceId = await runNative({ reference: input.versions.recorded, production: input.versions.head, titles: Object.values(TITLE), historical: true, tag: 'matched' });
+          // The application's current production is the baseline for the neighboring cases.
+          await choose('Production version', `v${input.versions.head}`, 'matched-production');
+          await expectPlan({ candidate: state.repaired.number, reference: input.versions.recorded, titles: Object.values(TITLE) });
+          await expect(page.getByLabel('Production version', { exact: true })).toContainText(`v${input.versions.head}`);
+          await shot('05a-matched-plan');
+          const evidenceId = await startRun('matched');
           const run = await waitRun(evidenceId, signal);
           requireValue(run.status === 'completed', `Matched run did not complete (${run.failure})`);
           state.runs.matched = run;
@@ -314,8 +317,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Recorded reference`) }).first(), 'open-original-failure-cell');
           await expect(page.getByText('Observed by the application')).toBeVisible();
           await shot('06-cell-observation');
-          await op.click(page.getByRole('combobox', { name: 'Your assessment' }), 'open-assessment');
-          await op.click(page.getByRole('option', { name: /Disagree/ }), 'choose-disagree');
+          await op.click(page.getByRole('radio', { name: /Disagree/ }), 'choose-disagree');
           await edit('annotation-why', () => page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.'));
           const appended = page.waitForResponse((res) => res.url().includes('/annotations/') && res.request().method() === 'POST');
           await op.review('record-human-disagreement', [`cell-${cells[0].attempt_id}`], [], async () => { await page.getByRole('button', { name: 'Record review' }).click(); }, decision);
@@ -347,11 +349,11 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'release-ready-packet') {
-          await go('matched-run-result', `/dashboard/skills/contexts/${input.contextId}?version=${state.repaired.number}`);
-          await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          // Later verifications (the acceptance controls) are newer; the packet is for the matched candidate run.
-          await choose('Verification', new RegExp(`^${state.runs.matched.execution_fingerprint.replace('sha256:', '').slice(0, 12)}`), 'matched-verification');
+          // The matched verification is still the one on screen (the CI ran elsewhere); the responder closes the
+          // reviewed cell and continues; nothing is reopened or chosen again.
+          await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
           await expect(page.getByText('Release packet')).toBeVisible({ timeout: 120_000 });
+          await expect(page.getByText(new RegExp(`Verification ${state.runs.matched.execution_fingerprint.replace('sha256:', '').slice(0, 12)}`))).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {
             await page.getByLabel('Retained pipeline run URL').fill(state.ci.summary.url);

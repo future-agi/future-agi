@@ -41,7 +41,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     userGoal: 'An incident responder proves a context repair on the actual application with matched native runs, and the product holds a text-only success and a routing near-miss',
     steps: [
       'pin the runtime-measured application configuration as the context target',
-      'add the expected skill and business action to the captured failure and preview a matched run with the recorded v4 reference',
+      'review the captured failure with its required skill and business action, then plan a matched run with the carried v4 reference',
       'run the application with candidate, reference and production contexts and read selection, delivery, tool and answer outcomes per cell',
       'append a human disagreement beside the automatic grade',
     ],
@@ -136,42 +136,36 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
         'output.value': 'False refund success', 'fi.context.id': contextId, 'fi.context.version_id': v4.version.id, 'fi.context.digest': v4.version.digest } });
     await expect.poll(async () => (await probe.ch<{ n: string }>('SELECT count() AS n FROM spans FINAL WHERE trace_id={t:String}', { t: trace.traceId }))[0].n, POLL.SPAN_VISIBLE).toBe('2');
 
-    // Capture through the UI (physical identity carried, nothing retyped).
+    // Capture through the UI (physical identity carried, nothing retyped). The span names the context it
+    // was delivered from, so the review opens in it directly with every supported segment preselected.
     await page.goto('/dashboard/observe');
     await page.getByText(projectName, { exact: true }).click();
     await page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').filter({ hasText: 'Synthetic refund failure' }).click();
     await page.getByRole('button', { name: 'Create context regression case', exact: true }).click();
-    await page.getByLabel('Regression context', { exact: true }).click();
-    await page.getByRole('option', { name: `${prefix}-support`, exact: true }).click();
-    await page.getByRole('button', { name: 'Review selected span', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('checkbox')).toHaveCount(2);
-    for (const index of [1, 0]) await dialog.getByRole('checkbox').nth(index).check();
+    for (const box of await dialog.getByRole('checkbox').all()) await expect(box).toBeChecked();
     await dialog.getByRole('button', { name: 'Preview selected text', exact: true }).click();
     await dialog.getByRole('textbox', { name: 'Example title', exact: true }).fill('Original refund failure');
     await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt');
+    // The reviewer chooses the required skill and business action in the same review; no identity or JSON is typed.
+    await dialog.getByLabel('Required skill', { exact: true }).click();
+    await page.getByRole('option', { name: /refund-policy$/ }).click();
+    await dialog.getByLabel('Required business action', { exact: true }).click();
+    await page.getByRole('option', { name: 'Issue a refund', exact: true }).click();
+    await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
+    await shot('J2-required-behavior');
     await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
     await dialog.getByRole('checkbox', { name: /workspace/ }).check();
     const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
     await dialog.getByRole('button', { name: 'Save reviewed example', exact: true }).click();
     expect((await accepted).ok()).toBe(true);
 
-    // Tests: add the expected skill and action to the captured failure (a human decision), then pin the target.
-    await page.goto(`/dashboard/skills/contexts/${contextId}?version=4`);
-    await page.getByRole('tab', { name: 'Tests', exact: true }).click();
-    await page.getByRole('row', { name: /Original refund failure/ }).getByRole('button', { name: 'Review example' }).click();
-    const editor = page.getByRole('dialog');
-    // The reviewer chooses the required skill and business action; no identity or JSON is typed.
-    await editor.getByLabel('Required skill', { exact: true }).click();
-    await page.getByRole('option', { name: /refund-policy$/ }).click();
-    await editor.getByLabel('Required business action', { exact: true }).click();
-    await page.getByRole('option', { name: 'Issue a refund', exact: true }).click();
-    await editor.getByText('Required application behavior').scrollIntoViewIfNeeded();
-    await shot('J2-required-behavior');
-    await editor.getByRole('checkbox', { name: /I reviewed the request/ }).check();
-    await editor.getByRole('button', { name: 'Save example' }).click();
-    await expect(editor).toBeHidden();
-
+    // The saved example hands off to its reproduction: the recorded version is carried, not chosen.
+    await dialog.getByRole('button', { name: 'Reproduce on the application', exact: true }).click();
+    await expect(page).toHaveURL(/tab=tests/);
+    await expect(page).toHaveURL(/reproduce=/);
+    await expect(page).toHaveURL(/reference=4/);
     await page.getByRole('button', { name: 'Add application target' }).click();
     await page.getByRole('button', { name: 'Review runtime configuration' }).click();
     await expect(page.getByText('Pin the application configuration')).toBeVisible();
@@ -179,18 +173,17 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByRole('button', { name: 'Pin this configuration' }).click();
     await expect(page.getByText('Configuration pinned')).toBeVisible();
 
-    // Plan: candidate v7 against recorded v4 and production v6; the captured failure is the historical case.
-    await page.getByLabel('Candidate version').click(); await page.getByRole('option', { name: 'v7' }).click();
-    await page.getByLabel('Recorded reference version').click(); await page.getByRole('option', { name: 'v4' }).click();
-    await page.getByLabel('Production version').click(); await page.getByRole('option', { name: 'v6' }).click();
+    // Plan: the recorded v4 reference and the captured failure (historical) are preselected; the responder
+    // widens it to candidate v7, production v6 and the neighboring cases.
+    await expect(page.getByLabel('Recorded reference version')).toContainText('v4');
     const group = page.getByRole('group', { name: 'Examples to run' });
-    for (const title of ['Original refund failure', 'Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
-    await group.getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last().check();
-    await page.getByRole('button', { name: 'Preview application run' }).click();
+    await expect(group.getByRole('checkbox', { name: 'Recorded failure to reproduce' }).last()).toBeChecked();
+    await page.getByLabel('Candidate version').click(); await page.getByRole('option', { name: 'v7' }).click();
+    await page.getByLabel('Production version').click(); await page.getByRole('option', { name: 'v6' }).click();
+    for (const title of ['Working chargeback case', 'Working shipping case']) await group.getByRole('checkbox', { name: title }).check();
     await expect(page.getByText(/9 cells/)).toBeVisible();
     await shot('J2-native-preview');
-    await page.getByRole('checkbox', { name: /I accept up to/ }).check();
-    await page.getByRole('button', { name: 'Run on the application' }).click();
+    await page.getByRole('button', { name: /^Run on the application · accept up to \$/ }).click();
     await expect(page.getByText(/Release-ready on the application|Hold this release|The run stopped/).first()).toBeVisible({ timeout: 240_000 });
     await expect(page.getByText('Release-ready on the application')).toBeVisible();
     await shot('J2-native-result');
@@ -226,8 +219,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
 
     // Human disagreement is appended beside the automatic grade.
     await page.getByRole('row', { name: /Original refund failure.*Recorded reference/ }).first().click();
-    await page.getByRole('combobox', { name: 'Your assessment' }).click();
-    await page.getByRole('option', { name: /Disagree/ }).click();
+    await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record review' }).click();
     await expect(page.getByText(/disagree: The answer claims success/)).toBeVisible();
