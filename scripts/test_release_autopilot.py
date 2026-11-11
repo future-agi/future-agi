@@ -16,7 +16,9 @@ from unittest.mock import patch
 
 import release_autopilot as policy
 
-NOW = datetime(2026, 11, 10, 10, 0, tzinfo=timezone.utc)  # Tuesday
+# GitEvidenceTests replace published() by default; keep the real one for the retry trace.
+REAL_PUBLISHED = policy.published
+NOW =datetime(2026, 11, 10, 10, 0, tzinfo=timezone.utc)  # Tuesday
 SHA = "a" * 40
 BASE = "b" * 40
 CONFIG = {"RELEASE_AUTOPILOT": "on"}
@@ -474,6 +476,21 @@ class GitEvidenceTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__), patch.object(policy, "published", side_effect=error):
                 self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
 
+    def test_one_transient_api_failure_in_the_approve_recheck_does_not_cost_a_review(self):
+        # The previous tag's run failed on a side job, so both GitHub reads happen.
+        run = {"id": 7, "head_branch": "v1.0.0", "status": "completed", "conclusion": "failure"}
+        jobs = [{"name": name, "conclusion": "success"} for name in policy.SHIPPED_JOBS]
+        recheck = {"expected_sha": self.sha, "approved_environment": "production-auto"}
+        with patch.object(policy, "published", REAL_PUBLISHED), patch.object(policy.time, "sleep"):
+            with patch.object(policy, "api", side_effect=[RuntimeError("HTTP 502"), {"workflow_runs": [run]}]), \
+                    patch.object(policy, "pages", side_effect=[RuntimeError("HTTP 502"), jobs]):
+                self.assertIn("environment=production-auto\n", self.release(**recheck))
+            # A read that fails on every try still means unknown, so the recheck refuses.
+            with patch.object(policy, "api", return_value={"workflow_runs": [run]}), \
+                    patch.object(policy, "pages", side_effect=RuntimeError("HTTP 502")), \
+                    self.assertRaises(RuntimeError):
+                self.release(**recheck)
+
     def test_tag_pushed_by_a_person_keeps_review(self):
         self.assertIn("environment=Production", self.release(env={"GITHUB_ACTOR": "someone"}))
 
@@ -585,6 +602,12 @@ class PublishedTests(unittest.TestCase):
 
     SHIPPED = ("approve", "backend / publish")
 
+    def setUp(self):
+        # Retries never wait in tests; the patch also records each pause.
+        sleep = patch.object(policy.time, "sleep")
+        self.sleep = sleep.start()
+        self.addCleanup(sleep.stop)
+
     def published(self, runs, jobs=()):
         with patch.object(policy, "git", return_value=SHA), \
                 patch.object(policy, "api", return_value={"workflow_runs": runs}) as api, \
@@ -636,14 +659,50 @@ class PublishedTests(unittest.TestCase):
         self.assertFalse(self.published([], everything)[0])
 
     def test_unreadable_or_malformed_job_evidence_is_not_shipped(self):
-        for error in (RuntimeError("api"), KeyError("jobs")):
+        # Transport failures are tried three times; malformed data fails at once.
+        for error, tries in ((RuntimeError("api"), 3), (subprocess.TimeoutExpired("gh", 60), 3),
+                             (KeyError("jobs"), 1), (TypeError("shape"), 1), (ValueError("json"), 1)):
+            self.sleep.reset_mock()
             with self.subTest(error=type(error).__name__), patch.object(policy, "git", return_value=SHA), \
                     patch.object(policy, "api", return_value={"workflow_runs": [self.run_row()]}), \
-                    patch.object(policy, "pages", side_effect=error), self.assertRaises(type(error)):
-                # migration_evidence maps each of these to an unknown count (Production).
-                policy.published("v1.1.0")
+                    patch.object(policy, "pages", side_effect=error) as pages:
+                with self.assertRaises(type(error)):
+                    # migration_evidence maps each of these to an unknown count (Production).
+                    policy.published("v1.1.0")
+                self.assertEqual(pages.call_count, tries)
+                self.assertEqual(self.sleep.call_count, tries - 1)
         with patch.object(policy, "git", return_value=SHA), patch.object(policy, "api", return_value={"workflow_runs": None}):
             self.assertFalse(policy.published("v1.1.0"))
+
+    def test_a_transient_failure_of_either_read_is_retried(self):
+        jobs = list(map(self.job, self.SHIPPED))
+        for error in (RuntimeError("HTTP 502"), subprocess.TimeoutExpired("gh", 60)):
+            with self.subTest(read="jobs", error=type(error).__name__), patch.object(policy, "git", return_value=SHA), \
+                    patch.object(policy, "api", return_value={"workflow_runs": [self.run_row()]}), \
+                    patch.object(policy, "pages", side_effect=[error, jobs]) as pages:
+                self.assertTrue(policy.published("v1.1.0"))
+                self.assertEqual(pages.call_count, 2)
+            with self.subTest(read="runs", error=type(error).__name__), patch.object(policy, "git", return_value=SHA), \
+                    patch.object(policy, "api", side_effect=[error, {"workflow_runs": [self.run_row(conclusion="success")]}]) as api, \
+                    patch.object(policy, "pages") as pages:
+                self.assertTrue(policy.published("v1.1.0"))
+                self.assertEqual(api.call_count, 2)
+                pages.assert_not_called()
+
+    def test_a_read_that_keeps_failing_still_fails_closed(self):
+        with patch.object(policy, "git", return_value=SHA), \
+                patch.object(policy, "api", side_effect=RuntimeError("HTTP 502")) as api, \
+                self.assertRaises(RuntimeError):
+            policy.published("v1.1.0")
+        self.assertEqual(api.call_count, policy.READ_TRIES)
+        # Fails on every try except a fourth that is never made.
+        jobs = list(map(self.job, self.SHIPPED))
+        with patch.object(policy, "git", return_value=SHA), \
+                patch.object(policy, "api", return_value={"workflow_runs": [self.run_row()]}), \
+                patch.object(policy, "pages", side_effect=[RuntimeError("HTTP 502")] * 3 + [jobs]) as pages, \
+                self.assertRaises(RuntimeError):
+            policy.published("v1.1.0")
+        self.assertEqual(pages.call_count, 3)
 
     def test_shipped_job_names_match_the_release_workflows(self):
         import yaml

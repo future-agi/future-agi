@@ -141,9 +141,11 @@ approval. New steps then fetch full history and execute the policy from `main`:
    install check, after the images were published. If the previous tag's run is
    still in progress or waiting for approval, was rejected, or failed before the
    backend image was published, the count is unknown and the release keeps
-   human review. An unreadable or malformed run or job listing also means
-   unknown. A dispatch retry of the previous tag does not count, because only
-   tag-push runs are read.
+   human review. Each of the two GitHub reads (the tag's runs, then a run's
+   jobs) is tried up to three times, 5 and then 10 seconds apart, when the
+   request fails or times out. A read that still fails, or a malformed run or
+   job listing, means unknown. A dispatch retry of the previous tag does not
+   count, because only tag-push runs are read.
 3. Count every added, edited, deleted or renamed migration or schema file since
    that baseline: `futureagi/*/migrations/*.py` and `*.sql`, nested
    `futureagi/ee/**/migrations/`, `ee/**/migrations/`, and the ClickHouse schema
@@ -172,11 +174,15 @@ approval. New steps then fetch full history and execute the policy from `main`:
 **Re-runs.** A person's **Re-run all jobs** on a release run, old or new, repeats
 the guard and now always selects `Production` review, including a retry of the
 newest release after a transient guard failure. Re-running only the approve job
-of an automatic run stops at the recheck in step 5. Re-running failed build jobs
-after approve succeeded reuses the earlier guard and approval and does not ask
-for review again, as the `release-images.yml` header says; that route can still
-rebuild an older release and move `latest` and the minor alias back, and closing
-it needs a check in the publish step of `build-image-multiarch.yml`.
+of an automatic run stops at the recheck in step 5. Because no re-run can return
+to `production-auto`, a GitHub API failure during the guard or the recheck would
+cost a Production review; the retries in step 2 make that less likely, and a
+read that fails three times still leads to **Re-run all jobs** and review.
+Re-running failed build jobs after approve succeeded reuses the earlier guard
+and approval and does not ask for review again, as the `release-images.yml`
+header says; that route can still rebuild an older release and move `latest`
+and the minor alias back, and closing it needs a check in the publish step of
+`build-image-multiarch.yml`.
 
 The policy applies to the supported stable, beta and rc tag-push events; their
 existing component/channel restrictions remain unchanged. The hours/weekend

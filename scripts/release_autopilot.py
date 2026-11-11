@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from urllib.parse import quote
 
 REPOSITORY = "future-agi/future-agi"
@@ -539,6 +540,23 @@ def is_migration(path):
 # approve passed review (or the automatic lane) and backend / publish pushed
 # the image that carries the migrations. A test pins both names to the workflows.
 SHIPPED_JOBS = frozenset({"approve", "backend / publish"})
+READ_TRIES = 3
+
+
+def retried(read, *args):
+    """Repeat a GitHub read that failed in transit, then re-raise the last error.
+
+    A person's re-run always selects Production review, so a single HTTP 502
+    here would otherwise cost a review that no retry can clear. Malformed data
+    (KeyError, TypeError, ValueError) is not transient and raises at once.
+    """
+    for attempt in range(1, READ_TRIES + 1):
+        try:
+            return read(*args)
+        except (RuntimeError, subprocess.TimeoutExpired):
+            if attempt == READ_TRIES:
+                raise
+            time.sleep(5 * attempt)
 
 
 def published(tag):
@@ -546,7 +564,7 @@ def published(tag):
     sha = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
     if not SHA.fullmatch(sha):
         return False
-    data = api(f"actions/workflows/release-images.yml/runs?head_sha={sha}&event=push&per_page=50")
+    data = retried(api, f"actions/workflows/release-images.yml/runs?head_sha={sha}&event=push&per_page=50")
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     if not isinstance(runs, list):
         return False
@@ -559,7 +577,7 @@ def published(tag):
     for run in runs:
         if run.get("status") != "completed" or type(run.get("id")) is not int:
             continue
-        jobs = pages(f"actions/runs/{run['id']}/jobs?filter=all", "jobs")
+        jobs = retried(pages, f"actions/runs/{run['id']}/jobs?filter=all", "jobs")
         passed = {job.get("name") for job in jobs if isinstance(job, dict) and job.get("conclusion") == "success"}
         if SHIPPED_JOBS <= passed:
             return True
