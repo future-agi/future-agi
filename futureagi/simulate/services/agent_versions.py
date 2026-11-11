@@ -249,7 +249,7 @@ def version_at_head(
         source={
             key: value
             for key, value in {**source, "commit_sha": head_sha}.items()
-            if key != "repository_id" and value
+            if value
         },
         trigger=trigger,
         user=user,
@@ -429,44 +429,47 @@ def _same_upload_version(
         .defer("credential_blob", "diff")
         .order_by("-created_at")[:_UPLOAD_COMPARE_LIMIT]
     )
+    rows = list(rows)
+    if not rows:
+        return None
+    uploaded = _upload_digests(definition.organization_id, archive_artifact_id)
+    if uploaded is None:
+        return None
     for runtime in rows:
-        if _same_upload(
+        current = _upload_digests(
             definition.organization_id,
             (runtime.source or {}).get("archive_artifact_id"),
-            archive_artifact_id,
-        ):
+        )
+        if current is not None and current == uploaded:
             return runtime.agent_version
     return None
 
 
-def _same_upload(organization_id: Any, current_id: Any, new_id: Any) -> bool:
-    """Whether two uploads hold the same files with the same content. Each upload
-    is packed on its own, so their bytes differ even then; an upload that can't be
-    read counts as different."""
+def _upload_digests(
+    organization_id: Any, artifact_id: Any
+) -> dict[str, tuple[str, int]] | None:
+    """The per-file digests of an upload, so two uploads compare by content even
+    though each is packed on its own; an upload that can't be read compares as
+    different."""
     from simulate.services.harness_versioning.archives import (
         get_archive,
         member_digests,
     )
     from simulate.services.hosted_harness_gateway import _source_object_key
 
-    if not current_id:
-        return False
+    if not artifact_id:
+        return None
     try:
-        current = member_digests(
-            get_archive(_source_object_key(organization_id, str(current_id)))
-        )
-        uploaded = member_digests(
-            get_archive(_source_object_key(organization_id, str(new_id)))
+        return member_digests(
+            get_archive(_source_object_key(organization_id, str(artifact_id)))
         )
     except (S3Error, HTTPError, tarfile.TarError, OSError, EOFError) as exc:
         logger.warning(
             "agent_upload_compare_failed",
-            current_archive=str(current_id),
-            new_archive=str(new_id),
+            archive=str(artifact_id),
             error=type(exc).__name__,
         )
-        return False
-    return current == uploaded
+        return None
 
 
 def credentials_version(

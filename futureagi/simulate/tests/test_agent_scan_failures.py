@@ -55,6 +55,50 @@ def _aged(scan, seconds):
     return scan
 
 
+class TestReadingSwitch:
+    @pytest.fixture(autouse=True)
+    def reading_off(self, settings):
+        settings.HARNESS_AGENT_READING_ENABLED = False
+
+    def test_a_scan_is_refused_while_reading_is_off(
+        self, organization, workspace, user
+    ):
+        from simulate.services.agent_connect import start_scan
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        with pytest.raises(HostedHarnessError) as refused:
+            start_scan(
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                source={"kind": "github", "repository": "acme/agent", "ref": "main"},
+            )
+
+        assert refused.value.code == "reading_unavailable"
+        assert refused.value.status_code == 422
+        assert not AgentScan.objects.exists()
+
+    def test_a_connect_is_refused_while_reading_is_off(
+        self, organization, workspace, user
+    ):
+        from simulate.models import AgentDefinition
+        from simulate.services.agent_connect import connect_agent
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        before = AgentDefinition.objects.count()
+        with pytest.raises(HostedHarnessError) as refused:
+            connect_agent(
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                source={"kind": "github", "repository": "acme/agent", "ref": "main"},
+                name="Harbor",
+            )
+
+        assert refused.value.code == "reading_unavailable"
+        assert AgentDefinition.objects.count() == before
+
+
 class TestStuckScans:
     def test_a_scan_past_every_attempt_reads_as_failed(self, auth_client, scan):
         _aged(scan, SCAN_DEADLINE_SECONDS + 60)

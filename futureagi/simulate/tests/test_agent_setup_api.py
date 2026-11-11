@@ -67,6 +67,22 @@ def test_get_agent_answers_the_stored_agent_without_its_raw_setup(
 
 
 @pytest.mark.django_db
+def test_get_agent_answers_a_source_echo_without_a_folder(
+    auth_client, definition, version
+):
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(extension={"framework": None, "source": {}}),
+        sdk_version="0.2.3",
+    )
+
+    response = auth_client.get(_agent_url(definition.id, version.id))
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["agent"]["name"] == "harbor_hotels"
+
+
+@pytest.mark.django_db
 def test_get_agent_404s(auth_client, definition, version):
     other = definition.create_version(
         description="", commit_message="second", status="active"

@@ -93,11 +93,24 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
             )
 
 
+def _require_reading() -> None:
+    from simulate.services.agent_version_steps import reading_enabled
+
+    if not reading_enabled():
+        raise HostedHarnessError(
+            "reading_unavailable",
+            "Agent reading is turned off on this installation",
+            status_code=422,
+        )
+
+
 def start_scan(
     *, organization, workspace, user, source: Mapping[str, Any]
 ) -> AgentScan:
     """Record a scan for the agents in a source and start it; the drawer polls it."""
     from simulate.tasks.agent_scans import schedule_agent_scan
+
+    _require_reading()
 
     cleaned = _clean_source(source)
     _check_source(organization.id, getattr(workspace, "id", None), cleaned)
@@ -181,6 +194,7 @@ def connect_agent(
     already stands for it."""
     from simulate.services.agent_versions import branch_head_of
 
+    _require_reading()
     workspace_id = getattr(workspace, "id", None)
     cleaned = _clean_source(source)
     _check_source(organization.id, workspace_id, cleaned)

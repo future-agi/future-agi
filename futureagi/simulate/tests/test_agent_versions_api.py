@@ -609,6 +609,41 @@ def test_sync_of_a_private_repository_reads_the_head_with_the_installation(
     assert private_head.call_args.kwargs["repository_id"] == 7
 
 
+def test_a_synced_version_keeps_the_repository_id(auth_client, agent, production, user):
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
+    from integrations.services.credentials import CredentialManager
+
+    IntegrationConnection.no_workspace_objects.create(
+        organization=agent.organization,
+        workspace=agent.workspace,
+        created_by=user,
+        platform=IntegrationPlatform.GITHUB,
+        display_name="acme",
+        host_url="https://github.com",
+        encrypted_credentials=CredentialManager.encrypt({"installation_id": "42"}),
+        external_project_name="42",
+        status=ConnectionStatus.ACTIVE,
+        backfill_completed=True,
+    )
+    _private(production)
+
+    with patch("integrations.services.github_app.branch_head", return_value="b" * 40):
+        response = _change(auth_client, agent, kind="sync")
+
+    assert response.status_code == status.HTTP_202_ACCEPTED, response.content
+    body = response.json()["version"]
+    assert "repository_id" not in body["source"]
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+        agent_version_id=body["id"]
+    )
+    assert runtime.source["repository_id"] == 7
+    assert runtime.source["commit_sha"] == "b" * 40
+
+
 @pytest.mark.parametrize(
     "secret_values",
     [
@@ -809,6 +844,28 @@ class TestUploadVersion:
 
         assert version.id == uploaded.id
         assert _versions(agent) == 1
+
+    def test_the_new_upload_is_read_once_however_many_versions_it_is_compared_with(
+        self, agent, uploads, uploaded
+    ):
+        from simulate.services.harness_versioning import archives
+
+        for _ in range(3):
+            other = _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))
+            upload_version(agent, archive_artifact_id=uuid.UUID(other))
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+        reads = []
+
+        def counted(key):
+            reads.append(key)
+            return original(key)
+
+        original = archives.get_archive
+        with patch.object(archives, "get_archive", side_effect=counted):
+            version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id == uploaded.id
+        assert reads.count(_source_object_key(agent.organization_id, artifact)) == 1
 
     def test_other_files_make_a_version(self, agent, uploads, uploaded):
         artifact = _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))

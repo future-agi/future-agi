@@ -54,7 +54,7 @@ class StoredFrameworkSerializer(serializers.Serializer):
 
 
 class StoredSourceEchoSerializer(serializers.Serializer):
-    subfolder = serializers.CharField()
+    subfolder = serializers.CharField(required=False, allow_blank=True)
 
 
 class StoredExtensionSerializer(serializers.Serializer):
