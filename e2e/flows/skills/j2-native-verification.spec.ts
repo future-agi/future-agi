@@ -23,6 +23,18 @@ export function assertMatchedOutcome(cells: any[], expected: { caseId: string; v
   }
 }
 
+export function assertDelivery(turns: { system: string; catalogMembers: number }[]) {
+  expect(turns).toHaveLength(9);
+  expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: capped-25'))).toHaveLength(3); // candidate cells
+  expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: full-amount'))).toHaveLength(6); // reference and production
+  expect(turns.every(turn => turn.catalogMembers === 15)).toBe(true);
+}
+export function assertBusiness(business: { status: string; cell: { case_id: string; variant: string } }[], historical: string) {
+  expect(business.filter(row => row.status === 'applied')).toHaveLength(7);
+  expect(business.filter(row => row.status === 'declined').map(row => `${row.cell.case_id}/${row.cell.variant}`).sort())
+    .toEqual([`${historical}/production`, `${historical}/reference`].sort());
+}
+
 test('SKILLS-E2E-022: verify a context repair on the real application and hold false repairs', {
   tag: ['@flow'],
   annotation: flowAnnotation({ id: 'SKILLS-E2E-022', area: 'skills',
@@ -198,16 +210,15 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(() => assertMatchedOutcome(run.cells, [{ caseId: historical, variant: 'reference', selection: 'pass', delivery: 'pass', tools: 'pass' }])).toThrow();
     const ledger = await fixtures.ledger();
     const turns = firstTurns(ledger);
-    expect(turns).toHaveLength(9);
-    expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: capped-25'))).toHaveLength(3); // candidate cells
-    expect(turns.filter(turn => turn.system.includes('POLICY-REFUND: full-amount'))).toHaveLength(6); // reference and production
-    expect(turns.every(turn => turn.catalogMembers === 15)).toBe(true);
+    assertDelivery(turns);
     const attempts = await probe.pg<{ id: string }>('SELECT id FROM simulate_hosted_harness_attempt WHERE job_id=$1', [run.job_id]);
     expect(attempts).toHaveLength(1);
     const business = runOperations(RUNTIME_CONTAINER, attempts[0].id, run.cells);
-    expect(business.filter(row => row.status === 'applied')).toHaveLength(7);
-    expect(business.filter(row => row.status === 'declined').map(row => `${row.cell.case_id}/${row.cell.variant}`).sort())
-      .toEqual([`${historical}/production`, `${historical}/reference`].sort());
+    assertBusiness(business, historical);
+    // One-sided controls: each independent oracle rejects a single changed observation.
+    expect(() => assertDelivery(turns.map(turn => ({ ...turn, system: turn.system.replace('capped-25', 'full-amount') })))).toThrow();
+    expect(() => assertDelivery(turns.map(turn => ({ ...turn, catalogMembers: 14 })))).toThrow();
+    expect(() => assertBusiness(business.map(row => ({ ...row, status: 'applied' })), historical)).toThrow();
     const credentials = await probe.pg<{ n: string }>('SELECT count(*) AS n FROM model_hub_hubskillcontextcredential WHERE workspace_id=$1 AND revoked_at IS NULL AND purpose=$2', [actor.workspaceId, 'consume']);
     expect(credentials[0].n).toBe('0');
 
