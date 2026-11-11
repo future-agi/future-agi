@@ -1717,3 +1717,10 @@ INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
 INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
     "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+
+# New attachments never inherit legacy public-media credentials or buckets.
+from .attachments import (  # noqa: E402,F401
+    FI_ATTACHMENTS_ENABLED,
+    FI_ATTACHMENTS_MEDIA_ORIGIN,
+    FI_ATTACHMENTS_STORAGE,
+)
