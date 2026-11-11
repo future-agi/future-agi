@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
-import ModalWrapper from "src/components/ModalWrapper";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { useCreateContextBinding } from "src/api/skills/context-consumers";
 import { IdentityValue } from "../review/ReleaseReviewBody";
 
@@ -44,7 +44,13 @@ export default function ContextTargetRegistration({ contextId, canRegister }) {
     setManifestName(chosen?.name || "");
     if (!chosen) return;
     try {
-      const value = JSON.parse(await chosen.text());
+      const text = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(chosen);
+      });
+      const value = JSON.parse(text);
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("not an object");
       setManifest(value);

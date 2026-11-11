@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -11,34 +12,40 @@ export async function readSkillResult({ apiUrl, headers, path, signal }) {
   return (await response.json()).result;
 }
 
-/** Public-UI driver with independent API/PG witnesses. Synthetic, pre-existing
- * draft/authentication inputs are NOT cold authority setup. Missing target,
- * annotation, role and expiry controls stay failed, never inferred from the
- * passing policy-ABA control or backend unit tests. No competitive claim here.
- * Private VM input: author/reviewer {access,refresh,organizationId,workspaceId,
- * userId,name}, skillId, skillName, baselineVersion, appUrl, apiUrl, pgUrl,
- * outputDir, provenance. Optional evidenceIds identifies user-selected records.
+/** J4 public-UI driver (synthetic fixture). Three people use the product UI:
+ * the workspace owner configures review authority and the application target
+ * (cold only), the author publishes and submits, and the independent reviewer
+ * arrives through Skills -> Reviews, decides, renews and releases. Races are
+ * injected by the environment through public APIs or the test-image retention
+ * clock seam; they are recorded as faults, not as operator actions, and every
+ * refused attempt, renewal and re-approval the operator performs is counted.
+ * API/PG witnesses are read independently of what the UI displays. No
+ * competitive claim is made here.
+ * Private VM input: admin/author/reviewer {access,refresh,organizationId,
+ * workspaceId,userId,name}, cohort, contextId, contextName, baselineVersion,
+ * manifestPath, targetName, bindingId (configured), evidenceIds, appUrl,
+ * apiUrl, pgUrl, outputDir, provenance.
  */
 export async function createDriver({ jobId, runId, registration }) {
   requireValue(process.platform === 'linux' && jobId === 'J4', 'J4 runs only on the approved cloud Linux VM');
   requireValue(process.env.J4_DRIVER_INPUT, 'Provide a private cloud-local driver input');
   const input = JSON.parse(await readFile(process.env.J4_DRIVER_INPUT, 'utf8'));
   for (const key of ['appUrl', 'apiUrl', 'pgUrl']) requireValue(new URL(input[key]).hostname === 'localhost', 'Use the owned full stack only');
-  requireValue(input.author.userId !== input.reviewer.userId, 'Independent author and reviewer required');
+  requireValue(new Set([input.admin.userId, input.author.userId, input.reviewer.userId]).size === 3, 'Independent owner, author and reviewer required');
+  requireValue(input.cohort === registration.cohort && input.evidenceIds.length === 2, 'Driver input differs from preregistration');
   const output = resolve(input.outputDir, runId);
   await mkdir(output, { recursive: true });
   const contexts = [];
   let browser;
-  let authorPage;
-  let reviewerPage;
+  const pages = {};
   let published;
   let submitted;
   let detail;
   let receipt;
+  let bindingId = input.bindingId;
   let baselineObservation;
-  let staleObservation;
-  let originalRevision;
-  const exercised = new Set();
+  const refusals = [];
+  const restored = { role: null, binding: null };
   const db = new pg.Client({ connectionString: input.pgUrl });
   let connected = false;
   const sql = async (text, values) => {
@@ -46,7 +53,14 @@ export async function createDriver({ jobId, runId, registration }) {
     return (await db.query(text, values)).rows;
   };
   const headers = (actor) => ({ Authorization: `Bearer ${actor.access}`, 'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId });
-  const read = (path, signal, actor = input.author) => readSkillResult({ apiUrl: input.apiUrl, headers: headers(actor), path, signal });
+  const read = (path, signal, actor = input.reviewer) => readSkillResult({ apiUrl: input.apiUrl, headers: headers(actor), path, signal });
+  // Environment-only calls (fault injection and control probes). Never an operator action.
+  const environment = async (actor, method, path, body, base = '/model-hub/skills/') => {
+    const response = await fetch(`${input.apiUrl}${base}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
+      headers: { ...headers(actor), 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() } });
+    const value = await response.json().catch(() => ({}));
+    return { status: response.status, code: value.code ?? null, result: value.result };
+  };
   const record = async (name, value) => {
     await writeFile(resolve(output, `${name}.json`), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     return digest(value);
@@ -64,28 +78,30 @@ export async function createDriver({ jobId, runId, registration }) {
       sessionStorage.setItem('workspaceOrgId', user.organizationId);
     }, actor);
     const page = await context.newPage();
-    page.setDefaultTimeout(30_000);
+    page.setDefaultTimeout(45_000);
     return page;
   };
-  const ack = (page) => page.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
-  const responseFor = (page, suffix, method = 'POST') => {
-    const pending = page.waitForResponse(res => res.url().endsWith(suffix) && res.request().method() === method);
-    // Attach rejection handling immediately: a blocked click can outlive the
-    // response waiter. The awaited promise still rejects and fails the stage.
+  const page = async (role) => { pages[role] = pages[role] || await open(input[role]); return pages[role]; };
+  const ack = (target) => target.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+  const responseFor = (target, suffix, method = 'POST') => {
+    const pending = target.waitForResponse((res) => new URL(res.url()).pathname.endsWith(suffix) && res.request().method() === method, { timeout: 60_000 });
     pending.catch(() => {});
     return pending;
   };
   const decisionFor = (value) => ({ packet_sha256: digest(value.packet), preconditions_sha256: digest({ fingerprint: value.fingerprint, revision: value.revision }) });
+  const labelEvents = () => sql('SELECT id::text FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=$2', [input.contextId, published.number]);
+  const shot = (target, name) => target.screenshot({ path: resolve(output, `${name}.png`) });
   return {
     mode: 'product', provenance: input.provenance,
     async perform(stage, { ledger, signal }) {
       requireValue(!signal.aborted, 'Journey cancelled');
-      const actor = ['publish-candidate', 'share-and-submit'].includes(stage.id) ? 'author' : 'reviewer';
+      const actorFor = { 'configure-review-authority': 'admin', 'publish-candidate': 'author', 'share-and-submit': 'author' };
+      const actor = actorFor[stage.id] || 'reviewer';
       const op = new MeasuredOperator({ ledger, actor, step: stage.id, phase: stage.phase, signal });
-      const navigate = (page, target, url) => op.transition(target, () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target }, () => page.goto(url)));
-      const choose = async (page, label, option, target, operator = op) => {
-        await operator.click(page.getByLabel(label), `${target}-open`);
-        await operator.click(page.getByRole('option', { name: option, exact: typeof option === 'string' }), `${target}-select`);
+      const navigate = (target, name, url, operator = op) => operator.transition(name, () => ledger.measure({ dimension: 'A', primitive: 'click', actor: operator.actor, step: stage.id, phase: stage.phase, target: name }, () => target.goto(url)));
+      const choose = async (target, label, option, name, operator = op) => {
+        await operator.click(target.getByLabel(label, { exact: true }), `${name}-open`);
+        await operator.click(target.getByRole('option', { name: option, exact: typeof option === 'string' }), `${name}-select`);
       };
       const stamp = async (name, value, decision = undefined, source = 'api') => {
         const artifactHash = await record(name, value);
@@ -93,188 +109,316 @@ export async function createDriver({ jobId, runId, registration }) {
       };
       const cancel = () => { void browser?.close().catch(() => {}); };
       signal.addEventListener('abort', cancel, { once: true });
+      // Reviewer helpers. Each is a counted operator primitive.
+      const attempt = async (reviewer, operator, name, { acknowledge = true } = {}) => {
+        if (acknowledge) {
+          await expect(ack(reviewer)).not.toBeChecked();
+          await operator.click(ack(reviewer), `${name}-acknowledge`);
+        }
+        await operator.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), `${name}-open-release`);
+        const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
+        await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
+        const result = await response;
+        return { status: result.status(), code: (await result.json().catch(() => ({}))).code ?? null };
+      };
+      const renew = async (reviewer, operator, name) => {
+        await operator.click(reviewer.getByRole('button', { name: 'Renew review', exact: true }), `${name}-open-renewal`);
+        const dialog = reviewer.getByRole('dialog');
+        await expect(dialog.getByText('Renew release review', { exact: true })).toBeVisible();
+        // Independent read of exactly what the dialog shows.
+        const preview = await read(`release-requests/${submitted.id}/renewal/`, signal);
+        const items = preview.changes.map((row) => row.item);
+        const removed = preview.removed_evidence.map((row) => `removed-${row.source_id}`);
+        requireValue(items.length + removed.length > 0, 'Renewal must expose at least one changed precondition');
+        const decision = decisionFor({ packet: preview.packet, fingerprint: preview.fingerprint, revision: preview.revision + 1 });
+        await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
+          for (const item of items) await expect(dialog.getByRole('cell', { name: item, exact: true })).toBeVisible();
+          for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed packet`))).toBeVisible();
+        }, decision);
+        await operator.click(dialog.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.', exact: true }), `${name}-acknowledge-changes`);
+        const response = responseFor(reviewer, `/release-requests/${submitted.id}/renewal/`);
+        await operator.click(dialog.getByRole('button', { name: 'Create renewed revision', exact: true }), `${name}-create-revision`);
+        const result = await response;
+        requireValue(result.status() === 200 || result.status() === 201, 'Renewal rejected');
+        await expect(dialog).not.toBeVisible();
+        // The renewed pending revision replaces the stale view (remount).
+        await expect(reviewer.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0, { timeout: 60_000 });
+        detail = await read(`release-requests/${submitted.id}/`, signal);
+        requireValue(detail.status === 'pending' && detail.fingerprint === preview.fingerprint && detail.revision === preview.revision + 1, 'Renewal silently differs from the inspected changes');
+        return { preview, decision };
+      };
+      const approve = async (reviewer, operator, name, decision) => {
+        await expect(ack(reviewer)).toBeEnabled();
+        await operator.click(ack(reviewer), `${name}-acknowledge`);
+        await expect(ack(reviewer)).toBeChecked();
+        const response = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
+        await operator.approve(`${name}-approve`, ['release-packet'], () => reviewer.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
+        requireValue((await response).ok(), 'Reviewer decision rejected');
+        await expect(ack(reviewer)).not.toBeChecked();
+      };
+      const refused = async (fault, scenario, result, extra = {}) => {
+        const events = await labelEvents();
+        const row = { fault, scenario, attempt: result, events: events.length, ...extra };
+        refusals.push(row);
+        requireValue(result.status >= 400 && result.status < 500 && events.length === 0, `Stale approval executed under ${fault}`);
+        ledger.fault(fault, scenario);
+        return row;
+      };
       try {
         if (stage.id === 'configure-review-authority') {
-          throw new Error('Cold authority configuration requires a public role/target setup journey; preconfigured fixture identities do not satisfy it.');
+          // Workspace owner grants the reviewer release authority and registers
+          // the application target from its build manifest. Cold only.
+          const admin = await page('admin');
+          await navigate(admin, 'user-management', '/dashboard/settings/user-management');
+          await op.fill(admin.getByPlaceholder('Search by name or email'), input.reviewer.name, 'find-reviewer');
+          const row = admin.locator('.ag-row', { hasText: input.reviewer.name }).first();
+          await expect(admin.locator('.ag-center-cols-container .ag-row')).toHaveCount(1);
+          await op.click(row.locator('.ag-group-contracted:visible').first(), 'expand-reviewer-workspaces');
+          await expect(admin.locator('.ag-details-row, .ag-full-width-row').first()).toBeVisible();
+          await op.click(admin.getByRole('combobox').filter({ hasText: 'Workspace Viewer' }), 'open-workspace-role');
+          const roleResponse = admin.waitForResponse((res) => /members\/role\/$/.test(new URL(res.url()).pathname) && res.request().method() === 'POST');
+          await op.click(admin.getByRole('option', { name: 'Workspace Admin', exact: true }), 'grant-workspace-admin');
+          requireValue((await roleResponse).ok(), 'Reviewer authority not granted');
+          await navigate(admin, 'context-detail', `/dashboard/skills/contexts/${input.contextId}`);
+          await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Consumers', exact: true }), 'open-consumers'));
+          await op.click(admin.getByRole('button', { name: 'Register application target', exact: true }), 'open-target-registration');
+          const dialog = admin.getByRole('dialog');
+          await op.fill(dialog.getByLabel('Target name', { exact: true }), input.targetName, 'name-target');
+          const chooser = admin.waitForEvent('filechooser');
+          await op.click(dialog.getByRole('button', { name: 'Choose runtime manifest', exact: true }), 'choose-runtime-manifest');
+          await (await chooser).setFiles(input.manifestPath);
+          await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
+          const created = responseFor(admin, `/contexts/${input.contextId}/bindings/`);
+          await op.click(dialog.getByRole('button', { name: 'Register target', exact: true }), 'register-target');
+          const binding = (await (await created).json()).result;
+          bindingId = binding.id;
+          await expect(admin.getByText(`Registered ${input.targetName} · configuration r1`, { exact: true })).toBeVisible();
+          const authority = await sql(`SELECT m.level FROM accounts_workspacemembership m WHERE m.user_id=$1 AND m.workspace_id=$2 AND m.is_active`, [input.reviewer.userId, input.reviewer.workspaceId]);
+          const target = await sql('SELECT id::text, revision, configuration_digest FROM model_hub_hubskillcontextbinding WHERE id=$1', [bindingId]);
+          requireValue(authority[0]?.level === 8 && target.length === 1 && target[0].configuration_digest === binding.configuration_digest, 'Configured authority/target not observed');
+          await shot(admin, 'configure-review-authority');
+          await stamp('configured-authority', { authority, target }, undefined, 'pg');
+          return;
         }
-        if (!authorPage) authorPage = await open(input.author);
         if (stage.id === 'publish-candidate') {
-          await navigate(authorPage, 'candidate-editor', `/dashboard/skills/${input.skillId}/edit`);
-          await op.transition('publication-review', () => op.click(authorPage.getByRole('button', { name: 'Publish', exact: true }), 'open-publication-review'));
-          const dialog = authorPage.getByRole('dialog');
-          await expect(dialog.getByText('Publish skill', { exact: true })).toBeVisible();
-          const draft = await read(`${input.skillId}/draft/`, signal);
-          for (const [index, file] of draft.files.entries()) {
-            await op.review('candidate-diff', [`file-${index}`], [], async () => {
-              const item = dialog.getByRole('button', { name: new RegExp(file.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) });
-              if (await item.count()) await op.click(item.first(), 'inspect-candidate-file');
-            });
-          }
-          const response = responseFor(authorPage, `/${input.skillId}/draft/publish/`);
-          await op.click(dialog.getByRole('button', { name: 'Publish', exact: true }), 'publish-immutable-candidate');
-          const result = await response;
+          const author = await page('author');
+          await navigate(author, 'own-context', `/dashboard/skills/contexts/${input.contextId}`);
+          await op.transition('draft-editor', () => op.click(author.getByRole('button', { name: 'Resume your draft', exact: true }), 'resume-draft'));
+          await op.transition('publication-review', () => op.click(author.getByRole('button', { name: 'Review changes', exact: true }), 'open-publication-review'));
+          const draft = await read(`contexts/${input.contextId}/draft/`, signal, input.author);
+          await op.review('candidate-against-origin', ['AGENTS.md'], [], () => expect(author.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible());
+          await op.click(author.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true }), 'acknowledge-candidate');
+          const warnings = author.getByRole('checkbox', { name: 'I acknowledge the static warnings for this exact candidate.', exact: true });
+          if (await warnings.count()) await op.click(warnings, 'acknowledge-warnings');
+          const acked = responseFor(author, `/contexts/${input.contextId}/draft/acknowledge-head/`);
+          await op.click(author.getByRole('button', { name: 'Acknowledge reviewed head', exact: true }), 'acknowledge-head');
+          requireValue((await acked).ok(), 'Head acknowledgement failed');
+          await expect(author.getByRole('button', { name: 'Publish version', exact: true })).toBeVisible();
+          const reviewed = author.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
+          if (!(await reviewed.isChecked())) await op.click(reviewed, 'acknowledge-acknowledged-candidate');
+          if (await warnings.count() && !(await warnings.isChecked())) await op.click(warnings, 'acknowledge-acknowledged-warnings');
+          const publication = responseFor(author, `/contexts/${input.contextId}/draft/publish/`);
+          await op.click(author.getByRole('button', { name: 'Publish version', exact: true }), 'publish-immutable-candidate');
+          const result = await publication;
           requireValue(result.status() === 201, 'Candidate publication failed');
           published = (await result.json()).result.version;
-          baselineObservation = await sql('SELECT v.number FROM model_hub_hubskilllabel l JOIN model_hub_hubskillversion v ON v.id=l.version_id WHERE l.skill_id=$1 AND l.name=$2', [input.skillId, 'production']);
+          requireValue(published.digest === draft.digest, 'Published bytes differ from the reviewed draft');
+          baselineObservation = await sql('SELECT v.number FROM model_hub_hubskilllabel l JOIN model_hub_hubskillversion v ON v.id=l.version_id WHERE l.skill_id=$1 AND l.name=$2', [input.contextId, 'production']);
           requireValue(baselineObservation[0]?.number === input.baselineVersion, 'Publication changed production');
-          await stamp('publication-observation', { version: await read(`${input.skillId}/versions/${published.number}/`, signal), baseline: baselineObservation }, undefined, 'pg');
-        } else if (stage.id === 'share-and-submit') {
-          await navigate(authorPage, 'author-reviews', '/dashboard/skills/reviews');
-          await op.click(authorPage.getByRole('button', { name: 'Request review', exact: true }), 'open-author-composer');
-          await choose(authorPage, 'Release resource', input.skillName, 'subject');
-          await choose(authorPage, 'Published candidate', new RegExp(`^v${published.number}(?: —|$)`), 'candidate');
-          // Selection and sharing are separate measured user decisions. No API
-          // submission substitutes for an unavailable composer or evidence row.
-          for (const id of input.evidenceIds || []) {
-            const checkbox = authorPage.getByRole('checkbox', { name: new RegExp(`evidence ${id}$`) });
-            const section = checkbox.locator('xpath=ancestor::*[.//button[normalize-space()="Share evidence"]][1]');
-            if (await section.count()) {
-              await op.click(section.getByRole('button', { name: 'Share evidence', exact: true }), 'share-selected-evidence');
-              await op.click(authorPage.getByRole('dialog').getByRole('button', { name: 'Share with workspace', exact: true }), 'confirm-evidence-sharing');
-            }
-            await op.click(checkbox, 'attach-selected-evidence');
+          await shot(author, 'publish-candidate');
+          await stamp('publication-observation', { version: published, production: baselineObservation }, undefined, 'pg');
+          return;
+        }
+        if (stage.id === 'share-and-submit') {
+          const author = await page('author');
+          await navigate(author, 'skills-home', '/dashboard/skills');
+          await op.transition('author-reviews', () => op.click(author.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews'));
+          await op.transition('composer', () => op.click(author.getByRole('button', { name: 'Request review', exact: true }), 'open-composer'));
+          await choose(author, 'Resource kind', 'Agent context', 'kind');
+          await choose(author, 'Release resource', input.contextName, 'subject');
+          await choose(author, 'Published candidate', new RegExp(`^v${published.number}(?: —|$)`), 'candidate');
+          await choose(author, 'Application target', new RegExp(`^${input.targetName} · configuration r\\d+$`), 'target');
+          // Attach every listed exact-candidate result; sharing is a separate
+          // explicit decision per record. No identifier is typed or matched.
+          const attach = author.getByRole('checkbox', { name: /^Attach text evidence / });
+          await expect(attach).toHaveCount(input.evidenceIds.length);
+          for (let index = 0; index < input.evidenceIds.length; index += 1) {
+            const share = author.getByRole('button', { name: 'Share evidence', exact: true }).first();
+            await op.click(share, 'share-evidence');
+            await op.click(author.getByRole('dialog').getByRole('button', { name: 'Share with workspace', exact: true }), 'confirm-sharing');
+            await expect(author.getByRole('dialog')).not.toBeVisible();
           }
-          await op.click(authorPage.getByRole('button', { name: 'Prepare exact review', exact: true }), 'prepare-exact-packet');
-          await choose(authorPage, 'Assigned reviewer', input.reviewer.name, 'reviewer');
-          await op.review('author-review', ['candidate', 'transition', ...(input.evidenceIds || []).map((_, i) => `evidence-${i}`)], [], () => expect(ack(authorPage)).toBeEnabled());
-          await op.click(ack(authorPage), 'acknowledge-author-packet');
-          const response = responseFor(authorPage, '/release-requests/');
-          await op.handoff('assigned-reviewer', () => op.click(authorPage.getByRole('button', { name: 'Send review request', exact: true }), 'submit-exact-review-packet'));
-          const sent = await response;
-          requireValue(sent.status() === 201, 'Author submission failed');
-          submitted = (await sent.json()).result;
-          originalRevision = submitted.revision;
-          detail = await read(`release-requests/${submitted.id}/`, signal);
-          requireValue(detail.author_id === input.author.userId && detail.packet.candidate_version_id === published.id, 'Submitted identity differs');
+          await expect(author.getByRole('button', { name: 'Share evidence', exact: true })).toHaveCount(0);
+          for (let index = 0; index < input.evidenceIds.length; index += 1) await op.click(attach.nth(index), 'attach-evidence');
+          const prepared = responseFor(author, '/release-requests/preview/');
+          await op.click(author.getByRole('button', { name: 'Prepare exact review', exact: true }), 'prepare-exact-packet');
+          const preview = (await (await prepared).json()).result;
+          await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
+          await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(ack(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));
+          await op.click(ack(author), 'acknowledge-author-packet');
+          const sent = responseFor(author, '/release-requests/');
+          await op.handoff('assigned-reviewer', () => op.click(author.getByRole('button', { name: 'Send review request', exact: true }), 'submit-exact-review-packet'));
+          const response = await sent;
+          requireValue(response.status() === 201, 'Author submission failed');
+          submitted = (await response.json()).result;
+          detail = await read(`release-requests/${submitted.id}/`, signal, input.author);
+          requireValue(detail.author_id === input.author.userId && detail.packet.candidate_version_id === published.id
+            && detail.packet.target?.binding_id === bindingId && detail.packet.evidence.length === input.evidenceIds.length
+            && detail.packet.evidence.every((ref) => input.evidenceIds.includes(ref.source_id) && ref.visibility === 'workspace'), 'Submitted identity differs');
+          await shot(author, 'share-and-submit');
           await stamp('author-submission', detail);
-        } else if (stage.id === 'reviewer-inbox-arrival') {
-          reviewerPage = await open(input.reviewer);
-          await navigate(reviewerPage, 'reviewer-skills', '/dashboard/skills');
-          await op.transition('reviewer-inbox', () => op.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews'));
-          await op.transition('assigned-request', () => op.click(reviewerPage.getByRole('button', { name: input.skillName, exact: true }), 'open-assigned-packet'));
-          const inbox = await read('review-inbox/', signal, input.reviewer);
-          requireValue(inbox.results.some(row => row.id === submitted.id && row.unread), 'Assigned unread request absent');
+          return;
+        }
+        const reviewer = await page('reviewer');
+        if (stage.id === 'reviewer-inbox-arrival') {
+          await navigate(reviewer, 'reviewer-skills', '/dashboard/skills');
+          await op.transition('reviewer-inbox', () => op.click(reviewer.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews'));
+          const inbox = await read('review-inbox/', signal);
+          requireValue(inbox.results.some((row) => row.id === submitted.id && row.unread), 'Assigned unread request absent');
+          await shot(reviewer, 'reviewer-inbox-arrival');
+          await op.transition('assigned-request', () => op.click(reviewer.getByRole('button', { name: input.contextName, exact: true }), 'open-assigned-packet'));
+          await expect(ack(reviewer)).toBeVisible();
           await stamp('reviewer-arrival', inbox);
-        } else if (stage.id === 'review-packet') {
-          detail = await read(`release-requests/${submitted.id}/`, signal, input.reviewer);
+          return;
+        }
+        if (stage.id === 'review-packet') {
+          detail = await read(`release-requests/${submitted.id}/`, signal);
           const decision = decisionFor(detail);
-          const comparison = await read(`${input.skillId}/compare/?from=${input.baselineVersion}&to=${published.number}`, signal, input.reviewer);
-          requireValue(comparison.from === input.baselineVersion && comparison.to === published.number, 'Comparison is not the exact release transition');
-          const files = comparison.files.filter(file => file.status !== 'unchanged');
-          requireValue(files.length > 0, 'Synthetic review must contain an actual changed file');
-          for (const [index, file] of files.entries()) {
-            // Typography renders the summary itself; use its exact text locator.
-            const heading = reviewerPage.getByText(`${file.path} · ${file.status}`, { exact: true });
-            const disclosure = heading.locator('..');
-            if (await disclosure.getAttribute('open') === null) await op.click(heading, 'open-exact-file-diff');
-            await op.review('inspect-exact-file-diff', [`file-${index}`], [], async () => {
-              await expect(disclosure.getByRole('table', { name: 'File changes', exact: true })).toBeVisible();
-              for (const [side, text] of [['Before', file.from_text], ['After', file.to_text]]) {
-                requireValue(typeof text === 'string', 'Independent comparison lacks complete file bytes');
-                const cells = disclosure.getByRole('cell', { name: new RegExp(`^${side} line `) }).locator('code');
-                requireValue((await cells.allTextContents()).join('\n') === text.replace(/\n$/, ''), 'Visible file diff differs from independently observed bytes');
-              }
-            }, decision);
-          }
-          const baselineVersion = await read(`${input.skillId}/versions/${input.baselineVersion}/`, signal, input.reviewer);
-          await op.review('inspect-capability-identities', ['baseline-capabilities', 'candidate-capabilities'], [], async () => {
-            await expect(reviewerPage.getByText(`Before ${baselineVersion.digest} · candidate ${published.digest}`, { exact: true })).toBeVisible();
-            await expect(reviewerPage.getByText('Capability comparison unavailable. No safety conclusion can be drawn.', { exact: true })).not.toBeVisible();
+          const wire = { resource_id: input.contextId, kind: 'agent_context', candidate_version_id: published.id, label: 'production', target: detail.packet.target,
+            evidence: detail.packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })),
+            external_pipeline: null, expected_fingerprint: detail.fingerprint };
+          const response = await fetch(`${input.apiUrl}/model-hub/skills/release-requests/inspection/`, { method: 'POST', body: JSON.stringify(wire), headers: { ...headers(input.reviewer), 'Content-Type': 'application/json' }, signal });
+          requireValue(response.ok, 'Independent inspection unavailable');
+          const inspection = (await response.json()).result;
+          await op.review('inspect-exact-diff', ['AGENTS.md'], [], async () => {
+            await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
-          const sections = ['Exact release', 'Execution-related changes', 'Static checks', 'Evidence', 'Retained regression pipeline', 'Known impact'];
-          const exceptions = [...(!detail.packet.evidence.length ? ['not-tested'] : []), ...(!detail.packet.target ? ['no-application-target'] : [])];
-          await op.review('inspect-release-consequences', [...sections.map(item => item.replaceAll(' ', '-').toLowerCase()), ...exceptions], exceptions, async () => {
-            for (const item of sections) await expect(reviewerPage.getByText(item, { exact: true }).first()).toBeVisible();
-            if (!detail.packet.evidence.length) await expect(reviewerPage.getByText('No evidence selected. Not tested is not a pass.', { exact: true })).toBeVisible();
-            if (!detail.packet.target) await expect(reviewerPage.getByText('No application target selected. Native applicability cannot be established.', { exact: true })).toBeVisible();
+          await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
+            await expect(reviewer.getByText(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
+            requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
           }, decision);
-          await op.click(ack(reviewerPage), 'acknowledge-reviewed-packet');
-          // Item exposure is machine-observed; it is not evidence of human
-          // comprehension or of speed. Missing native outcomes remain unqualified.
-          await stamp('reviewed-packet', { request: detail, exposure: { files: files.map(file => file.path), capabilities: { beforeDigest: baselineVersion.digest, candidateDigest: published.digest }, exceptions, humanComprehensionMeasured: false } }, decision);
-        } else if (stage.id === 'record-decision') {
+          // Correct decision rule for this synthetic fixture: approve only if
+          // every attached result is complete, has no regression and no
+          // unresolved human disagreement. Values come from the server.
+          const outcomes = inspection.summaries.map((row) => ({ id: row.source_id, planned: row.planned, graded: row.graded, incomplete: row.incomplete, regressions: row.regressions, disagreements: row.disagreements }));
+          await op.review('inspect-evidence-outcomes', outcomes.map((_, i) => `evidence-${i}`), [], async () => {
+            for (const row of outcomes) await expect(reviewer.getByText(`${row.graded}/${row.planned} attempts graded · ${row.incomplete} incomplete · ${row.regressions} regressions`, { exact: true }).first()).toBeVisible();
+          }, decision);
+          const correct = outcomes.every((row) => row.graded === row.planned && row.planned > 0 && row.incomplete === 0 && row.regressions === 0 && row.disagreements === 0);
+          requireValue(correct, 'Fixture evidence does not support approval; the correct decision would be request changes');
+          await op.review('inspect-capabilities-and-impact', ['capabilities', 'impact'], [], async () => {
+            await expect(reviewer.getByText(`Before ${inspection.capabilities.before_digest} · candidate ${inspection.capabilities.after_digest}`, { exact: true })).toBeVisible();
+          }, decision);
+          await shot(reviewer, 'review-packet');
+          await stamp('reviewed-packet', { request: detail, inspection, outcomes, correctDecision: 'approve', humanComprehensionMeasured: false }, decision);
+          return;
+        }
+        if (stage.id === 'record-decision') {
           const decision = decisionFor(detail);
-          const response = responseFor(reviewerPage, `/release-requests/${submitted.id}/decisions/`);
-          await op.approve('approve-exact-packet', ['release-packet'], () => reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
-          requireValue((await response).ok(), 'Reviewer decision rejected');
-          const decisions = await sql('SELECT d.actor_id::text, p.fingerprint, p.revision FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=$1', [submitted.id]);
+          await approve(reviewer, op, 'initial', decision);
+          const decisions = await sql('SELECT d.actor_id::text, d.decision, p.fingerprint, p.revision FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=$1', [submitted.id]);
           requireValue(decisions.length === 1 && decisions[0].actor_id === input.reviewer.userId && decisions[0].fingerprint === detail.fingerprint, 'Independent decision attribution differs');
+          await shot(reviewer, 'record-decision');
           await stamp('recorded-decision', decisions, decision, 'pg');
-        } else if (stage.id === 'stale-execution-control') {
-          await expect(ack(reviewerPage)).not.toBeChecked();
-          await op.click(ack(reviewerPage), 'acknowledge-stale-control');
-          await op.click(reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }), 'prepare-release-control');
-          // Use real admin UI in another page; retain the old reviewed packet.
-          const policyPage = await reviewerPage.context().newPage();
-          const policy = await read(`${input.skillId}/label-protection/`, signal, input.reviewer);
-          await navigate(policyPage, 'policy-configuration', `/dashboard/skills/${input.skillId}?tab=versions`);
-          if (await policyPage.getByRole('tab', { name: 'Versions', exact: true }).count()) await op.click(policyPage.getByRole('tab', { name: 'Versions', exact: true }), 'open-versions');
-          for (const names of [[...policy.protected_label_names, 'j4-guard'], policy.protected_label_names]) {
-            await op.click(policyPage.getByRole('button', { name: 'Protection', exact: true }), 'open-label-protection');
-            await op.fill(policyPage.getByLabel('Protected label names'), names.join(', '), 'change-protected-names');
-            const changed = responseFor(policyPage, '/label-protection/', 'PUT');
-            await op.click(policyPage.getByRole('button', { name: 'Save protection', exact: true }), 'save-label-protection');
-            requireValue((await changed).ok(), 'Policy control not applied');
-            await expect(policyPage.getByRole('dialog')).not.toBeVisible();
-            await navigate(policyPage, 'reload-policy-state', `/dashboard/skills/${input.skillId}?tab=versions`);
-          }
-          await policyPage.close();
-          const response = responseFor(reviewerPage, `/release-requests/${submitted.id}/execute/`);
-          await op.click(reviewerPage.getByRole('button', { name: 'Move production', exact: true }), 'attempt-stale-release');
-          const result = await response;
-          staleObservation = { status: result.status(), events: await sql('SELECT id FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=$2', [input.skillId, published.number]) };
-          requireValue(staleObservation.status === 409 && staleObservation.events.length === 0, 'Stale approval executed');
-          exercised.add('policy-aba'); ledger.fault('policy-aba', 'policy-aba-current-packet');
-          await stamp('policy-aba-refusal', staleObservation, undefined, 'pg');
-        } else if (stage.id === 'renewed-review') {
-          const authorOp = new MeasuredOperator({ ledger, actor: 'author', step: stage.id, phase: stage.phase, signal });
-          await authorOp.click(authorPage.getByRole('button', { name: input.skillName, exact: true }), 'open-authored-renewal');
-          await choose(authorPage, 'Published candidate', new RegExp(`^v${published.number}(?: —|$)`), 'renewed-candidate', authorOp);
-          const authorPreviewResponse = responseFor(authorPage, '/release-requests/preview/');
-          await authorOp.click(authorPage.getByRole('button', { name: 'Prepare exact review', exact: true }), 'prepare-renewed-packet');
-          const authorPreview = (await (await authorPreviewResponse).json()).result;
-          await choose(authorPage, 'Assigned reviewer', input.reviewer.name, 'renewed-reviewer', authorOp);
-          await authorOp.review('author-renewal', ['candidate', 'policy-change'], [], () => expect(ack(authorPage)).toBeEnabled(), decisionFor({ ...authorPreview, revision: originalRevision + 1 }));
-          await authorOp.click(ack(authorPage), 'acknowledge-renewed-author-packet');
-          const sent = responseFor(authorPage, '/release-requests/');
-          await authorOp.handoff('assigned-reviewer', () => authorOp.click(authorPage.getByRole('button', { name: 'Send review request', exact: true }), 'submit-renewed-packet'));
-          requireValue((await sent).status() === 201, 'Renewal rejected');
-          await navigate(reviewerPage, 'renewed-inbox', '/dashboard/skills/reviews');
-          await op.click(reviewerPage.getByRole('button', { name: input.skillName, exact: true }), 'open-renewed-packet');
-          detail = await read(`release-requests/${submitted.id}/`, signal, input.reviewer);
-          requireValue(detail.revision === originalRevision + 1 && detail.status === 'pending', 'Renewal retained old approval');
+          return;
+        }
+        if (stage.id === 'stale-execution-control') {
+          // Author cannot release even an approved packet (separate authority).
+          const authorProbe = await environment(input.author, 'POST', `release-requests/${submitted.id}/execute/`, { revision: detail.revision, expected_fingerprint: detail.fingerprint });
+          requireValue(authorProbe.status === 403 && (await labelEvents()).length === 0, 'Author released without authority');
+          // 1. Safety policy A -> B -> A: the owner quarantines the candidate
+          // and clears it again. The visible state returns to A, but the
+          // security revision advanced. (The v1.1 label-protection API is
+          // skill-only, so the context policy race uses the safety policy.)
+          const safety = await environment(input.admin, 'GET', `version-safety/${published.id}/`);
+          const quarantined = await environment(input.admin, 'PUT', `version-safety/${published.id}/`, { revision: safety.result.revision, quarantined: true, reason: 'Synthetic safety hold during review', replacement_version_id: null });
+          const cleared = await environment(input.admin, 'PUT', `version-safety/${published.id}/`, { revision: quarantined.result?.revision, quarantined: false, reason: 'Synthetic safety hold cleared', replacement_version_id: null });
+          requireValue(safety.status === 200 && quarantined.status === 200 && cleared.status === 200, `Policy race not applied ${safety.status} ${quarantined.status} ${quarantined.code} ${cleared.status} ${cleared.code}`);
+          await refused('policy-aba', 'safety-quarantine-a-b-a', await attempt(reviewer, op, 'policy-aba'));
+          let renewed = await renew(reviewer, op, 'policy-aba');
+          await approve(reviewer, op, 'policy-aba-renewed', renewed.decision);
+          // 2. Application target configuration A -> B -> A (revision moves).
+          const binding = await read(`contexts/bindings/${bindingId}/`, signal, input.admin).catch(async () => (await read(`contexts/${input.contextId}/bindings/`, signal, input.admin)).results.find((row) => row.id === bindingId));
+          const body = (configuration) => ({ name: binding.name, kind: binding.kind, selector: binding.selector, update_mode: binding.update_mode, profile: binding.profile,
+            profile_version: binding.profile_version, repository: binding.repository, expected_report_interval_seconds: binding.expected_report_interval_seconds, configuration });
+          const toolsChanged = await environment(input.admin, 'PATCH', `contexts/bindings/${bindingId}/`, { revision: binding.revision, binding: body({ ...binding.configuration, tools_digest: `sha256:${'f'.repeat(64)}` }) });
+          const toolsBack = await environment(input.admin, 'PATCH', `contexts/bindings/${bindingId}/`, { revision: toolsChanged.result.revision, binding: body(binding.configuration) });
+          requireValue(toolsChanged.status === 200 && toolsBack.status === 200 && toolsBack.result.configuration_digest === binding.configuration_digest, 'Target race not applied');
+          restored.binding = { digest: toolsBack.result.configuration_digest, revision: toolsBack.result.revision };
+          await refused('target-config-change', 'target-configuration-a-b-a', await attempt(reviewer, op, 'target-config'));
+          renewed = await renew(reviewer, op, 'target-config');
+          await approve(reviewer, op, 'target-config-renewed', renewed.decision);
+          // 3. A late human annotation on attached evidence.
+          const annotated = detail.packet.evidence[0];
+          const late = await environment(input.admin, 'POST', `evidence/skills_text/${annotated.source_id}/annotations/`, { annotation_revision: annotated.annotation_revision, check_id: null, attempt_id: null, verdict: 'agree', cited_text: '', comment: 'Late confirmation from the support lead.' });
+          requireValue(late.status === 201 || late.status === 200, 'Annotation race not applied');
+          await refused('late-annotation', 'late-agree-annotation', await attempt(reviewer, op, 'late-annotation'));
+          renewed = await renew(reviewer, op, 'late-annotation');
+          await approve(reviewer, op, 'late-annotation-renewed', renewed.decision);
+          // 4. Transient role loss of the approver/releaser.
+          const lost = await environment(input.admin, 'POST', 'organization/members/role/', { user_id: input.reviewer.userId, ws_level: 1, workspace_id: input.admin.workspaceId }, '/accounts/');
+          requireValue(lost.status === 200, 'Role race not applied');
+          const roleAttempt = await attempt(reviewer, op, 'role-loss');
+          // Control: a still-authorized but unassigned releaser cannot address
+          // the request at all (404), so it cannot carry the demoted approval.
+          const ownerProbe = await environment(input.admin, 'POST', `release-requests/${submitted.id}/execute/`, { revision: detail.revision, expected_fingerprint: detail.fingerprint });
+          await refused('role-loss', 'approver-demoted-to-viewer', roleAttempt, { ownerProbe: { status: ownerProbe.status, code: ownerProbe.code } });
+          requireValue([403, 404].includes(ownerProbe.status) && (await labelEvents()).length === 0, 'Demoted approval executed by another releaser');
+          const back8 = await environment(input.admin, 'POST', 'organization/members/role/', { user_id: input.reviewer.userId, ws_level: 8, workspace_id: input.admin.workspaceId }, '/accounts/');
+          requireValue(back8.status === 200, 'Role not restored');
+          restored.role = 8;
+          // 5. Retention expiry of one attached result (test-image clock seam).
+          const expiring = detail.packet.evidence[1];
+          const expired = await environment(input.admin, 'POST', 'model-hub/e2e/j4/evidence-clock/', { source: 'skills_text', source_id: expiring.source_id }, '/');
+          requireValue(expired.status === 200 && expired.result.payload_purged === true, 'Expiry not applied');
+          await refused('evidence-expiry', 'retention-clock-advance-and-purge', await attempt(reviewer, op, 'evidence-expiry', { acknowledge: false }), { expired: expired.result });
+          await shot(reviewer, 'stale-execution-control');
+          await stamp('stale-refusals', { authorProbe: { status: authorProbe.status, code: authorProbe.code }, refusals }, undefined, 'pg');
+          return;
+        }
+        if (stage.id === 'renewed-review') {
+          const renewed = await renew(reviewer, op, 'expiry');
+          requireValue(renewed.preview.removed_evidence.length === 1 && detail.packet.evidence.length === 1, 'Expired evidence was not removed explicitly');
+          await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
+            await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
+            await expect(ack(reviewer)).toBeEnabled();
+          }, renewed.decision);
+          await approve(reviewer, op, 'renewed', renewed.decision);
+          await shot(reviewer, 'renewed-review');
+          await stamp('renewed-review', await read(`release-requests/${submitted.id}/`, signal), renewed.decision);
+          return;
+        }
+        if (stage.id === 'authorized-release') {
           const decision = decisionFor(detail);
-          await op.review('renewed-packet-review', ['candidate', 'changed-policy', 'transition'], [], () => expect(ack(reviewerPage)).toBeEnabled(), decision);
-          await op.click(ack(reviewerPage), 'acknowledge-renewed-review');
-          const response = responseFor(reviewerPage, `/release-requests/${submitted.id}/decisions/`);
-          await op.approve('approve-renewed-packet', ['release-packet'], () => reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
-          requireValue((await response).ok(), 'Renewed decision rejected');
-          await stamp('renewed-review', await read(`release-requests/${submitted.id}/`, signal, input.reviewer), decision);
-        } else if (stage.id === 'authorized-release') {
-          await expect(ack(reviewerPage)).not.toBeChecked();
-          await op.click(ack(reviewerPage), 'acknowledge-final-release');
-          await op.click(reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }), 'prepare-authorized-release');
-          const decision = decisionFor(detail);
-          const response = responseFor(reviewerPage, `/release-requests/${submitted.id}/execute/`);
-          await op.approve('authorize-exact-transition', ['release-packet'], () => reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
+          await expect(ack(reviewer)).not.toBeChecked();
+          await op.click(ack(reviewer), 'acknowledge-final-release');
+          await op.click(reviewer.getByRole('button', { name: 'Release approved packet', exact: true }), 'prepare-authorized-release');
+          const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
+          await op.approve('authorize-exact-transition', ['release-packet'], () => reviewer.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
           const result = await response;
           requireValue(result.ok(), 'Authorized release rejected');
           receipt = (await result.json()).result;
+          await shot(reviewer, 'authorized-release');
           await stamp('authorized-release', receipt, decision);
-        } else if (stage.id === 'inspect-receipt') {
-          await op.transition('durable-receipt', () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target: 'reopen-durable-receipt' }, () => reviewerPage.reload()));
+          return;
+        }
+        if (stage.id === 'inspect-receipt') {
+          await op.transition('durable-receipt', () => ledger.measure({ dimension: 'A', primitive: 'click', actor, step: stage.id, phase: stage.phase, target: 'reopen-durable-receipt' }, () => reviewer.reload()));
           await op.review('pre-and-post-move', ['pre-move-currentness', 'post-move-pointer'], [], async () => {
-            await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
-            await expect(reviewerPage.getByText('Currentness before the move', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('Durable release receipt', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('Currentness before the move', { exact: true })).toBeVisible();
+            await expect(reviewer.getByText('Pointer state after the move', { exact: true })).toBeVisible();
           });
-          const durable = await read(`release-requests/${submitted.id}/receipt/`, signal, input.reviewer);
+          const durable = await read(`release-requests/${submitted.id}/receipt/`, signal);
           requireValue(digest(durable) === digest(receipt), 'Durable receipt differs');
+          await shot(reviewer, 'inspect-receipt');
           await stamp('durable-receipt', durable);
-        } else throw new Error('Unimplemented registered stage');
-        await (actor === 'author' ? authorPage : reviewerPage)?.screenshot({ path: resolve(output, `${stage.id}.png`) });
+          return;
+        }
+        throw new Error('Unimplemented registered stage');
       } catch (error) {
-        for (const [index, context] of contexts.entries()) for (const [pageIndex, page] of context.pages().entries()) await page.screenshot({ path: resolve(output, `blocked-${index}-${pageIndex}.png`) }).catch(() => {});
-        await record('blocked-stage', { stage: stage.id, reason: error.message, completeJobQualified: false });
+        for (const [index, context] of contexts.entries()) for (const [pageIndex, item] of context.pages().entries()) await item.screenshot({ path: resolve(output, `blocked-${stage.id}-${index}-${pageIndex}.png`) }).catch(() => {});
+        await record(`blocked-${stage.id}`, { stage: stage.id, reason: String(error?.message || error).slice(0, 2000), refusals, completeJobQualified: false });
         throw error;
       } finally { signal.removeEventListener('abort', cancel); }
     },
@@ -283,21 +427,27 @@ export async function createDriver({ jobId, runId, registration }) {
       let source = 'pg'; let raw; let value;
       if (check.id === 'inbox-recipient-set') {
         raw = await sql('SELECT recipient_id::text FROM model_hub_hubskillreleaserecipient WHERE request_id=$1', [submitted.id]);
-        value = raw.map(row => row.recipient_id);
+        value = raw.map((row) => row.recipient_id);
       } else if (check.id === 'unauthorized-unread-count') {
-        source = 'api'; raw = await read('review-inbox/', signal); value = raw.unread_count;
+        source = 'api'; raw = await read('review-inbox/', signal, input.author); value = raw.unread_count;
       } else if (check.id === 'decision-actor-packet') {
-        raw = await sql('SELECT d.actor_id::text, p.fingerprint FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=$1 AND p.revision=$2', [submitted.id, detail.revision]);
-        value = raw.length === 1 && raw[0].actor_id === input.reviewer.userId && raw[0].fingerprint === detail.fingerprint;
+        raw = await sql('SELECT d.actor_id::text, d.decision, p.fingerprint, p.revision FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=$1 ORDER BY p.revision', [submitted.id]);
+        const final = raw.filter((row) => Number(row.revision) === detail.revision);
+        value = final.length === 1 && final[0].actor_id === input.reviewer.userId && final[0].decision === 'approve' && final[0].fingerprint === detail.fingerprint
+          && raw.every((row) => row.actor_id === input.reviewer.userId);
       } else if (check.id === 'stale-release-refused') {
-        raw = { policy: staleObservation, exercised: [...exercised], missing: registration.fault_ids.filter(id => !exercised.has(id)) };
-        value = raw.missing.length === 0 && staleObservation.status === 409 && staleObservation.events.length === 0;
+        const faults = ['policy-aba', 'target-config-change', 'late-annotation', 'role-loss', 'evidence-expiry'];
+        const executions = await sql('SELECT response FROM model_hub_hubskillcontextoperation WHERE operation=$1 AND result_resource_id=$2', ['execute_release', submitted.id]);
+        raw = { refusals, executions: executions.length, faults };
+        value = faults.every((fault) => refusals.some((row) => row.fault === fault && row.attempt.status >= 400 && row.attempt.status < 500 && row.events === 0))
+          && executions.length === 1 && executions[0].response.revision === detail.revision;
       } else if (check.id === 'exact-release-event') {
-        raw = await sql('SELECT id::text, from_version, to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=$2', [input.skillId, published.number]);
+        raw = await sql('SELECT id::text, from_version, to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id=$1 AND to_version=$2', [input.contextId, published.number]);
         value = raw.length === 1 && raw[0].id === receipt.post_move_state.event_id && raw[0].actor_id === input.reviewer.userId && raw[0].from_version === input.baselineVersion;
       } else if (check.id === 'pre-move-currentness') {
-        raw = await sql('SELECT response FROM model_hub_hubskillcontextoperation WHERE result_resource_id=$1', [submitted.id]);
-        value = raw.some(row => row.response.currentness_at_action?.packet_fingerprint === detail.fingerprint && row.response.currentness_at_action.release_revision < row.response.post_move_state.release_revision);
+        raw = await sql('SELECT response FROM model_hub_hubskillcontextoperation WHERE operation=$1 AND result_resource_id=$2', ['execute_release', submitted.id]);
+        value = raw.length === 1 && raw[0].response.currentness_at_action?.packet_fingerprint === detail.fingerprint
+          && raw[0].response.currentness_at_action.release_revision < raw[0].response.post_move_state.release_revision;
       } else if (check.id === 'production-unchanged-before-release') {
         raw = baselineObservation; value = raw?.length === 1 && raw[0].number === input.baselineVersion;
       } else throw new Error('Unobserved check');
@@ -306,8 +456,22 @@ export async function createDriver({ jobId, runId, registration }) {
     async teardown() {
       for (const context of contexts) await context.close();
       await browser?.close();
+      // Verify the environment was returned to the configured state: the
+      // reviewer's authority and the registered target configuration.
+      let environmentRestored = true;
+      try {
+        if (restored.role !== null) {
+          const level = await sql('SELECT level FROM accounts_workspacemembership WHERE user_id=$1 AND workspace_id=$2 AND is_active', [input.reviewer.userId, input.reviewer.workspaceId]);
+          environmentRestored &&= level[0]?.level === restored.role;
+        }
+        if (restored.binding !== null) {
+          const row = await sql('SELECT configuration_digest, revision FROM model_hub_hubskillcontextbinding WHERE id=$1 AND retired_at IS NULL', [bindingId]);
+          environmentRestored &&= row[0]?.configuration_digest === restored.binding.digest;
+        }
+      } catch { environmentRestored = false; }
       if (connected) await db.end();
-      return { qualified: !browser || !browser.isConnected() };
+      await record('teardown', { environmentRestored, role: restored.role, binding: restored.binding });
+      return { qualified: environmentRestored && (!browser || !browser.isConnected()) };
     },
   };
 }

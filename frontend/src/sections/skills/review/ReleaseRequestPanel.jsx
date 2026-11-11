@@ -390,8 +390,10 @@ function PacketActions({
             variant="contained"
             disabled={!canExecute || !reviewed || locked}
             onClick={async () => {
-              const result = await operation.run(onExecute, actionInput);
-              if (result) setConfirm(false);
+              await operation.run(onExecute, actionInput);
+              // Close on every outcome: a refusal or unknown result is shown
+              // beside the decision, where renewal or retry is offered.
+              setConfirm(false);
             }}
           >
             Move {packet.transition.label}

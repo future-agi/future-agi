@@ -2,7 +2,6 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
-  Button,
   Checkbox,
   FormControlLabel,
   Stack,
@@ -13,7 +12,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import ModalWrapper from "src/components/ModalWrapper";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {

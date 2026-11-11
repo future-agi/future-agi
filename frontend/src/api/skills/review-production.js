@@ -76,7 +76,7 @@ export async function loadReleaseInspection(packet, fingerprint, config) {
 // --- J4: explicit reviewer renewal -----------------------------------------
 // These server codes mean the reviewed packet no longer matches current state.
 // They never refresh preconditions; they only expose explicit renewal.
-export const STALE_REVIEW_CODES = Object.freeze(['release_conflict', 'impact_changed', 'target_configuration_changed', 'target_retired', 'annotation_conflict', 'evidence_expired', 'evidence_share_required', 'review_stale']);
+export const STALE_REVIEW_CODES = Object.freeze(['release_conflict', 'impact_changed', 'target_configuration_changed', 'target_retired', 'annotation_conflict', 'evidence_expired', 'evidence_share_required', 'review_stale', 'review_conflict']);
 export const isStaleReview = (error) => [403, 409, 410].includes(operationStatus(error)) && STALE_REVIEW_CODES.includes(error?.code);
 const renewalPath = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/renewal/', { request_id });
 export const mapRenewal = (value) => ({
