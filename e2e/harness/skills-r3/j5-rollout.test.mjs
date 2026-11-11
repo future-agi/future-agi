@@ -132,3 +132,118 @@ test('the rollout CLI prints the grouped ownership packet and reads a stored pla
   await writeFile(join(dir, 'empty'), '\n');
   await assert.rejects(credentialEnv({ CONTEXT_CREDENTIAL_FILE: join(dir, 'empty') }), /empty_credential_file/);
 });
+
+// ---- One-step rollout paths (round 6): fewer commands, identical review authority ----
+
+test('create and edit return the candidate review packet in the same step and never publish', async () => {
+  const calls = [];
+  const hub = async (method, path, body) => {
+    calls.push([method, path]);
+    if (method === 'POST' && path === '/model-hub/skills/contexts/') return { context_id: 'ctx', revision: 1 };
+    if (method === 'POST' && path.endsWith('/draft/start/')) return { revision: 4 };
+    if (method === 'PUT' && path.endsWith('/draft/')) return { revision: 5 };
+    if (method === 'POST' && path.endsWith('/draft/head-review/')) return { draft_revision: body.revision, candidate_digest: 'sha256:c', expected_head_version: null, review_fingerprint: 'f' };
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const rollout = new ContextRollout({ hub, executor: {} });
+  const created = await rollout.createContext({ name: 'n', files: [] });
+  assert.equal(created.review.context_id, 'ctx'); assert.equal(created.review.draft_revision, 1); assert.match(created.review.packet_sha256, /^[0-9a-f]{64}$/);
+  const edited = await rollout.editDraft({ contextId: 'ctx', fromVersion: 1, files: [] });
+  assert.equal(edited.review.draft_revision, 5);
+  assert.equal(calls.filter(([, path]) => /acknowledge-head|publish/.test(path)).length, 0, 'review packet only; nothing approved');
+});
+
+test('publish-and-start plans the rollout of exactly the published release and starts nothing if publishing is refused', async () => {
+  const rollout = new ContextRollout({ hub: async () => null, executor: {} });
+  const order = [];
+  rollout.publishReviewed = async ({ review }) => { order.push(['publish', review.id]); return { number: 3, id: 'v3' }; };
+  rollout.start = async (request) => { order.push(['start', request.version]); return { campaign_id: 'c' }; };
+  const result = await rollout.publishAndStart({ review: { id: 'r' }, baseVersion: 2, start: { version: 2, contextName: 'n' } });
+  assert.deepEqual(order, [['publish', 'r'], ['start', 3]]);
+  assert.deepEqual(result, { version: { number: 3, id: 'v3' }, started: { campaign_id: 'c' } });
+  await assert.rejects(rollout.publishAndStart({ review: { id: 'r' }, baseVersion: 2 }), /invalid_rollout_request/);
+  rollout.publishReviewed = async () => { throw new Error('review_stale'); };
+  order.length = 0;
+  await assert.rejects(rollout.publishAndStart({ review: { id: 'r' }, baseVersion: 2, start: {} }), /review_stale/);
+  assert.deepEqual(order, [], 'no rollout is started for an unpublished candidate');
+});
+
+test('authorize-and-open writes only the authorized include set and only after the same checks as authorizeReviewed', async () => {
+  const opened = [];
+  const executor = { execute: async ({ bindingId }) => { opened.push(bindingId); return { state: 'pr_open', pull_request_number: 1 }; } };
+  const targets = [1, 2, 4].map((n) => ({ bindingId: binding(n), repository: 'synthetic/r', contents: {}, idempotencyKey: `k${n}` }));
+  // A target outside the reviewed include set, or a missing one, refuses before authorization.
+  for (const wrong of [[...targets, { ...targets[0], bindingId: binding(3) }], targets.slice(1)]) {
+    const world = state(); const { hub, calls } = fakeHub(world);
+    const rollout = new ContextRollout({ hub, executor });
+    const packet = await rollout.packet({ campaignId, review: review() });
+    await assert.rejects(rollout.authorizeAndOpen({ packet, acknowledgedExceptions: ['1003', '1004'], targets: wrong }), /targets_not_authorized_set/);
+    assert.equal(calls.filter(([method, path]) => method === 'POST' && path.endsWith('/authorize/')).length, 0);
+  }
+  // Unacknowledged exceptions or a stale packet refuse with no Git write.
+  const stale = state(); const staleHub = fakeHub(stale);
+  const refused = new ContextRollout({ hub: staleHub.hub, executor });
+  const stalePacket = await refused.packet({ campaignId, review: review() });
+  await assert.rejects(refused.authorizeAndOpen({ packet: stalePacket, acknowledgedExceptions: ['1003'], targets }), /exceptions_not_acknowledged/);
+  stale.campaign.revision = 9;
+  await assert.rejects(refused.authorizeAndOpen({ packet: stalePacket, acknowledgedExceptions: ['1003', '1004'], targets }), /review_stale/);
+  assert.deepEqual(opened, [], 'nothing opened without a current authorization');
+  const world = state(); const { hub } = fakeHub(world);
+  const rollout = new ContextRollout({ hub, executor });
+  const packet = await rollout.packet({ campaignId, review: review() });
+  const result = await rollout.authorizeAndOpen({ packet, acknowledgedExceptions: ['1004', '1003'], targets });
+  assert.equal(result.campaign.status, 'authorized');
+  assert.deepEqual(opened, [binding(1), binding(2), binding(4)]);
+  assert.deepEqual(result.receipts.map((row) => row.state), ['pr_open', 'pr_open', 'pr_open']);
+});
+
+test('merge-reviewed installs only merged targets and load-checks only verified installations, with separate receipts', async () => {
+  const rollout = new ContextRollout({ hub: async () => null, executor: {} });
+  const seen = { install: null, load: null };
+  rollout.batch = () => ({
+    mergeAll: async ({ targets }) => targets.map((row) => (row.repository_id === '2'
+      ? { repository_id: '2', state: 'refused', merged: false } : { repository_id: row.repository_id, state: 'merged', merged: true, merge_commit: 'm' })),
+    executeAll: async ({ targets }) => targets.map(() => ({ state: 'merged', delivered: false })),
+    applyAll: async ({ plans }) => plans.map((row) => ({ repository_id: row.repository_id, state: 'installed', delivery: 'not_observed', verified: row.repository_id !== '3' })),
+  });
+  const install = rollout.install.bind(rollout);
+  rollout.install = async (request) => { seen.install = request.targets.map((row) => row.repository_id); return install(request); };
+  rollout.loadCheck = async ({ targets }) => { seen.load = targets.map((row) => row.repository_id); return targets.map((row) => ({ repository_id: row.repository_id, delivery: 'observed' })); };
+  const targets = ['1', '2', '3'].map((id) => ({ repository_id: id, repository: 'synthetic/r', pull_request_number: 1, commit: 'c', plan: {}, contents: {},
+    binding_id: `b${id}`, plan_path: `p${id}`, project: `/p${id}`, expected_instructions: 'x' }));
+  const result = await rollout.mergeReviewed({ campaignId, targets, host: { executable: '/x', sha256: sha(1) } });
+  assert.deepEqual(result.merges.map((row) => row.state), ['merged', 'refused', 'merged']);
+  assert.deepEqual(seen.install, ['1', '3'], 'a refused merge is never installed');
+  assert.deepEqual(seen.load, ['1'], 'an unverified installation is never load-checked');
+  assert.deepEqual(result.loads.map((row) => row.repository_id), ['1']);
+  seen.load = null;
+  const noHost = await rollout.mergeReviewed({ campaignId, targets, host: null });
+  assert.deepEqual(noHost.loads, []); assert.equal(seen.load, null);
+  await assert.rejects(rollout.mergeReviewed({ campaignId, targets: [] }), /invalid_targets/);
+});
+
+test('reconcile-and-resume resumes only on an exact reconciled PR and otherwise stays paused', async () => {
+  for (const [state, resumed] of [['pr_open', true], ['unknown', false]]) {
+    const campaign = { status: 'running', revision: 3 }; const actions = [];
+    const hub = async (method, path, body) => {
+      if (method === 'GET') return structuredClone(campaign);
+      const action = path.split('/').at(-2); actions.push([action, body.reason]);
+      campaign.status = action === 'pause' ? 'paused' : 'running'; campaign.revision += 1; return {};
+    };
+    const rollout = new ContextRollout({ hub, executor: {} });
+    rollout.batch = () => ({ executeAll: async ({ targets }) => { assert.equal(campaign.status, 'paused', 'reconciled only while paused'); return targets.map(() => ({ state })); } });
+    const result = await rollout.reconcileAndResume({ campaignId, target: { bindingId: binding(1) }, reason: 'Exact PR reconciled.' });
+    assert.equal(result.observed.state, state);
+    assert.deepEqual(actions.map(([action]) => action), resumed ? ['pause', 'resume'] : ['pause']);
+    assert.equal(result.campaign.status, resumed ? 'running' : 'paused');
+  }
+  await assert.rejects(new ContextRollout({ hub: async () => null, executor: {} }).reconcileAndResume({ campaignId, target: {}, reason: ' ' }), /invalid_reconcile_request/);
+});
+
+test('one-step CLI commands refuse wrong arity before any hub, Git or SDK call', async () => {
+  const { main } = await import('../../../bin/context-campaign.mjs');
+  for (const args of [['adopt-review'], ['merge-install'], ['reconcile-resume', campaignId, 'x'], ['release-publish', 'a', 'b', 'c', 'd']]) {
+    await assert.rejects(main(args, {}), /invalid_arguments/);
+  }
+  await assert.rejects(main(['adopt-review', '/nonexistent.json'], {}), /inventory_input_required/);
+});

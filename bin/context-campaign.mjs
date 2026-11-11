@@ -45,6 +45,13 @@ export async function main(args, env = process.env) {
     console.log('                                                                  acknowledged exception repository ids differ from the packet');
     console.log('                                                                  {credentialFile} stores the planning credential in a new 0600 file for later');
     console.log('                                                                  subcommands (CONTEXT_CREDENTIAL_FILE); the secret is never printed');
+    console.log('One-step paths (same reviews, approvals and separate receipts; fewer commands):');
+    console.log('       node bin/context-campaign.mjs adopt-review SELECTED.json     inventory without hooks and print the grouped ownership packet');
+    console.log('       context-create/context-edit also print the candidate review packet (no separate release-review)');
+    console.log('       node bin/context-campaign.mjs release-publish REVIEW.json BASE_VERSION|null START.json   publish, then freeze and plan the rollout');
+    console.log('       node bin/context-campaign.mjs authorize-reviewed PACKET.json ACKNOWLEDGED.json TARGETS.json   one approval, then open each authorized PR');
+    console.log('       node bin/context-campaign.mjs merge-install UNIT.json       one merge decision: merge, install merged, load-check installed (pinned host)');
+    console.log('       node bin/context-campaign.mjs reconcile-resume CAMPAIGN_ID TARGET.json REASON   pause, reconcile the unknown write, resume only if exact');
     console.log('       node bin/context-campaign.mjs status CAMPAIGN_ID pause|resume|cancel REASON');
     console.log('       node bin/context-campaign.mjs install TARGETS.json        after merge-reviewed: record merges, apply and verify each lock (no delivery claim)');
     console.log('       node bin/context-campaign.mjs load-check TARGETS.json     pinned native host per checkout (CONTEXT_NATIVE_HOST, CONTEXT_NATIVE_HOST_SHA256)');
@@ -87,6 +94,45 @@ export async function main(args, env = process.env) {
     console.log(JSON.stringify(packet));
     return packet.individual.length ? 6 : 0;
   }
+  // ---- BEGIN one-step rollout commands (round 6) ----
+  if (args[0] === 'adopt-review' && args.length === 2) {
+    // Inventory (no hooks) and grouped ownership packet in one command; needs only the installed SDK.
+    const runner = new ContextRollout({ hub: async () => { throw new Error('hub_not_used'); }, python: env.CONTEXT_SDK_PYTHON });
+    const result = await runner.inventoryOwnership({ manifestPath: args[1] });
+    console.log(JSON.stringify(result));
+    return result.exitCode || result.packet.individual.length ? 6 : 0;
+  }
+  if (args[0] === 'release-publish' && args.length === 4) {
+    // Publish exactly the reviewed candidate and freeze/plan the rollout of it; prints the rollout packet to review.
+    const request = await json(args[3]);
+    const runner = await rollout();
+    const { version, started } = await runner.publishAndStart({ review: await json(args[1]), baseVersion: args[2] === 'null' ? null : Number(args[2]), start: request });
+    if (request.credentialFile) await writeFile(request.credentialFile, runner.env.FI_CONTEXT_CREDENTIAL, { flag: 'wx', mode: 0o600 });
+    console.log(JSON.stringify({ version, started: { ...started, review: { ...started.review, patches: Object.fromEntries(started.review.patches) } } }));
+    return started.packet.individual.length ? 6 : 0;
+  }
+  if (args[0] === 'authorize-reviewed' && args.length === 4) {
+    const { campaign, receipts } = await (await rollout()).authorizeAndOpen({ packet: await json(args[1]), acknowledgedExceptions: await json(args[2]),
+      targets: (await json(args[3])).targets });
+    console.log(JSON.stringify({ campaign, receipts, installed: false, delivered: false }));
+    return receipts.every((row) => row.state === 'pr_open') ? 0 : 6;
+  }
+  if (args[0] === 'merge-install' && args.length === 2) {
+    const { campaignId, targets } = await json(args[1]);
+    const host = env.CONTEXT_NATIVE_HOST ? { executable: env.CONTEXT_NATIVE_HOST, sha256: env.CONTEXT_NATIVE_HOST_SHA256,
+      version: env.CONTEXT_NATIVE_HOST_VERSION ?? null } : null;
+    const result = await (await rollout()).mergeReviewed({ campaignId, targets, host });
+    console.log(JSON.stringify(result));
+    const all = (rows, ok) => rows.length === targets.length && rows.every(ok);
+    return all(result.merges, (row) => row.state === 'merged') && all(result.installed, (row) => row.state === 'installed' && row.verified === true)
+      && (!host || all(result.loads, (row) => row.delivery === 'observed')) ? 0 : 6;
+  }
+  if (args[0] === 'reconcile-resume' && args.length === 4) {
+    const result = await (await rollout()).reconcileAndResume({ campaignId: args[1], target: await json(args[2]), reason: args[3] });
+    console.log(JSON.stringify(result));
+    return result.observed.state === 'pr_open' ? 0 : 6;
+  }
+  // ---- END one-step rollout commands ----
   if (args[0] === 'context-create' && args.length === 2) return print(await (await rollout()).createContext(await json(args[1])));
   if (args[0] === 'context-edit' && args.length === 2) return print(await (await rollout()).editDraft(await json(args[1])));
   if (args[0] === 'release-review' && args.length === 3) return print(await (await rollout()).reviewRelease({ contextId: args[1], revision: Number(args[2]) }));

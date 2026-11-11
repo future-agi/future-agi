@@ -374,8 +374,12 @@ class CampaignJourney {
     const manifest = join(this.scratch, 'selected.json');
     await writeFile(manifest, JSON.stringify(this.selected.map(({ repository_id, project }) => ({ repository_id, project }))));
     await mkdir(this.config.evidence_dir, { recursive: true });
-    const observed = await this.action('command', () => runInventory({ python: this.config.python, manifestPath: manifest,
-      evidencePath: join(this.config.evidence_dir, `${this.runId}${this.setup ? '-setup' : ''}-inventory.json`), signal: this.signal }));
+    // One product command: inventory without hooks and the grouped ownership packet for the next stage's review.
+    const adopted = await this.action('command', () => this.rollout.inventoryOwnership({ manifestPath: manifest }));
+    await writeFile(join(this.config.evidence_dir, `${this.runId}${this.setup ? '-setup' : ''}-inventory.json`),
+      JSON.stringify({ exitCode: adopted.exitCode, inventory: adopted.inventory }, null, 2), { flag: 'wx', mode: 0o600 });
+    const observed = { exitCode: adopted.exitCode, inventory: adopted.inventory };
+    this.ownershipReview = adopted.packet;
     const expected = this.repos.map((repo) => ({ id: repo.id, available: repo.disposition !== 'unavailable', lock_sha256: null,
       files: Object.fromEntries(Object.entries(repo.files).filter(([path]) => path !== 'references/local-policy.md').map(([path, text]) => [path, hash(text)])) }));
     assertInventory(observed.inventory, expected); assert.equal(observed.exitCode, 6);
@@ -389,19 +393,27 @@ class CampaignJourney {
     return { source: 'filesystem', value: expected };
   }
 
-  /** One review of the candidate release, then one approval bound to exactly that candidate. */
-  async publish(revision, baseVersion) {
-    // Fetching the candidate (release-review) is a command; reading it is the review; publishing is the approval.
-    const reviewed = await this.action('command', () => this.rollout.reviewRelease({ contextId: this.contextId, revision }));
-    await this.action('review', async () => { assert.ok(reviewed.candidate_digest && reviewed.review_fingerprint, 'release_review_packet_missing'); });
+  /**
+   * One review of the candidate release (create/edit already returned its
+   * packet), then one approval bound to exactly that candidate. With a start
+   * request the same approval also freezes and plans the rollout of it.
+   */
+  async publish(reviewed, baseVersion, start = null) {
+    await this.action('review', async () => { assert.ok(reviewed?.candidate_digest && reviewed.review_fingerprint, 'release_review_packet_missing'); });
     this.releases += 1;
-    return this.action('approve', () => this.rollout.publishReviewed({ review: reviewed, baseVersion }));
+    if (!start) return this.action('approve', () => this.rollout.publishReviewed({ review: reviewed, baseVersion }));
+    return this.action('approve', () => this.rollout.publishAndStart({ review: reviewed, baseVersion, start }));
   }
 
-  async publishNext() {
+  /** Edit the next release; with a rollout label, publishing it also starts that rollout (returns the started campaign). */
+  async publishNext(label = null) {
     const saved = await this.action('field_edit', () => this.rollout.editDraft({ contextId: this.contextId, fromVersion: this.version.number,
       files: [{ path: 'AGENTS.md', content: `Reviewed managed release ${this.releases + 1}. Preserve all local instructions.\n` }], description: 'Synthetic fixture.' }));
-    this.version = await this.publish(saved.revision, this.version.number);
+    if (!label) { this.version = await this.publish(saved.review, this.version.number); return null; }
+    const { version, started } = await this.publish(saved.review, this.version.number,
+      { ...this.startRequest(label), parentCampaignId: this.campaigns.at(-1) ?? null });
+    this.version = version;
+    return started;
   }
 
   async ownership() {
@@ -411,8 +423,10 @@ class CampaignJourney {
     // Independent oracle for the product's grouped ownership packet: every shared
     // instruction file it groups is byte-identical on disk across the group, and
     // every retained personal file it lists is the repository's actual file.
-    // The ownership-review command is its own counted operator command.
-    const packet = await this.action('command', async () => ownershipPacket(this.inventory));
+    // The packet came from the counted inventory command (one product step);
+    // it must be exactly the grouping of that inventory, then is checked on disk.
+    const packet = this.ownershipReview;
+    assert.deepEqual(packet, ownershipPacket(this.inventory), 'ownership_packet_not_from_inventory');
     for (const group of packet.groups) {
       for (const member of group.members) {
         const project = this.projects.get(member.repository_id);
@@ -440,7 +454,8 @@ class CampaignJourney {
     const created = await this.action('configuration_edit', () => this.rollout.createContext({ name: this.name, description: 'Synthetic campaign driver.',
       files: [{ path: 'AGENTS.md', content: 'Reviewed managed release 1. Preserve all local instructions.\n' }] }));
     this.contextId = created.context_id; this.contextRoot = `${ROOT}${this.contextId}/`;
-    this.first = this.version = await this.publish(created.revision, null);
+    assert.equal(created.review?.context_id, this.contextId, 'candidate_review_missing');
+    this.first = this.version = await this.publish(created.review, null);
     const rows = [];
     for (const repo of this.repos) {
       const row = { name: repo.name, repository_id: repo.id, profile: this.profile, selector: { label: 'production' } };
@@ -536,36 +551,51 @@ class CampaignJourney {
     this.ledger.fault('unavailable-target', `plan-${this.campaign.label}`);
   }
 
-  /** One approval over the reviewed packet with every exception explicitly acknowledged. */
+  /**
+   * One approval over the reviewed packet with every exception explicitly
+   * acknowledged; once authorized, the same step opens each authorized target's
+   * deterministic PR (product path authorizeAndOpen). PR creation is mechanical
+   * follow-on work, so the create-prs stage has no further operator command.
+   */
   async authorize() {
     const before = await this.api('GET', this.campaign.root);
     const { packet } = this.campaign;
     const acknowledged = [...packet.held, ...packet.individual].map((row) => row.repository_id);
+    const indices = [...this.campaign.patches.keys()].sort((a, b) => a - b);
+    this.pendingBaseMovement = null;
+    if (!this.baseMovement && !this.setup) {
+      // Fixture fault, not an operator action: a concurrent contributor advances
+      // main after review and before the approval writes. The batch must stop
+      // before any write; recovery must review a replacement campaign.
+      const repo = this.repos[indices[0]];
+      const base = (await (await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`)).json()).sha;
+      const after = this.git.advanceUnchangedBase(repo.id);
+      this.pendingBaseMovement = { repo, before: base, after, writes: this.git.requests.filter((row) => row.method !== 'GET').length };
+    }
+    let opened;
     await this.review('approve', [{ kind: 'campaign', key: this.campaign.id, repos: this.repos }], { packet,
       exposed: packet.units.flatMap((unit) => unit.repository_ids), preconditions: before },
-    () => this.rollout.authorizeReviewed({ packet, acknowledgedExceptions: acknowledged }));
-    const after = await this.api('GET', this.campaign.root);
-    assert.equal(after.status, 'authorized', 'campaign_not_authorized');
+    async () => { opened = await this.rollout.authorizeAndOpen({ packet, acknowledgedExceptions: acknowledged, targets: this.openTargets(indices) }); return opened; });
+    assert.equal(opened.campaign.status, 'authorized', 'campaign_not_authorized');
+    this.campaign.opened = { indices, receipts: opened.receipts };
     return { source: 'api', value: await this.targets() };
   }
 
-  executeTargets(indices, { key = () => randomUUID() } = {}) {
-    return this.batch().executeAll({ campaignId: this.campaign.id, targets: indices.map((index) => ({
-      bindingId: this.bindings[index].id, repository: `synthetic/${this.repos[index].name}`,
-      contents: this.campaign.patches.get(index).contents, idempotencyKey: key(index) })) });
+  openTargets(indices, { key = () => randomUUID() } = {}) {
+    return indices.map((index) => ({ bindingId: this.bindings[index].id, repository: `synthetic/${this.repos[index].name}`,
+      contents: this.campaign.patches.get(index).contents, idempotencyKey: key(index) }));
   }
 
+  executeTargets(indices, options) {
+    return this.batch().executeAll({ campaignId: this.campaign.id, targets: this.openTargets(indices, options) });
+  }
+
+  /** Observe the PRs the authorization opened; no operator command (verified against the fake Git host). */
   async createPRs() {
-    const indices = [...this.campaign.patches.keys()].sort((a, b) => a - b);
-    if (!this.baseMovement && !this.setup) {
-      // Fixture fault, not an operator action: a concurrent contributor advances
-      // main after review. The batch must stop before any write; recovery must
-      // review a replacement campaign.
-      const repo = this.repos[indices[0]];
-      const before = (await (await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`)).json()).sha;
-      const after = this.git.advanceUnchangedBase(repo.id);
-      const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
-      const receipts = await this.action('command', () => this.executeTargets(indices));
+    assert.ok(this.campaign.opened, 'authorized_open_missing');
+    const { indices, receipts } = this.campaign.opened;
+    if (this.pendingBaseMovement) {
+      const { repo, before, after, writes } = this.pendingBaseMovement; this.pendingBaseMovement = null;
       assert.equal(receipts[0].state, 'unknown'); assert.match(receipts[0].reason, /Base moved/);
       assert.ok(receipts.slice(1).every((row) => row.state === 'not_attempted'), 'batch_continued_after_base_movement');
       assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes, 'stale_base_wrote_git');
@@ -574,7 +604,6 @@ class CampaignJourney {
       this.baseMovement = { repository_id: repo.id, before, after, campaign_id: this.campaign.id, receipt: receipts[0], recovered: false };
       return { source: 'git', value: this.baseMovement };
     }
-    const receipts = await this.action('command', () => this.executeTargets(indices));
     for (const [position, index] of indices.entries()) {
       const unknown = this.rounds.length === 0 && this.repos[index].disposition === 'unknown_response';
       assert.equal(receipts[position].state, unknown ? 'unknown' : 'pr_open');
@@ -620,13 +649,17 @@ class CampaignJourney {
     for (const [index, receipt] of this.campaign.receipts) {
       if (receipt.state !== 'unknown') continue;
       this.ledger.fault('unknown-pr-response', `campaign-${this.campaigns.length}`);
-      await this.action('recovery_decision', () => this.rollout.setStatus({ campaignId: this.campaign.id, action: 'pause', reason: 'Inspect uncertain Git result before retry.' }));
+      // One recovery decision (product path reconcileAndResume): pause, the
+      // product looks the target up again by its deterministic branch and tree,
+      // and resumes only on an exact PR. The oracle checks no Git write happened.
       const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
-      const [observed] = await this.action('reconcile', () => this.executeTargets([index]), { dimension: 'R', repos: [this.repos[index]] });
+      const { observed, campaign } = await this.action('recovery_decision', () => this.rollout.reconcileAndResume({ campaignId: this.campaign.id,
+        target: this.openTargets([index])[0], reason: 'Exact deterministic PR and complete tree reconciled.' }));
       assert.equal(observed.state, 'pr_open'); assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes);
+      const pulls = this.git.pulls(this.repos[index].id);
+      assert.equal(pulls.filter((pr) => pr.number === observed.pull_request_number).length, 1, 'reconciled_pr_unobserved');
       this.campaign.receipts.set(index, observed);
-      const resumed = await this.action('recovery_decision', () => this.rollout.setStatus({ campaignId: this.campaign.id, action: 'resume', reason: 'Exact deterministic PR and complete tree reconciled.' }));
-      assert.ok(['authorized', 'running'].includes(resumed.status), 'campaign_not_resumed');
+      assert.ok(['authorized', 'running'].includes(campaign.status), 'campaign_not_resumed');
     }
     return { source: 'git', value: [...this.campaign.receipts.values()] };
   }
@@ -642,55 +675,56 @@ class CampaignJourney {
       // Each repository's own review/CI remains a counted handoff.
       prs.set(index, await this.action('handoff', async () => (await this.git.fetch(prUrl)).json(), { dimension: 'H', repos: [repo], target: 'repository-review' }));
     }
-    // One verification command over every open PR, then one review and one
-    // merge decision per reviewed unit (a proven-identical group or an
-    // individual exception), mirroring plan review. The command re-verifies
-    // every PR's head, parent and tree; the fixture's own trees are checked
-    // independently before each merge decision, and the merge re-verifies.
+    // Per reviewed unit (a proven-identical group or an individual exception):
+    // one review of the repository reviewers' results against the authorized PR
+    // receipts, then one merge decision (product path mergeReviewed) that
+    // re-verifies every head/parent/tree, merges head-guarded, installs only
+    // what merged and load-checks only verified installations with the pinned
+    // host. Merge, installation and load receipts stay separate per target and
+    // the oracle below re-checks each against the Git fixture and filesystem.
+    const native = Boolean(this.config.native && !this.setup);
+    if (native) await assertQualifiedCodex({ executable: this.config.native.executable, executableSha256: this.config.native.sha256 });
+    const host = native ? { executable: this.config.native.executable, sha256: this.config.native.sha256, version: CODEX_VERSION } : null;
     const toTarget = (repo) => {
       const index = byRepo.get(repo.id); const patch = this.campaign.patches.get(index); const receipt = this.campaign.receipts.get(index);
+      const encoded = patch.contents['AGENTS.md'];
+      if (native) assert.ok(encoded, 'reviewed_instructions_missing');
       return { repository_id: repo.id, repository: `synthetic/${repo.name}`, pull_request_number: receipt.pull_request_number,
-        commit: receipt.repository_commit, plan: patch.plan, contents: patch.contents };
+        commit: receipt.repository_commit, plan: patch.plan, contents: patch.contents, binding_id: this.bindings[index].id,
+        plan_path: patch.path, project: this.projects.get(repo.id),
+        expected_instructions: encoded ? Buffer.from(encoded, 'base64').toString('utf8') : null };
     };
-    const planned = indices.map((index) => this.repos[index]);
-    const verified = await this.action('command', () => this.batch().verifyPulls({ targets: planned.map(toTarget) }), { repos: planned });
-    assert.deepEqual(verified.map((row) => row.repository_id), planned.map((repo) => repo.id), 'verified_pull_set');
-    const merges = new Map();
+    const merges = new Map(); const loads = new Map();
     for (const unit of this.campaign.units) {
       const members = unit.repos.filter((repo) => byRepo.has(repo.id));
       if (!members.length) continue;
       await this.action('review', async () => {
         for (const repo of members) {
           const index = byRepo.get(repo.id); const pr = prs.get(index); const patch = this.campaign.patches.get(index);
-          const row = verified.find((item) => item.repository_id === repo.id);
-          assert.equal(pr.head.sha, row.head); assert.equal(pr.merged, false);
-          const tree = this.git.files(row.head);
+          assert.equal(pr.head.sha, this.campaign.receipts.get(index).repository_commit, 'reviewed_head_not_authorized_commit'); assert.equal(pr.merged, false);
+          const tree = this.git.files(pr.head.sha);
           for (const change of patch.plan.changes) assert.equal(tree[change.path] === undefined ? null : hash(tree[change.path]), change.after_sha256);
         }
       }, { repos: members });
-      const merged = await this.action('approve', () => this.batch().mergeAll({ targets: members.map(toTarget) }), { repos: members });
-      assert.deepEqual(merged.map((row) => row.repository_id), members.map((repo) => repo.id), 'merged_unit_membership');
+      const result = await this.action('approve', () => this.rollout.mergeReviewed({ campaignId: this.campaign.id, targets: members.map(toTarget), host }),
+        { repos: members });
+      assert.deepEqual(result.merges.map((row) => row.repository_id), members.map((repo) => repo.id), 'merged_unit_membership');
       // Per-target receipts: a refused or unknown merge is retained, never counted as merged.
-      assert.ok(merged.every((row) => row.state === 'merged' && row.merged === true), 'merge_receipt_not_merged');
-      for (const row of merged) {
+      assert.ok(result.merges.every((row) => row.state === 'merged' && row.merged === true), 'merge_receipt_not_merged');
+      assert.ok(result.recorded.length === members.length && result.recorded.every((row) => row.state === 'merged' && row.delivered === false), 'merge_observation');
+      assert.ok(result.installed.length === members.length
+        && result.installed.every((row) => row.state === 'installed' && row.delivery === 'not_observed' && row.verified === true), 'installation_unverified');
+      assert.deepEqual(result.loads.map((row) => row.repository_id), native ? members.map((repo) => repo.id) : [], 'load_check_target_set');
+      for (const row of result.merges) {
         const index = byRepo.get(row.repository_id); const repo = this.repos[index];
         const observed = this.git.pulls(repo.id).find((pr) => pr.number === row.pull_request_number);
         assert.equal(observed?.merged, true, 'merge_unobserved'); assert.equal(observed.merge_commit_sha, row.merge_commit);
         assert.notEqual(row.merge_commit, this.campaign.receipts.get(index).repository_commit);
         merges.set(index, { pr: prs.get(index), merge: { merged: true, sha: row.merge_commit } });
       }
+      for (const row of result.loads) loads.set(row.repository_id, row);
     }
     assert.equal(merges.size, indices.length, 'planned_target_not_merged');
-    // One install command records every merged target from the Git host, applies
-    // each merged plan to its checkout and verifies its lock. Merge and
-    // installation receipts stay separate; neither is treated as delivery.
-    const settled = await this.action('command', () => this.rollout.install({ campaignId: this.campaign.id, targets: indices.map((index) => ({
-      binding_id: this.bindings[index].id, repository_id: this.repos[index].id, repository: `synthetic/${this.repos[index].name}`,
-      contents: this.campaign.patches.get(index).contents, plan_path: this.campaign.patches.get(index).path, project: this.projects.get(this.repos[index].id) })) }),
-    { repos: indices.map((index) => this.repos[index]) });
-    assert.ok(settled.merged.length === indices.length && settled.merged.every((row) => row.state === 'merged' && row.delivered === false), 'merge_observation');
-    assert.ok(settled.installed.length === indices.length
-      && settled.installed.every((row) => row.state === 'installed' && row.delivery === 'not_observed' && row.verified === true), 'installation_unverified');
     const installs = [];
     for (const index of indices) {
       const repo = this.repos[index]; const { pr, merge } = merges.get(index);
@@ -715,23 +749,12 @@ class CampaignJourney {
       installs.push({ repository_id: repo.id, version_id: this.version.id, pr: pr.number, head: pr.head.sha, merge: merge.sha, hashes,
         installed: true, discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' });
     }
-    if (this.config.native && !this.setup) {
-      // One load-check command over every installed checkout (product path). Its
-      // verdict is not trusted: each raw capture is re-checked by the oracle
-      // against the merged Git tree before it is recorded.
-      await assertQualifiedCodex({ executable: this.config.native.executable, executableSha256: this.config.native.sha256 });
-      const repos = indices.map((index) => this.repos[index]);
-      const receipts = await this.action('command', () => this.rollout.loadCheck({
-        host: { executable: this.config.native.executable, sha256: this.config.native.sha256, version: CODEX_VERSION },
-        targets: indices.map((index) => {
-          const encoded = this.campaign.patches.get(index).contents['AGENTS.md'];
-          assert.ok(encoded, 'reviewed_instructions_missing');
-          return { repository_id: this.repos[index].id, project: this.projects.get(this.repos[index].id), expected_instructions: Buffer.from(encoded, 'base64').toString('utf8') };
-        }) }), { repos, target: 'native-host' });
-      assert.deepEqual(receipts.map((row) => row.repository_id), repos.map((repo) => repo.id), 'load_check_target_set');
-      for (const [position, receipt] of receipts.entries()) {
-        const install = installs[position]; assert.equal(install.repository_id, receipt.repository_id);
-        assert.ok(receipt.requests && receipt.process_events, `load_check_failed:${receipt.error ?? 'no_capture'}`);
+    if (native) {
+      // The merge decision's load receipts are not trusted: each raw capture is
+      // re-checked by the oracle against the merged Git tree before it is recorded.
+      for (const install of installs) {
+        const receipt = loads.get(install.repository_id);
+        assert.ok(receipt?.requests && receipt.process_events, `load_check_failed:${receipt?.error ?? 'no_capture'}`);
         assertCodexBoundary({ requests: receipt.requests, events: receipt.process_events, expectedInstructions: this.git.files(install.merge)['AGENTS.md'] });
         const boundary = { evidence_class: 'synthetic fixture', ...receipt, scope: NATIVE_SCOPE };
         Object.assign(install, { discovery: boundary.discovery, delivery: boundary.delivery, source: boundary.source,
@@ -816,9 +839,10 @@ class CampaignJourney {
 
   async update(reverse) {
     assert.ok(this.rounds.length, 'initial_install_required');
-    if (reverse) { await this.reverseConflictChecks(); this.version = this.first; }
-    else await this.publishNext();
-    await this.freeze(reverse ? 'reverse' : 'second-update', reverse); await this.plans();
+    if (reverse) { await this.reverseConflictChecks(); this.version = this.first; await this.freeze('reverse', true); }
+    // Publishing the reviewed next release also freezes and plans its rollout (one approval, no repository write).
+    else await this.adoptStarted('second-update', await this.publishNext('second-update'));
+    await this.plans();
     const reviewed = this.decision;
     await this.authorize(); await this.createPRs(); await this.reconcile();
     // Reverse-plan's required review must bind to its actual review action, not

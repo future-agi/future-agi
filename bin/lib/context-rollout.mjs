@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { CampaignBatch, lockedVersion } from './context-campaign-batch.mjs';
 import { probeCodexLoad } from './context-load-probe.mjs';
 
 const ROOT = '/model-hub/skills/contexts/';
+const execute = promisify(execFile);
 const need = (condition, code) => { if (!condition) throw new Error(code); };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const byRepository = (a, b) => (a.repository_id < b.repository_id ? -1 : a.repository_id > b.repository_id ? 1 : 0);
@@ -94,17 +97,19 @@ export class ContextRollout {
   }
 
   // ---- Releases: create/edit, then one review and one approval per release ----
+  /** Create the context and return the candidate's review packet in the same step (nothing is published). */
   async createContext({ name, description = '', files }) {
     const created = await this.hub('POST', ROOT, { name, description, tags: [], files });
-    return { context_id: created.context_id, revision: created.revision };
+    return { context_id: created.context_id, revision: created.revision,
+      review: await this.reviewRelease({ contextId: created.context_id, revision: created.revision }) };
   }
 
-  /** Start a draft from the current head and save the edited files in one step. */
+  /** Start a draft from the current head, save the edited files and return the candidate's review packet in one step. */
   async editDraft({ contextId, fromVersion, files, description = '' }) {
     const root = `${ROOT}${contextId}/`;
     const draft = await this.hub('POST', `${root}draft/start/`, { revision: 0, from_version: fromVersion });
     const saved = await this.hub('PUT', `${root}draft/`, { revision: draft.revision, base_version: fromVersion, files, description, note: '' });
-    return { revision: saved.revision };
+    return { revision: saved.revision, review: await this.reviewRelease({ contextId, revision: saved.revision }) };
   }
 
   /** The review packet the operator reads before approving publication. */
@@ -231,4 +236,84 @@ export class ContextRollout {
     }
     return receipts;
   }
+
+  // ---- BEGIN one-step rollout paths (round 6) ----------------------------------
+  // Each path is one operator command or decision over the whole set. Review
+  // authority, packet binding, explicit exception acknowledgement and separate
+  // merge/install/load receipts are unchanged; only mechanical follow-on
+  // commands are carried out by the same step.
+
+  /** Inventory the selected checkouts (no hooks are executed) and return the grouped ownership packet in one command. */
+  async inventoryOwnership({ manifestPath }) {
+    need(typeof this.python === 'string' && this.python && typeof manifestPath === 'string' && manifestPath, 'inventory_input_required');
+    let stdout; let exitCode = 0;
+    try {
+      ({ stdout } = await execute(this.python, ['-I', '-m', 'fi.context', 'inventory', '--repositories', manifestPath],
+        { signal: this.signal, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }));
+    } catch (error) {
+      // Exit 6 is the SDK's explicit incomplete/unavailable result: retained, never treated as success.
+      if (error.code !== 6 || typeof error.stdout !== 'string') throw error;
+      stdout = error.stdout; exitCode = 6;
+    }
+    const inventory = JSON.parse(stdout);
+    return { exitCode, inventory, packet: ownershipPacket(inventory) };
+  }
+
+  /**
+   * Approve exactly the reviewed candidate and, in the same step, freeze every
+   * binding at the new release and plan all targets. The returned rollout packet
+   * still needs its own review and authorization; nothing is written to Git.
+   */
+  async publishAndStart({ review, baseVersion, note = '', start }) {
+    need(start && typeof start === 'object', 'invalid_rollout_request');
+    const version = await this.publishReviewed({ review, baseVersion, note });
+    return { version, started: await this.start({ ...start, version: version.number }) };
+  }
+
+  /**
+   * One approval over the reviewed packet (authorizeReviewed's checks, unchanged),
+   * after which exactly the included, authorized targets get their deterministic
+   * PRs. A moved base stops the batch before any further write.
+   */
+  async authorizeAndOpen({ packet, acknowledgedExceptions, targets }) {
+    const included = new Set((packet?.decisions ?? []).filter((row) => row.decision === 'include').map((row) => row.binding_id));
+    need(Array.isArray(targets) && targets.length === included.size && new Set(targets.map((row) => row.bindingId)).size === targets.length
+      && targets.every((row) => included.has(row.bindingId)), 'targets_not_authorized_set');
+    const campaign = await this.authorizeReviewed({ packet, acknowledgedExceptions });
+    return { campaign, receipts: await this.batch().executeAll({ campaignId: packet.campaign_id, targets }) };
+  }
+
+  /**
+   * One merge decision for one reviewed unit: each PR is re-verified and merged
+   * guarded by its authorized head; only what merged is recorded and installed,
+   * only verified installations are load-checked (with a pinned host). Merge,
+   * installation and load receipts stay separate and per target.
+   */
+  async mergeReviewed({ campaignId, targets, host = null }) {
+    need(Array.isArray(targets) && targets.length > 0, 'invalid_targets');
+    const merges = await this.batch().mergeAll({ targets: targets.map((row) => ({ repository_id: row.repository_id, repository: row.repository,
+      pull_request_number: row.pull_request_number, commit: row.commit, plan: row.plan, contents: row.contents })) });
+    const merged = new Set(merges.filter((row) => row.state === 'merged' && row.merged === true).map((row) => row.repository_id));
+    const installable = targets.filter((row) => merged.has(row.repository_id));
+    const settled = installable.length ? await this.install({ campaignId, targets: installable }) : { merged: [], installed: [] };
+    const verified = new Set(settled.installed.filter((row) => row.state === 'installed' && row.verified === true).map((row) => row.repository_id));
+    const loads = host ? await this.loadCheck({ host, targets: installable.filter((row) => verified.has(row.repository_id))
+      .map((row) => ({ repository_id: row.repository_id, project: row.project, expected_instructions: row.expected_instructions })) }) : [];
+    return { merges, recorded: settled.merged, installed: settled.installed, loads };
+  }
+
+  /**
+   * Recovery decision after an unknown Git result: pause, look the target up
+   * again (the deterministic branch and tree are reconciled, never written
+   * twice) and resume only when its exact PR is observed. Anything else leaves
+   * the campaign paused with the observation for a further decision.
+   */
+  async reconcileAndResume({ campaignId, target, reason }) {
+    need(target && typeof reason === 'string' && reason.trim(), 'invalid_reconcile_request');
+    await this.setStatus({ campaignId, action: 'pause', reason: 'Inspect uncertain Git result before retry.' });
+    const [observed] = await this.batch().executeAll({ campaignId, targets: [target] });
+    if (observed.state !== 'pr_open') return { observed, campaign: await this.hub('GET', `${ROOT}campaigns/${campaignId}/`) };
+    return { observed, campaign: await this.setStatus({ campaignId, action: 'resume', reason }) };
+  }
+  // ---- END one-step rollout paths ----------------------------------------------
 }
