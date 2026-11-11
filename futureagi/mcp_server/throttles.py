@@ -3,6 +3,7 @@
 import hashlib
 import math
 import time
+import uuid
 from collections.abc import Mapping
 from typing import TypeVar
 
@@ -16,6 +17,7 @@ from rest_framework.request import Request
 from rest_framework.settings import api_settings
 from rest_framework.throttling import BaseThrottle, SimpleRateThrottle
 
+from mcp_server import rate_limiter
 from mcp_server.constants import (
     DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE,
     DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT,
@@ -94,13 +96,76 @@ def _invalid_lockout_key(request: Request) -> str:
 
 
 def _in_flight_key(request: Request) -> str:
-    return f"mcp_oauth_token_in_flight:{oauth_token_attempt_ident(request)}"
+    return f"mcp_oauth_token_in_flight_v2:{oauth_token_attempt_ident(request)}"
 
 
-# Request attribute holding the in-flight reservation key until release.
+# Request attribute holding (key, member) of the in-flight reservation until
+# release.
 _RESERVATION_ATTR = "_mcp_oauth_token_attempt_reservation"
-# Upper bound on how long a crashed worker's reservation can linger.
+# Each reservation expires on its own this long after it was taken, so a slot
+# lost to a killed worker or a failed release stops counting after this,
+# whatever other traffic does in the meantime.
 _RESERVATION_TIMEOUT_SECONDS = 60
+
+# Prune expired reservations and add this one in a single step. Every
+# reservation is its own sorted-set member scored by when it was taken, so
+# later requests never extend an older reservation's lifetime. The key TTL
+# only garbage-collects the set once its newest member has expired.
+_RESERVE_IN_FLIGHT_LUA = """
+local key    = KEYS[1]
+local now    = tonumber(ARGV[1])
+local ttl    = tonumber(ARGV[2])
+local member = ARGV[3]
+
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
+redis.call('ZADD', key, now, member)
+redis.call('EXPIRE', key, ttl)
+return redis.call('ZCARD', key)
+"""
+
+_RELEASE_IN_FLIGHT_LUA = """
+return redis.call('ZREM', KEYS[1], ARGV[1])
+"""
+
+
+def _live_reservations(key: str, now: float) -> dict[str, float]:
+    """Return the unexpired reservations held in the non-Redis fallback."""
+    stored = cache.get(key) or {}
+    cutoff = now - _RESERVATION_TIMEOUT_SECONDS
+    return {member: taken for member, taken in stored.items() if taken > cutoff}
+
+
+def _add_reservation(key: str, member: str, now: float) -> int:
+    """Record one reservation and return how many are live, this one included."""
+    script = rate_limiter._redis_script(_RESERVE_IN_FLIGHT_LUA)
+    if script is not None:
+        return int(
+            script(
+                keys=[key],
+                args=[now, _RESERVATION_TIMEOUT_SECONDS, member],
+            )
+        )
+    # Only reached when the explicit test fallback is enabled; production
+    # without Redis already failed closed in _redis_script().
+    with rate_limiter._fallback_lock:
+        live = _live_reservations(key, now)
+        live[member] = now
+        cache.set(key, live, timeout=_RESERVATION_TIMEOUT_SECONDS)
+        return len(live)
+
+
+def _remove_reservation(key: str, member: str) -> None:
+    script = rate_limiter._redis_script(_RELEASE_IN_FLIGHT_LUA)
+    if script is not None:
+        script(keys=[key], args=[member])
+        return
+    with rate_limiter._fallback_lock:
+        live = _live_reservations(key, time.time())
+        live.pop(member, None)
+        if live:
+            cache.set(key, live, timeout=_RESERVATION_TIMEOUT_SECONDS)
+        else:
+            cache.delete(key)
 
 
 def _invalid_attempt_limit() -> int:
@@ -140,26 +205,22 @@ def reserve_token_attempt(request: Request) -> bool:
     more secret checks than the limit allows. Recorded invalid attempts plus
     requests still being verified must stay within the limit. A refused
     request gives its slot back at once; an admitted one keeps it until
-    release_token_attempt_reservation() runs after the response is built.
+    release_token_attempt_reservation() runs after the response is built, or
+    until the reservation expires _RESERVATION_TIMEOUT_SECONDS after it was
+    taken.
     """
     key = _in_flight_key(request)
+    member = uuid.uuid4().hex
     try:
-        if cache.add(key, 1, timeout=_RESERVATION_TIMEOUT_SECONDS):
-            in_flight = 1
-        else:
-            try:
-                in_flight = cache.incr(key)
-            except ValueError:
-                cache.set(key, 1, timeout=_RESERVATION_TIMEOUT_SECONDS)
-                in_flight = 1
-            else:
-                # incr keeps the original TTL; extend it so the counter only
-                # expires after a quiet period, not under requests in flight.
-                cache.touch(key, _RESERVATION_TIMEOUT_SECONDS)
-        setattr(request, _RESERVATION_ATTR, key)
+        in_flight = _add_reservation(key, member, time.time())
+        setattr(request, _RESERVATION_ATTR, (key, member))
+        # Read the recorded attempts after reserving. A request that finishes
+        # in between records its attempt before it releases its slot, so this
+        # order can only overcount, never undercount.
         recorded = int(cache.get(_invalid_attempt_key(request)) or 0)
     except (ConnectionInterrupted, RedisError) as exc:
         logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        release_token_attempt_reservation(request)
         raise RateLimitBackendUnavailableError() from exc
 
     if recorded + in_flight <= _invalid_attempt_limit():
@@ -169,20 +230,16 @@ def reserve_token_attempt(request: Request) -> bool:
 
 
 def release_token_attempt_reservation(request: Request | None) -> None:
-    key = getattr(request, _RESERVATION_ATTR, None)
-    if not key:
+    reservation = getattr(request, _RESERVATION_ATTR, None)
+    if not reservation:
         return
     setattr(request, _RESERVATION_ATTR, None)
+    key, member = reservation
     try:
-        if cache.decr(key) < 0:
-            # The counter expired under this request and was recreated;
-            # never let a stale release undercount newer reservations.
-            cache.delete(key)
-    except ValueError:
-        # The reservation already expired.
-        pass
-    except (ConnectionInterrupted, RedisError):
-        # The reservation TTL bounds how long a missed release can linger.
+        _remove_reservation(key, member)
+    except (ConnectionInterrupted, RedisError, RateLimitBackendUnavailableError):
+        # The reservation expires on its own _RESERVATION_TIMEOUT_SECONDS
+        # after it was taken, so a missed release cannot linger past that.
         logger.error("mcp_oauth_token_reservation_release_failed", exc_info=True)
 
 
