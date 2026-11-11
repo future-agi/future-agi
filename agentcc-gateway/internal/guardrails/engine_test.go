@@ -1364,3 +1364,21 @@ func TestPlugin_InvalidRequestPolicy(t *testing.T) {
 		t.Fatal("expected error for invalid policy value")
 	}
 }
+
+func TestParseAction(t *testing.T) {
+	tests := []struct {
+		in  string
+		out Action
+	}{
+		{in: "block", out: ActionBlock},
+		{in: "warn", out: ActionWarn},
+		{in: "log", out: ActionLog},
+		{in: "mask", out: ActionMask},
+		{in: "unknown", out: ActionLog}, // default
+	}
+	for _, tt := range tests {
+		if got := parseAction(tt.in); got != tt.out {
+			t.Errorf("parseAction(%q) = %v, want %v", tt.in, got, tt.out)
+		}
+	}
+}
