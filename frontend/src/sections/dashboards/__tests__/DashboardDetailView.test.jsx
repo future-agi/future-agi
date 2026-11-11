@@ -1,7 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, fireEvent } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  act,
+  render,
+  renderWithRouter,
+  screen,
+  fireEvent,
+} from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
+import { resolveGlobalDateRange } from "../dashboardDateRange";
+
+// Long enough for any date filter change to settle and reach the widgets.
+const DATE_FILTER_SETTLE_MS = 1000;
 
 // Controlled stubs (hoisted so the vi.mock factory can see them). `widgets` is
 // per-test controllable so we can drive both the empty and populated dashboard.
@@ -83,6 +93,10 @@ beforeEach(() => {
   h.dashboardId = "dash-1";
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("DashboardDetailView — delete confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -161,6 +175,74 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — time filter debounce (#1968)", () => {
+  // About as fast as a user can click through the chips.
+  const CLICK_GAP_MS = 100;
+  const presets = ["today", "yesterday", "7D", "30D", "3M", "6M", "12M"].map(
+    (value) => DATE_PRESETS.find((p) => p.value === value),
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    h.canEdit = { ...WRITER };
+    h.widgetChartProps = null;
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        position: 0,
+        width: 12,
+        query_config: { metrics: [{ name: "Tokens" }] },
+      },
+    ];
+  });
+
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("highlights each clicked chip at once but refetches widgets once, for the last preset", () => {
+    render(<DashboardDetailView />);
+    const chart = screen.getByTestId("widget-chart");
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+
+    presets.forEach((preset, index) => {
+      if (index > 0) {
+        act(() => {
+          vi.advanceTimersByTime(CLICK_GAP_MS);
+        });
+      }
+      fireEvent.click(screen.getByRole("button", { name: preset.label }));
+      // Only the fetch waits; the chip itself switches with no delay.
+      expect(screen.getByRole("button", { name: preset.label })).toHaveClass(
+        "MuiChip-filled",
+      );
+    });
+    const lastRange = resolveGlobalDateRange("12M", null);
+
+    // Mid-burst the widgets keep their range and are not remounted: a
+    // remount alone sends a fresh query for every widget on every click.
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+    expect(screen.getByTestId("widget-chart")).toBe(chart);
+
+    act(() => {
+      vi.advanceTimersByTime(DATE_FILTER_SETTLE_MS);
+    });
+    expect(h.widgetChartProps.globalDateRange).toEqual(lastRange);
+  });
+
+  it("applies the timePreset from the URL on first render without waiting", () => {
+    renderWithRouter(<DashboardDetailView />, { route: "/?timePreset=7D" });
+    expect(screen.getByRole("button", { name: "7D" })).toHaveClass(
+      "MuiChip-filled",
+    );
+    expect(h.widgetChartProps.globalDateRange).toEqual(
+      resolveGlobalDateRange("7D", null),
+    );
   });
 });
 
@@ -369,6 +451,13 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
 });
 
 it("keeps a custom calendar day on apply / close / reopen without a phantom day", () => {
+  // Widgets get a date filter change once it settles (#1968), so each
+  // apply is flushed before reading what the widgets received.
+  vi.useFakeTimers();
+  const settle = () =>
+    act(() => {
+      vi.advanceTimersByTime(DATE_FILTER_SETTLE_MS);
+    });
   h.canEdit = { ...WRITER };
   h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
   render(<DashboardDetailView />);
@@ -379,6 +468,7 @@ it("keeps a custom calendar day on apply / close / reopen without a phantom day"
     });
   }
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  settle();
   const expected = {
     start: new Date(2026, 10, 1).toISOString(),
     end: new Date(2026, 10, 2).toISOString(),
@@ -389,5 +479,6 @@ it("keeps a custom calendar day on apply / close / reopen without a phantom day"
   expect(screen.getByLabelText("End Date")).toHaveValue("2026-11-01");
   expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  settle();
   expect(h.widgetChartProps.globalDateRange).toEqual(expected);
 });
