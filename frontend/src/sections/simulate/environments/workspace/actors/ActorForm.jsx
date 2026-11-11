@@ -23,6 +23,7 @@ import {
   KEPT_TRIGGER,
   actorId,
   capProblem,
+  recordOverBy,
   timeoutProblem,
   hasEdits,
   idFrom,
@@ -103,6 +104,7 @@ export default function ActorForm({
   actor,
   context,
   busy,
+  offline,
   error,
   conflict,
   onClose,
@@ -233,6 +235,7 @@ export default function ActorForm({
   const capName = channel ? "max_lines" : "max_turns";
   const capWrong = capProblem(value(capName));
   const timeoutWrong = timeoutProblem(value("timeout"));
+  const overBy = actor ? recordOverBy(actor, fields, context) : 0;
   const fallbackActs = permitted.includes(value("fallback"));
   const argumentsWrong =
     fallbackActs && parsedArguments(value("fallback_arguments")) === null
@@ -266,6 +269,11 @@ export default function ActorForm({
           {error && (
             <Alert severity="error" sx={{ mx: 2.5, mt: 1.5, flexShrink: 0 }}>
               {error}
+            </Alert>
+          )}
+          {offline && (
+            <Alert severity="info" sx={{ mx: 2.5, mt: 1.5, flexShrink: 0 }}>
+              {C.offline}
             </Alert>
           )}
           {conflict && (
@@ -671,6 +679,11 @@ export default function ActorForm({
               </Collapse>
             </>
           </Stack>
+          {overBy > 0 && (
+            <Alert severity="error" sx={{ mx: 2.5, mb: 1.5, flexShrink: 0 }}>
+              {F.tooLong(overBy)}
+            </Alert>
+          )}
           <Stack
             direction="row"
             spacing={1}
@@ -701,6 +714,7 @@ export default function ActorForm({
                 Boolean(capWrong) ||
                 Boolean(timeoutWrong) ||
                 Boolean(argumentsWrong) ||
+                overBy > 0 ||
                 shareUnconfirmed
               }
               onClick={() =>
@@ -766,6 +780,7 @@ ActorForm.propTypes = {
     reservedIds: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,
   busy: PropTypes.bool,
+  offline: PropTypes.bool,
   error: PropTypes.string,
   // The draft moved under this form: its record is the fresh one with the typed fields kept, or it is gone.
   conflict: PropTypes.oneOf(["changed", "removed"]),

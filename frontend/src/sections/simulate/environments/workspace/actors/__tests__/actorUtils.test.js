@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   KEPT_TRIGGER,
   capProblem,
+  recordOverBy,
   hasEdits,
   hidden,
   idFrom,
@@ -512,5 +513,28 @@ describe("a fallback action's arguments", () => {
     expect(parsedArguments("")).toEqual({});
     expect(parsedArguments("[1]")).toBeNull();
     expect(parsedArguments("{oops")).toBeNull();
+  });
+});
+
+describe("recordOverBy", () => {
+  const context = { records: {}, knowledgeSources: {} };
+  const actor = { id: "a", name: "A" };
+  it("counts the record the form would save as compact JSON in characters, as the server does", () => {
+    const room = 65536 - JSON.stringify({ ...actor, goal: "" }).length;
+    expect(recordOverBy(actor, { goal: "ü".repeat(room) }, context)).toBe(0);
+    expect(recordOverBy(actor, { goal: "ü".repeat(room + 3) }, context)).toBe(
+      3,
+    );
+    // One character outside the basic plane is one character, not two.
+    expect(recordOverBy(actor, { goal: "😀".repeat(room) }, context)).toBe(0);
+  });
+  it("is 0 while a field cannot make a record yet", () => {
+    expect(
+      recordOverBy(
+        actor,
+        { mode: "conditional", triggerCollection: "deals", triggerWhere: "{" },
+        context,
+      ),
+    ).toBe(0);
   });
 });

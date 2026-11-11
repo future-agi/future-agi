@@ -1091,7 +1091,8 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
 
 
-# Bounds every field of one actor record together; each field's own limit comes from the sealed rules.
+# Bounds every field of one actor record together, as compact JSON (the editor counts the same way); each
+# field's own limit comes from the sealed rules.
 ACTOR_RECORD_MAX_CHARS = 65_536
 
 
@@ -1100,7 +1101,8 @@ class HarnessActorRecordField(JsonObjectRequestField):
 
     def to_internal_value(self, data):
         value = super().to_internal_value(data)
-        if len(json.dumps(value, ensure_ascii=False)) > ACTOR_RECORD_MAX_CHARS:
+        size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        if size > ACTOR_RECORD_MAX_CHARS:
             raise serializers.ValidationError(
                 f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
             )

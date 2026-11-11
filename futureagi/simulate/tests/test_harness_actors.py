@@ -961,6 +961,14 @@ def test_an_actor_s_fields_are_bounded_on_the_server(
             160,
         )
     assert listed["actors"] == []
+    # Counted as compact JSON, the way the editor counts it, so a record the editor allows is saved.
+    bare = json.dumps(
+        {**MANAGER, "goal": ""}, ensure_ascii=False, separators=(",", ":")
+    )
+    at_bound = _add(
+        auth_client, environment, {**MANAGER, "goal": "ü" * (65_536 - len(bare))}
+    )
+    assert at_bound.status_code == 200, at_bound.content
 
 
 def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
@@ -1846,3 +1854,35 @@ def test_no_conflict_for_an_action_the_actor_already_had_none_holds_or_two_alrea
 
     assert added.status_code == 200, added.content
     assert kept.status_code == 200, kept.content
+
+
+def test_an_actor_s_model_is_one_the_environment_offers(
+    user, workspace, storage, auth_client
+):
+    from simulate.services import harness_actors
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests import test_harness_versioning_record as record_tests
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    # A release whose actor record takes any model name of up to 120 characters, as today's does.
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules["records"]["actors.json"]["properties"]["model"] = {
+        "type": ["string", "null"],
+        "maxLength": 120,
+    }
+    rules["actor_models"] = ["gemini-4.0-flash"]
+    environment = record_tests._environment(user, workspace, "actors-model")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
+    )
+    unknown = _add(auth_client, environment, {**MANAGER, "model": "gpt-unknown"})
+    offered = _add(auth_client, environment, {**MANAGER, "model": "gemini-4.0-flash"})
+
+    assert (unknown.status_code, unknown.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "manager's model 'gpt-unknown' is not one of: gemini-4.0-flash."
+        in unknown.json()["message"]
+    )
+    assert offered.status_code == 200, offered.content

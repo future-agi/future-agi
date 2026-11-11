@@ -511,6 +511,11 @@ def _new_choices(
                 )
         problems += _sharing_the_caller(before, after, suite_files or {}, rules)
     problems += _knowledge_problems(before, after, files, rules, stores)
+    model = after.get("model")
+    if model and model != before.get("model") and model not in actor_models(rules):
+        problems.append(
+            f"{actor_id}'s model {model!r} is not one of: {', '.join(actor_models(rules))}."
+        )
     known = [one["action"] for one in world_actions(files, rules)]
     old = set(before.get("permitted_actions") or [])
     added = [

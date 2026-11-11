@@ -797,6 +797,35 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByRole("button", { name: "Save to draft" })).toBeEnabled();
   });
 
+  it("says a change made offline is kept and saves once back online", () => {
+    editState = { isPending: true, isPaused: true, error: null };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(
+      screen.getByText(
+        "No connection: your change is kept and saves once you are back online",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("will not save an actor too long for the server and says by how much", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    const facts = screen.getByLabelText(
+      "What they know (optional, one per line)",
+    );
+    fireEvent.change(facts, { target: { value: "é".repeat(70000) } });
+    expect(screen.getByText(/characters too long to save/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+    fireEvent.change(facts, { target: { value: "é".repeat(60000) } });
+    expect(screen.queryByText(/characters too long to save/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Save to draft" })).toBeEnabled();
+  });
+
   it("says who already has a typed id and will not save it, and offers any actor, one who speaks too, to be brought in by", () => {
     actorsData = cast([
       { id: "colleague", name: "Jordan Taylor", channel: "audio_mix" },
@@ -915,6 +944,22 @@ describe("WorldActorsPanel", () => {
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     choose("The action", "crm.approve_discount");
     expect(save).not.toBeDisabled();
+  });
+
+  it("keeps the form open and Save off while the record match is half-typed JSON", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    choose("Comes in", "Once a record exists");
+    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+      target: { value: '{"status": ' },
+    });
+    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
   });
 
   it("keeps Save off for a cap that is not a whole number, and saves the number as typed", () => {

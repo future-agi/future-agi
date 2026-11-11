@@ -205,6 +205,9 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         {C.intro}
       </Typography>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
+        {(edit.isPaused || limits.isPaused) && (
+          <Alert severity="info">{C.offline}</Alert>
+        )}
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
         {cast.length > 0 && !hasCaller && (
           <Alert severity="info">{ACTORS_COPY.noCaller}</Alert>
@@ -263,6 +266,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         actor={form?.actor ?? null}
         context={context}
         busy={edit.isPending}
+        offline={edit.isPaused}
         error={
           editing && edit.error && !conflicted
             ? refusalText(edit.error, C.saveFailed)
