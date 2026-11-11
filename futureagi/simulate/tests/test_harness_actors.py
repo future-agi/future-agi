@@ -1886,3 +1886,20 @@ def test_an_actor_s_model_is_one_the_environment_offers(
         in unknown.json()["message"]
     )
     assert offered.status_code == 200, offered.content
+
+
+@pytest.mark.parametrize(
+    "permitted",
+    [[1, None], "crm.approve_discount", [{"a": 1}]],
+)
+def test_an_actor_whose_actions_are_not_a_list_of_names_is_refused_never_an_error(
+    permitted, user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, f"actors-bad-actions-{len(str(permitted))}")
+    response = _add(
+        auth_client, environment, {**MANAGER, "permitted_actions": permitted}
+    )
+    linked = _add(auth_client, environment, {**MANAGER, "parent": {"id": "x"}})
+
+    assert (response.status_code, response.json()["error"]) == (400, "actor_invalid")
+    assert (linked.status_code, linked.json()["error"]) == (400, "actor_invalid")

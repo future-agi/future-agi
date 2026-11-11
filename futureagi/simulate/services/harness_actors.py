@@ -517,10 +517,15 @@ def _new_choices(
             f"{actor_id}'s model {model!r} is not one of: {', '.join(actor_models(rules))}."
         )
     known = [one["action"] for one in world_actions(files, rules)]
-    old = set(before.get("permitted_actions") or [])
+    old = {
+        str(one)
+        for one in before.get("permitted_actions") or []
+        if isinstance(one, (str, int))
+    }
+    given = after.get("permitted_actions")
     added = [
-        one
-        for one in after.get("permitted_actions") or []
+        str(one)
+        for one in (given if isinstance(given, list) else [])
         if one not in old and one not in known
     ]
     tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
@@ -754,6 +759,9 @@ def actor_problems(
     known = {str(one.get("id") or "") for one in actors}
     actor = next(one for one in actors if one.get("id") == actor_id)
     problems = _record_problems(actor, rules, new_id=new_id)
+    if problems:
+        # The links are read only from a record of the right shape.
+        return problems
     problems += [
         f"{actor_id}'s {path} {other!r} is not another listed actor."
         for path, other in _broken_references(actor, known, rules)
@@ -943,9 +951,9 @@ def write_actor_edit(
     if op == "delete":
         problems = _removal_problems(actors, actor_id, rules, before)
     else:
-        problems = actor_problems(
-            actors, actor_id, rules, new_id=op == "create"
-        ) + _new_choices(
+        problems = actor_problems(actors, actor_id, rules, new_id=op == "create")
+        # The choices are read only from a record of the right shape: a list of numbers is a type to fix first.
+        problems = problems or _new_choices(
             next((one for one in before if one.get("id") == actor_id), None),
             next(one for one in actors if one.get("id") == actor_id),
             environment_files,
