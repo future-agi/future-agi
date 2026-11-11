@@ -84,11 +84,10 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
       const configuration = (await req('GET', `contexts/${contextId}/native/runtime-configuration/`)).configuration;
       await req('PUT', `contexts/${contextId}/native/targets/${created.binding_id}/`, { revision: created.revision, configuration });
     }
-    // The application team's production wiring: a label-following binding and a context-only credential.
-    const production = await req('POST', `contexts/${contextId}/bindings/`, { name: 'support-app production', kind: 'runtime', selector: { label: 'production' }, update_mode: 'manual', profile: 'support-app', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 });
-    const credential = await req('POST', 'contexts/credentials/', { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId, labels: ['production'], version_ids: [] }], binding_ids: [], expires_at: new Date(Date.now() + 86_400_000).toISOString() });
+    // The application team's production wiring: its runtime binding, currently on the recorded head.
+    const production = await req('POST', `contexts/${contextId}/bindings/`, { name: 'support-app production', kind: 'runtime', selector: { version: 6 }, update_mode: 'manual', profile: 'support-app', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 });
     await writeFile(process.env.J2_PREPARE_OUT!, JSON.stringify({
-      userId: (await actor.api.get<{ id: string }>('/accounts/user-info/')).id, v4Id: v4.id, production: { bindingId: production.id, credential: credential.secret }, apiKey: actor.apiKey, secretKey: actor.secretKey, collectorInternalUrl: 'http://app:4318',
+      userId: (await actor.api.get<{ id: string }>('/accounts/user-info/')).id, v4Id: v4.id, production: { bindingId: production.id, revision: production.revision }, apiKey: actor.apiKey, secretKey: actor.secretKey, collectorInternalUrl: 'http://app:4318',
       appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, pgUrl: E2E.pgUrl, fixtureOrigin: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28082'}`,
       providerNamespace: PROVIDER_NAMESPACE, runtimeContainer: RUNTIME_CONTAINER, contextId, contextName: `${prefix}-support`,
       versions: { recorded: 4, head: 6 }, skills, requests: REQUESTS, recordedRoot: ROOT.recorded, recordedRootSha256: createHash('sha256').update(ROOT.recorded).digest('hex'),

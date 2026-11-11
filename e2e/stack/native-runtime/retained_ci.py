@@ -49,7 +49,7 @@ def main() -> int:
         "passed": all(r["passed"] for r in rows), "configuration_identity": DATASET["pipeline"] + "@" + hashlib.sha256(json.dumps(DATASET, sort_keys=True).encode()).hexdigest()[:12]}
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / f"{args.label}.json").write_text(json.dumps(report))
-    print(json.dumps({"label": args.label, "passed": report["passed"], "url": f"http://native-runtime:8090/ci/{args.label}"}))
+    print(json.dumps({"label": args.label, "passed": report["passed"], "url": f"https://ci.native-runtime.internal/runs/{args.label}"}))  # a recorded reference of a synthetic CI run, never fetched
     return 0 if report["passed"] else 1
 
 

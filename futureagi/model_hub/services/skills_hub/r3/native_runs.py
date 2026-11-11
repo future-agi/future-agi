@@ -236,9 +236,13 @@ def list_application_targets(*, principal: SkillPrincipal, context_id: UUID) -> 
     get_resource(principal=principal, resource_id=context_id, kind="agent_context")
     return {
         "runtime": runtime_status(),
+        # A pinned application is the verification target; other runtime bindings follow it.
         "targets": [
             _target_output(row)
-            for row in _binding_rows(principal, context_id).order_by("name", "id")
+            for row in sorted(
+                _binding_rows(principal, context_id).order_by("name", "id"),
+                key=lambda row: not row.configuration_digest,
+            )
         ],
     }
 

@@ -85,7 +85,7 @@ export async function createDriver({ jobId, runId, registration }) {
       const edit = (target, effect) => ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-responder', step: stage.id, phase: stage.phase, target }, effect);
       const choose = async (label, option, target) => {
         await op.click(page.getByLabel(label, { exact: true }), `open-${target}`);
-        await op.click(page.getByRole('option', { name: option, exact: true }), `choose-${target}`);
+        await op.click(page.getByRole('option', { name: option, exact: typeof option === 'string' }), `choose-${target}`);
       };
       const receipt = (source, hash, decision = null) => ledger.stage({ step: stage.id, phase: stage.phase, source, artifactHash: hash, actionSequences: [], ...(decision ? { decision } : {}) });
       /** Plan, accept the paid ceiling and run through the public Tests UI. Returns the evidence id. */
@@ -110,7 +110,8 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'qualify-application') {
           await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}`);
           await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
-          await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
+          // The application's production binding already exists; a deployment without one registers it here.
+          if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
           await op.click(page.getByRole('button', { name: 'Review runtime configuration', exact: true }), 'review-runtime-configuration');
           await expect(page.getByText('Pin the application configuration')).toBeVisible();
           await shot('01-pin-configuration');
@@ -329,6 +330,8 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'release-ready-packet') {
           await go('matched-run-result', `/dashboard/skills/contexts/${input.contextId}?version=${state.repaired.number}`);
           await op.click(page.getByRole('tab', { name: 'Tests', exact: true }), 'open-context-tests');
+          // Later verifications (the acceptance controls) are newer; the packet is for the matched candidate run.
+          await choose('Verification', new RegExp(`^${state.runs.matched.execution_fingerprint.replace('sha256:', '').slice(0, 12)}`), 'matched-verification');
           await expect(page.getByText('Release packet')).toBeVisible({ timeout: 120_000 });
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {
@@ -350,10 +353,14 @@ export async function createDriver({ jobId, runId, registration }) {
           return;
         }
         if (stage.id === 'retained-trace-conformance') {
-          // The separately measured J4 job releases the candidate. The harness stands in for it outside this ledger.
-          const transition = state.packet.packet.transition;
-          await api('PUT', `${input.contextId}/labels/production/`, { version: state.repaired.number, expected_release_revision: transition.expected_release_revision, note: 'Release performed by the separate J4 job (harness stand-in)' });
-          const produced = JSON.parse(execFileSync('docker', ['exec', '-e', `CTXHUB_CONTEXT_CREDENTIAL=${input.production.credential}`, '-e', 'CTXHUB_REGISTRY_URL=http://app:8000', '-e', `TRACE_URL=${input.collectorInternalUrl}`,
+          // The separately measured J4 job releases the candidate to production. The harness stands in for it
+          // outside this ledger: the production binding moves to the exact version, with a context-only credential for it.
+          const bindings = await api('GET', `${root}bindings/`);
+          const current = (bindings.results ?? bindings).find((row) => row.id === input.production.bindingId);
+          const moved = await api('PATCH', `contexts/bindings/${input.production.bindingId}/`, { revision: current.revision, binding: { name: 'support-app production', kind: 'runtime', selector: { version: state.repaired.number }, update_mode: 'manual', profile: 'support-app', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 } });
+          const productionCredential = await api('POST', 'contexts/credentials/', { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: input.contextId, labels: [], version_ids: [state.repaired.id] }], binding_ids: [], expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+          requireValue(moved.selector.version === state.repaired.number, 'Production binding did not move to the repaired version');
+          const produced = JSON.parse(execFileSync('docker', ['exec', '-e', `CTXHUB_CONTEXT_CREDENTIAL=${productionCredential.secret}`, '-e', 'CTXHUB_REGISTRY_URL=http://app:8000', '-e', `TRACE_URL=${input.collectorInternalUrl}`,
             '-e', `TRACE_API_KEY=${input.apiKey}`, '-e', `TRACE_SECRET_KEY=${input.secretKey}`, '-e', `TRACE_PROJECT=${input.projectName}`, input.runtimeContainer, 'python', '/opt/ctxhub/production_request.py',
             '--binding-id', input.production.bindingId, '--context-id', input.contextId], { encoding: 'utf8' }).trim().split('\n').at(-1));
           state.production = produced;
