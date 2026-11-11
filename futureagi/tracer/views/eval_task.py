@@ -40,6 +40,7 @@ from model_hub.utils.eval_input_validation import (
     PARTIAL_INPUT_MESSAGE,
     PARTIAL_INPUT_WARNING_TYPE,
 )
+from tfc.routers import primary_required
 from tfc.temporal.eval_tasks.client import (
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
@@ -1759,7 +1760,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
+            # many=True validates through the child, not ManyRelatedField itself.
+            evals_field = fields["evals"].child_relation
+            evals_field.queryset = self._scope_custom_eval_config_queryset(
                 CustomEvalConfig.objects.using("default")
             )
         return serializer
@@ -1858,10 +1861,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
+    # Mutation contexts include contract validation, relation reads and response
+    # serialization. Keep primary_required outside validated_request; browsing
+    # deliberately retains replica-eligible prefetches.
+    @primary_required
     @validated_request(request_serializer=EvalTaskSerializer)
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         partial_request_validation=True,
@@ -1881,6 +1889,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskSerializer,
         responses={
@@ -2982,6 +2991,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Evaluation tasks could not be loaded")
 
+    @primary_required
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
         responses={
