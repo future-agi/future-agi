@@ -2974,6 +2974,9 @@ class TestSourceFreshness:
         HostedHarnessConversationLease.no_workspace_objects.filter(
             id=capability.lease.id
         ).update(state="active", heartbeat_at=timezone.now())
+        heartbeat = HostedHarnessConversationLease.no_workspace_objects.get(
+            id=capability.lease.id
+        ).heartbeat_at
         gateway = HostedHarnessGateway.__new__(HostedHarnessGateway)
         gateway.client = MagicMock(runtime_name="r", runtime_digest="d")
         assert rebuild.wanted_agent_version(environment, conversation) == a2
@@ -2988,7 +2991,13 @@ class TestSourceFreshness:
                 endpoint_base_url="https://platform.example",
             )
 
-        deleted.assert_called_once_with("sandbox-old", conversation.id)
+        deleted.assert_called_once_with(
+            "sandbox-old",
+            conversation.id,
+            reason="agent_changed",
+            failure_domain="",
+            last_seen=heartbeat,
+        )
         assert start.call_args.kwargs["agent_version"] == a2
 
     def test_the_sandbox_gets_the_agents_payload_with_names_only(

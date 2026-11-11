@@ -755,3 +755,56 @@ class HostedHarnessConversationLease(BaseModel):
         indexes = [
             models.Index(fields=["state", "expires_at"], name="idx_hconv_lease_exp")
         ]
+
+
+class HostedSandboxLifetime(BaseModel):
+    """One chat, rebuild or fix-engine sandbox, timed from create to confirmed deletion."""
+
+    class Kind(models.TextChoices):
+        CHAT = "chat", "Chat"
+        PLATFORM_CHECK = "platform_check", "Platform check"
+        FIX_ENGINE = "fix_engine", "Fix engine"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    # A deleted workspace must not take the sandbox's timing with it.
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    provider = models.CharField(max_length=32)
+    provider_ref = models.CharField(max_length=255)
+    # The conversation or fix run; not a foreign key, because the row outlives it.
+    owner_id = models.UUIDField()
+    started_at = models.DateTimeField()
+    lifetime_seconds = models.PositiveIntegerField()
+    armed_at = models.DateTimeField()
+    lifetime_ends_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True)
+    end_reason = models.CharField(max_length=64, blank=True, default="")
+    failure_domain = models.CharField(max_length=32, blank=True, default="")
+    billed_minutes = models.DecimalField(max_digits=12, decimal_places=4, null=True)
+    settled_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "simulate_hosted_sandbox_lifetime"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider_ref", "provider"],
+                name="uniq_hosted_sandbox_lifetime_ref",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["lifetime_ends_at"],
+                condition=models.Q(ended_at__isnull=True),
+                name="idx_hsandbox_open",
+            ),
+            models.Index(
+                fields=["updated_at"],
+                condition=models.Q(ended_at__isnull=False, settled_at__isnull=True),
+                name="idx_hsandbox_unsettled",
+            ),
+        ]

@@ -46,6 +46,7 @@ from .hosted_harness import (
     HostedHarnessScenario,
     HostedHarnessSecret,
     HostedHarnessStageOutput,
+    HostedSandboxLifetime,
 )
 from .persona import Persona
 from .prompt_trial import PromptTrial
@@ -120,4 +121,5 @@ __all__ = [
     "HostedHarnessSecret",
     "HostedHarnessScenario",
     "HostedHarnessStageOutput",
+    "HostedSandboxLifetime",
 ]

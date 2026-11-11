@@ -9,6 +9,7 @@ import json
 import sys
 import tarfile
 from contextlib import contextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4, uuid5
@@ -545,3 +546,59 @@ def test_poll_stores_the_spend_and_leaves_authoring_pricing_to_the_seal(
     assert events[0].event_id == str(
         uuid5(UUID(str(attempt.id)), "authoring:understand-agent")
     )
+
+
+@pytest.mark.django_db
+def test_sandbox_lifetime_lifecycle_imports_no_billing(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    from django.utils import timezone
+
+    from simulate.models import HostedSandboxLifetime
+    from simulate.services import sandbox_usage
+
+    requests = []
+    monkeypatch.setattr(sandbox_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(
+        usage_tasks.seal_hosted_sandbox_lifetime,
+        "apply_async",
+        lambda args, **options: requests.append(list(args)),
+    )
+    created_at = timezone.now()
+    renewed_at = created_at + timedelta(minutes=1)
+
+    with block_ee_usage(), django_capture_on_commit_callbacks(execute=True):
+        sandbox_usage.open_sandbox_lifetime(
+            kind=HostedSandboxLifetime.Kind.CHAT,
+            provider_name="e2b",
+            provider_ref="sandbox-runner",
+            organization_id=organization.id,
+            workspace_id=None,
+            owner_id=uuid4(),
+            lifetime_seconds=1800,
+            armed_at=created_at,
+        )
+        sandbox_usage.rearm_sandbox_lifetime(
+            provider=SimpleNamespace(renews_ttl=True),
+            provider_ref="sandbox-runner",
+            lifetime_seconds=1800,
+            renewed_at=renewed_at,
+        )
+        sandbox_usage.record_sandbox_end_reason(
+            provider_ref="sandbox-runner", reason="idle_window_over"
+        )
+        sandbox_usage.close_sandbox_lifetime(provider_ref="sandbox-runner")
+
+    row = HostedSandboxLifetime.no_workspace_objects.get(provider_ref="sandbox-runner")
+    assert row.armed_at == renewed_at
+    assert row.end_reason == "idle_window_over"
+    assert row.ended_at is not None
+    assert requests == [[str(row.id)]]
+
+
+@pytest.mark.django_db
+def test_create_check_allows_when_billing_cannot_be_imported(organization, monkeypatch):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+
+    with block_ee_usage():
+        assert harness_usage.require_sandbox_create(str(organization.id)) is None

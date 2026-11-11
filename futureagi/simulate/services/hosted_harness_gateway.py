@@ -43,6 +43,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessSecret,
+    HostedSandboxLifetime,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
@@ -56,6 +57,7 @@ from simulate.services.hosted_harness import (
     scope_dispatch_to_rerun,
 )
 from simulate.services.hosted_harness_conversation import (
+    RUNTIME_STALE_SECONDS,
     _unacked_commands,
     ensure_conversation,
     issue_conversation_capability,
@@ -287,6 +289,29 @@ def _alk_source_overlay() -> bytes | None:
 
 def _chat_idle_seconds() -> int:
     return max(300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800)))
+
+
+def _retired_chat_ending(
+    lease: HostedHarnessConversationLease, now
+) -> tuple[str, str, Any]:
+    """Why a chat sandbox of its own is retired, the failure domain when that is ours, and
+    the last moment its process was seen alive, which decides whether a sandbox found gone
+    had reached its lifetime limit. A fenced-out lease's process stops reporting while its
+    sandbox lives, so its heartbeat is not passed on."""
+    gone = HostedHarnessConversationLease.State
+    if lease.state in (gone.EXPIRED, gone.RELEASED):
+        return "lease_expired", "", None
+    if lease.heartbeat_at is None or now - lease.heartbeat_at >= timedelta(
+        seconds=RUNTIME_STALE_SECONDS
+    ):
+        # It stopped answering, whether or not its idle window is over since.
+        return "chat_runtime_stopped", "infrastructure", lease.heartbeat_at
+    if lease.expires_at <= now + timedelta(seconds=60):
+        return "idle_window_over", "", lease.heartbeat_at
+    if runtime_is_live(lease, now=now):
+        return "agent_changed", "", lease.heartbeat_at
+    # Its start never finished.
+    return "chat_runtime_stopped", "infrastructure", lease.heartbeat_at
 
 
 def _execution_ttl_seconds(
@@ -2641,6 +2666,13 @@ class HostedHarnessGateway:
                 unrestricted_egress=unrestricted,
                 runtime_name=selected_snapshot,
             )
+            from simulate.services.harness_usage import require_sandbox_create
+
+            # Queued runs and retries reach here long after submission; a refusal ends the
+            # attempt before any sandbox exists, and is not retried.
+            require_sandbox_create(str(job.organization_id), attempt=attempt)
+            # The provider's lifetime starts inside create: the recorded limit is never later.
+            create_requested_at = timezone.now()
             sandbox = self.client.create(
                 launch_spec, timeout=self.client.create_timeout_seconds
             )
@@ -2659,7 +2691,13 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
             from simulate.services.harness_usage import record_sandbox_runtime
 
-            record_sandbox_runtime(attempt, started=True)
+            record_sandbox_runtime(
+                attempt,
+                started=True,
+                provider=self.client.name,
+                lifetime_seconds=ttl_seconds,
+                armed_at=create_requested_at,
+            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -2705,7 +2743,16 @@ class HostedHarnessGateway:
             )
             # Provider creation and uploads can consume much of the initial lease. Re-arm
             # providers with mutable leases before exposing a full-duration capability.
+            renewed_at = timezone.now()
             self.client.renew_ttl(sandbox, ttl_seconds)
+            from simulate.services.harness_usage import rearm_sandbox_runtime
+
+            rearm_sandbox_runtime(
+                attempt,
+                provider=self.client,
+                lifetime_seconds=ttl_seconds,
+                renewed_at=renewed_at,
+            )
             # The guest has not received its token yet. Start the runnable deadline here,
             # after E2B/Daytona creation and source/secret uploads, which can consume many
             # minutes without any guest work. Never refresh it after the guest starts.
@@ -3108,6 +3155,7 @@ class HostedHarnessGateway:
         claim_ref = f"pending:{uuid.uuid4()}"
         claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
         retired_ref = ""
+        retired_ending = ("deleted", "", None)
         with transaction.atomic():
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -3147,6 +3195,7 @@ class HostedHarnessGateway:
                     and not lease.provider_ref.startswith("pending:")
                 ):
                     retired_ref = lease.provider_ref
+                    retired_ending = _retired_chat_ending(lease, now)
                 settle_interrupted_turn(conversation)
                 HostedHarnessConversationLease.no_workspace_objects.update_or_create(
                     conversation=conversation,
@@ -3180,7 +3229,13 @@ class HostedHarnessGateway:
                 self._renew_chat_idle_window(live)
             return live
         if retired_ref:
-            self._delete_chat_sandbox(retired_ref, conversation.id)
+            self._delete_chat_sandbox(
+                retired_ref,
+                conversation.id,
+                reason=retired_ending[0],
+                failure_domain=retired_ending[1],
+                last_seen=retired_ending[2],
+            )
         try:
             if attempt is not None:
                 return self._start_chat_in_sandbox(
@@ -3232,9 +3287,32 @@ class HostedHarnessGateway:
             )
         return started
 
-    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+    def _delete_chat_sandbox(
+        self,
+        provider_ref: str,
+        conversation_id: Any,
+        *,
+        reason: str = "deleted",
+        failure_domain: str = "",
+        last_seen: Any = None,
+    ) -> None:
+        """Delete a chat sandbox of its own. ``last_seen`` is the last moment its process
+        was seen alive, where the caller knows one."""
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+        from simulate.services.sandbox_usage import (
+            _lease_of,
+            close_sandbox_lifetime,
+            record_sandbox_end_reason,
+        )
+
+        ending = {
+            "reason": reason,
+            "failure_domain": failure_domain,
+            "last_seen": last_seen,
+        }
+        record_sandbox_end_reason(provider_ref=provider_ref, **ending)
         try:
-            self.client.delete(
+            deleted = self.client.delete(
                 self.client.get(
                     provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
                 ),
@@ -3242,16 +3320,59 @@ class HostedHarnessGateway:
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            deleted = True
+            seen = last_seen
+            if seen is None:
+                try:
+                    with transaction.atomic():
+                        lease = _lease_of(provider_ref)
+                        limit = (
+                            HostedSandboxLifetime.no_workspace_objects.filter(
+                                provider_ref=provider_ref, ended_at__isnull=True
+                            )
+                            .values_list("lifetime_ends_at", flat=True)
+                            .first()
+                        )
+                    # Gone after its lifetime limit, it may simply have expired: only one
+                    # gone before it is read by its lease's last heartbeat.
+                    if (
+                        lease is not None
+                        and limit is not None
+                        and timezone.now() < limit
+                    ):
+                        seen = lease[1]
+                except Exception:  # noqa: BLE001 - the recorded ending stands
+                    logger.exception(
+                        "chat sandbox last heartbeat not read conversation=%s",
+                        conversation_id,
+                    )
+            if seen is not None:
+                # Already gone before this delete: lost on our side, unless it was seen
+                # alive up to its lifetime limit.
+                ending = {
+                    "reason": "sandbox_gone",
+                    "failure_domain": "infrastructure",
+                    "last_seen": seen,
+                }
         except Exception:
             logger.exception(
                 "retired conversation sandbox deletion failed conversation=%s",
                 conversation_id,
             )
+            return
+        if delete_confirmed(
+            self.client,
+            provider_ref,
+            deleted,
+            request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+        ):
+            # The ending again: it holds if the write before the delete was lost.
+            close_sandbox_lifetime(provider_ref=provider_ref, **ending)
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
         """Keep a chat sandbox for the idle window after the user's latest message."""
         ttl_seconds = _chat_idle_seconds()
+        renewed_at = timezone.now()
         try:
             self.client.renew_ttl(
                 self.client.get(
@@ -3269,6 +3390,14 @@ class HostedHarnessGateway:
         HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id).update(
             expires_at=timezone.now() + timedelta(seconds=ttl_seconds),
             updated_at=timezone.now(),
+        )
+        from simulate.services.sandbox_usage import rearm_sandbox_lifetime
+
+        rearm_sandbox_lifetime(
+            provider=self.client,
+            provider_ref=lease.provider_ref,
+            lifetime_seconds=ttl_seconds,
+            renewed_at=renewed_at,
         )
 
     def _start_chat_sandbox(
@@ -3340,11 +3469,44 @@ class HostedHarnessGateway:
             allowed_domains=tuple(sorted(allowed_domains)),
         )
 
+        from simulate.services.harness_usage import require_sandbox_create
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+        from simulate.services.sandbox_usage import (
+            close_sandbox_lifetime,
+            open_sandbox_lifetime,
+            record_sandbox_end_reason,
+        )
+
+        # Started only for the platform's own messages (its check of a build it just made):
+        # the organization did not ask for it, so its limits are not checked.
+        platform_only = {
+            bool((payload or {}).get("from_platform"))
+            for payload in _unacked_commands(conversation).values_list(
+                "payload", flat=True
+            )
+        } == {True}
+        if not platform_only:
+            require_sandbox_create(str(job.organization_id))
         sandbox = None
         try:
+            create_requested_at = timezone.now()
             sandbox = self.client.create(
                 launch_spec,
                 timeout=self.client.create_timeout_seconds,
+            )
+            open_sandbox_lifetime(
+                kind=(
+                    HostedSandboxLifetime.Kind.PLATFORM_CHECK
+                    if platform_only
+                    else HostedSandboxLifetime.Kind.CHAT
+                ),
+                provider_name=self.client.name,
+                provider_ref=str(sandbox.id),
+                organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
+                owner_id=conversation.id,
+                lifetime_seconds=ttl_seconds,
+                armed_at=create_requested_at,
             )
             capability = issue_conversation_capability(
                 conversation,
@@ -3359,7 +3521,12 @@ class HostedHarnessGateway:
                 claim_ref=claim_ref,
             )
             if capability is None:
-                self._delete_chat_sandbox(str(sandbox.id), conversation.id)
+                self._delete_chat_sandbox(
+                    str(sandbox.id),
+                    conversation.id,
+                    reason="claim_released",
+                    failure_domain="infrastructure",
+                )
                 return None
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
@@ -3452,13 +3619,24 @@ class HostedHarnessGateway:
             return capability.lease
         except Exception:
             if sandbox is not None:
+                ending = {"reason": "start_failed", "failure_domain": "infrastructure"}
+                record_sandbox_end_reason(provider_ref=str(sandbox.id), **ending)
                 try:
-                    self.client.delete(sandbox, timeout=120, wait=True)
+                    deleted = self.client.delete(sandbox, timeout=120, wait=True)
                 except Exception:
                     logger.exception(
                         "conversation sandbox cleanup failed conversation=%s",
                         conversation.id,
                     )
+                else:
+                    if delete_confirmed(
+                        self.client,
+                        str(sandbox.id),
+                        deleted,
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    ):
+                        # The ending again: it holds if the write before was lost.
+                        close_sandbox_lifetime(provider_ref=str(sandbox.id), **ending)
             raise
 
     @staticmethod
@@ -4766,8 +4944,11 @@ class HostedHarnessGateway:
         ).first()
         if lease is None:
             return
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+
         provider_ref = str(lease.provider_ref or "")
         absent = not provider_ref or provider_ref.startswith("pending:")
+        ending = {}
         if not absent:
             try:
                 sandbox = self.client.get(
@@ -4776,6 +4957,13 @@ class HostedHarnessGateway:
                 )
             except SandboxNotFoundError:
                 absent = True
+                # Already gone before this delete: lost on our side, unless it was seen
+                # alive up to its lifetime limit.
+                ending = {
+                    "reason": "sandbox_gone",
+                    "failure_domain": "infrastructure",
+                    "last_seen": lease.heartbeat_at,
+                }
             except Exception:
                 logger.exception(
                     "conversation sandbox cleanup deferred conversation=%s",
@@ -4784,15 +4972,12 @@ class HostedHarnessGateway:
                 return
             else:
                 try:
-                    absent = self.client.delete(sandbox, timeout=120, wait=True)
-                    if not absent:
-                        try:
-                            self.client.get(
-                                provider_ref,
-                                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
-                            )
-                        except SandboxNotFoundError:
-                            absent = True
+                    absent = delete_confirmed(
+                        self.client,
+                        provider_ref,
+                        self.client.delete(sandbox, timeout=120, wait=True),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
                 except Exception:
                     logger.exception(
                         "conversation sandbox deletion failed conversation=%s",
@@ -4802,6 +4987,10 @@ class HostedHarnessGateway:
         if absent:
             lease.state = HostedHarnessConversationLease.State.EXPIRED
             lease.save(update_fields=["state", "updated_at"])
+            if provider_ref and not provider_ref.startswith("pending:"):
+                from simulate.services.sandbox_usage import close_sandbox_lifetime
+
+                close_sandbox_lifetime(provider_ref=provider_ref, **ending)
 
     def _delete_and_record(
         self,

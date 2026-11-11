@@ -36,6 +36,10 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
 )
+from simulate.services.sandbox_usage import (
+    fix_engine_died_unseen,
+    record_sandbox_end_reason,
+)
 from simulate.temporal.client import (
     cancel_agent_fix_workflow,
     cancel_hosted_harness_gateway_workflow,
@@ -261,6 +265,19 @@ def request_stop(fix_run: AgentFixRun) -> AgentFixRun:
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run.id)
         if locked.state not in AgentFixRun.ACTIVE_STATES:
             return locked
+        if locked.sandbox_ref and fix_engine_died_unseen(
+            state=locked.state,
+            heartbeat_at=locked.heartbeat_at,
+            ended_at=timezone.now(),
+        ):
+            # The engine cannot report once its fix is stopping, so its silence is read
+            # now: it had died before the stop, unseen.
+            record_sandbox_end_reason(
+                provider_ref=locked.sandbox_ref,
+                reason="engine_gone",
+                failure_domain="infrastructure",
+                last_seen=locked.heartbeat_at,
+            )
         locked.state = AgentFixRun.State.STOPPING
         locked.save(update_fields=["state", "updated_at"])
         transaction.on_commit(lambda: _signal_stop(locked.id))

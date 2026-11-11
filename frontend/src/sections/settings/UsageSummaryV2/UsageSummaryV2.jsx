@@ -70,6 +70,11 @@ const DIMENSION_CONFIG = {
     colorIndex: 5,
     label: "Voice Simulation",
   },
+  sandbox_minutes: {
+    icon: "solar:server-square-linear",
+    colorIndex: 7,
+    label: "Sandbox Minutes",
+  },
   tracing_events: {
     icon: "solar:chart-2-linear",
     colorIndex: 4,

@@ -73,6 +73,13 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         description="Re-enqueue usage sealing for hosted sandbox cleanups whose seal never ran",
     ),
     ScheduleConfig(
+        schedule_id="sweep-hosted-sandbox-lifetimes",
+        activity_name="sweep_hosted_sandbox_lifetimes",
+        interval_seconds=600,
+        queue="default",
+        description="Bill chat, rebuild and fix sandboxes whose deletion was never confirmed once their lifetime limit has passed",
+    ),
+    ScheduleConfig(
         schedule_id="harness-github-poll",
         activity_name="poll_harness_github_heads",
         interval_seconds=600,

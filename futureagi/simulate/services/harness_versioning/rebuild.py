@@ -13,10 +13,11 @@ import logging
 import tarfile
 from collections.abc import Mapping
 from datetime import timedelta
+from datetime import timezone as dt_timezone
 from functools import partial
 from itertools import zip_longest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.db import transaction
 from django.db.models import Q
@@ -41,6 +42,14 @@ from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_diagnostics import _normalize_log_text
 
 logger = logging.getLogger(__name__)
+
+# The rebuild's sandbox never got going or was lost: the whole sandbox ended on our side,
+# unless it had lived to its lifetime limit.
+_OUR_REBUILD_ENDINGS = frozenset({"rebuild_not_started", "rebuild_stuck"})
+# A turn that ended this way failed on our side; the sandbox it ran in did not.
+_FAILED_TURN_ENDINGS = frozenset(
+    {"landing_failed", "no_report", "turn_failed", "turn_interrupted"}
+)
 
 State = HarnessNudge.State
 Target = HarnessNudge.Target
@@ -302,11 +311,15 @@ def answer_rebuild(
 ) -> HarnessNudge:
     """Queue the rebuild a pending (or failed, "Rebuild again") nudge offers."""
     from simulate.services.harness_agent_versions import _busy
-    from simulate.services.harness_usage import require_harness_authoring
+    from simulate.services.harness_usage import (
+        require_harness_authoring,
+        require_sandbox_usage,
+    )
     from simulate.services.harness_versioning import drafts
 
     nudge = _check_answerable(environment, nudge_id)
     require_harness_authoring(str(environment.organization_id))
+    require_sandbox_usage(str(environment.organization_id))
     # Outside any transaction: it may read storage or GitHub.
     facts = _facts(environment, nudge)
     replaced = False
@@ -460,6 +473,7 @@ def close_nudge(
             started_at=_taken_at(nudge),
             ended_at=now,
             stopped=turn_event is None,
+            ending=(error or {}).get("code") or state,
         )
     nudge.state = state
     nudge.error = error
@@ -478,6 +492,11 @@ def close_nudge(
             _after_close,
             str(locked.id),
             dispatched=bool(nudge.command_message_id),
+            lost=(
+                code
+                if (code := (error or {}).get("code")) in _OUR_REBUILD_ENDINGS
+                else ""
+            ),
         )
     )
 
@@ -501,11 +520,12 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
-def _after_close(environment_id: str, *, dispatched: bool) -> None:
+def _after_close(environment_id: str, *, dispatched: bool, lost: str = "") -> None:
     """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
     from simulate.services.hosted_harness_conversation import (
         _ACTIVE_CONVERSATION_STATES,
         _unacked_commands,
+        runtime_is_live,
         settle_interrupted_turn,
     )
     from simulate.tasks import harness_nudges as tasks
@@ -520,7 +540,28 @@ def _after_close(environment_id: str, *, dispatched: bool) -> None:
                 )
                 if conversation is None:
                     return
+                lease = _chat_lease(conversation) if lost else None
+                # A live sandbox was busy with the person's own turn; one still starting
+                # has taken no turn at all.
+                ours = bool(lost) and not runtime_is_live(lease, now=timezone.now())
                 ref = _expire_chat_lease(conversation)
+                if ref and ours:
+                    from simulate.services.sandbox_usage import (
+                        record_sandbox_end_reason,
+                    )
+
+                    # The rebuild never got going in this sandbox, or was lost waiting on
+                    # it: the ending is ours, unless the sandbox had already lived to its
+                    # lifetime limit.
+                    if not record_sandbox_end_reason(
+                        provider_ref=ref,
+                        reason=lost,
+                        failure_domain="infrastructure",
+                        last_seen=getattr(lease, "heartbeat_at", None),
+                    ):
+                        # Fencing the lease without its ending would lose the ending:
+                        # the chat is handed back on a later pass instead.
+                        raise RuntimeError("sandbox ending not recorded")
                 waiting = _unacked_commands(conversation).exists()
                 if conversation.state in _ACTIVE_CONVERSATION_STATES:
                     # The rebuild's turn (or its sandbox's start) is over.
@@ -631,6 +672,7 @@ def record_usage(
     started_at: Any,
     ended_at: Any = None,
     stopped: bool = False,
+    ending: str | None = None,
 ) -> None:
     """One attempt's spend, keyed by its builder message; never billed. The caller
     saves the nudge."""
@@ -660,8 +702,76 @@ def record_usage(
     elif entry.get("stopped") is None:
         entry["stopped"] = bool(stopped)
         entry["partial"] = True
+    if ending and entry.get("ending") is None:
+        entry["ending"] = ending
     usage["attempts"] = attempts
     nudge.usage = usage
+
+
+class FailedTurns(NamedTuple):
+    intervals: list[tuple[Any, Any]]
+    pending: bool
+    sandbox_failed_at: Any
+
+
+def _aware_time(value: Any):
+    moment = _event_time(value)
+    if moment is not None and timezone.is_naive(moment):
+        return timezone.make_aware(moment, dt_timezone.utc)
+    return moment
+
+
+def failed_turn_intervals(
+    *, conversation_id: Any, provider_ref: str, cut_off_at: Any = None
+) -> FailedTurns:
+    """For one sandbox: the (start, end) of each failed rebuild turn that ran in it, whether
+    a turn that ran in it has not ended yet (so its failed time is not known), and when a
+    rebuild running in it was found stuck (the whole sandbox ended on our side unless it had
+    reached its lifetime limit). ``cut_off_at`` is the sandbox's lifetime limit when it ended there: a
+    turn still running at that moment was cut off by the limit and is a failed turn in this
+    sandbox, whatever its attempt's ending."""
+    # Base managers: a deleted environment's turns still count.
+    job_id = (
+        HostedHarnessConversation._base_manager.filter(id=conversation_id)
+        .values_list("job_id", flat=True)
+        .first()
+    )
+    intervals, pending, failed_at = [], False, None
+    if job_id is None:
+        return FailedTurns(intervals, pending, failed_at)
+    for usage in HarnessNudge._base_manager.filter(
+        job_id=job_id, usage__attempts__contains=[{"sandbox_refs": [provider_ref]}]
+    ).values_list("usage", flat=True):
+        for entry in (usage or {}).get("attempts") or []:
+            refs = entry.get("sandbox_refs") or []
+            if provider_ref not in refs:
+                continue
+            ending = entry.get("ending")
+            start = _aware_time(entry.get("turn_started_at"))
+            end = _aware_time(entry.get("turn_ended_at"))
+            if ending in _OUR_REBUILD_ENDINGS and refs[-1] == provider_ref:
+                # Lost in its last sandbox; an earlier one ended on its own recorded terms.
+                failed_at = end or failed_at
+            if (
+                cut_off_at is not None
+                and start is not None
+                and start < cut_off_at
+                and (end is None or end > cut_off_at)
+            ):
+                # Running when the sandbox reached its lifetime limit: cut off by it.
+                intervals.append((start, cut_off_at))
+                continue
+            if ending is None:
+                pending = True
+            elif ending in _FAILED_TURN_ENDINGS:
+                if start is None or end is None:
+                    logger.warning(
+                        "failed rebuild turn has no time bounds conversation=%s",
+                        conversation_id,
+                    )
+                    continue
+                intervals.append((start, end))
+    return FailedTurns(intervals, pending, failed_at)
 
 
 # --- the agent default (D7) ----------------------------------------------------------
@@ -1058,6 +1168,51 @@ def start_nudge_turn(nudge_id: Any, *, message_id: Any, started_at: Any) -> None
     logger.info("harness_nudge_running nudge=%s", nudge.id)
 
 
+def _note_turn_sandbox(
+    nudge_id: Any, conversation_id: str, command_message_id: Any
+) -> None:
+    """Remember the sandbox a rebuild's turn runs in, so a failed turn's time is known
+    for that sandbox."""
+    ref = (
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation_id=conversation_id, attempt__isnull=True
+        )
+        .values_list("provider_ref", flat=True)
+        .first()
+    )
+    if not ref or ref.startswith("pending:"):
+        return
+    key = _id(command_message_id)
+    with transaction.atomic():
+        nudge = (
+            HarnessNudge.no_workspace_objects.select_for_update()
+            .filter(id=nudge_id)
+            .first()
+        )
+        if (
+            nudge is None
+            or nudge.state not in OPEN
+            # A late start of an earlier attempt's command ran in an earlier sandbox.
+            or _id(nudge.command_message_id) != key
+        ):
+            return
+        usage = dict(nudge.usage or {})
+        attempts = [dict(one) for one in usage.get("attempts") or []]
+        entry = next(
+            (one for one in attempts if one.get("command_message_id") == key), None
+        )
+        if entry is None:
+            entry = {"command_message_id": key, **dict.fromkeys(_USAGE_FIELDS)}
+            attempts.append(entry)
+        refs = list(entry.get("sandbox_refs") or [])
+        if ref in refs:
+            return
+        entry["sandbox_refs"] = [*refs, ref]
+        usage["attempts"] = attempts
+        nudge.usage = usage
+        nudge.save(update_fields=["usage", "updated_at"])
+
+
 def on_turn_event(
     conversation_id: str, kind: str, payload: Mapping[str, Any], sequence: int, at: Any
 ) -> None:
@@ -1090,6 +1245,7 @@ def on_turn_event(
                     updated_at=timezone.now(),
                 )
             start_nudge_turn(nudge.id, message_id=command.id, started_at=at)
+            _note_turn_sandbox(nudge.id, conversation_id, command.id)
         elif nudge is not None and kind == "turn_interrupted":
             HarnessNudge.no_workspace_objects.filter(
                 id=nudge.id, state__in=OPEN

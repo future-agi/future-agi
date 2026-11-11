@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from decimal import Decimal
+from datetime import datetime, timedelta
+from decimal import ROUND_DOWN, Decimal
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -17,11 +18,38 @@ from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
 
-_ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
+_ACTIONS = frozenset(
+    {"agent_fix", "harness_authoring", "sandbox_runtime", "text_call", "voice_call"}
+)
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
     {"infrastructure", "connectivity", "platform_sync"}
+)
+# The provider name a bring-your-own sandbox is recorded under; its time is the customer's.
+BYO_SANDBOX_PROVIDER = "daytona-byo"
+_MINUTE_PRECISION = Decimal("0.0001")
+# A sandbox last seen alive this close to its lifetime limit, and found gone after it, reached
+# that limit: it expired, and its time up to the limit is charged. Longer than every cadence at
+# which the platform sees a live sandbox (the run poll, the chat heartbeat window).
+SANDBOX_EXPIRY_TOLERANCE = timedelta(seconds=90)
+# The run failure that means the provider no longer had the sandbox.
+_RUN_SANDBOX_GONE = "sandbox_disappeared"
+# Launch errors raised after the sandbox exists that are the platform's own doing, although the
+# gateway records every launch error under "environment".
+OUR_LAUNCH_ERRORS = frozenset(
+    {"attempt_capability_activation_invalid", "conversation_idempotency_conflict"}
+)
+# A fix that ended on our side: its own sandbox and the check runs it cancelled are free.
+OUR_FIX_FAILURES = frozenset(
+    {
+        "fix_dispatch_failed",
+        "fix_engine_died",
+        "fix_engine_failed",
+        "fix_sandbox_failed",
+        "fix_watch_failed",
+        "fix_workflow_lost",
+    }
 )
 
 logger = logging.getLogger(__name__)
@@ -29,20 +57,22 @@ logger = logging.getLogger(__name__)
 
 def check_harness_usage(attempt: HostedHarnessAttempt, action: str) -> dict:
     decision = check_harness_action(str(attempt.job.organization_id), action)
+    _save_usage_limit(attempt.job_id, decision)
+    return decision
+
+
+def _save_usage_limit(job_id, decision: dict) -> None:
     with transaction.atomic():
-        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=attempt.job_id
-        )
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
         metadata = dict(job.payload.get("metadata") or {})
         if not decision["allowed"]:
             metadata["usage_limit"] = decision
         elif "usage_limit" in metadata:
             metadata.pop("usage_limit")
         else:
-            return decision
+            return
         job.payload = {**job.payload, "metadata": metadata}
         job.save(update_fields=["payload", "updated_at"])
-    return decision
 
 
 def check_harness_action(organization_id: str, action: str) -> dict:
@@ -87,8 +117,71 @@ def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
 
 
+def require_sandbox_usage(organization_id: str) -> None:
+    _require_harness_action(organization_id, "sandbox_runtime")
+
+
+def require_sandbox_start(organization_id: str) -> None:
+    """The sandbox check for a caller that answers only hosted harness errors (re-runs,
+    resumes): a refusal keeps the fields the limit message and banner read."""
+    try:
+        require_sandbox_usage(organization_id)
+    except Exception as exc:
+        refusal = usage_limit_error(exc)
+        if refusal is None:
+            raise
+        result = exc.check_result
+        refusal.details = {
+            "error_code": result.error_code,
+            "dimension": result.dimension,
+            "current_usage": result.current_usage,
+            "limit": result.limit,
+            "upgrade_cta": (
+                result.upgrade_cta.model_dump() if result.upgrade_cta else None
+            ),
+        }
+        raise refusal from exc
+
+
+def require_sandbox_create(
+    organization_id: str, *, attempt: HostedHarnessAttempt | None = None
+) -> None:
+    """Refuse a sandbox the organization's plan does not allow, just before it is created.
+    Where the plan cannot be read (the sandbox runner has no billing config) the create goes
+    ahead: the submission already checked where it could."""
+    if is_oss():
+        return
+    try:
+        decision = check_harness_action(organization_id, "sandbox_runtime")
+    except Exception as exc:  # noqa: BLE001 - a check that cannot run never blocks
+        # Expected on the sandbox runner, which has no billing config: not worth a warning
+        # on every create there. Anything else is.
+        expected = (
+            isinstance(exc, ImportError) or type(exc).__name__ == "BillingConfigError"
+        )
+        (logger.info if expected else logger.warning)(
+            "sandbox usage check unavailable, create allowed organization=%s error=%s",
+            organization_id,
+            type(exc).__name__,
+        )
+        return
+    if decision["allowed"]:
+        return
+    if attempt is not None:
+        try:
+            _save_usage_limit(attempt.job_id, decision)
+        except Exception:  # noqa: BLE001 - the refusal stands; only its banner is lost
+            logger.exception("usage limit not saved on the run job=%s", attempt.job_id)
+    raise HostedHarnessError(
+        "usage_limit",
+        decision.get("reason") or "the organization's usage limit is reached",
+        status_code=402,
+    )
+
+
 def require_agent_fix_usage(organization_id: str) -> None:
     _require_harness_action(organization_id, "agent_fix")
+    require_sandbox_usage(organization_id)
 
 
 def require_harness_call_usage(job: HostedHarnessJob) -> None:
@@ -98,12 +191,14 @@ def require_harness_call_usage(job: HostedHarnessJob) -> None:
         "voice_call" if _resolve_scenario_modality(job, {}) == "voice" else "text_call"
     )
     _require_harness_action(str(job.organization_id), action)
+    require_sandbox_usage(str(job.organization_id))
 
 
 def require_harness_run_usage(organization_id: str, payload: dict) -> None:
     """Check authoring and any call rail that the submitted connector identifies."""
 
     require_harness_authoring(organization_id)
+    require_sandbox_usage(organization_id)
     agent = payload.get("agent") or {}
     config = agent.get("config") or {}
     metadata = payload.get("metadata") or {}
@@ -459,7 +554,7 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
         )
 
 
-def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
+def replay_harness_usage(attempt: HostedHarnessAttempt, *, seal: bool = False) -> None:
     current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
     job = HostedHarnessJob.all_objects.only("payload").get(id=current.job_id)
     metadata = job.payload.get("metadata") or {}
@@ -486,6 +581,9 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         "Authoring usage could not be finalized for attempt %s",
                         current.id,
                     )
+    if seal:
+        # Only the seal sends the sandbox charge: it retries when the stream is down.
+        emit_sandbox_runtime(current)
     price_fix_check_run(current.job_id)
 
 
@@ -526,7 +624,7 @@ def price_fix_check_run(job_id) -> None:
     usd = sum(
         (
             Decimal(str(used.get(dimension) or 0)) * _paid_unit_usd(config, dimension)
-            for dimension in ("text_sim_tokens", "voice_sim_minutes")
+            for dimension in ("text_sim_tokens", "voice_sim_minutes", "sandbox_minutes")
         ),
         Decimal(str(used.get("ai_credits") or 0)) * Decimal("0.01"),
     )
@@ -621,13 +719,31 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     consumption["sandbox_seconds"] = sum(
         observation["seconds"] for observation in runtimes.values()
     )
+    # What was billed: the charge frozen once each attempt's end was final.
+    consumption["sandbox_minutes"] = float(
+        sum(
+            (
+                Decimal(attempt.sandbox_runtime["billed_minutes"])
+                for attempt in attempts.values()
+                if "billed_minutes" in (attempt.sandbox_runtime or {})
+            ),
+            Decimal(0),
+        )
+    )
     return consumption
 
 
 def record_sandbox_runtime(
-    attempt: HostedHarnessAttempt, *, started: bool = False, final: bool = False
+    attempt: HostedHarnessAttempt,
+    *,
+    started: bool = False,
+    final: bool = False,
+    provider: str | None = None,
+    lifetime_seconds: int | None = None,
+    armed_at: datetime | None = None,
+    retried: bool = False,
 ) -> None:
-    """Observe provision-to-confirmed-teardown duration without billing it."""
+    """Observe provision-to-confirmed-teardown duration; the seal bills it once it is final."""
     with transaction.atomic():
         current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
             id=attempt.id
@@ -637,10 +753,229 @@ def record_sandbox_runtime(
             return
         now = timezone.now()
         observation.setdefault("started_at", now.isoformat())
+        if started and provider is not None and lifetime_seconds is not None:
+            observation.setdefault("provider", provider)
+            observation.setdefault("lifetime_seconds", int(lifetime_seconds))
+            observation.setdefault(
+                "armed_at",
+                (
+                    armed_at.isoformat()
+                    if armed_at is not None
+                    else observation["started_at"]
+                ),
+            )
         began = parse_datetime(observation["started_at"])
         observation["seconds"] = max(0.0, (now - began).total_seconds())
         observation["observed_at"] = now.isoformat()
         if final:
             observation["ended_at"] = now.isoformat()
+            if retried:
+                # The platform will run the job again: an expiry of this attempt is free.
+                observation["retried"] = True
         current.sandbox_runtime = observation
         current.save(update_fields=["sandbox_runtime", "updated_at"])
+
+
+def rearm_sandbox_runtime(
+    attempt: HostedHarnessAttempt, *, provider, lifetime_seconds: int, renewed_at
+) -> None:
+    """Record a renewed lifetime limit, when the provider's renewal restarts it.
+    ``renewed_at`` is taken just before the renewal call, so the recorded limit is never
+    later than the provider's."""
+    if not getattr(provider, "renews_ttl", False):
+        return
+    try:
+        with transaction.atomic():
+            current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+                id=attempt.id
+            )
+            observation = dict(current.sandbox_runtime or {})
+            if observation.get("ended_at") or "provider" not in observation:
+                return
+            observation["armed_at"] = renewed_at.isoformat()
+            observation["lifetime_seconds"] = int(lifetime_seconds)
+            current.sandbox_runtime = observation
+            current.save(update_fields=["sandbox_runtime", "updated_at"])
+    except Exception:  # noqa: BLE001 - metering never fails a launch
+        logger.exception("sandbox lifetime renewal not recorded attempt=%s", attempt.id)
+
+
+def sandbox_metered_end(ended_at, armed_at, lifetime_seconds: int):
+    return min(ended_at, armed_at + timedelta(seconds=int(lifetime_seconds)))
+
+
+def billable_sandbox_minutes(
+    *,
+    provider,
+    failure_domains,
+    started_at,
+    ended_at,
+    armed_at,
+    lifetime_seconds,
+    excluded=(),
+) -> Decimal:
+    """What a finished sandbox bills: nothing on a bring-your-own sandbox or one our own
+    failure ended; otherwise start to confirmed end, never past its last lifetime limit,
+    less the parts of ``excluded`` (start, end) spans inside that time, each moment once.
+    """
+    if provider == BYO_SANDBOX_PROVIDER:
+        return Decimal(0)
+    if any(domain in _NON_BILLABLE_FAILURE_DOMAINS for domain in failure_domains):
+        return Decimal(0)
+    end = sandbox_metered_end(ended_at, armed_at, lifetime_seconds)
+    removed, reach = 0.0, started_at
+    for low, high in sorted((max(a, started_at), min(b, end)) for a, b in excluded):
+        low = max(low, reach)
+        if high > low:
+            removed += (high - low).total_seconds()
+            reach = high
+    seconds = max(0.0, (end - started_at).total_seconds() - removed)
+    return (Decimal(str(seconds)) / Decimal(60)).quantize(
+        _MINUTE_PRECISION, rounding=ROUND_DOWN
+    )
+
+
+def _aware(value: str):
+    moment = parse_datetime(value)
+    return timezone.make_aware(moment) if timezone.is_naive(moment) else moment
+
+
+def reached_its_lifetime(*, cap, last_seen, found_at) -> bool:
+    """Whether a sandbox found gone had reached its lifetime limit, which is an expiry
+    charged up to the limit, rather than failed before it, which is free."""
+    return (
+        last_seen is not None
+        and found_at >= cap
+        and last_seen >= cap - SANDBOX_EXPIRY_TOLERANCE
+    )
+
+
+def _run_sandbox_domains(
+    attempt: HostedHarnessAttempt, job: HostedHarnessJob, *, cap, ended_at
+) -> list:
+    """The failure domains that decide whether an attempt's sandbox is free."""
+    failure = attempt.terminal_failure or {}
+    if (
+        failure.get("code") == _RUN_SANDBOX_GONE
+        # A retried attempt is the platform's to pay for; only the run's last one is charged.
+        and not (attempt.sandbox_runtime or {}).get("retried")
+        and reached_its_lifetime(
+            cap=cap, last_seen=attempt.heartbeat_at, found_at=ended_at
+        )
+    ):
+        # It lived to its lifetime limit and expired: its time up to the limit is charged.
+        return []
+    domains = [failure.get("domain")]
+    if (
+        failure.get("domain") == "environment"
+        and failure.get("code") in OUR_LAUNCH_ERRORS
+    ):
+        domains.append("infrastructure")
+    if attempt.attempt_number == job.current_attempt_number:
+        domains.append((job.failure or {}).get("domain"))
+        # A check run cancelled because the fix it checks failed on our side.
+        if job.cancel_reason == "fix_ended" and job.fix_run_id is not None:
+            if (job.fix_run.failure or {}).get("code") in OUR_FIX_FAILURES:
+                domains.append("infrastructure")
+    return domains
+
+
+def _run_sandbox_charge(attempt: HostedHarnessAttempt, job: HostedHarnessJob):
+    """(minutes, metered end) an attempt's sandbox bills; (0, None) until cleanup confirmed
+    it gone, and always for an attempt timed before providers and limits were recorded.
+    """
+    observation = attempt.sandbox_runtime or {}
+    if attempt.cleanup_verified_at is None or not observation.get("ended_at"):
+        return Decimal(0), None
+    if (
+        not {"started_at", "provider", "lifetime_seconds", "armed_at"}
+        <= observation.keys()
+    ):
+        return Decimal(0), None
+    started_at, ended_at, armed_at = (
+        _aware(observation[key]) for key in ("started_at", "ended_at", "armed_at")
+    )
+    lifetime = int(observation["lifetime_seconds"])
+    minutes = billable_sandbox_minutes(
+        provider=observation["provider"],
+        failure_domains=_run_sandbox_domains(
+            attempt,
+            job,
+            cap=armed_at + timedelta(seconds=lifetime),
+            ended_at=ended_at,
+        ),
+        started_at=started_at,
+        ended_at=ended_at,
+        armed_at=armed_at,
+        lifetime_seconds=lifetime,
+    )
+    return minutes, sandbox_metered_end(ended_at, armed_at, lifetime)
+
+
+def freeze_run_sandbox_charge(
+    attempt: HostedHarnessAttempt, job: HostedHarnessJob
+) -> None:
+    """Store the attempt's sandbox charge once it is final, before anything can rewrite
+    the job it is read from; every later send, and the run page, use the stored one."""
+    if is_oss():
+        # Nothing is billed, so the run page shows sandbox seconds alone, re-run or not.
+        return
+    with transaction.atomic():
+        current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=attempt.id
+        )
+        observation = dict(current.sandbox_runtime or {})
+        if "billed_minutes" in observation:
+            return
+        minutes, ended = _run_sandbox_charge(current, job)
+        if ended is None:
+            # Not final yet, or timed before this change: nothing to store.
+            return
+        observation["billed_minutes"] = str(minutes.quantize(_MINUTE_PRECISION))
+        observation["metered_end"] = ended.isoformat()
+        current.sandbox_runtime = observation
+        current.save(update_fields=["sandbox_runtime", "updated_at"])
+
+
+def emit_sandbox_runtime(attempt: HostedHarnessAttempt) -> None:
+    if is_oss():
+        return
+    job = attempt.job
+    freeze_run_sandbox_charge(attempt, job)
+    observation = (
+        HostedHarnessAttempt.no_workspace_objects.values_list(
+            "sandbox_runtime", flat=True
+        ).get(id=attempt.id)
+        or {}
+    )
+    if "billed_minutes" not in observation:
+        return
+    minutes = Decimal(observation["billed_minutes"])
+    if not minutes:
+        return
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    # Raises when the event did not reach the stream, so the seal is retried, not lost.
+    emit(
+        UsageEvent(
+            event_id=str(uuid5(UUID(str(attempt.id)), "sandbox_runtime")),
+            org_id=str(job.organization_id),
+            event_type=BillingEventType.SANDBOX_RUNTIME,
+            amount=float(minutes),
+            timestamp=_aware(observation["metered_end"]),
+            properties={
+                "source": "rl_environment",
+                "source_id": str(job.id),
+                "harness_job_id": str(job.id),
+                "attempt_id": str(attempt.id),
+                "workspace_id": str(job.workspace_id or ""),
+                "test_execution_id": str(job.test_execution_id or ""),
+                "sandbox_kind": "run",
+                "provider": observation["provider"],
+                "failure_domain": (attempt.terminal_failure or {}).get("domain"),
+            },
+        ),
+        raise_on_failure=True,
+    )

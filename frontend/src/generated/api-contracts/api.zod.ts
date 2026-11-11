@@ -41856,6 +41856,8 @@ export const simulateApiHarnessJobsListResponseConsumptionAiCreditsMin = 0;
 
 export const simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin = 0;
 
+export const simulateApiHarnessJobsListResponseConsumptionSandboxMinutesMin = 0;
+
 export const SimulateApiHarnessJobsListResponseItem = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -42009,6 +42011,9 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       sandbox_seconds: zod
         .number()
         .min(simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin),
+      sandbox_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionSandboxMinutesMin),
     })
     .optional(),
   usage_limit: zod.object({}).passthrough().optional(),
@@ -42861,6 +42866,8 @@ export const simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin = 0;
 
 export const simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin = 0;
 
+export const simulateApiHarnessJobsReadResponseConsumptionSandboxMinutesMin = 0;
+
 export const SimulateApiHarnessJobsReadResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
@@ -43014,6 +43021,9 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       sandbox_seconds: zod
         .number()
         .min(simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin),
+      sandbox_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionSandboxMinutesMin),
     })
     .optional(),
   usage_limit: zod.object({}).passthrough().optional(),
@@ -43083,6 +43093,8 @@ export const simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin =
 export const simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin = 0;
 
 export const simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionSandboxMinutesMin = 0;
 
 export const SimulateApiHarnessJobsCancelResponse = zod.object({
   job: zod.object({
@@ -43237,6 +43249,9 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
       sandbox_seconds: zod
         .number()
         .min(simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin),
+      sandbox_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionSandboxMinutesMin),
     })
     .optional(),
   usage_limit: zod.object({}).passthrough().optional(),

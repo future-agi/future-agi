@@ -1124,6 +1124,9 @@ class RunTestExecutionView(APIView):
         except Http404:
             return self.gm.not_found("Run test not found")
         except Exception as e:
+            refusal = _usage_refusal_response(e)
+            if refusal is not None:
+                return refusal
             return self.gm.internal_server_error_response(
                 f"Failed to execute test: {str(e)}"
             )
@@ -6885,6 +6888,16 @@ _CREDENTIALS_RERUN_REFUSALS = frozenset(
 )
 
 
+def _usage_refusal_response(exc: Exception) -> Response | None:
+    """A plan usage refusal of a rerun, answered as the standard 402 rather than as a
+    restart that failed."""
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    if isinstance(exc, HostedHarnessError) and exc.code == "usage_limit":
+        return Response(exc.as_dict(), status=exc.status_code)
+    return None
+
+
 def _dispatch_repository_harness_rerun(
     test_execution, *, environment_values: dict[str, str]
 ) -> dict:
@@ -7146,6 +7159,9 @@ class CallExecutionRerunView(APIView):
                         ),
                     )
                 except Exception as dispatch_error:
+                    refusal = _usage_refusal_response(dispatch_error)
+                    if refusal is not None:
+                        return refusal
                     from simulate.services.hosted_harness import HostedHarnessError
 
                     if (
@@ -7829,6 +7845,9 @@ class TestExecutionRerunView(APIView):
                             source_execution, environment_values={}
                         )
                     except Exception as dispatch_error:
+                        refusal = _usage_refusal_response(dispatch_error)
+                        if refusal is not None:
+                            return refusal
                         logger.exception(
                             "repository_harness_bulk_rerun_dispatch_failed",
                             test_execution_id=str(source_execution.id),
