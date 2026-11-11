@@ -4,7 +4,8 @@ import ContextTraceCaptureAction from './ContextTraceCaptureAction';
 import { physicalCaptureRef } from './physical-capture-ref';
 import ContextTestsPanel from './ContextTestsPanel';
 
-const state = vi.hoisted(() => ({ identity: 'scope-a', canPublish: true, suiteError: false, capture: vi.fn() }));
+const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
+const state = vi.hoisted(() => ({ identity: 'scope-a', canPublish: true, suiteError: false, runtime: false, capture: vi.fn() }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ enabled: true, identity: state.identity }) }));
 vi.mock('src/api/skills/context-authoring', () => ({
   useContexts: () => ({ data: { totalPages: 1, results: [{ id: 'context', name: 'Refund policy' }] } }),
@@ -14,12 +15,18 @@ vi.mock('src/api/skills/context-testing', () => ({
   useContextTestSuite: () => ({ data: state.suiteError ? undefined : { revision: 3, cases: [] }, isError: state.suiteError, refetch: vi.fn() }),
   useSaveContextTestSuite: () => ({ mutateAsync: vi.fn() }),
 }));
+vi.mock('src/api/skills/context-native', () => ({
+  useNativeTargets: () => ({ data: { runtime: { available: state.runtime, runtime: 'test-runtime', evidenceClass: 'synthetic fixture' }, targets: [] } }),
+  useNativeRuns: () => ({ data: [] }), useNativeRun: () => ({ data: undefined }), useRuntimeConfiguration: () => ({ data: undefined }),
+  useCreateNativeTarget: idle, useQualifyNativeTarget: idle, usePreviewNativeRun: idle, useCreateNativeRun: idle,
+}));
+vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useEvidenceAnnotations: () => ({}), useAppendEvidenceAnnotation: idle }));
 vi.mock('./ContextCaptureController', () => ({ default: (props) => { state.capture(props); return <div>Source review</div>; } }));
 const projectId = '10000000-0000-4000-8000-000000000001';
 const span = { trace: 'trace', id: 'span', start_time: '2026-11-10T00:00:00.123456Z' };
 const ref = { projectId, traceId: span.trace, spanId: span.id, startTime: span.start_time };
 afterEach(cleanup);
-beforeEach(() => { state.identity = 'scope-a'; state.canPublish = true; state.suiteError = false; state.capture.mockClear(); });
+beforeEach(() => { state.identity = 'scope-a'; state.canPublish = true; state.suiteError = false; state.runtime = false; state.capture.mockClear(); });
 
 it('carries the exact physical identity without truncating sub-millisecond precision', () => {
   expect(physicalCaptureRef(projectId, span)).toEqual(ref);
@@ -59,6 +66,14 @@ it('renders context cases while clearly withholding native reproduction and rele
   expect(screen.getByText('Context regression cases · viewed v4')).toBeVisible();
   expect(screen.getByText(/Application verification unavailable/)).toBeVisible();
   expect(screen.getByText('No regression cases yet')).toBeVisible();
+});
+it('offers application verification only when the deployment has a hosted runtime', () => {
+  state.runtime = true;
+  render(<ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite />);
+  expect(screen.queryByText(/Application verification unavailable/)).not.toBeInTheDocument();
+  expect(screen.getByText('Application target')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add application target' })).toBeEnabled();
+  expect(screen.getByText(/synthetic fixture/)).toBeVisible();
 });
 it('does not turn an inaccessible suite into empty successful coverage', () => {
   state.suiteError = true;

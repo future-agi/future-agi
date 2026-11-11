@@ -9,8 +9,7 @@ import {
   useCreateNativeRun, useCreateNativeTarget, useNativeRun, useNativeRuns, useNativeTargets, usePreviewNativeRun,
   useQualifyNativeTarget, useRuntimeConfiguration,
 } from 'src/api/skills/context-native';
-import { useAppendEvidenceAnnotation, useEvidenceAnnotations } from 'src/api/skills/evidence-annotations';
-import { useEvidenceReference } from 'src/api/skills/evidence-annotations';
+import { useAppendEvidenceAnnotation, useEvidenceAnnotations, useEvidenceReference } from 'src/api/skills/evidence-annotations';
 import ClosableDialog from 'src/components/custom-dialog/closable-dialog';
 import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
@@ -76,7 +75,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
 }
 TargetSection.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, canWrite: PropTypes.bool.isRequired, targets: PropTypes.object.isRequired };
 
-function CellDrawer({ contextId, run, cell, caseTitle, onClose, canWrite }) {
+function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
   const reference = useEvidenceReference('simulation_native', run.id);
   const annotations = useEvidenceAnnotations('simulation_native', run.id, 1);
   const append = useAppendEvidenceAnnotation('simulation_native', run.id);
@@ -122,7 +121,7 @@ function CellDrawer({ contextId, run, cell, caseTitle, onClose, canWrite }) {
     </Stack>
   </Drawer>;
 }
-CellDrawer.propTypes = { contextId: PropTypes.string.isRequired, run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, canWrite: PropTypes.bool.isRequired };
+CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, canWrite: PropTypes.bool.isRequired };
 
 function RunDetail({ contextId, evidenceId, canWrite }) {
   const query = useNativeRun(contextId, evidenceId);
@@ -153,7 +152,7 @@ function RunDetail({ contextId, evidenceId, canWrite }) {
         {FAMILIES.map(([key]) => <TableCell key={key}><Verdict value={cell[key]} /></TableCell>)}
       </TableRow>)}</TableBody></Table>
     </TableContainer>}
-    {open && <CellDrawer contextId={contextId} run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => setOpen(null)} />}
+    {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => setOpen(null)} />}
   </Stack>;
 }
 RunDetail.propTypes = { contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired };

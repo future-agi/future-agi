@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Button, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
+import { Button, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import { useContextTestSuite, useSaveContextTestSuite } from 'src/api/skills/context-testing';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import ContentSkeleton from 'src/components/content-skeleton';
