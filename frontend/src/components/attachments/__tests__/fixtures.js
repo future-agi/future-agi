@@ -76,14 +76,16 @@ export const occurrence = {
   capture_complete: true,
   policy_version: "v1",
   deletion_generation: 0,
-  expires_at: "2099-01-01T00:00:00Z",
+  // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
+  expires_at: "2099-01-01T00:00:00+00:00",
 };
 /** @satisfies {import("zod").infer<typeof import("../contract").resolveResultSchema>} */
 export const grant = {
   occurrence_id: occurrenceId,
   status: "ready",
   gateway_path: `/tracer/v1/attachment-media/${occurrenceId}/synthetic-grant`,
-  expires_at: "2099-01-01T00:00:00Z",
+  // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
+  expires_at: "2099-01-01T00:00:00+00:00",
 };
 export const projection = {
   occurrence_id: occurrenceId,

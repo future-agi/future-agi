@@ -5,7 +5,8 @@ function media() {
   const element = new EventTarget();
   Object.assign(element, {
     currentTime: 0,
-    readyState: 1,
+    readyState: 4,
+    seeking: false,
     play: vi.fn().mockResolvedValue(),
     pause: vi.fn(),
     load: vi.fn(),
@@ -28,7 +29,8 @@ describe("shared streaming transport", () => {
       expect(elements.map((element) => element.currentTime)).toEqual(
         Array(count).fill(7198),
       );
-      elements[0].currentTime = 7199;
+      await vi.waitFor(() => expect(player.isPlaying()).toBe(true));
+      elements.forEach((element) => { element.currentTime = 7199; });
       elements[0].dispatchEvent(new Event("timeupdate"));
       expect(player.getCurrentTime()).toBe(7199);
       expect(tick).toHaveBeenLastCalledWith(7199);
@@ -45,12 +47,15 @@ describe("shared streaming transport", () => {
     const player = new StreamingPlayback([element], 7200);
     await player.play();
     player.setTime(7000);
+    await vi.waitFor(() => expect(player.isPlaying()).toBe(true));
+    const startsBeforeRenewal = element.play.mock.calls.length;
     player.replaceSources(["/new-grant"]);
     element.currentTime = 0;
     element.dispatchEvent(new Event("loadedmetadata"));
     expect(element.currentTime).toBe(7000);
-    expect(element.preload).toBe("none");
-    expect(element.play).toHaveBeenCalledTimes(2);
+    expect(element.preload).toBe("auto");
+    await vi.waitFor(() => expect(player.isPlaying()).toBe(true));
+    expect(element.play).toHaveBeenCalledTimes(startsBeforeRenewal + 1);
     player.destroy();
   });
   it("stops all tracks when any track fails instead of playing a partial direction", async () => {

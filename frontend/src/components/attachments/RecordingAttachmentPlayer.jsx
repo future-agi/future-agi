@@ -65,7 +65,9 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
   const playerRef = useRef(null);
   const [status, setStatus] = useState("loading");
   const [time, setTime] = useState(0);
+  // Keep Pause available during buffering so pending play can be cancelled.
   const [playing, setPlaying] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [retryable, setRetryable] = useState(false);
   const duration = manifest.duration_ms / 1000;
@@ -118,8 +120,8 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
           player = new StreamingPlayback(elements, duration);
           playerRef.current = player;
           player.on("timeupdate", setTime);
-          player.on("play", () => setPlaying(true));
-          player.on("pause", () => setPlaying(false));
+          player.on("intent", setPlaying);
+          player.on("buffering", setBuffering);
           player.on("error", () => {
             // One bounded reauthorization attempt, never a provider URL retry.
             if (recoveryUsed) {
@@ -237,6 +239,7 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
               {timeLabel(time)} / {timeLabel(duration)}
             </Typography>
           </Stack>
+          {buffering && <Typography variant="caption" role="status">Buffering recording…</Typography>}
           <Typography variant="caption" color="text.secondary">
             {manifest.tracks
               .map((track) => trackLabels[track.role])
