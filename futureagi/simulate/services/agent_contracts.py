@@ -18,6 +18,8 @@ logger = structlog.get_logger(__name__)
 
 _STORAGE_ERRORS = (S3Error, HTTPError)
 _CONTRACT_MAX_BYTES = 5 * 1_048_576
+SEED_MAX_BYTES = _CONTRACT_MAX_BYTES
+_READING_INPUTS_KEY = "reading_inputs"
 
 
 def contract_object_key(
@@ -72,7 +74,7 @@ def store_version_contract(
         return False
     agent_definition_id, previous_key = current
     key = contract_object_key(organization_id, agent_definition_id, agent_version_id)
-    body = json.dumps(contract, separators=(",", ":")).encode("utf-8")
+    body = contract_bytes(contract)
     client = get_storage_client()
     try:
         ensure_bucket(client, UPLOAD_BUCKET_NAME)
@@ -105,6 +107,14 @@ def store_version_contract(
         replaced=bool(stored and previous_key),
     )
     return bool(stored)
+
+
+def contract_bytes(contract: dict[str, Any]) -> bytes:
+    """A contract as stored and as handed back to a build: UTF-8, not escaped, so a
+    reading's bytes do not grow past the size a build may be handed."""
+    return json.dumps(contract, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
@@ -150,14 +160,21 @@ def seeded_from_reading(job) -> bool:
     return bool(((job.payload or {}).get("metadata") or {}).get("seeded_contract"))
 
 
+def seed_was_used(contract: dict[str, Any] | None) -> bool:
+    """Whether a build's contract is the seed it was handed: the seed's bytes carry
+    the record of what the reading was made from, and a contract read again has none."""
+    return isinstance((contract or {}).get(_READING_INPUTS_KEY), dict)
+
+
 def store_build_contract(
     job, *, agent_version_id: UUID | None = None, archive: bytes | None = None
 ) -> bool:
     """Keep a build's contract on the version the build stored its agent on.
 
     The build's authoring archive and its agent arrive in either order; whichever
-    comes second stores the contract, since it needs both. A build seeded from the
-    version's reading replaces the reading's contract with its own.
+    comes second stores the contract, since it needs both. A build that used the
+    version's reading as its seed replaces the reading's contract with its own; one
+    that read the agent again keeps the reading's, which later builds seed from.
     """
     from simulate.services.hosted_harness_gateway import authored_contract
 
@@ -172,12 +189,13 @@ def store_build_contract(
         archive = _frozen_authoring_archive(job)
     if archive is None:
         return False
+    contract = authored_contract(archive)
     try:
         return store_version_contract(
             organization_id=job.organization_id,
             agent_version_id=agent_version_id,
-            contract=authored_contract(archive),
-            replace=seeded_from_reading(job),
+            contract=contract,
+            replace=seeded_from_reading(job) and seed_was_used(contract),
         )
     except DatabaseError:
         logger.warning(

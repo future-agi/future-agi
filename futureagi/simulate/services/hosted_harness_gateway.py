@@ -23,13 +23,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from integrations.services.github_app import (
     GitHubAppError,
@@ -2489,8 +2490,15 @@ class HostedHarnessGateway:
         if source["kind"] == "github":
             source["commit_sha"] = commit_sha
         payload["source"] = source
-        # A fresh build from a version already read starts from that reading.
-        seed_contract = _seed_contract_for(job) if authoring_archive is None else None
+        # A fresh build from a version already read starts from that reading; only the
+        # conversation's harness takes one.
+        seed_contract = (
+            _seed_contract_for(job)
+            if authoring_archive is None
+            and not (payload.get("metadata") or {}).get("simulation_only")
+            and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+            else None
+        )
         if seed_contract is not None:
             payload["metadata"] = {
                 **(payload.get("metadata") or {}),
@@ -3390,14 +3398,6 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-            # A rebuild onto a version already read starts from that reading.
-            seed_contract = (
-                _seed_contract_for(job, agent_version.id)
-                if agent_version is not None
-                else None
-            )
-            if seed_contract is not None:
-                sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
             # A rebuild onto a provider agent's version sees that version's
             # definition, not whatever the build fetched.
             profile = _provider_profile_bytes(agent_version)
@@ -4858,28 +4858,41 @@ def _safe_source_member(raw_path: str) -> str:
     return candidate
 
 
-def _seed_contract_for(job: HostedHarnessJob, version_id: Any = None) -> bytes | None:
-    """The raw contract of the version the build is tied to (or of ``version_id``),
-    when the sandbox's agent-learning-kit can start from one; None otherwise."""
+def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
+    """The raw contract of the version the build is tied to, when the sandbox's
+    agent-learning-kit can start from one; None otherwise."""
     if not getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False):
         return None
-    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.agent_contracts import (
+        SEED_MAX_BYTES,
+        contract_bytes,
+        stored_version_contract,
+    )
     from simulate.services.hosted_harness import frozen_build_pin
 
-    if version_id is None:
-        pinned = frozen_build_pin(job)
-        version_id = pinned.id if pinned is not None else job.agent_version_id
+    pinned = frozen_build_pin(job)
+    version_id = pinned.id if pinned is not None else job.agent_version_id
     if version_id is None:
         return None
     contract = stored_version_contract(version_id)
     if not contract:
         return None
-    logger.info(
+    body = contract_bytes(contract)
+    if len(body) > SEED_MAX_BYTES:
+        structlog_logger.info(
+            "hosted_build_not_seeded",
+            job_id=str(job.id),
+            agent_version_id=str(version_id),
+            reason="contract_too_large",
+            size_bytes=len(body),
+        )
+        return None
+    structlog_logger.info(
         "hosted_build_seeded",
         job_id=str(job.id),
         agent_version_id=str(version_id),
     )
-    return json.dumps(contract, separators=(",", ":")).encode("utf-8")
+    return body
 
 
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
@@ -5225,7 +5238,10 @@ def prepare_dispatch_payload(
         agent["config"] = config
         dispatched["agent"] = agent
     if job is not None:
-        offered = _offered_eval_catalogue(job)
+        offered = _offered_eval_catalogue(
+            job,
+            seeded=bool((payload.get("metadata") or {}).get("seeded_contract")),
+        )
         if offered:
             # Offered, not required: a guest that ignores it selects nothing.
             metadata = dict(dispatched.get("metadata") or {})
@@ -5234,8 +5250,11 @@ def prepare_dispatch_payload(
     return dispatched
 
 
-def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
+def _offered_eval_catalogue(job: Any, *, seeded: bool = False) -> list[dict[str, Any]]:
     """The platform evals this job may select, filtered to its tenant and, once a contract exists, its modality.
+
+    A build seeded from a reading is offered what the reading was, the list for no
+    contract yet, or the seed no longer matches its job and the agent is read again.
 
     The union-and-`any` logic moved into `harness_evals.briefing_evals`, which
     is the one place that knows the list format. What stays here is the job:
@@ -5245,7 +5264,11 @@ def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
     from simulate.services.harness_evals import briefing_evals
 
     try:
-        return briefing_evals(job.organization, job.workspace, _authored_modality(job))
+        return briefing_evals(
+            job.organization,
+            job.workspace,
+            "" if seeded else _authored_modality(job),
+        )
     except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
         structlog_logger.exception(
             "harness_eval_catalogue_failed",
@@ -6453,6 +6476,7 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
         data=io.BytesIO(body),
         length=len(body),
         content_type="application/gzip",
+        metadata={"folder-name": quote((name or "uploaded-agent")[:255])},
     )
     return {
         "source_id": source_id,
@@ -6460,6 +6484,21 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
         "file_count": len(files),
         "total_bytes": total,
     }
+
+
+def stored_upload_name(organization_id: Any, source_id: Any) -> str | None:
+    """The folder name an upload was stored with; None for an older upload or one
+    that can't be read."""
+    try:
+        stat = get_storage_client().stat_object(
+            UPLOAD_BUCKET_NAME, _source_object_key(organization_id, str(source_id))
+        )
+    except (S3Error, HTTPError):
+        return None
+    for key, value in (getattr(stat, "metadata", None) or {}).items():
+        if str(key).lower() in ("x-amz-meta-folder-name", "folder-name"):
+            return unquote(str(value)) or None
+    return None
 
 
 def _load_source_archive(job: HostedHarnessJob) -> bytes:
