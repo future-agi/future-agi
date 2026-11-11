@@ -24,6 +24,24 @@ def repair_payload_bytes(apps, schema_editor):
         last_id = ids[-1]
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:tracer_sqlexecution"],
+    "mitigation": (
+        "Non-atomic migration: two partial indexes built CONCURRENTLY, then "
+        "RunPython repairs only legacy rows with output_bytes=0 and a non-empty "
+        "result, in id-ordered batches of 1000 with an id cursor, setting "
+        "output_bytes to octet_length(result::text). Touches only "
+        "tracer_sqlexecution (new in this release, so small on upgrade); "
+        "idempotent and safe to rerun; reverse is a no-op."
+    ),
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3577#discussion_r4537374137",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
     atomic = False
     dependencies = [("tracer", "0121_merge_sql_execution_and_alert_high_water")]
