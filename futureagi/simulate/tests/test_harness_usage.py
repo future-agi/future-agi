@@ -825,9 +825,55 @@ def test_a_reading_bill_says_whether_it_holds_every_turn(monkeypatch, complete):
         organization_id=uuid4(),
         workspace_id=None,
         subject_id=uuid4(),
+        run_id=uuid4(),
         spend=spend,
     )
 
     assert len(events) == 1
     assert events[0].properties["source"] == "agent_reading"
     assert events[0].properties["complete"] is complete
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_each_reading_run_is_billed_once_and_a_retry_again(monkeypatch):
+    from ee.usage.services import emitter
+
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    spend = {
+        "stages": [
+            {
+                "stage": "understanding-agent",
+                "models": ["gemini-3.7-flash"],
+                "tokens_in": 1_000_000,
+                "tokens_out": 100_000,
+                "tokens_cached": 0,
+            }
+        ]
+    }
+    subject_id, first_run, retried_run = uuid4(), uuid4(), uuid4()
+
+    for run_id in (first_run, first_run, retried_run):
+        harness_usage.record_agent_reading_usage(
+            organization_id=uuid4(),
+            workspace_id=None,
+            subject_id=subject_id,
+            run_id=str(run_id),
+            spend=spend,
+        )
+
+    expected = [
+        str(uuid5(run_id, "reading:understanding-agent"))
+        for run_id in (first_run, first_run, retried_run)
+    ]
+    assert [event.event_id for event in events] == expected
+    assert len(set(expected)) == 2
+    assert {event.properties["source_id"] for event in events} == {str(subject_id)}
+    assert [event.properties["reading_run_id"] for event in events] == [
+        str(first_run),
+        str(first_run),
+        str(retried_run),
+    ]

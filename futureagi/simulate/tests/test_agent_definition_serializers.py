@@ -747,3 +747,85 @@ class TestAgentDefinitionSerializerObservability:
         agent = _agent_with_row(organization, workspace, enabled=True, api_key="")
         _delete_project(agent)
         assert "api_key" not in self._errors(_stored_agent(agent))
+
+
+@pytest.mark.unit
+class TestAgentConnectRequestSerializer:
+    def _connect(self, **fields):
+        from simulate.serializers.requests.agent_connect import (
+            AgentConnectRequestSerializer,
+        )
+
+        body = {"kind": "github", "repository": "acme/agent", "name": "Support"}
+        return AgentConnectRequestSerializer(data={**body, **fields})
+
+    @pytest.mark.parametrize(
+        "commit_sha", ["a" * 40, "0123456789ABCDEFabcdef0123456789abcdef01"]
+    )
+    def test_a_scanned_commit_is_taken(self, commit_sha):
+        serializer = self._connect(commit_sha=commit_sha)
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["commit_sha"] == commit_sha
+
+    @pytest.mark.parametrize(
+        "commit_sha", ["a" * 39, "a" * 41, "g" * 40, "main", "a" * 7]
+    )
+    def test_anything_but_a_full_commit_is_refused(self, commit_sha):
+        serializer = self._connect(commit_sha=commit_sha)
+
+        assert not serializer.is_valid()
+        assert "commit_sha" in serializer.errors
+
+    def test_an_upload_names_no_commit(self):
+        from simulate.serializers.requests.agent_connect import (
+            AgentConnectRequestSerializer,
+        )
+
+        serializer = AgentConnectRequestSerializer(
+            data={
+                "kind": "archive",
+                "archive_artifact_id": str(uuid.uuid4()),
+                "name": "Support",
+                "commit_sha": "a" * 40,
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert serializer.errors["commit_sha"] == [
+            "only a github source names a commit"
+        ]
+
+
+@pytest.mark.integration
+class TestAgentVersionSource:
+    def test_an_upload_version_shows_its_artifact(
+        self, db, settings, organization, workspace
+    ):
+        from simulate.models import AgentDefinition
+        from simulate.serializers.response.agent_version import (
+            AgentVersionResponseSerializer,
+        )
+        from simulate.services.harness_agent_versions import create_agent_version
+
+        settings.HARNESS_VERSIONING_ENABLED = True
+        artifact = str(uuid.uuid4())
+        agent = AgentDefinition.objects.create(
+            agent_name="Uploaded agent",
+            agent_type="text",
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        version = create_agent_version(
+            agent,
+            parent=None,
+            env=None,
+            source={"kind": "archive", "archive_artifact_id": artifact},
+            agent_payload={"connector": "auto", "config": {}},
+            trigger="connect",
+        )
+
+        data = AgentVersionResponseSerializer(version).data
+
+        assert data["source"] == {"kind": "archive", "archive_artifact_id": artifact}

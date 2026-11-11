@@ -922,3 +922,57 @@ def test_summary_ignores_workspace_context(organization, user, provider_list):
         summary = agent_summary(definition.id, agent_version_id=pinned)
         assert (summary.agent_version_id, summary.agent_stored) == (version.id, True)
         assert (summary.credential_id, summary.key_present) == (credential.id, True)
+
+
+PROMPT = "You are the booking assistant for Harbor Hotels."
+
+
+def _version_row(version):
+    return AgentVersion.no_workspace_objects.get(id=version.id)
+
+
+@pytest.mark.django_db
+def test_a_blank_version_takes_the_prompt_its_document_found(version):
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    stored = _version_row(version)
+    assert stored.description == PROMPT
+    assert stored.configuration_snapshot["description"] == PROMPT
+
+
+@pytest.mark.django_db
+def test_a_version_with_a_prompt_keeps_it(definition):
+    version = definition.create_version(
+        description="Our own prompt.", commit_message="first", status="active"
+    )
+    before = _version_row(version).configuration_snapshot
+
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    stored = _version_row(version)
+    assert stored.description == "Our own prompt."
+    assert stored.configuration_snapshot == before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instructions", [None, "   "])
+def test_a_document_without_a_prompt_leaves_the_version_blank(version, instructions):
+    agent = source_agent()
+    agent["behaviour"][0]["instructions"] = instructions
+
+    store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3")
+
+    assert _version_row(version).description == ""
+
+
+@pytest.mark.django_db
+def test_the_same_document_again_leaves_the_prompt_alone(version):
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+    AgentVersion.no_workspace_objects.filter(id=version.id).update(description="")
+
+    again = store_agent(
+        agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+
+    assert again == "unchanged"
+    assert _version_row(version).description == ""

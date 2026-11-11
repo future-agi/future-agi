@@ -1,6 +1,9 @@
 """The Agents page's version endpoints: a change by kind, production, retry and
 discard, the richer list, and an environment's follow-or-pin policy."""
 
+import io
+import tarfile
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -12,8 +15,10 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
+from simulate.services.agent_versions import upload_version, version_at_head
 from simulate.services.harness_agent_changes import HeadResult
-from simulate.services.harness_agent_versions import POLICY_KEY
+from simulate.services.harness_agent_versions import POLICY_KEY, create_agent_version
+from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.tests.test_agent_overview_api import _environment
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_harness_agent_versions import _preflight
@@ -23,6 +28,8 @@ pytestmark = pytest.mark.django_db
 
 AGENTS = "/simulate/agent-definitions/"
 NUDGE = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+Trigger = HarnessAgentVersionRuntime.Trigger
+Status = HarnessAgentVersionRuntime.PreflightStatus
 
 
 @pytest.fixture(autouse=True)
@@ -684,3 +691,175 @@ def test_a_version_named_with_follow_is_refused(auth_client, agent, production):
     )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+
+
+def _versions(agent):
+    return AgentVersion.objects.filter(agent_definition=agent).count()
+
+
+def _failed(version):
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=version
+    ).update(preflight_status=Status.FAILED)
+
+
+class TestVersionAtHead:
+    def test_the_production_commit_is_production(self, agent, production):
+        version, created = version_at_head(agent, "A" * 40, trigger=Trigger.PUSH)
+
+        assert (version.id, created) == (production.id, False)
+        assert _versions(agent) == 1
+
+    def test_a_new_commit_gets_one_version_whoever_looks_first(self, agent, production):
+        made, created = version_at_head(agent, "c" * 40, trigger=Trigger.PUSH)
+        again, created_again = version_at_head(agent, "c" * 40, trigger=Trigger.SYNC)
+
+        assert created is True
+        assert created_again is False
+        assert again.id == made.id
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=made
+        )
+        assert runtime.trigger == Trigger.PUSH
+        assert runtime.source["commit_sha"] == "c" * 40
+        assert _versions(agent) == 2
+
+    def test_a_version_made_at_the_commit_otherwise_is_the_commits_version(
+        self, agent, production
+    ):
+        synced = _connect(
+            agent,
+            parent=production,
+            commit="b",
+            trigger=Trigger.SYNC,
+            prompt="A prompt the head would not be made with.",
+        )
+
+        version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+
+        assert (version.id, created) == (synced.id, False)
+        assert _versions(agent) == 2
+
+    def test_a_failed_version_at_the_commit_does_not_stand_for_it(
+        self, agent, production
+    ):
+        synced = _connect(
+            agent,
+            parent=production,
+            commit="b",
+            trigger=Trigger.SYNC,
+            prompt="A prompt the head would not be made with.",
+        )
+        _failed(synced)
+
+        version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+
+        assert created is True
+        assert version.id != synced.id
+        assert _versions(agent) == 3
+
+
+def _packed(files):
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as tar:
+        for path, data in files.items():
+            member = tarfile.TarInfo(f"source/{path}")
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+    return body.getvalue()
+
+
+def _uploaded(objects, organization_id, body):
+    artifact = str(uuid.uuid4())
+    objects.put_object(
+        "bucket",
+        _source_object_key(organization_id, artifact),
+        io.BytesIO(body),
+        len(body),
+    )
+    return artifact
+
+
+AGENT_FILES = {"agent.py": b"print('agent')", "README.md": b"Support agent"}
+OTHER_FILES = {"agent.py": b"print('another agent')"}
+
+
+@pytest.fixture
+def uploads(storage):  # noqa: F811
+    return storage
+
+
+class TestUploadVersion:
+    @pytest.fixture
+    def uploaded(self, agent, uploads):
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+        return create_agent_version(
+            agent,
+            parent=None,
+            env=None,
+            source={"kind": "archive", "archive_artifact_id": artifact},
+            agent_payload={"connector": "auto", "config": {}},
+            trigger=Trigger.CONNECT,
+        )
+
+    def test_the_same_folder_again_makes_no_version(self, agent, uploads, uploaded):
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id == uploaded.id
+        assert _versions(agent) == 1
+
+    def test_other_files_make_a_version(self, agent, uploads, uploaded):
+        artifact = _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id != uploaded.id
+        assert _versions(agent) == 2
+
+    def test_an_older_upload_with_the_same_files_is_that_version(
+        self, agent, uploads, uploaded
+    ):
+        other = upload_version(
+            agent,
+            archive_artifact_id=uuid.UUID(
+                _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))
+            ),
+        )
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert other.id != uploaded.id
+        assert version.id == uploaded.id
+        assert _versions(agent) == 2
+
+    def test_a_failed_upload_version_is_not_reused(self, agent, uploads, uploaded):
+        _failed(uploaded)
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id != uploaded.id
+
+    @pytest.mark.parametrize("stored", [b"not a tar archive", None])
+    def test_an_upload_that_cannot_be_read_counts_as_different(
+        self, agent, uploads, uploaded, stored
+    ):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=uploaded
+        )
+        key = _source_object_key(
+            agent.organization_id, runtime.source["archive_artifact_id"]
+        )
+        if stored is None:
+            uploads.objects.pop(key)
+        else:
+            uploads.objects[key] = stored
+        artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id != uploaded.id
+        assert _versions(agent) == 2

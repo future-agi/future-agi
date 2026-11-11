@@ -39,10 +39,11 @@ from simulate.services.harness_agent_versions import (
     submitted_credentials,
 )
 from simulate.services.harness_credentials import AGENT_VERSION_FILE_KEY
-from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_provider import _environment_agent_maker, serialize_job
 from simulate.services.harness_versioning import run_warnings
 from simulate.services.hosted_harness import canonical_digest, create_hosted_job
 from simulate.services.hosted_harness_gateway import PlatformSecretResolver
+from simulate.tests.test_harness_connected_versions import _connect
 from simulate.tests.test_harness_provider import _v1_payload
 from tfc.telemetry.middleware import _mask_sensitive
 
@@ -939,3 +940,85 @@ class TestSecretHygiene:
             user.organization, {}, {"VAPI_API_KEY": "val-vapi-1", "DB_URL": "val-db-1"}
         )
         _no_values(repr(submitted))
+
+
+class TestConnectedAgentCreationCheck:
+    CHECKED = CreationCheck(report={"checked": True}, required_variable_names=["DB"])
+
+    @pytest.fixture
+    def maker(self, monkeypatch):
+        calls = SimpleNamespace(asked=[], made=[])
+
+        def check(*args):
+            calls.asked.append(args)
+            return self.CHECKED
+
+        def ensure(_job, **kwargs):
+            calls.made.append(kwargs["check"])
+
+        monkeypatch.setattr(service, "check_creation_credentials", check)
+        monkeypatch.setattr(service, "ensure_environment_agent", ensure)
+
+        def make(organization, agent_definition_id):
+            payload = {
+                "agent": {"secret_refs": {}},
+                "metadata": {"agent_definition_id": agent_definition_id},
+            }
+            _environment_agent_maker(organization, payload, {}, None, None)(None)
+            return calls
+
+        return make
+
+    @pytest.fixture
+    def agent(self, user, workspace):
+        return AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=user.organization,
+            workspace=workspace,
+        )
+
+    def test_a_connected_agent_is_bound_without_a_creation_check(
+        self, maker, user, agent
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id))
+
+        assert calls.asked == []
+        assert calls.made == [CreationCheck(report={}, required_variable_names=[])]
+
+    def test_an_agent_an_environment_made_is_checked(self, maker, user, agent):
+        version = _connect(agent)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=version
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload={**runtime.agent_payload, "definition_owner": "environment"}
+        )
+
+        calls = maker(user.organization, str(agent.id))
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    @pytest.mark.parametrize("case", ["not_uuid", "unknown", "other_organization"])
+    def test_a_creation_naming_no_agent_of_its_own_is_checked(
+        self, maker, user, agent, case
+    ):
+        from accounts.models import Organization
+
+        organization, agent_definition_id = {
+            "not_uuid": (user.organization, "not-a-uuid"),
+            "unknown": (user.organization, str(uuid.uuid4())),
+            "other_organization": (
+                Organization.objects.create(name="Other Org"),
+                str(agent.id),
+            ),
+        }[case]
+
+        calls = maker(organization, agent_definition_id)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]

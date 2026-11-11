@@ -12,7 +12,12 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
-from simulate.models import AgentVersion, HarnessAgentVersionRuntime, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.services import harness_agent_changes as changes
 from simulate.services import harness_github as github
 from simulate.services import harness_provider
@@ -40,6 +45,7 @@ from simulate.services.harness_provider import _preflight_source_connectors
 from simulate.services.harness_versioning.versions import move_default
 from simulate.services.hosted_harness import HostedHarnessError, _soft_delete
 from simulate.services.hosted_harness_gateway import _empty_source_archive
+from simulate.tests.test_agent_overview_api import _environment as _agent_environment
 from simulate.tests.test_harness_agent_creation import VALUES, _body, _job, _post
 from simulate.tests.test_harness_agent_creation import (  # noqa: F401 - fixture
     gates as gates,
@@ -59,6 +65,7 @@ from simulate.tests.test_harness_agent_versions import (
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
+from simulate.tests.test_harness_connected_versions import _completed, _connect
 from simulate.tests.test_harness_versioning_assembly import (  # noqa: F401 - fixture
     gateway as gateway,
 )
@@ -253,7 +260,6 @@ class TestWatchedSources:
                 source={"kind": "archive", "archive_artifact_id": str(uuid.uuid4())}
             ),
             lambda p: p.update(source={"kind": "provider"}),
-            lambda p: p["metadata"].update(agent_definition_owner="connected"),
             lambda p: p["metadata"].update(scenario_extend={"id": "x"}),
         ]
         for edit in refused:
@@ -261,6 +267,15 @@ class TestWatchedSources:
             assert watched() == [environment.id]
             _edit_payload(environment, edit)
             assert watched() == [], edit
+
+        _edit_payload(environment, restore)
+        _edit_payload(
+            environment,
+            lambda p: p["metadata"].update(
+                agent_definition_owner="connected", scenario_extend={"id": "x"}
+            ),
+        )
+        assert watched_sources() == [dataclasses.replace(found, connected=True)]
 
         _edit_payload(environment, restore)
         for state in ("running", "failed"):
@@ -1775,3 +1790,59 @@ def test_organizations_take_turns_at_the_poll():
         poll_repository_heads(budget=2)
 
     assert read == ["busy/r0", "acme/agent"]
+
+
+class TestConnectedAgents:
+    @pytest.fixture
+    def connected(self, organization, workspace):
+        agent = AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        version = _connect(agent)
+        environments = []
+        for minutes in (1, 2):
+            environment = _completed(_agent_environment(agent, minutes), version)
+            _edit_payload(
+                environment,
+                lambda p: p["metadata"].update(agent_definition_owner="connected"),
+            )
+            environments.append(environment)
+        return agent, environments
+
+    def test_a_connected_agents_environments_are_watched(self, connected):
+        agent, environments = connected
+
+        found = watched_sources(definition_id=agent.id)
+
+        assert [one.environment_id for one in found] == [one.id for one in environments]
+        assert all(one.connected for one in found)
+        assert {(one.repository, one.ref) for one in found} == {("acme/agent", "main")}
+
+    def test_a_new_head_makes_one_version_for_the_agent(self, connected):
+        agent, environments = connected
+        heads = {("acme/agent", "main"): HeadResult("ok", HEAD_Y)}
+
+        with patch.object(
+            changes, "_observe_one", side_effect=AssertionError("environment path")
+        ):
+            outcomes = observe_repository_head(agent.id, heads=heads)
+
+        assert outcomes == {str(one.id): "created" for one in environments}
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y
+        assert row.agent_payload["requested_by_environments"] == []
+        assert "created_for_environment" not in row.agent_payload
+
+    def test_a_head_already_made_makes_nothing(self, connected):
+        agent, environments = connected
+        heads = {("acme/agent", "main"): HeadResult("ok", HEAD_Y)}
+        observe_repository_head(agent.id, heads=dict(heads))
+
+        outcomes = observe_repository_head(agent.id, heads=dict(heads))
+
+        assert outcomes == {str(one.id): "unchanged" for one in environments}
+        assert len(_push_versions(agent.id)) == 1

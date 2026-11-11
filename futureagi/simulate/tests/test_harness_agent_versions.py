@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -2983,3 +2984,62 @@ class TestAgentDefaultMove:
         assert again.status_code == 200
         environment.refresh_from_db()
         assert environment.payload == after
+
+
+class TestDocumentReading:
+    Kind = HarnessAgentVersionRuntime.SourceKind
+
+    def _runtime(self, *, parent=True, kind=None, owner="environment"):
+        return SimpleNamespace(
+            parent_id=uuid.uuid4() if parent else None,
+            source_kind=kind or self.Kind.GITHUB,
+            agent_payload={"definition_owner": owner} if owner else {},
+        )
+
+    @pytest.mark.parametrize("kind", ["github", "archive"])
+    def test_a_later_code_version_of_an_environments_agent_is_read(
+        self, settings, kind
+    ):
+        from simulate.services.agent_version_steps import document_reading_applies
+
+        settings.HARNESS_AGENT_READING_ENABLED = True
+
+        assert document_reading_applies(self._runtime(kind=kind)) is True
+        assert document_reading_applies(self._runtime(owner=None)) is True
+
+    @pytest.mark.parametrize(
+        "enabled, shape",
+        [
+            (False, {}),
+            (True, {"parent": False}),
+            (True, {"kind": "provider"}),
+            (True, {"owner": "connected"}),
+        ],
+    )
+    def test_other_versions_are_not_read_for_their_document(
+        self, settings, enabled, shape
+    ):
+        from simulate.services.agent_version_steps import document_reading_applies
+
+        settings.HARNESS_AGENT_READING_ENABLED = enabled
+
+        assert document_reading_applies(self._runtime(**shape)) is False
+        assert document_reading_applies(None) is False
+
+    @pytest.mark.parametrize("applies", [True, False])
+    def test_the_check_starts_a_document_reading_when_one_applies(self, applies):
+        version_id = uuid.uuid4()
+        steps = "simulate.services.agent_version_steps"
+        queue = "simulate.tasks.harness_agent_versions"
+        with (
+            patch(f"{steps}.workflow_applies_to", return_value=False),
+            patch(f"{steps}.document_reading_applies_to", return_value=applies),
+            patch(f"{queue}.schedule_agent_preflight") as checked,
+            patch(f"{queue}.schedule_agent_document_reading") as read,
+        ):
+            service._schedule_preflight(version_id)
+
+        checked.assert_called_once_with(version_id)
+        assert [one.args for one in read.call_args_list] == (
+            [(version_id,)] if applies else []
+        )

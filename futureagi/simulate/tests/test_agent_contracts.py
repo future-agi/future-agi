@@ -10,6 +10,9 @@ from simulate.models import AgentDefinition
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.services import hosted_harness
 from simulate.services.agent_contracts import (
+    SEED_MAX_BYTES,
+    contract_bytes,
+    seed_was_used,
     store_build_contract,
     stored_version_contract,
 )
@@ -60,8 +63,10 @@ def _archive(contract):
     return body.getvalue()
 
 
-def _job(organization, *, frozen=False):
+def _job(organization, *, frozen=False, seeded=False):
     metadata = {"authoring_object_key": ARCHIVE_KEY} if frozen else {}
+    if seeded:
+        metadata["seeded_contract"] = True
     return SimpleNamespace(
         id=uuid.uuid4(),
         organization_id=organization.id,
@@ -166,3 +171,70 @@ def test_a_contract_is_filed_under_its_agent_and_version(
         f"agent-contracts/{organization.id}/{definition.id}/{version.id}/"
     )
     assert key in objects.objects
+
+
+def test_a_seed_is_held_to_the_size_a_contract_is_stored_at():
+    assert SEED_MAX_BYTES == 5 * 1_048_576
+
+
+def test_a_contract_is_kept_as_utf8_and_not_escaped():
+    body = contract_bytes({"agent": {"name": "café"}, "greeting": "こんにちは"})
+
+    assert body == '{"agent":{"name":"café"},"greeting":"こんにちは"}'.encode()
+    assert json.loads(body) == {"agent": {"name": "café"}, "greeting": "こんにちは"}
+
+
+@pytest.mark.parametrize(
+    "contract, used",
+    [
+        ({**CONTRACT, "reading_inputs": {"commit_sha": "a" * 40}}, True),
+        ({**CONTRACT, "reading_inputs": {}}, True),
+        ({**CONTRACT, "reading_inputs": "a" * 40}, False),
+        (CONTRACT, False),
+        (None, False),
+    ],
+)
+def test_a_build_used_its_seed_only_when_the_reading_record_survives(contract, used):
+    assert seed_was_used(contract) is used
+
+
+def _stored_first(objects, organization, definition, version, *, seeded):
+    job = _job(organization, seeded=seeded)
+    hosted_harness._store_authored_agent(job, definition, _sent())
+    store_build_contract(job, agent_version_id=version.id, archive=_archive(CONTRACT))
+    return job
+
+
+def test_a_build_that_used_its_seed_replaces_the_reading(
+    objects, organization, definition, version
+):
+    job = _stored_first(objects, organization, definition, version, seeded=True)
+    finished = {
+        **CONTRACT,
+        "agent": {"name": "finished"},
+        "reading_inputs": {"commit_sha": "a" * 40},
+    }
+
+    replaced = store_build_contract(
+        job, agent_version_id=version.id, archive=_archive(finished)
+    )
+
+    assert replaced is True
+    assert stored_version_contract(version.id) == finished
+
+
+@pytest.mark.parametrize("seeded", [True, False])
+def test_a_build_that_read_the_agent_again_keeps_the_reading(
+    objects, organization, definition, version, seeded
+):
+    job = _stored_first(objects, organization, definition, version, seeded=seeded)
+    reread = {**CONTRACT, "agent": {"name": "read again"}}
+    if not seeded:
+        reread["reading_inputs"] = {"commit_sha": "a" * 40}
+
+    replaced = store_build_contract(
+        job, agent_version_id=version.id, archive=_archive(reread)
+    )
+
+    assert replaced is False
+    assert stored_version_contract(version.id) == CONTRACT
