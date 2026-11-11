@@ -1,8 +1,9 @@
 """Bounded, metadata-only enrichment for trace and Voice readers.
 
-B10 implements AuthorizedAttachmentReader using current viewer/session and full
-scope/parent authorization. This is deliberately independent of OTLP hints and
-legacy recording URLs. No installed reader returns no attachment metadata.
+``control_plane.ControlPlaneReader`` implements AuthorizedAttachmentReader with
+the current viewer/session and full scope/parent authorization. This is
+deliberately independent of OTLP hints and legacy recording URLs. No installed
+reader (or the feature switched off) returns no attachment metadata.
 """
 
 from dataclasses import dataclass
@@ -42,6 +43,8 @@ class AuthorizedStatus:
     bound: bool
     capture_complete: bool
     expires_at: datetime
+    # The server-side recording an occurrence belongs to, when it is a segment.
+    recording_id: str | None = None
 
 
 class AuthorizedAttachmentReader(Protocol):
@@ -56,6 +59,10 @@ class AuthorizedAttachmentReader(Protocol):
         Do not reuse public/shared-trace access as attachment authority. Read
         metadata contains no filenames, object/source URLs, hashes or grants.
         """
+        ...
+
+    def recording_manifest(self, viewer, target: ReadTarget, recording_id: str):
+        """The authorized RecordingManifest for one parent, or None. Never media."""
         ...
 
 
@@ -91,11 +98,12 @@ def attachment_statuses(
         status = "pending" if not row.bound else row.state
         if status == "ready" and not row.capture_complete:
             status = "partial"
-        items.append(
-            {
-                "reference": ref,
-                "status": status,
-                "capture_complete": row.capture_complete,
-            }
-        )
+        item = {
+            "reference": ref,
+            "status": status,
+            "capture_complete": row.capture_complete,
+        }
+        if row.recording_id is not None:
+            item["recording_id"] = row.recording_id
+        items.append(item)
     return result

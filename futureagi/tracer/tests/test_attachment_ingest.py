@@ -157,22 +157,11 @@ class AttachmentReferencesTests(TestCase):
 class AttachmentBindingTests(TestCase):
     def setUp(self):
         self.link = PendingLink(
-            A, SCOPE, PARENT, A, A, B, 2, "p1", NOW, NOW + timedelta(hours=24), 0, 7
+            1, "scope-pk", SCOPE, PARENT, A, B, "mixed", "audio", NOW,
+            NOW + timedelta(hours=24),
         )
         self.source = ParentState(
-            SCOPE,
-            PARENT,
-            A,
-            A,
-            B,
-            2,
-            "p1",
-            True,
-            True,
-            True,
-            True,
-            NOW + timedelta(hours=2),
-            "live-v2",
+            SCOPE, PARENT, True, {B: REF}, "source-state", NOW + timedelta(hours=2)
         )
         self.store = Mock()
         self.store.claim_pending.return_value = [self.link]
@@ -205,39 +194,36 @@ class AttachmentBindingTests(TestCase):
         self.store.stage.assert_not_called()
 
     def test_arrival_permutations_need_no_sdk_retry(self):
-        for name in (
-            "attachment_first",
-            "child_before_root",
-            "long_lived_root",
-            "span_first",
+        # Attachment before span, span before its references, span first.
+        for name, parents in (
+            ("attachment_first", {}),
+            (
+                "span_without_refs_yet",
+                {(SCOPE, PARENT): replace(self.source, references={})},
+            ),
+            ("span_first", {(SCOPE, PARENT): self.source}),
         ):
             with self.subTest(order=name):
-                self.reader.latest.return_value = (
-                    {}
-                    if name == "attachment_first"
-                    else {
-                        (SCOPE, PARENT): replace(
-                            self.source, root_observed=name == "span_first"
-                        )
-                    }
-                )
+                self.reader.latest.return_value = parents
                 counts = reconcile_pending(self.store, self.reader, now=NOW)
                 self.assertEqual(counts["bound"], int(name == "span_first"))
+                self.assertEqual(counts["pending"], int(name != "span_first"))
                 self.reader.latest.return_value = {(SCOPE, PARENT): self.source}
                 self.assertEqual(
                     reconcile_pending(self.store, self.reader, now=NOW)["bound"], 1
                 )
+        state, source = self.store.settle.call_args.args[1:3]
+        self.assertEqual((state, source), ("bound", self.source))
 
     def test_privacy_negatives(self):
+        other = dict(REF, attachment_id=C)
         for changes, expected in (
             ({"live": False}, "expired"),
-            ({"deletion_generation": 3}, "expired"),
-            ({"actor_id": B}, "rejected"),
-            ({"capture_session_id": B}, "rejected"),
-            ({"correlation_nonce": C}, "rejected"),
-            ({"policy_allowed": False}, "rejected"),
-            ({"policy_version": "p2"}, "rejected"),
-            ({"retention_known": False}, "pending"),
+            ({"references": {B: other}}, "rejected"),
+            ({"references": {B: dict(REF, direction="input")}}, "rejected"),
+            ({"references": {B: dict(REF, modality="image")}}, "rejected"),
+            ({"source": None}, "pending"),
+            ({"expires_at": None}, "pending"),
             ({"expires_at": NOW}, "expired"),
             ({"scope": Scope(B, A, C)}, "rejected"),
             ({"parent": Parent(B, PARENT.span_id)}, "rejected"),

@@ -12,26 +12,33 @@ from .reads import MAX_PARENTS, ReadTarget, attachment_statuses
 from .references import InvalidReference
 
 
-def _enrich_parents(*, request, project_id, observations, reader):
-    """One bounded authorized batch of (response row, explicit parent) pairs.
-
-    Missing explicit workspace fails closed, rather than adopting an older
-    null-workspace project. B10 must additionally reauthorize each parent;
-    a trace read is not media permission.
-    """
-    if reader is None:
-        return
+def _request_scope(request, project_id):
+    """The viewer's explicit scope, or None. Never adopts a null workspace."""
     organization = getattr(request, "organization", None) or getattr(
         getattr(request, "user", None), "organization", None
     )
     workspace = getattr(request, "workspace", None)
     try:
-        scope = Scope(
+        return Scope(
             str(getattr(organization, "id", "")),
             str(getattr(workspace, "id", "")),
             str(project_id),
         )
     except InvalidReference:
+        return None
+
+
+def _enrich_parents(*, request, project_id, observations, reader):
+    """One bounded authorized batch of (response row, explicit parent) pairs.
+
+    Missing explicit workspace fails closed, rather than adopting an older
+    null-workspace project. The reader additionally reauthorizes each parent;
+    a trace read is not media permission.
+    """
+    if reader is None:
+        return
+    scope = _request_scope(request, project_id)
+    if scope is None:
         return
     selected = [
         (observation, ReadTarget(scope, parent))
@@ -92,9 +99,10 @@ def enrich_observations(*, request, project_id, observations, reader=None):
 
 
 RECORDING_PURPOSE = "conversation_recording"
-# I04 coarse states. No reader supplies an authorized RecordingManifest yet, so
-# nothing is projected as playable: a ready recording reads as not-ready until
-# the manifest/resolver integration (B06/B11) authorizes it.
+# I04 coarse states. A recording is projected playable only with an authorized
+# manifest whose bytes the gateway can serve as-is (see ``_playable``); every
+# other ready recording reads as not-ready until channel/stitched derivatives
+# (B11) exist.
 _COARSE_RECORDING_STATES = {
     "pending": "pending",
     "pending_upload": "pending_upload",
@@ -106,14 +114,36 @@ _COARSE_RECORDING_STATES = {
 }
 
 
+def _playable(manifest, occurrence_id):
+    """One complete mixed segment covering the whole timeline, and nothing else.
+
+    The gateway serves an occurrence's validated bytes unchanged, so only a
+    recording that IS one mixed occurrence plays without derivatives.
+    """
+    try:
+        (segment,) = manifest["segments"]
+        return (
+            manifest["layout"] == "mixed"
+            and manifest["capture_complete"] is True
+            and not manifest["gaps"]
+            and segment["occurrence_id"] == occurrence_id
+            and segment["start_ms"] == 0
+            and segment["duration_ms"] == manifest["duration_ms"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def enrich_voice_detail(*, request, result, reader=None):
     """Enrich Voice detail rows, then project I04 `recording_attachment`.
 
     The projection is derived ONLY from authorized statuses on the explicit
     conversation root (the first row). Absent, denied or non-recording roots
     leave the key absent so the legacy URL tier keeps working; when present the
-    UI never falls back to legacy URLs. The shape stays coarse
-    ({occurrence_id, parent, state}) and carries no manifest, origin or URL.
+    UI never falls back to legacy URLs. Segments of one server recording are
+    one recording; two recordings on one root are never resolved by guessing.
+    The shape is `{occurrence_id, parent, state}` plus `manifest` only when
+    ``state`` is `ready`. No origin, URL or grant is projected.
     """
     observations = result.get("observation_span") or []
     enrich_observations(
@@ -125,28 +155,48 @@ def enrich_voice_detail(*, request, result, reader=None):
     if not observations:
         return
     root = observations[0]
-    recordings = [
-        item
-        for item in root.get("attachments") or ()
-        if item["reference"].get("purpose") == RECORDING_PURPOSE
-        and item["reference"]["modality"] == "audio"
-    ]
+    recordings = {}
+    for item in root.get("attachments") or ():
+        reference = item["reference"]
+        if (
+            reference.get("purpose") == RECORDING_PURPOSE
+            and reference["modality"] == "audio"
+        ):
+            key = item.get("recording_id") or reference["occurrence_id"]
+            recordings.setdefault(key, []).append(item)
     if not recordings:
         return
     if len(recordings) != 1:
-        # Ambiguous recording roots are never resolved by guessing one.
         result["recording_attachment"] = {"state": "rejected"}
         return
     try:
         parent = Parent(str(root.get("trace_id", "")), str(root.get("id", "")))
     except InvalidReference:
         return
-    item = recordings[0]
-    result["recording_attachment"] = {
-        "occurrence_id": item["reference"]["occurrence_id"],
+    ((recording_id, items),) = recordings.items()
+    item = items[0]
+    occurrence_id = item["reference"]["occurrence_id"]
+    statuses = [entry["status"] for entry in items]
+    status = next((value for value in statuses if value != "ready"), "ready")
+    projection = {
+        "occurrence_id": occurrence_id,
         "parent": {"trace_id": parent.trace_id, "span_id": parent.span_id},
-        "state": _COARSE_RECORDING_STATES[item["status"]],
+        "state": _COARSE_RECORDING_STATES[status],
     }
+    scope = _request_scope(request, result.get("project_id"))
+    if (
+        status == "ready"
+        and len(items) == 1
+        and "recording_id" in item
+        and scope is not None
+    ):
+        manifest = reader.recording_manifest(
+            request, ReadTarget(scope, parent), recording_id
+        )
+        if manifest is not None and _playable(manifest, occurrence_id):
+            projection["state"] = "ready"
+            projection["manifest"] = manifest
+    result["recording_attachment"] = projection
 
 
 def enrich_voice_page(*, request, project_id, entries, reader=None):

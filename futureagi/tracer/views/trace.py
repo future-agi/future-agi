@@ -94,6 +94,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.attachments.control_plane import ControlPlaneReader
 from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -1982,9 +1983,9 @@ def _build_annotation_map_from_scores_pg(
 
 
 class TraceView(BaseModelViewSetMixin, ModelViewSet):
-    # B10 installs an AuthorizedAttachmentReader only after control-store and
-    # gateway qualification. No reader means no queries or response changes.
-    attachment_reader = None
+    # Re-authorizes every attachment for the viewer's live application session.
+    # With FI_ATTACHMENTS_ENABLED off it does no I/O and changes no response.
+    attachment_reader = ControlPlaneReader()
 
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()

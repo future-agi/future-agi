@@ -1,6 +1,7 @@
 """Exercise the actual legacy-media and trace/Voice response boundaries."""
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -395,3 +396,94 @@ def test_voice_detail_projection_requires_workspace_scope():
     )
     reader.list_authorized.assert_not_called()
     assert "recording_attachment" not in result
+
+
+RECORDING_ID = "22222222-2222-2222-2222-222222222222"
+TRACK = "33333333-3333-3333-3333-333333333333"
+
+
+def _segment_status(occurrence_id, recording_id=RECORDING_ID, state="ready"):
+    return replace(
+        _status(ROOT, {**RECORDING, "occurrence_id": occurrence_id}, state),
+        recording_id=recording_id,
+    )
+
+
+def _manifest(segments=None, layout="mixed", complete=True, gaps=()):
+    return {
+        "schema_version": 1,
+        "recording_id": RECORDING_ID,
+        "timebase": "session_relative_ms",
+        "sample_format": "s16le",
+        "sample_rate_hz": 16000,
+        "channels": 1,
+        "codec": "pcm",
+        "container": "wav",
+        "layout": layout,
+        "tracks": [
+            {"track_id": TRACK, "channels": [0], "direction": "mixed", "role": "mixed"}
+        ],
+        "segments": (
+            segments
+            if segments is not None
+            else [{"occurrence_id": B, "index": 0, "start_ms": 0, "duration_ms": 1000}]
+        ),
+        "gaps": list(gaps),
+        "playout": [],
+        "capture_complete": complete,
+        "duration_ms": 1000,
+    }
+
+
+def test_voice_detail_projects_ready_manifest_for_one_mixed_occurrence():
+    reader = Mock()
+    reader.list_authorized.return_value = [_segment_status(B)]
+    reader.recording_manifest.return_value = _manifest()
+    result = _real_voice_detail(reader)
+    assert result["recording_attachment"] == {
+        "occurrence_id": B,
+        "parent": {"trace_id": A, "span_id": ROOT},
+        "state": "ready",
+        "manifest": _manifest(),
+    }
+    viewer, target, recording_id = reader.recording_manifest.call_args.args
+    assert (target.scope, target.parent, recording_id) == (
+        Scope(A, B, C),
+        Parent(A, ROOT),
+        RECORDING_ID,
+    )
+
+
+def test_voice_detail_unplayable_manifests_stay_coarse():
+    half = {"occurrence_id": B, "index": 0, "start_ms": 0, "duration_ms": 500}
+    gap = {"start_ms": 500, "duration_ms": 500, "reason": "incomplete"}
+    for manifest in (
+        None,  # denied or not yet written
+        _manifest(layout="stereo"),  # needs channel derivatives (B11)
+        _manifest(complete=False),
+        _manifest(segments=[half], complete=False, gaps=[gap]),
+        _manifest(segments=[dict(half, occurrence_id=C)]),  # another occurrence
+    ):
+        reader = Mock()
+        reader.list_authorized.return_value = [_segment_status(B)]
+        reader.recording_manifest.return_value = manifest
+        result = _real_voice_detail(reader)
+        assert result["recording_attachment"]["state"] == "pending", manifest
+        assert "manifest" not in result["recording_attachment"]
+
+
+def test_voice_detail_segments_of_one_recording_are_one_recording():
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        _segment_status(B),
+        _segment_status(C, state="validating"),
+    ]
+    result = _real_voice_detail(reader)
+    # Multi-segment recordings need server derivatives, so never ready here.
+    assert result["recording_attachment"]["state"] == "validating"
+    reader.recording_manifest.assert_not_called()
+    reader.list_authorized.return_value = [
+        _segment_status(B),
+        _segment_status(C, recording_id=A),
+    ]
+    assert _real_voice_detail(reader)["recording_attachment"] == {"state": "rejected"}

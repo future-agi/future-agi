@@ -63,6 +63,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     # The sweep-lost-insight-runs schedule's activity
     "tfc.temporal.insights.activities",
     "tracer.tasks.outbox_cdc",
+    "tracer.tasks.attachment_binding",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",

@@ -1,9 +1,16 @@
-"""Bounded ingestion/reconciliation boundary for the attachment control store.
+"""Ingestion staging seam plus the bounded reconcile engine for occurrence binding.
 
-The B02 broker supplies Writer from authentication, never OTLP/resource attrs.
-B01/B09 implement BindingStore transactions; B05/B10 implement ParentReader
-against collapsed latest live CH state and authoritative retention provenance.
-No default/in-memory production store is installed: absent authority stays dark.
+Binding proof (``control_plane`` supplies the concrete store and reader):
+- the occurrence's parent was fixed by an authenticated, eligible writer when
+  the upload was initialized (B02 broker), never by OTLP attributes; and
+- the latest live ClickHouse span at exactly that scope/trace/span persists a
+  normalized ``fi.attachment.refs`` entry naming the same attachment and
+  occurrence, with the same direction and modality; and
+- the source's retention is known (the same rule the read path applies).
+
+The capture-session carriers are stripped before persistence on both ingest
+paths, so the nonce is not re-proven at bind time. ``stage_ingested_span`` is
+an optional credential-bound observation hook; binding does not depend on it.
 """
 
 from dataclasses import dataclass
@@ -19,7 +26,6 @@ from .references import (
 )
 
 MAX_BATCH = 256
-MAX_ATTEMPTS = 12
 MAX_PENDING_AGE = timedelta(hours=24)
 
 
@@ -65,39 +71,45 @@ class Candidate:
 
 @dataclass(frozen=True)
 class PendingLink:
-    internal_id: str
+    """One unbound live occurrence. Its parent came from the authenticated upload."""
+
+    internal_id: object
+    scope_id: object
     scope: Scope
     parent: Parent
-    actor_id: str
-    capture_session_id: str
-    correlation_nonce: str
-    deletion_generation: int
-    policy_version: str
+    attachment_id: str
+    occurrence_id: str
+    direction: str
+    modality: str
     created_at: datetime
     expires_at: datetime
-    attempts: int
-    revision: int
 
 
 @dataclass(frozen=True)
 class ParentState:
+    """Latest collapsed ClickHouse facts for one exact parent.
+
+    ``references`` maps occurrence_id to the persisted, validated reference.
+    ``source`` is the backend ``SourceState`` that binding stores; it is None
+    when retention is unknown, which never binds.
+    """
+
     scope: Scope
     parent: Parent
-    actor_id: str
-    capture_session_id: str
-    correlation_nonce: str
-    deletion_generation: int
-    policy_version: str
-    # A live child without its authoritative root is not a readable parent.
-    root_observed: bool
     live: bool
-    policy_allowed: bool
-    retention_known: bool
+    references: dict
+    source: object | None
     expires_at: datetime | None
-    source_revision: str
 
 
-class BindingStore(Protocol):
+class StagingStore(Protocol):
+    """Optional credential-bound ingest observation; nothing installs one yet.
+
+    Both ingest paths lack the original credential id today (the Go actor and
+    the Python ingestion task carry only org/workspace/user), so a staging
+    store would have no writer to verify. Binding never waits for it.
+    """
+
     def stage(self, candidate: Candidate, now: datetime) -> bool:
         """Atomically validate writer/session/nonce and exact registered IDs.
 
@@ -108,20 +120,22 @@ class BindingStore(Protocol):
         """
         ...
 
+
+class BindingStore(Protocol):
     def claim_pending(self, now: datetime, limit: int) -> list[PendingLink]:
-        """Lease due pending links across scopes, with a hard SQL limit."""
+        """Unbound live occurrences, oldest first, with a hard SQL limit."""
         ...
 
     def settle(
         self, link: PendingLink, state: str, source: ParentState | None, now: datetime
     ) -> bool:
-        """CAS link revision and revalidate policy/session/deletion fences atomically.
+        """Apply one decision atomically; False on any concurrent change.
 
-        For bound, require unchanged current source_revision and generations and
-        derive expiry from source provenance (never extend it). For expired,
-        tombstone and enqueue idempotent cleanup/release. For pending, increment
-        attempts and schedule bounded backoff. Return false on any concurrent
-        change. Physical cleanup is B09's outbox, not a PG cascade.
+        ``bound`` goes through the backend's fenced CAS (scope enabled, policy
+        and deletion generation unchanged, identical source on replay) and
+        never extends the source expiry. ``expired``/``rejected`` tombstone the
+        occurrence and enqueue the erase outbox when nothing else references
+        the bytes. ``pending`` changes nothing.
         """
         ...
 
@@ -132,9 +146,8 @@ class ParentReader(Protocol):
     ) -> dict[tuple[Scope, Parent], ParentState]:
         """One bounded batch; collapse versions BEFORE excluding deleted rows.
 
-        Resolve full project/trace/span tuple, root eligibility, writer nonce and
-        authoritative retention provenance. Ambiguous/unknown sources are absent.
-        Do not use OTLP timestamps as retention provenance.
+        Resolve the full project/trace/span tuple and authoritative retention.
+        Ambiguous/unknown sources are absent. OTLP timestamps are never used.
         """
         ...
 
@@ -145,7 +158,7 @@ def stage_ingested_span(
     trace_id,
     span_id,
     writer: Writer | None,
-    store: BindingStore | None,
+    store: StagingStore | None,
     now: datetime,
 ):
     """Server-only hook; safe when called before or after span persistence.
@@ -178,7 +191,7 @@ class IngestionBinding:
     """Explicit converter dependency, constructed by the authenticated broker."""
 
     writer: Writer
-    store: BindingStore
+    store: StagingStore
 
     def stage(self, span, project, organization_id, now):
         scope = self.writer.scope
@@ -204,41 +217,36 @@ class IngestionBinding:
         )
 
 
-def _decision(link, source, now):
-    if (
-        now >= min(link.expires_at, link.created_at + MAX_PENDING_AGE)
-        or link.attempts >= MAX_ATTEMPTS
-    ):
+def _decision(link, parent, now):
+    if now >= min(link.expires_at, link.created_at + MAX_PENDING_AGE):
         return "expired"
-    if source is None:
+    if parent is None:
         return "pending"
-    if source.scope != link.scope or source.parent != link.parent:
+    if parent.scope != link.scope or parent.parent != link.parent:
         return "rejected"
-    if not source.live or source.deletion_generation != link.deletion_generation:
+    if not parent.live:
         return "expired"
-    if (source.actor_id, source.capture_session_id, source.correlation_nonce) != (
-        link.actor_id,
-        link.capture_session_id,
-        link.correlation_nonce,
-    ):
-        return "rejected"
-    if not source.policy_allowed or source.policy_version != link.policy_version:
-        return "rejected"
-    if source.expires_at is not None and now >= source.expires_at:
-        return "expired"
-    if (
-        not source.root_observed
-        or not source.retention_known
-        or not source.source_revision
-    ):
+    reference = parent.references.get(link.occurrence_id)
+    if reference is None:
+        # The span may be re-exported with its references; expiry bounds this.
         return "pending"
+    if (
+        reference["attachment_id"],
+        reference["direction"],
+        reference["modality"],
+    ) != (link.attachment_id, link.direction, link.modality):
+        return "rejected"
+    if parent.source is None or parent.expires_at is None:
+        return "pending"
+    if now >= parent.expires_at:
+        return "expired"
     return "bound"
 
 
 def reconcile_pending(
     store: BindingStore, reader: ParentReader, *, now: datetime, limit: int = MAX_BATCH
 ):
-    """One finite worker tick. Durable scheduling/leases belong to the store.
+    """One finite worker tick. Durable state lives in the occurrence rows.
 
     No SDK retry, open span, media fetch, URL or payload is needed. Store failure
     propagates so the scheduler retries; it must never acknowledge a false bind.
@@ -248,12 +256,12 @@ def reconcile_pending(
     links = store.claim_pending(now, limit)
     if len(links) > limit:
         raise ValueError("attachment_store_exceeded_bound")
-    sources = reader.latest(links) if links else {}
+    parents = reader.latest(links) if links else {}
     counts = dict.fromkeys(("bound", "pending", "rejected", "expired", "conflict"), 0)
     for link in links:
-        source = sources.get((link.scope, link.parent))
-        state = _decision(link, source, now)
-        if store.settle(link, state, source, now):
+        parent = parents.get((link.scope, link.parent))
+        state = _decision(link, parent, now)
+        if store.settle(link, state, parent, now):
             counts[state] += 1
         else:
             counts["conflict"] += 1
