@@ -34,8 +34,9 @@ changes none of them.
   never approves with the workflow token. Turning the setting off stops
   `frontend-auto-approve-hotfix.yml`, which approves with that token. `ee` and
   `agent-learning-kit` also produce deployed images and had the setting on
-  (read-only check, 11 Nov); turn it off there too. Their workflows were not
-  checked for anything that relies on it.
+  (read-only check, 11 Nov); turn it off there too, and add a repository
+  ruleset on each one's `main` with `require_last_push_approval: true`. Their
+  workflows were not checked for anything that relies on the setting.
 - **Last-push approval.** Add a repository ruleset on `main` and `dev` with
   `require_last_push_approval: true`. Do not edit organisation ruleset
   2289447, which covers other repositories. Without it, a writer can push to
@@ -131,8 +132,10 @@ changes none of them.
   last. Then generate a new private key for the release-bot App and delete the
   old ones, because any branch workflow could read the old key. The other
   remedy, a separate App for deployment bumps under the same custody, is
-  described in those deployment documents. A job names one environment, so
-  this repository needs three holders:
+  described in those deployment documents. The separate App covers only
+  `future-agi/deployment`. This repository still needs the move, because the
+  shared App can approve here. Do it before any approver key is added. A job
+  names one environment, so this repository needs three holders:
   - `production-auto`, for `release-worker` in `release-images.yml`, which
     already names it. Restrict `production-auto` (see "`Production` and
     `production-auto`" below) **before** adding the copy; it has no branch
@@ -147,8 +150,9 @@ changes none of them.
 
   Other readers are docs `changelog-sync.yml`, agent-learning-kit
   `publish-pypi.yml` (`release-pr`, `deployment-bump`) and futureagi-sdk
-  `promote.yml` (on `dev`) and `release-please.yml`; each needs an environment
-  of the same kind in its repository.
+  `promote.yml` (on `dev`), `release-please.yml` and `publish.yml` job `docs`
+  (on `main` once futureagi-sdk PR #50 merges); each needs an environment of
+  the same kind in its repository.
 
   The App merges the release PR, because a merge made with the workflow token
   does not start push workflows, so release-please would not tag the release.
@@ -185,9 +189,14 @@ changes none of them.
   `blocked` until the PR has its approval; then the first run approves and
   defers the merge at its recheck, and later runs wait. Either way the release
   waits, with green runs, until a person updates the release branch.
-- Restrict release-tag creation to the release App and trusted release managers
-  with a tag ruleset on `v*` (which also covers beta and rc tags); protect
-  `main` and release tags from force updates/deletion. This ruleset is part of
+- Add a tag ruleset on `v*` (which also covers beta and rc tags). Only
+  administrators and the release App (bypass list) can create, update or
+  delete `v*` tags. Beta and rc tags are then cut by an administrator or by the
+  App. future-agi had no beta or rc tag on 11 Nov (read-only tag list). In
+  all 63 push runs of `release-images.yml` (28 Jul to 3 Nov), people pushed
+  two stable tags (`v1.29.0` and `v1.38.1`) and the release App pushed the
+  rest; whether those people are administrators was not checked. Also protect
+  `main` from force updates and deletion. This ruleset is part of
   the key custody above, so it is added before any environment that admits
   tags gets a key copy. A tag containing
   a different workflow could omit any in-file guard, so tag creation authority
@@ -407,7 +416,10 @@ write access can edit a PR body.
 - **Older bumps.** While an older release's bump PR that does not clear
   migrations is open, the deployment autopilot keeps it open and newer bumps
   wait at `older-release-has-migrations`. A hold label does not release them;
-  a person merges or closes the older PR. The count is taken against the
+  a person merges or closes the older PR. Whoever closes it unmerged also
+  holds the newer bump with `autopilot-hold`, because the newer count does not
+  cover the older release's files. If a release with migrations never got a
+  bump PR, the next bump is held the same way. The count is taken against the
   previous shipped release, not against the version deployment `main` pins.
 - **Cost.** A release whose baseline is unknown but which changes no schema
   also needs a hand merge. About 6 of the last 39 releases had an unknown
@@ -436,10 +448,11 @@ run by this bot.
   approvals and completed merges independently. GitHub cannot transact a merge
   and its subsequent audit label together: a post-merge API failure leaves the
   pre-merge audit/review, but an operator must repair the success annotation.
-- Before `RELEASE_AUTO_APPROVE=on`, add a tag ruleset on `v*` so only the release
-  App (and named release managers) can create, update or delete release tags,
-  and set the `production-auto` environment to "Selected branches and tags"
-  with `main` and `v*` tags (see the prerequisites for why `main`). The
+- Before `RELEASE_AUTO_APPROVE=on`, add a tag ruleset on `v*` so only
+  administrators and the release App (bypass list) can create, update or
+  delete `v*` tags (see the prerequisites), and set the `production-auto`
+  environment to "Selected branches and tags" with `main` and `v*` tags (see
+  the prerequisites for why `main`). The
   in-code actor check is defence in
   depth; the ruleset is the control that matters. Also complete the approver
   App, environment and Actions-approval settings above, so that no writer can
