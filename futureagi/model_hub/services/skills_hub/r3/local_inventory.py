@@ -202,7 +202,9 @@ def _member(
     }
 
 
-def _folder(path: Path, prefix: str) -> tuple[list[dict], list[dict]]:
+def _folder(
+    path: Path, prefix: str, sink: list | None = None
+) -> tuple[list[dict], list[dict]]:
     # Opening the folder via its parent chain prevents ancestor symlink escapes.
     absolute = Path(os.path.abspath(path))
     fd = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY)
@@ -242,6 +244,10 @@ def _folder(path: Path, prefix: str) -> tuple[list[dict], list[dict]]:
                     entries.append((item, raw))
     finally:
         os.close(fd)
+    if sink is not None:
+        # The exact bytes that were inventoried, for a migration packet; never
+        # re-read later, so the packet cannot differ from this report.
+        sink.extend(entries)
     roots = sorted(
         path[: -len("SKILL.md")].rstrip("/")
         for path, _ in entries
@@ -280,7 +286,7 @@ def _folder(path: Path, prefix: str) -> tuple[list[dict], list[dict]]:
     return members, [{"source": prefix, **row} for row in rejected + unowned]
 
 
-def _exchange(path: Path, prefix: str) -> list[dict]:
+def _exchange(path: Path, prefix: str, sink: list | None = None) -> list[dict]:
     export = json.loads(read_local_file(path))
     if (
         not isinstance(export, dict)
@@ -339,6 +345,8 @@ def _exchange(path: Path, prefix: str) -> list[dict]:
                 source,
             )
         )
+    if sink is not None:
+        sink.append(export)
     return members
 
 
@@ -368,105 +376,7 @@ def _compile(members: list[dict], name: str, description: str, owned: list[dict]
     )
 
 
-def inventory(
-    *,
-    folders: list[Path],
-    exchanges: list[Path],
-    agents: Path,
-    name: str,
-    description: str,
-    selected: list[str] | None = None,
-    local_source: dict | None = None,
-) -> dict:
-    if len(folders) + len(exchanges) > 50:
-        raise ValueError("At most 50 input sources")
-    if local_source is not None:
-        if set(local_source) != {"origin", "project", "revision"}:
-            raise ValueError(
-                "Supply the local source origin, project and immutable revision"
-            )
-        for key, value in local_source.items():
-            if (
-                not isinstance(value, str)
-                or not value.strip()
-                or len(value) > (255 if key == "origin" else 200)
-                or any(ord(c) < 32 for c in value)
-            ):
-                raise ValueError("Invalid local source identity")
-    members, unowned = [], []
-    folder_identities = {}
-
-    def check_budget():
-        if (
-            len(members) > 50
-            or sum(
-                row["size_bytes"] for member in members for row in member["inventory"]
-            )
-            > MAX_INPUT_BYTES
-        ):
-            raise ValueError(
-                "Complete collection exceeds bounded intake; no partial result"
-            )
-
-    for index, folder in enumerate(folders):
-        found, others = _folder(folder, f"folder-{index}")
-        members.extend(found)
-        unowned.extend(others)
-        if local_source is not None:
-            for member in found:
-                # webkitRelativePath includes the selected directory's basename.
-                # The source resource is its retained path, NOT skill frontmatter
-                # or a Hub name. Keep it stable across revisions and name edits.
-                resource = folder.name + (
-                    "/" + member["root"] if member["root"] != "." else ""
-                )
-                if len(resource) > 200:
-                    raise ValueError("Local source resource exceeds identity limit")
-                member["source"] = {
-                    **local_source,
-                    "resource": resource,
-                    "digest": member["manifest_digest"],
-                }
-                key = _hash(
-                    json.dumps(["loose", resource], separators=(",", ":")).encode()
-                )
-                if key in folder_identities:
-                    raise ValueError("Ambiguous folder upload identity")
-                if not member["blockers"]:
-                    folder_identities[key] = member["source"]
-        check_budget()
-    for index, exchange in enumerate(exchanges):
-        members.extend(_exchange(exchange, f"exchange-{index}"))
-        check_budget()
-    if not members:
-        raise ValueError("No SKILL.md roots found")
-    # Migration mappings are unique across the entire source collection, not
-    # only within one exchange file. Revision, digest and frontmatter name are
-    # not identity components: two such inputs would target the same Hub leaf.
-    # Check before selection so excluding one cannot hide an ambiguous library.
-    source_identities = set()
-    for member in members:
-        source = member["source"]
-        if source is None:
-            continue
-        identity = tuple(source[key] for key in ("origin", "project", "resource"))
-        if identity in source_identities:
-            raise ValueError(
-                "Duplicate retained source identity in complete collection"
-            )
-        source_identities.add(identity)
-    keys = {member["key"] for member in members}
-    if selected is not None and (
-        len(selected) != len(set(selected)) or not set(selected) <= keys
-    ):
-        raise ValueError("Selected members must be unique keys in the full inventory")
-    included = (
-        members
-        if selected is None
-        else [member for member in members if member["key"] in selected]
-    )
-    root = read_local_file(agents, MAX_FILE_BYTES).decode("utf-8")
-    owned = [{"path": "AGENTS.md", "content": root}]
+def _closure(included: list[dict], name: str, description: str, owned: list[dict]):
     closure = {
         "fits": False,
         "identity_kind": "unpublished-version-1-projection",
@@ -500,6 +410,146 @@ def inventory(
         for key in ("file_count", "total_bytes", "descriptor_bytes"):
             if key in exc.detail:
                 closure[key] = exc.detail[key]
+    return closure
+
+
+def inventory(
+    *,
+    folders: list[Path],
+    exchanges: list[Path],
+    agents: Path,
+    name: str,
+    description: str,
+    selected: list[str] | None = None,
+    local_source: dict | None = None,
+    capture: dict | None = None,
+) -> dict:
+    if len(folders) + len(exchanges) > 50:
+        raise ValueError("At most 50 input sources")
+    if local_source is not None:
+        if set(local_source) != {"origin", "project", "revision"}:
+            raise ValueError(
+                "Supply the local source origin, project and immutable revision"
+            )
+        for key, value in local_source.items():
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > (255 if key == "origin" else 200)
+                or any(ord(c) < 32 for c in value)
+            ):
+                raise ValueError("Invalid local source identity")
+    members, unowned = [], []
+    folder_identities = {}
+
+    def check_budget():
+        if (
+            len(members) > 50
+            or sum(
+                row["size_bytes"] for member in members for row in member["inventory"]
+            )
+            > MAX_INPUT_BYTES
+        ):
+            raise ValueError(
+                "Complete collection exceeds bounded intake; no partial result"
+            )
+
+    sources = [] if capture is not None else None
+    for index, folder in enumerate(folders):
+        entries = [] if capture is not None else None
+        found, others = _folder(folder, f"folder-{index}", entries)
+        identities = {}
+        members.extend(found)
+        unowned.extend(others)
+        if local_source is not None:
+            for member in found:
+                # webkitRelativePath includes the selected directory's basename.
+                # The source resource is its retained path, NOT skill frontmatter
+                # or a Hub name. Keep it stable across revisions and name edits.
+                resource = folder.name + (
+                    "/" + member["root"] if member["root"] != "." else ""
+                )
+                if len(resource) > 200:
+                    raise ValueError("Local source resource exceeds identity limit")
+                member["source"] = {
+                    **local_source,
+                    "resource": resource,
+                    "digest": member["manifest_digest"],
+                }
+                key = _hash(
+                    json.dumps(["loose", resource], separators=(",", ":")).encode()
+                )
+                if key in folder_identities:
+                    raise ValueError("Ambiguous folder upload identity")
+                if not member["blockers"]:
+                    folder_identities[key] = member["source"]
+                    identities[key] = member["source"]
+        check_budget()
+        if sources is not None:
+            sources.append(
+                {
+                    "kind": "folder",
+                    "base": folder.name,
+                    "entries": entries,
+                    "source_identities": identities,
+                }
+            )
+    for index, exchange in enumerate(exchanges):
+        exports = [] if capture is not None else None
+        members.extend(_exchange(exchange, f"exchange-{index}", exports))
+        check_budget()
+        if sources is not None:
+            sources.append({"kind": "langfuse", "export": exports[0]})
+    if not members:
+        raise ValueError("No SKILL.md roots found")
+    # Migration mappings are unique across the entire source collection, not
+    # only within one exchange file. Revision, digest and frontmatter name are
+    # not identity components: two such inputs would target the same Hub leaf.
+    # Check before selection so excluding one cannot hide an ambiguous library.
+    source_identities = set()
+    for member in members:
+        source = member["source"]
+        if source is None:
+            continue
+        identity = tuple(source[key] for key in ("origin", "project", "resource"))
+        if identity in source_identities:
+            raise ValueError(
+                "Duplicate retained source identity in complete collection"
+            )
+        source_identities.add(identity)
+    keys = {member["key"] for member in members}
+    if selected is not None and (
+        len(selected) != len(set(selected)) or not set(selected) <= keys
+    ):
+        raise ValueError("Selected members must be unique keys in the full inventory")
+    included = (
+        members
+        if selected is None
+        else [member for member in members if member["key"] in selected]
+    )
+    root = read_local_file(agents, MAX_FILE_BYTES).decode("utf-8")
+    owned = [{"path": "AGENTS.md", "content": root}]
+    closure = _closure(included, name, description, owned)
+    # Without an explicit selection, also project the closure of every member
+    # that has no blocker. This is a proposal shown for review, never an
+    # automatic exclusion: intake still requires explicit acknowledgment.
+    proposed = None
+    if selected is None and any(member["blockers"] for member in members):
+        supported = [member for member in members if not member["blockers"]]
+        proposed = {
+            "selected": [member["key"] for member in supported],
+            "excluded": [
+                member["key"] for member in members if member["blockers"]
+            ],
+            "compiled_closure": _closure(supported, name, description, owned),
+        }
+    if capture is not None:
+        capture["sources"] = sources
+        capture["context"] = {
+            "name": name,
+            "description": description,
+            "agents_md": root,
+        }
     # Unassigned files and excluded roots are visible before any intake. They are
     # not silently counted as migrated merely because the selected closure fits.
     return {
@@ -520,6 +570,7 @@ def inventory(
         and len(included) == len(members)
         and not unowned,
         "compiled_closure": closure,
+        **({"proposed_supported_subset": proposed} if proposed else {}),
         "limitations": [
             "Local projection only; publish and resolve exact accepted links before delivery.",
             "No source rights or native Langfuse export conformance is established.",

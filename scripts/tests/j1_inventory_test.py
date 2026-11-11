@@ -69,6 +69,58 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertIn(".futureagi/context.json", subset["compiled_closure"]["paths"])
         self.assertNotIn("Exact café", json.dumps(subset))
 
+    def test_unselected_run_proposes_reviewed_supported_subset(self):
+        for i in range(15):
+            self.package(f"policy-{i}", 2)
+        (self.library / "policy-14" / "binary.bin").write_bytes(b"\x00\xff")
+        report = self.run_inventory()
+        # The whole-collection verdict is unchanged; the subset is only proposed.
+        self.assertFalse(report["compiled_closure"]["fits"])
+        self.assertEqual(report["excluded"], [])
+        proposed = report["proposed_supported_subset"]
+        self.assertEqual(proposed["excluded"], ["folder-0/policy-14"])
+        self.assertEqual(len(proposed["selected"]), 14)
+        explicit = self.run_inventory(selected=proposed["selected"])
+        self.assertEqual(proposed["compiled_closure"], explicit["compiled_closure"])
+        self.assertNotIn("proposed_supported_subset", explicit)
+        clean = Path(self.temp.name) / "clean"
+        clean.mkdir()
+        self.library = clean
+        self.package("only", 1)
+        self.assertNotIn("proposed_supported_subset", self.run_inventory())
+
+    def test_packet_carries_exact_inventoried_bytes_and_identities(self):
+        from model_hub.services.skills_hub.packages import parse_upload
+
+        self.package("policy", 2)
+        (self.library / "policy" / "binary.bin").write_bytes(b"\x00\xff")
+        self.package("clean", 1)
+        (self.library / "notes.txt").write_text("unowned\n")
+        exchange = self.root / "exchange.json"
+        files = [{"path": "SKILL.md", "content": "---\nname: refunds\ndescription: Use when refunding\n---\n\nBody\n"}]
+        exchange.write_text(json.dumps({"format": "langfuse-skills-v1", "origin": "https://lf.example", "project": "p",
+            "skills": [{"resource": "r1", "revision": "3", "digest": manifest_digest(files), "files": files}]}))
+        capture = {}
+        report = inventory(folders=[self.library], exchanges=[exchange], agents=self.agents, name="trial",
+            description="Private trial", local_source={"origin": "local:synthetic", "project": "library", "revision": "v1"},
+            capture=capture)
+        self.assertEqual(capture["context"], {"name": "trial", "description": "Private trial",
+            "agents_md": self.agents.read_text()})
+        folder, = [s for s in capture["sources"] if s["kind"] == "folder"]
+        langfuse, = [s for s in capture["sources"] if s["kind"] == "langfuse"]
+        self.assertEqual(langfuse["export"]["skills"][0]["files"], files)
+        # Every regular file, including the binary and unowned ones, as uploaded.
+        uploads = [(f"private/{item}", raw) for item, raw in folder["entries"]]
+        on_disk = sorted(str(p.relative_to(self.root)) for p in self.library.rglob("*") if p.is_file())
+        self.assertEqual(sorted(path for path, _ in uploads), on_disk)
+        self.assertIn(("private/policy/binary.bin", b"\x00\xff"), uploads)
+        parsed = parse_upload(uploads)
+        clean = next(b for b in parsed["bundles"] if b["root"].endswith("clean"))
+        self.assertEqual(folder["source_identities"][clean["key"]]["digest"], manifest_digest(clean["files"]))
+        # Blocked members never receive an importable identity.
+        self.assertEqual(folder["source_identities"], {k: v for k, v in report["folder_upload_source_identities"].items()})
+        self.assertEqual(len(folder["source_identities"]), 1)
+
     def test_compiled_aggregate_not_individual_packages(self):
         for i in range(15):
             self.package(f"policy-{i}", 14)
@@ -395,6 +447,34 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertTrue(report["complete_inventory"])
         self.assertEqual(before, (self.library / "policy/SKILL.md").read_bytes())
         self.assertNotIn("DJANGO_SETTINGS_MODULE", os.environ)
+
+    def test_cli_packet_is_private_exclusive_and_bound_to_report(self):
+        import base64
+        import hashlib
+
+        self.package("policy", 2)
+        packet = self.root / "packet.json"
+        command = [sys.executable, "-I", str(ROOT / "scripts/skills_inventory.py"), "--folder", str(self.library),
+            "--agents", str(self.agents), "--name", "trial", "--description", "Trial", "--source-origin", "local:synthetic",
+            "--source-project", "library", "--source-revision", "v1", "--packet", str(packet)]
+        result = subprocess.run(command, cwd=self.root, env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, check=True)
+        report = json.loads(result.stdout)
+        summary = report.pop("migration_packet")
+        raw = packet.read_bytes()
+        self.assertEqual(summary["sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(packet.stat().st_mode & 0o777, 0o600)
+        body = json.loads(raw)
+        self.assertEqual(body["kind"], "futureagi-migration-packet")
+        self.assertEqual(body["inventory_sha256"], hashlib.sha256(json.dumps(report, ensure_ascii=True, sort_keys=True).encode()).hexdigest())
+        folder, = body["sources"]
+        self.assertEqual(sorted(f["path"] for f in folder["files"]), ["private/policy/SKILL.md", "private/policy/ref-0.md"])
+        skill = next(f for f in folder["files"] if f["path"] == "private/policy/SKILL.md")
+        self.assertEqual(base64.b64decode(skill["content_base64"]), (self.library / "policy/SKILL.md").read_bytes())
+        # Never overwrite an existing packet; no partial report either.
+        again = subprocess.run(command, cwd=self.root, env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
+        self.assertEqual(again.returncode, 1)
+        self.assertFalse(json.loads(again.stdout)["complete_inventory"])
+        self.assertEqual(packet.read_bytes(), raw)
 
 
 if __name__ == "__main__":
