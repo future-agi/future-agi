@@ -72,7 +72,7 @@ No repository settings are changed by the workflow installation.
 | PR label `autopilot-hold` | Absent | Add to stop automation for one PR; remove only when the PR may be reconsidered |
 | Labels `autopilot-low`, `autopilot-medium`, `autopilot-high` | Created by the first enabled run | No setup needed; the controller replaces only its own current tier label |
 | Labels `autopilot-approved`, `autopilot-merged` | Absent | Created/applied by the controller for audit; retain them after merge and revert |
-| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including separate `statuses: read` in both controller jobs, and “Allow GitHub Actions to create and approve pull requests”; no Administration permission or protection-bypass role is needed or granted |
+| Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including `statuses: write` in the prepare job (it posts the reservation status) and `statuses: read` in the gate job, and “Allow GitHub Actions to create and approve pull requests”; no Administration permission or protection-bypass role is needed or granted |
 | `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient |
 | Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
@@ -90,9 +90,12 @@ push history (`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<branch>`,
 one page of up to 100 rows). Every row must name a trusted author. A push by
 anyone else, including an "Update branch" click by someone not on the list,
 sends the PR to a person for good; the author has to update the branch
-themselves. An empty history, or a full page that may hide older pushes, also
-goes to a person. If the newest push in the feed is not yet the PR head, the
-run waits. If the endpoint does not answer, the run stops and approves nothing.
+themselves. An empty history, a full page that may hide older pushes, or a
+page whose oldest row is not the branch's `branch_creation` row (so earlier
+pushes are missing) also goes to a person. On 2026-11-11 the oldest row of
+all 19 sampled PR branches in this repository was `branch_creation`. If the
+newest push in the feed is not yet the PR head, the run waits. If the
+endpoint does not answer, the run stops and approves nothing.
 
 An invalid or overnight working-hours window denies automation. Use one
 same-day UTC window; there is no local-time/DST conversion or implicit fallback.
@@ -183,7 +186,7 @@ number of human approvals.
    a dismissed bot approval for this head. Review evidence comes **only from
    step names in the cited run**, read from attempt 1
    (`GET .../actions/runs/{id}/attempts/1/jobs`). It never comes from a check
-   run's conclusion or `external_id`, because any Actions token in the
+   run's conclusion, name or `external_id`, because any Actions token in the
    repository can edit those, while a finished run's step names cannot change.
    A cited run must be a `workflow_dispatch` run of this workflow on `dev`,
    for this PR number (the run name is `PR autopilot #N`), in this repository,
@@ -242,35 +245,64 @@ reasons. There is no string-to-boolean coercion. Binary, missing, inconsistent
 or oversized patches require a person; the model never certifies a truncated
 diff. Review findings and the decision are recorded, without logging raw diffs.
 
-Each attempt is reserved **before** the AI call, twice: a bot-authored PR
-comment and an in-progress `PR Autopilot review` check run on the head, both
-carrying the same record (PR, head, base, run ID, round, diff digest). In the
-same run, the prepare job then runs a step named `Review reserved: head <head>
-base <base> patch <patch>` (template `RESERVED_STEP` in `scripts/pr_risk.py`),
-rendered from the policy step's output; it runs even if that step failed after
+Each attempt is reserved **before** the AI call, three times, in this order:
+a bot-authored PR comment carrying the record (PR, head, base, run ID, round,
+diff digest); a commit status on the head with context
+`pr-autopilot/reservation` whose target URL is the run
+(`https://github.com/<repo>/actions/runs/<id>`); and an in-progress `PR
+Autopilot review` check run on the head with the same record as its
+`external_id`. The status's state (`success`, description "AI review attempt
+N reserved. A record, not a verdict.") is never read. In the same run, the
+prepare job then runs a step named `Review reserved: head <head> base <base>
+patch <patch>` (template `RESERVED_STEP` in `scripts/pr_risk.py`), rendered
+from the policy step's output; it runs even if that step failed after
 reserving. The budget counts **different diffs**, not commits: the digest
 covers the exact patches the model reviews (hunk line numbers ignored).
 
-The controller builds a PR's attempt history from the ledger comments **and**
-the review check runs (name `PR Autopilot review`, app `github-actions`) on
-every head the PR has had. The heads are the PR's commits, both sides of each
-force push in its timeline (GraphQL `HEAD_REF_FORCE_PUSHED_EVENT`), and both
-sides of each push in the branch's activity feed. Anyone with write access can
-delete or edit a comment, but a check run cannot be deleted, so removing or
-editing a reservation comment does not remove the attempt. The following go
-to a person (an escalation comment, no review, no merge):
+The controller builds a PR's attempt history from the ledger comments, the
+reservation statuses and the review check runs (name `PR Autopilot review`,
+app `github-actions`) on every head the PR has had. The heads are the PR's
+commits, both sides of each force push in its timeline (GraphQL
+`HEAD_REF_FORCE_PUSHED_EVENT`), and both sides of each push in the branch's
+activity feed. Anyone with write access can delete or edit a comment, and any
+Actions token in the repository can rename a check run or change its
+`external_id` (`PATCH .../check-runs/{id}` accepts both). A commit status
+cannot be edited or deleted; GitHub only appends them. So deleting the
+comment and renaming the check does not remove the attempt: the status still
+indexes it. A status carries only the run link. The controller rebuilds the
+attempt from the run itself: the PR number from the run name `PR autopilot
+#N`, and the head, base and diff from its `Review reserved` step. Anyone with
+write access can post a status, so a forged one can add an attempt (or send
+the PR to a person) but cannot shape one.
+
+The following go to a person (an escalation comment, no review, no merge):
 
 - a history list that is truncated (more than 100 commits or force pushes) or
-  unavailable;
+  returned in an unexpected shape;
 - a review check on one of the PR's heads whose record cannot be parsed;
+- a reservation status that does not link to a run of this repository, whose
+  run is not a trusted `dev` dispatch run with exactly one `Review reserved`
+  step, that sits on a head its run did not reserve, or whose run's commit is
+  not the base the run reserved;
 - a record that cites a run that is not the trusted `dev` dispatch run for its
-  revision, or whose run or jobs cannot be read (for example, a deleted run);
+  revision, or whose run or jobs GitHub reports as gone (HTTP 404 or 410, for
+  example a deleted run);
 - two records for one run that disagree, a run whose `Review reserved` or
   outcome step names a different head, base or diff than its record, or a run
   with no `Review reserved` step for that record. The last case stops an
   edited record from citing some other run that has no outcome, which would
   move a never-finished bar onto a made-up diff. A genuine run cancelled in
   the moment between its reservation and that step also lands here.
+
+Any other failed request while reading this history (HTTP 5xx, 403 or 429
+rate limits, a timeout, an unreadable body or a GraphQL error) is not evidence
+that anything was deleted or edited. The run fails without an escalation
+comment and approves nothing; the next run retries. When a later run gets past
+these checks and goes on to review, reuse a pass or wait for a branch update,
+it rewrites any standing escalation comment to say it no longer applies, with
+fixed text (the comment's edit history keeps the earlier escalation), so a PR
+never shows "a person must review" beside an automatic merge. It does this
+before reserving anything.
 
 For each attempt the controller reads the outcome marker of its run. An attempt
 whose run shows its `Review reserved` step but no outcome marker never finished
@@ -290,7 +322,8 @@ blocked one.
   fresh review on the new base at no cost to the diff budget. This matters
   because `dev` requires branches to be up to date and moves often.
 - At most **three different diffs** and **nine attempts** per PR are reviewed,
-  counted from the union of comments and check runs. After that the controller
+  counted from the union of comments, reservation statuses and check runs.
+  After that the controller
   posts a human escalation.
 - A record that names another PR (the same head pushed to two PRs) counts only
   toward barring this diff, not toward this PR's budget or reuse.
@@ -306,6 +339,18 @@ starts with no history, so a blocked diff can be reviewed again that way. A
 repository-wide record keyed by the diff digest would close this. Until the
 owner decides, this is a documented limit; the trusted-author list,
 LOW-only paths and the review on every attempt still apply.
+
+**Accepted limit, for the owner to confirm: renamed branches.** The branch
+activity feed is read by the branch's current name
+(`activity?ref=refs/heads/<head ref>`). Two guarantees depend on it: that
+every push came from a trusted author, and finding an amended head that was
+force-pushed over a later commit (that head is in neither the PR's commits
+nor its force-push timeline). Whether the feed for the new name still lists
+pushes made before a rename has not been observed. If it starts over without
+a `branch_creation` row, the controller sends the PR to a person. If a rename
+writes a fresh `branch_creation` row for the new name, earlier pushes drop
+out of both checks without notice. Until the rename rehearsal in the rollout
+list confirms the feed keeps them, this is a documented limit.
 
 **Workflow reruns do not invoke review or approve/merge.** All three controller/
 review jobs require `github.run_attempt == '1'`; a runtime guard also precedes
@@ -430,11 +475,25 @@ Suggested rollout:
      dispatch run has `head_branch` `dev` and `head_sha` equal to the
      dispatched commit; and both hold after "Re-run failed jobs";
    - the branch activity endpoint and the GraphQL commits and
-     `HEAD_REF_FORCE_PUSHED_EVENT` timeline query succeed with the job token;
-   - whether deleting a workflow run also deletes the check runs it created.
-     The controller sends a record whose run is gone to a person, but if the
-     check disappears with the run and the comment is also deleted, nothing
-     is left to read and that attempt drops out of the history;
+     `HEAD_REF_FORCE_PUSHED_EVENT` timeline query succeed with the job token,
+     and the oldest activity row of a freshly pushed branch is
+     `branch_creation`;
+   - the prepare job's token (`statuses: write`) can post the
+     `pr-autopilot/reservation` status, and `commits/<sha>/statuses` still
+     lists it for a head that a force push replaced;
+   - an end-to-end rehearsal of the rename case: get a blocking verdict on a
+     test PR, then from a workflow on another branch whose job has `checks:
+     write`, rename that review check (`PATCH .../check-runs/{id}` with a new
+     `name`) and blank its `external_id`; delete the ledger comment; amend
+     the commit without changing the diff and force-push it. The next run
+     must not reserve a review and must escalate as a blocked diff. The
+     controller does not depend on GitHub refusing that `PATCH`, which the
+     REST documentation allows;
+   - rename a test PR's branch and check whether
+     `activity?ref=refs/heads/<new name>` still lists the pushes made before
+     the rename (see the renamed-branches limit above);
+   - deleting a workflow run leaves its reservation status in place, so the
+     next run sends that PR to a person instead of dropping the attempt;
    - when the Claude step hits its 12-minute step timeout, `needs.ai-review.result`
      is `failure` and the gate job still runs, so the outcome is retryable.
      If the gate job does not run, no marker is written and the diff is barred.
@@ -448,8 +507,9 @@ Suggested rollout:
 4. Provision the review key, set a weekday window and a very small approved trust
    list. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
    pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
-   diff, a push by an account not on the list, a dismissed bot approval, and
-   post-merge dispatches.
+   diff, a push by an account not on the list, a dismissed bot approval, a
+   blocked diff fixed by a new commit (the escalation must then say it no
+   longer applies), and post-merge dispatches.
    Confirm the medium/high human path and every relevant dev push consumer.
 5. Expand only after the audit trail, post-merge verification and revert/incident
    guardrails behave as expected. Policy widening is itself HIGH-risk.
@@ -461,9 +521,13 @@ missing switches/key, hours, non-admin protection queries, declared evidence sco
 required-check provenance, stale/rerun checks, structured verdicts, immutable completed
 verdicts, the three review outcomes and their marker steps, attempt-1 evidence
 after reruns, trusted-run rules (a `pull_request_target` run or a run on another
-commit never vouches), attempt history built from comments and per-commit check
-runs across force pushes, tampered or unreadable records, persistent budgets,
-pusher trust, dismissed approvals, the compare-only behind-dev rule, the sweep's
+commit never vouches), attempt history built from comments, reservation
+statuses and per-commit check runs across force pushes (including a renamed
+check plus a deleted comment), forged or misplaced statuses, tampered or
+unreadable records, persistent budgets, HTTP 404/410 versus transient API
+failures and the HTTP code on `GitHub.request` errors, clearing a superseded
+escalation, pusher trust and the `branch_creation` row, dismissed approvals,
+the compare-only behind-dev rule, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads), audit
 ordering and dispatch selection. No cloud/cluster or production
