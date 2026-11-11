@@ -19,6 +19,7 @@ from tracer.models.attachment import (
     AttachmentAuditEvent,
     AttachmentOccurrence,
     AttachmentOutbox,
+    AttachmentState,
 )
 from tracer.services.attachments import (
     control_plane,
@@ -439,15 +440,24 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
 
 def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):
     scope, _ = setup
-    row = occurrence(setup, monkeypatch)
+    aborted, token, _, _ = initialized(setup)
+    uploads.abort(token, scope_id=scope.id, upload_id=aborted.id)
+    expired, _, _, _ = initialized(setup)
+    uploads.settle(expired.id, scope_id=scope.id, outcome=AttachmentState.EXPIRED)
+    assert set(
+        Attachment.objects.filter(
+            pk__in=[aborted.attachment_id, expired.attachment_id]
+        ).values_list("state", flat=True)
+    ) == {"deleted", "expired"}
+    # Positive control on the same parent: live bytes still bind.
+    live = occurrence(setup, monkeypatch)
     spans = Spans()
-    spans.put(scope.project_id, span_for(row))
-    for state in ("deleted", "expired"):
-        Attachment.objects.filter(pk=row.attachment_id).update(state=state)
-        assert control_plane.reconcile_tick(span_reader=spans) == dict.fromkeys(
-            ("bound", "pending", "rejected", "expired", "conflict"), 0
-        )
-    assert spans.calls == []
-    # Positive control: the same row binds once its bytes are live again.
-    Attachment.objects.filter(pk=row.attachment_id).update(state="ready")
-    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+    spans.put(scope.project_id, span_for(live))
+    counts = control_plane.reconcile_tick(span_reader=spans)
+    assert counts == dict(
+        dict.fromkeys(("bound", "pending", "rejected", "expired", "conflict"), 0),
+        bound=1,
+    )
+    assert AttachmentOccurrence.objects.filter(
+        pk__in=[aborted.occurrence_id, expired.occurrence_id], bound_at__isnull=False
+    ).count() == 0
