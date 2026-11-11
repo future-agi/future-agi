@@ -257,17 +257,30 @@ def release_gates(pr, config, now):
     main_sha = (api("git/ref/heads/main").get("object") or {}).get("sha", "")
     if not SHA.fullmatch(main_sha):
         return False, "main's tip is unknown"
-    if api(f"compare/{main_sha}...{sha}").get("behind_by") != 0:
-        # release-please may not rebuild the PR for hidden commit types. Wait the
-        # same cooldown after main last moved, then release what main contains.
-        try:
-            moved = datetime.fromisoformat(api(f"commits/{main_sha}")["commit"]["committer"]["date"].replace("Z", "+00:00"))
-            age = config.get("RELEASE_AUTOPILOT_MIN_AGE_MINUTES", "") or "30"
-            if (now.astimezone(timezone.utc) - moved).total_seconds() < int(age) * 60:
-                return False, "main moved recently; waiting for the release PR to catch up"
-        except (KeyError, TypeError, ValueError, AttributeError):
-            return False, "main's last change time is unknown"
-    return True, "migrations-callout passed and the release PR is current with main"
+    if api(f"compare/{main_sha}...{sha}").get("behind_by") == 0:
+        return True, "migrations-callout passed and the release PR is current with main"
+    # GitHub reports "behind" when main requires up-to-date branches. It would
+    # refuse the merge below, so stop here, before any approval is written.
+    if pr.get("mergeable_state") == "behind":
+        return False, "main requires an up-to-date branch; update the release branch or remove the rule"
+    # release-please may not rebuild the PR for hidden commit types. Wait the
+    # same cooldown after main last moved, then release what main contains.
+    try:
+        moved = datetime.fromisoformat(api(f"commits/{main_sha}")["commit"]["committer"]["date"].replace("Z", "+00:00"))
+        age = config.get("RELEASE_AUTOPILOT_MIN_AGE_MINUTES", "") or "30"
+        if (now.astimezone(timezone.utc) - moved).total_seconds() < int(age) * 60:
+            return False, "main moved recently; waiting for the release PR to catch up"
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False, "main's last change time is unknown"
+    return True, "migrations-callout passed; the release PR is behind main, which has been quiet for the cooldown"
+
+
+class GitHubError(RuntimeError):
+    """A failed GitHub request. It keeps only the HTTP status, never response text."""
+
+    def __init__(self, status=None):
+        super().__init__("GitHub API request failed; no further writes attempted")
+        self.status = status
 
 
 def api(path, *, token=None, method="GET", data=None):
@@ -282,7 +295,10 @@ def api(path, *, token=None, method="GET", data=None):
                             text=True, capture_output=True, env=env, timeout=60)
     if result.returncode:
         # Never echo credentials, response bodies or user-controlled API text.
-        raise RuntimeError("GitHub API request failed; no further writes attempted")
+        # gh ends its first error line with "(HTTP NNN)"; keep only that number.
+        first = (result.stderr or "").splitlines()[:1]
+        match = re.search(r"\(HTTP ([1-5][0-9]{2})\)\Z", first[0].rstrip()) if first else None
+        raise GitHubError(int(match[1]) if match else None)
     return json.loads(result.stdout)
 
 
@@ -486,8 +502,28 @@ def autopilot(merge=False):
     if not allowed:
         summary(f"Release autopilot: approval recorded; merge deferred: {reason}.")
         return
-    result = api(f"pulls/{number}/merge", method="PUT", token=os.environ["RELEASE_APP_TOKEN"],
-                 data={"sha": sha, "merge_method": "squash"})
+    refused = f"<!-- release-autopilot-v2-merge-refused:{sha} -->"
+    try:
+        result = api(f"pulls/{number}/merge", method="PUT", token=os.environ["RELEASE_APP_TOKEN"],
+                     data={"sha": sha, "merge_method": "squash"})
+    except GitHubError as error:
+        if error.status not in (405, 422):
+            raise
+        # GitHub refused the merge, so nothing merged; the approval stays. A first
+        # refusal can be transient (main just moved), so the next eligible run
+        # retries. A second refusal of the same head fails the run, so a standing
+        # refusal, such as main requiring up-to-date branches, is not silent.
+        if any(row.get("user", {}).get("login") == "github-actions[bot]"
+               and row.get("body", "").startswith(refused) for row in comments):
+            summary(f"Release autopilot: GitHub refused the merge of head `{sha}` again "
+                    f"(HTTP {error.status}). A person must resolve it.")
+            raise
+        api(f"issues/{number}/comments", method="POST",
+            data={"body": refused + f"\nRelease autopilot: GitHub refused the merge of head `{sha}` "
+                  f"(HTTP {error.status}). The approval stays. The next eligible run retries once; "
+                  "a second refusal of this head fails the run."})
+        summary(f"Release autopilot: approval recorded; merge deferred: GitHub refused the merge (HTTP {error.status}).")
+        return
     if result.get("merged") is not True:
         raise RuntimeError("GitHub refused the SHA-bound merge")
     api(f"issues/{number}/labels", method="POST", data={"labels": [LABEL]})

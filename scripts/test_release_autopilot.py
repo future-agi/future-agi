@@ -898,6 +898,20 @@ class ApiAdapterTests(unittest.TestCase):
                 self.assertRaises(RuntimeError):
             policy.snapshot(42)
 
+    def test_api_keeps_only_the_http_status_of_a_failure(self):
+        for stderr, status in (("gh: Pull Request is not mergeable (HTTP 405)\n", 405),
+                               ("gh: Validation Failed (HTTP 422)\nprivate detail (HTTP 500)\n", 422),
+                               ("gh: request failed\n", None), ("", None),
+                               ("gh: (HTTP 405) private text\n", None)):
+            with self.subTest(stderr=stderr), \
+                    patch.object(policy.subprocess, "run",
+                                 return_value=subprocess.CompletedProcess([], 1, "private body", stderr)):
+                with self.assertRaises(policy.GitHubError) as error:
+                    policy.api("pulls/42/merge", method="PUT", data={"sha": SHA})
+                self.assertEqual(error.exception.status, status)
+                self.assertNotIn("private", str(error.exception))
+                self.assertNotIn("mergeable", str(error.exception))
+
     def test_api_uses_stdin_payload_and_never_echoes_error_body(self):
         with patch.object(policy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, '{"merged": true}', '')) as run:
             self.assertTrue(policy.api("pulls/42/merge", method="PUT", data={"sha": SHA}, token="synthetic-app")["merged"])
@@ -911,11 +925,13 @@ class ApiAdapterTests(unittest.TestCase):
 
 class ExecutionTests(unittest.TestCase):
     def run_merge(self, *, first=None, final=None, first_metadata=None, final_metadata=None,
-                  already_approved=False, merge_result=True, prior_marker=None):
+                  already_approved=False, merge_result=True, prior_marker=None, merge_error=None,
+                  extra_comments=(), gates=(True, "synthetic gates passed")):
         first = deepcopy(first or PR)
         final = deepcopy(final or first)
         marker = prior_marker or f"<!-- release-autopilot-v2:{SHA}:{BASE} -->"
         comments = [{"user": {"login": "github-actions[bot]"}, "body": marker}] if already_approved else []
+        comments += list(extra_comments)
         reviews = [{"id": 1, "user": {"login": "github-actions[bot]"}, "body": marker,
                     "state": "APPROVED", "commit_id": SHA}] if already_approved else []
         if already_approved:
@@ -923,12 +939,19 @@ class ExecutionTests(unittest.TestCase):
             final["labels"].append({"name": policy.APPROVED_LABEL})
         env = {**CONFIG, "EXPECTED_PR": "42", "EXPECTED_HEAD_SHA": SHA,
                "RELEASE_APP_TOKEN": "synthetic-app", "GH_TOKEN": "synthetic-actions"}
+
+        def fake_api(path, **kwargs):
+            if path.endswith("/merge") and merge_error is not None:
+                raise merge_error
+            return {"merged": merge_result}
         with patch.dict(os.environ, env, clear=True), patch.object(policy, "datetime", FrozenDatetime), \
                 patch.object(policy, "snapshot", side_effect=[evidence(first, first_metadata), evidence(final, final_metadata)]), \
                 patch.object(policy, "pages", side_effect=[comments, reviews]), \
-                patch.object(policy, "api", return_value={"merged": merge_result}) as api, \
-                patch.object(policy, "release_gates", return_value=(True, "synthetic gates passed")), \
+                patch.object(policy, "api", side_effect=fake_api) as api, \
+                patch.object(policy, "release_gates", return_value=gates), \
                 patch("sys.stdout", new_callable=io.StringIO):
+            # Kept on the test so a case that expects an exception can still inspect the writes.
+            self.calls = api.call_args_list
             policy.autopilot(merge=True)
             return api.call_args_list
 
@@ -1008,6 +1031,46 @@ class ExecutionTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_merge(merge_result=False)
 
+    REFUSED = f"<!-- release-autopilot-v2-merge-refused:{SHA} -->"
+
+    def test_first_refused_merge_defers_with_the_approval_kept_and_a_head_bound_record(self):
+        for status in (405, 422):
+            with self.subTest(status=status):
+                calls = self.run_merge(merge_error=policy.GitHubError(status))
+                self.assertTrue(any(call.args[0] == "pulls/42/reviews" for call in calls))
+                labels = [call.kwargs["data"]["labels"] for call in calls if call.args[0] == "issues/42/labels"]
+                self.assertEqual(labels, [[policy.APPROVED_LABEL]])
+                record = [call.kwargs["data"]["body"] for call in calls if call.args[0] == "issues/42/comments"]
+                self.assertTrue(record[-1].startswith(self.REFUSED))
+                self.assertNotIn("merged verified head", record[-1])
+
+    def test_second_refusal_of_the_same_head_fails_the_run(self):
+        mine = {"user": {"login": "github-actions[bot]"}, "body": self.REFUSED + "\nearlier"}
+        with self.assertRaises(policy.GitHubError):
+            self.run_merge(merge_error=policy.GitHubError(405), extra_comments=[mine])
+        self.assertFalse(any(call.kwargs.get("data", {}).get("body", "").startswith(self.REFUSED)
+                             for call in self.calls))
+        # A record for another head, or one written by someone else, is not a first refusal.
+        for other in ({**mine, "body": f"<!-- release-autopilot-v2-merge-refused:{'c' * 40} -->"},
+                      {**mine, "user": {"login": "someone"}}):
+            with self.subTest(other=other):
+                calls = self.run_merge(merge_error=policy.GitHubError(405), extra_comments=[other])
+                self.assertTrue(any(call.kwargs.get("data", {}).get("body", "").startswith(self.REFUSED)
+                                    for call in calls))
+
+    def test_a_gate_refusal_such_as_a_strict_main_writes_nothing(self):
+        reason = "main requires an up-to-date branch; update the release branch or remove the rule"
+        self.assertEqual(self.run_merge(gates=(False, reason)), [])
+
+    def test_other_merge_failures_still_fail_the_run_without_a_refusal_record(self):
+        for status in (None, 409, 500, 502):
+            with self.subTest(status=status):
+                with self.assertRaises(policy.GitHubError):
+                    self.run_merge(merge_error=policy.GitHubError(status))
+                self.assertTrue(any(call.args[0] == "pulls/42/merge" for call in self.calls))
+                self.assertFalse(any(call.kwargs.get("data", {}).get("body", "").startswith(self.REFUSED)
+                                     for call in self.calls))
+
     def test_off_does_not_even_read_api(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(policy, "api") as api, \
                 patch("sys.stdout", new_callable=io.StringIO):
@@ -1025,13 +1088,13 @@ class ExecutionTests(unittest.TestCase):
 class ReleaseGateTests(unittest.TestCase):
     NOW = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
 
-    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None):
+    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None, pr=None):
         responses = {"git/ref/heads/main": {"object": {"sha": "c" * 40}},
                      f"compare/{'c' * 40}...{SHA}": {"behind_by": behind},
                      f"commits/{'c' * 40}": {"commit": {"committer": {"date": main_date}}}}
         with patch.object(policy, "pages", return_value=runs), \
                 patch.object(policy, "api", side_effect=lambda path, **kw: responses[path]):
-            return policy.release_gates(PR, config or {}, self.NOW)
+            return policy.release_gates(pr or PR, config or {}, self.NOW)
 
     def callout_run(self, **fields):
         return {"id": 5, "path": policy.CALLOUT_WORKFLOW, "head_sha": SHA, "status": "completed",
@@ -1064,8 +1127,23 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_behind_main_waits_for_the_cooldown(self):
         self.assertFalse(self.gates([self.callout_run()], behind=1, main_date="2026-11-11T11:50:00Z")[0])
-        self.assertTrue(self.gates([self.callout_run()], behind=1, main_date="2026-11-11T10:00:00Z")[0])
+        allowed, reason = self.gates([self.callout_run()], behind=1, main_date="2026-11-11T10:00:00Z")
+        self.assertTrue(allowed)
+        self.assertIn("behind main", reason)
+        self.assertNotIn("current with main", reason)
         self.assertFalse(self.gates([self.callout_run()], behind=1, main_date="not a date")[0])
+        self.assertIn("current with main", self.gates([self.callout_run()])[1])
+
+    def test_behind_main_stops_before_approval_when_main_requires_up_to_date_branches(self):
+        strict = {**PR, "mergeable_state": "behind"}
+        allowed, reason = self.gates([self.callout_run()], behind=1, pr=strict)
+        self.assertFalse(allowed)
+        self.assertIn("up-to-date", reason)
+        # Other states, or a PR that is not behind, are not this case.
+        for state in ("clean", "blocked", "unstable", None):
+            with self.subTest(state=state):
+                self.assertTrue(self.gates([self.callout_run()], behind=1, pr={**PR, "mergeable_state": state})[0])
+        self.assertTrue(self.gates([self.callout_run()], behind=0, pr=strict)[0])
 
 
 class WorkflowContractTests(unittest.TestCase):

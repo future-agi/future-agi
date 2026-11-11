@@ -39,6 +39,15 @@ An admin must also verify these existing settings before enabling either policy:
 - Keep main's required check and approval protections. The script does not
   bypass protection or enable GitHub auto-merge. Squash merging must be allowed
   for the release-please PR; dev-to-main's separate merge-commit rule is unchanged.
+- main may require status checks, but must **not** require branches to be up to
+  date before merging. release-please does not rebuild the release PR for hidden
+  commit types (for example `test:`), so the autopilot merges a release PR that
+  is behind main once main has been quiet for the cooldown. Live main has
+  `strict: false` today (11 Nov). A strict rule for dev, which the low-risk PR
+  autopilot asks for, must go in a dev-only ruleset, not in the organisation
+  ruleset that also covers main. If main does become strict, the check step
+  stops before approving, with the reason "main requires an up-to-date branch",
+  and the release waits until a person updates the release branch.
 - Restrict release-tag creation to the release App and trusted release managers;
   protect `main` and release tags from force updates/deletion. A tag containing
   a different workflow could omit any in-file guard, so tag creation authority
@@ -243,7 +252,13 @@ pending-migration check remains mandatory; migrations are never run by this bot.
 - The merge also requires the `migrations-callout` workflow to have passed on the
   release head (identified by its workflow file, because its job is named
   `check` like other checks), and the release PR to be current with main or main
-  to have been quiet for the cooldown. Only runs from the release PR itself
+  to have been quiet for the cooldown. A behind PR merges on checks that ran
+  against an older main; the tag-time migration count still selects Production
+  review for what main added. If GitHub reports the PR as `behind` (main
+  requires up-to-date branches), the check step waits without approving. If
+  GitHub still refuses the merge (HTTP 405 or 422), the run records the refused
+  head in a PR comment, keeps the approval and ends green; the next eligible run
+  retries once, and a second refusal of the same head fails the run. Only runs from the release PR itself
   count: the run's head branch must be `release-please--branches--main` in
   `future-agi/future-agi`. Runs from a fork or another branch at the same commit
   are ignored before the newest run is chosen, so another PR can neither pass
