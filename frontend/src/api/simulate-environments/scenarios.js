@@ -133,6 +133,7 @@ export const scenarioFromApi = (row = {}) => {
     group: row.group,
     // "added" | "changed" | "unchanged" while the list shows unsaved changes.
     draftChange: row.draft_change ?? null,
+    readiness: row.readiness ?? null,
     _raw: row,
   };
 };

@@ -22,6 +22,17 @@ export const ROW_HEIGHTS = {
 export const scenarioToolbarButtonSx = { whiteSpace: "nowrap", flexShrink: 0 };
 
 export const SCENARIOS_COPY = {
+  proofFailed: "Proof failed on this environment version",
+  proofFailedDetail: (lastProved, heldBack) =>
+    [
+      "Its proof no longer holds since the environment changed.",
+      lastProved &&
+        `Last proved on environment v${lastProved.environment_version}, scenarios v${lastProved.suite_version}.`,
+      heldBack ? "It's held back from runs." : "It still runs.",
+      "Edit it in the builder to prove it again.",
+    ]
+      .filter(Boolean)
+      .join(" "),
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
   addShortLabel: "Add",

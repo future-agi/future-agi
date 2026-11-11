@@ -13,6 +13,7 @@ import {
   ClampCell,
   SubTasksCell,
   TruncTooltip,
+  ProofFailedMark,
   UnsavedMark,
 } from "./ScenarioTableCells";
 import {
@@ -353,6 +354,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                           </Tooltip>
                         )}
                         <UnsavedMark row={row} />
+                        <ProofFailedMark row={row} />
                       </Stack>
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
