@@ -282,6 +282,8 @@ const SetupOrganization = ({ getStarted = false }) => {
     },
     enabled: !getStarted,
     select: (d) => d?.data?.result,
+    // The step shows its own error state with Retry instead of a toast.
+    meta: { errorHandled: true },
   });
 
   const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({

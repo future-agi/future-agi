@@ -1,6 +1,10 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -11,6 +15,7 @@ import {
   within,
 } from "src/utils/test-utils";
 import { endpoints } from "src/utils/axios";
+import { handleError } from "src/utils/queryErrorHandler";
 import SetupOrganization from "../setup-org";
 
 const mocks = vi.hoisted(() => ({
@@ -18,11 +23,16 @@ const mocks = vi.hoisted(() => ({
   post: vi.fn(),
   onboarding: vi.fn(),
   enqueueSnackbar: vi.fn(),
+  globalToast: vi.fn(),
 }));
 
 vi.mock("src/utils/axios", async (importOriginal) => ({
   ...(await importOriginal()),
   default: { get: mocks.get, post: mocks.post },
+}));
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: mocks.globalToast,
 }));
 vi.mock("src/components/snackbar", () => ({
   useSnackbar: () => ({ enqueueSnackbar: mocks.enqueueSnackbar }),
@@ -67,6 +77,8 @@ function deferred() {
 
 function createClient() {
   const client = new QueryClient({
+    // The app's global handler, so tests see the toasts users would.
+    queryCache: new QueryCache({ onError: handleError }),
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   clients.push(client);
@@ -234,12 +246,19 @@ describe("onboarding profile initialization", () => {
   );
 
   it("shows an initial-read error and retries before enabling the form", async () => {
-    mocks.onboarding.mockRejectedValueOnce(new Error("Initial read failed"));
+    // An API error envelope: the app's global handler would toast its result.
+    mocks.onboarding.mockRejectedValueOnce(
+      Object.assign(new Error("Initial read failed"), {
+        result: "Profile unavailable",
+        statusCode: 500,
+      }),
+    );
     const retry = deferred();
     mocks.onboarding.mockReturnValueOnce(retry.promise);
     const user = userEvent.setup();
     renderSetup();
     await screen.findByText("Couldn't load your profile");
+    expect(mocks.globalToast).not.toHaveBeenCalled();
     expect(
       screen.queryByPlaceholderText("Tell us about your role"),
     ).not.toBeInTheDocument();
