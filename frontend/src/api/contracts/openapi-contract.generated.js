@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1128,
+  endpointCount: 1129,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -21395,6 +21395,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {},
+        responses: {
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/kb/{id}/download-file/": {
+      get: {
+        operationId: "model-hub_kb_download_file",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          file_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
         responses: {
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",

@@ -41,15 +41,20 @@ test('KB-E2E-001: a workspace reader downloads an owned knowledge-base file', {
     if (response.status() !== 200) return `status ${response.status()}`;
     expect(response.headers()['content-disposition']).toBe(`attachment; filename="${seeded.filename}"`);
     expect(response.headers()['cache-control']).toBe('private, no-store');
+    expect(response.headers()['content-type']).toBe('text/plain');
+    expect(response.headers()['x-content-type-options']).toBe('nosniff');
     expect(response.headers()['location']).toBeUndefined();
     return response.text();
   }, POLL.ASYNC_JOB).toBe(contents);
 
   const context = await scopeActors.openContext(browser, actor);
   const blocked: string[] = [];
+  const inventory: { method: string; host: string; blocked: boolean }[] = [];
   await context.route('**/*', route => {
     const host = new URL(route.request().url()).hostname;
-    if (!['localhost', '127.0.0.1'].includes(host)) {
+    const external = !['localhost', '127.0.0.1'].includes(host);
+    inventory.push({ method: route.request().method(), host, blocked: external });
+    if (external) {
       blocked.push(route.request().url());
       return route.abort();
     }
@@ -68,6 +73,9 @@ test('KB-E2E-001: a workspace reader downloads an owned knowledge-base file', {
     await download.saveAs(destination);
     expect(await fs.readFile(destination, 'utf8')).toBe(contents);
     await testInfo.attach('downloaded-file', { path: destination, contentType: 'text/plain' });
+    await testInfo.attach('file-table-after-download', {
+      contentType: 'image/png', body: await page.screenshot({ fullPage: true }),
+    });
 
     for (const outsider of [scopeActors.ownerB, scopeActors.withWorkspace(actor, scopeActors.emptyWorkspace.id)]) {
       const response = await request.get(`${E2E.apiUrl}${path}`, { headers: knowledgeHeaders(outsider), params });
@@ -80,6 +88,7 @@ test('KB-E2E-001: a workspace reader downloads an owned knowledge-base file', {
     expect(await anonymous.text()).not.toContain(contents);
   } finally {
     await testInfo.attach('blocked-external-urls', { contentType: 'application/json', body: JSON.stringify(blocked) });
+    await testInfo.attach('browser-network-inventory', { contentType: 'application/json', body: JSON.stringify(inventory) });
     await context.close();
   }
 });
