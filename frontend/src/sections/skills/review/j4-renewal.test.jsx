@@ -96,3 +96,17 @@ it('keeps a reviewer attestation only for the same revision and fingerprint', ()
   expect(screen.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.' })).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Release approved packet' })).toBeDisabled();
 });
+
+it('clears a refusal from the previous revision when the renewed revision is approved', async () => {
+  const props = { scopeKey: 'org:ws:reviewer', state: 'ready', preview: { packet, fingerprint: 'fp', current: true }, review: { complete: true },
+    permissions: { canDecide: true, canExecute: true }, onDecide: vi.fn(), onRenew: vi.fn(),
+    onExecute: vi.fn().mockRejectedValue({ statusCode: 409, code: 'release_conflict' }) };
+  const { rerender } = render(<ReleaseRequestPanel {...props} request={{ id: 'request', revision: 2, status: 'approved' }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Release approved packet' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Move production' }));
+  expect(await screen.findByText(/Request rejected/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Renew review' })).toBeVisible();
+  rerender(<ReleaseRequestPanel {...props} preview={{ packet, fingerprint: 'fp2', current: true }} request={{ id: 'request', revision: 3, status: 'approved' }} reviewedIdentity={null} onReviewedChange={vi.fn()} />);
+  expect(screen.queryByText(/Request rejected/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();
+});

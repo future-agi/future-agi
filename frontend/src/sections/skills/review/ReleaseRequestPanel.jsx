@@ -453,7 +453,10 @@ export default function ReleaseRequestPanel({
     );
   return (
     <PacketActions
-      key={`${scopeKey}:${request?.id ?? preview.packet.candidateVersionId}:${request?.status ?? "new"}`}
+      // Revision is part of the identity: a renewed-and-approved packet keeps
+      // the same status, but a refusal shown for the previous revision must
+      // not carry over to it.
+      key={`${scopeKey}:${request?.id ?? preview.packet.candidateVersionId}:${request?.revision ?? 0}:${request?.status ?? "new"}`}
       {...props}
       {...{ state, preview, request, recipients, permissions }}
     />

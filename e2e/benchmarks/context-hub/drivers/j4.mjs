@@ -396,9 +396,18 @@ export async function createDriver({ jobId, runId, registration }) {
           // The renewed packet lost evidence: the reviewer re-reads what
           // remains (candidate, remaining outcome, target) on the page.
           const remaining = detail.packet.evidence[0];
+          const wire = { resource_id: input.contextId, kind: 'agent_context', candidate_version_id: published.id, label: 'production', target: detail.packet.target,
+            evidence: detail.packet.evidence.map((ref) => ({ source: ref.source, source_id: ref.source_id, annotation_revision: ref.annotation_revision })),
+            external_pipeline: null, expected_fingerprint: detail.fingerprint };
+          const inspected = await fetch(`${input.apiUrl}/model-hub/skills/release-requests/inspection/`, { method: 'POST', body: JSON.stringify(wire), headers: { ...headers(input.reviewer), 'Content-Type': 'application/json' }, signal });
+          requireValue(inspected.ok, 'Independent renewed inspection unavailable');
+          const outcome = (await inspected.json()).result.summaries.find((row) => row.source_id === remaining.source_id);
+          requireValue(outcome && outcome.graded === outcome.planned && outcome.planned > 0 && outcome.incomplete === 0 && outcome.regressions === 0 && outcome.disagreements === 0,
+            'Remaining evidence does not support approval of the renewed packet');
           await op.review('renewed-packet', ['candidate', 'remaining-evidence', 'target'], [], async () => {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
             await expect(reviewer.getByText(remaining.source_id, { exact: true }).first()).toBeVisible();
+            await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             await expect(ack(reviewer)).toBeEnabled();
           }, renewed.decision);
