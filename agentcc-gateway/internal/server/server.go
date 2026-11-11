@@ -67,6 +67,21 @@ type Server struct {
 // as the provider that served an org's request states it: the org's own
 // instance when the org has one, else the config.yaml provider with that ID.
 func (s *Server) PriceTableName(orgID, providerID string) string {
+	return providers.PriceTableName(s.servingProvider(orgID, providerID))
+}
+
+// ProviderType is the type the config of the provider that served an org's
+// request records ("deepinfra"), or "" when it records none.
+func (s *Server) ProviderType(orgID, providerID string) string {
+	if t, ok := s.servingProvider(orgID, providerID).(interface{ ConfiguredType() string }); ok {
+		return t.ConfiguredType()
+	}
+	return ""
+}
+
+// servingProvider is the org's own instance of providerID when the org has
+// one, else the config.yaml provider with that ID, else nil.
+func (s *Server) servingProvider(orgID, providerID string) providers.Provider {
 	var p providers.Provider
 	if orgID != "" && s.OrgProviderCache != nil {
 		p = s.OrgProviderCache.Get(orgID, providerID)
@@ -74,7 +89,7 @@ func (s *Server) PriceTableName(orgID, providerID string) string {
 	if p == nil && s.registry != nil {
 		p, _ = s.registry.GetProvider(providerID)
 	}
-	return providers.PriceTableName(p)
+	return p
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica

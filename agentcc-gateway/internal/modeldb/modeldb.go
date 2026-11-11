@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ModelMode defines the type of model (chat, embedding, etc.).
@@ -35,6 +36,9 @@ type ModelInfo struct {
 	Capabilities    CapabilityFlags `json:"capabilities"`
 	DeprecationDate string          `json:"deprecation_date,omitempty"`
 	Regions         []string        `json:"regions,omitempty"`
+
+	// dated is the price schedule's rows, oldest first; never modified once built.
+	dated []datedPricing
 }
 
 // ModelDB is an immutable, thread-safe model metadata database.
@@ -68,6 +72,16 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			models[id] = existing
 		}
 		mergeOverride(existing, ov)
+		if ov.Pricing != nil && len(existing.dated) > 0 {
+			// An operator's price wins field by field over a dated one too. The
+			// rows are copied: bundled ones are shared by every ModelDB.
+			dated := make([]datedPricing, len(existing.dated))
+			copy(dated, existing.dated)
+			for i := range dated {
+				mergePricing(&dated[i].pricing, ov.Pricing)
+			}
+			existing.dated = dated
+		}
 	}
 
 	// Build provider index.
@@ -105,13 +119,14 @@ func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 	return nil, false
 }
 
-// GetPricing returns pricing info for a model.
+// GetPricing returns the pricing in force now for a model.
 func (db *ModelDB) GetPricing(id string) (*PricingInfo, bool) {
 	m, ok := db.Get(id)
 	if !ok {
 		return nil, false
 	}
-	return &m.Pricing, true
+	p := m.PricingAt(time.Now())
+	return &p, true
 }
 
 // GetCapabilities returns capability flags for a model.
@@ -164,14 +179,26 @@ func (db *ModelDB) Count() int {
 	return len(db.models)
 }
 
-// CalculateCost returns the cost for a given model and token counts.
+// CalculateCost returns the cost for a given model and token counts at the
+// pricing in force at opts.At, or now when it is zero.
 // Returns 0, false if the model is not found or has no pricing.
 func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, opts CostOptions) (float64, bool) {
 	m, ok := db.Get(modelID)
-	if !ok || m.Pricing.InputPerToken == 0 {
+	if !ok {
 		return 0, false
 	}
-	return m.Pricing.Calculate(inputTokens, outputTokens, opts), true
+	at := opts.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	pricing := m.Pricing
+	if !opts.TablePrice {
+		pricing = m.PricingAt(at)
+	}
+	if pricing.InputPerToken == 0 {
+		return 0, false
+	}
+	return pricing.Calculate(inputTokens, outputTokens, opts), true
 }
 
 // AudioCost returns the cost of transcribing the given seconds of audio.
@@ -366,40 +393,8 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		m.Regions = ov.Regions
 	}
 
-	if p := ov.Pricing; p != nil {
-		if p.InputPerToken != nil {
-			m.Pricing.InputPerToken = *p.InputPerToken
-		}
-		if p.OutputPerToken != nil {
-			m.Pricing.OutputPerToken = *p.OutputPerToken
-		}
-		if p.CachedInputPerToken != nil {
-			m.Pricing.CachedInputPerToken = *p.CachedInputPerToken
-		}
-		if p.BatchInputPerToken != nil {
-			m.Pricing.BatchInputPerToken = *p.BatchInputPerToken
-		}
-		if p.BatchOutputPerToken != nil {
-			m.Pricing.BatchOutputPerToken = *p.BatchOutputPerToken
-		}
-		if p.InputPerSecond != nil {
-			m.Pricing.InputPerSecond = *p.InputPerSecond
-		}
-		if p.InputPerCharacter != nil {
-			m.Pricing.InputPerCharacter = *p.InputPerCharacter
-		}
-		if p.InputPerQuery != nil {
-			m.Pricing.InputPerQuery = *p.InputPerQuery
-		}
-		if p.PerPage != nil {
-			m.Pricing.PerPage = *p.PerPage
-		}
-		if p.OutputPerImage != nil {
-			m.Pricing.OutputPerImage = *p.OutputPerImage
-		}
-		if p.OutputPerSecond != nil {
-			m.Pricing.OutputPerSecond = *p.OutputPerSecond
-		}
+	if ov.Pricing != nil {
+		mergePricing(&m.Pricing, ov.Pricing)
 	}
 
 	if c := ov.Capabilities; c != nil {
@@ -439,5 +434,42 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		if c.Reasoning != nil {
 			m.Capabilities.Reasoning = *c.Reasoning
 		}
+	}
+}
+
+// mergePricing sets each price ov names, leaving the others as they are.
+func mergePricing(p *PricingInfo, ov *PricingOverride) {
+	if ov.InputPerToken != nil {
+		p.InputPerToken = *ov.InputPerToken
+	}
+	if ov.OutputPerToken != nil {
+		p.OutputPerToken = *ov.OutputPerToken
+	}
+	if ov.CachedInputPerToken != nil {
+		p.CachedInputPerToken = *ov.CachedInputPerToken
+	}
+	if ov.BatchInputPerToken != nil {
+		p.BatchInputPerToken = *ov.BatchInputPerToken
+	}
+	if ov.BatchOutputPerToken != nil {
+		p.BatchOutputPerToken = *ov.BatchOutputPerToken
+	}
+	if ov.InputPerSecond != nil {
+		p.InputPerSecond = *ov.InputPerSecond
+	}
+	if ov.InputPerCharacter != nil {
+		p.InputPerCharacter = *ov.InputPerCharacter
+	}
+	if ov.InputPerQuery != nil {
+		p.InputPerQuery = *ov.InputPerQuery
+	}
+	if ov.PerPage != nil {
+		p.PerPage = *ov.PerPage
+	}
+	if ov.OutputPerImage != nil {
+		p.OutputPerImage = *ov.OutputPerImage
+	}
+	if ov.OutputPerSecond != nil {
+		p.OutputPerSecond = *ov.OutputPerSecond
 	}
 }

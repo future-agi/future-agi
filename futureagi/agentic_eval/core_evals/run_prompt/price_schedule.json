@@ -1,0 +1,164 @@
+{
+  "gemini-3.6-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "gemini-3.7-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "gemini-3.8-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "gemini/gemini-3.6-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "gemini/gemini-3.7-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "gemini/gemini-3.8-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "vertex_ai/gemini-3.6-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "vertex_ai/gemini-3.7-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ],
+  "vertex_ai/gemini-3.8-flash": [
+    {
+      "from": "2026-01-01",
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 3.75e-6,
+      "cache_read_input_token_cost": 7.5e-8,
+      "input_cost_per_token_batches": 3.75e-7,
+      "output_cost_per_token_batches": 1.875e-6
+    },
+    {
+      "from": "2027-01-01",
+      "input_cost_per_token": 1.5e-6,
+      "output_cost_per_token": 7.5e-6,
+      "cache_read_input_token_cost": 1.5e-7,
+      "input_cost_per_token_batches": 7.5e-7,
+      "output_cost_per_token_batches": 3.75e-6
+    }
+  ]
+}

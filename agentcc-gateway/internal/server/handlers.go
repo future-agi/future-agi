@@ -64,6 +64,8 @@ type Handlers struct {
 
 	// Model metadata database (shared atomic pointer for hot-reload).
 	modelDB *atomic.Pointer[modeldb.ModelDB]
+	// now is the clock /v1/models quotes dated prices at: time.Now unless a test sets it.
+	now func() time.Time
 
 	// Per-org multi-tenant support.
 	tenantStore      *tenant.Store
@@ -2357,6 +2359,13 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 	return h.modelDB.Load()
 }
 
+func (h *Handlers) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	var allModels []models.ModelObject
@@ -2369,6 +2378,8 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 		allModels = mergeModelObjects(allModels, scopedModels)
 	}
 
+	// One instant for the whole listing, so it never mixes two days' prices.
+	now := h.clock()
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
 		em := models.EnrichedModelObject{
@@ -2386,11 +2397,11 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 				if info.DeprecationDate != "" {
 					em.Deprecated = true
 				}
-				if info.Pricing.HasPricing() {
+				if pricing := info.PricingAt(now); pricing.HasPricing() {
 					em.Pricing = &models.ModelPricingAPI{
-						InputPerMTokens:       info.Pricing.InputPerMTok(),
-						OutputPerMTokens:      info.Pricing.OutputPerMTok(),
-						CachedInputPerMTokens: info.Pricing.CachedInputPerToken * 1_000_000,
+						InputPerMTokens:       pricing.InputPerMTok(),
+						OutputPerMTokens:      pricing.OutputPerMTok(),
+						CachedInputPerMTokens: pricing.CachedInputPerToken * 1_000_000,
 					}
 				}
 				em.Capabilities = &models.ModelCapsAPI{

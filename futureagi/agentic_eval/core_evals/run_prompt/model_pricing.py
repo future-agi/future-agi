@@ -1,7 +1,10 @@
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Optional
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+from agentic_eval.core_evals.run_prompt.price_schedule import dated_rates
+
 # (available_models always available)
 
 
@@ -320,12 +323,42 @@ def get_model_info(model_name: str) -> Optional[dict]:
 
 
 @lru_cache(maxsize=512)
-def get_model_pricing(model_name: str) -> Optional[dict]:
+def _catalogue_pricing(model_name: str) -> Optional[tuple[Optional[str], dict]]:
+    """The catalogue entry a name resolves to and its static pricing.
+
+    Cached per process, so it never holds a dated price: one cached before
+    midnight would still be billed after it.
     """
-    Get pricing information for a model.
+    from evaluations.decision_models import is_decision_model
+
+    if is_decision_model(model_name):
+        from evaluations.decision_pricing import calculate_decision_cost
+
+        cost = calculate_decision_cost(model_name, {"input_tokens": 1000000})
+        return None, {
+            "input_per_1M_tokens": cost["total_cost"],
+            "output_per_1M_tokens": 0.0,
+        }
+    model_info = get_model_info(model_name)
+    if model_info and "pricing" in model_info:
+        return model_info.get("model_name"), model_info["pricing"].copy()
+    return None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def get_model_pricing(
+    model_name: str, *, at: Optional[datetime] = None
+) -> Optional[dict]:
+    """
+    Get pricing information for a model, as in force at a moment.
 
     Args:
         model_name: The model identifier
+        at: When the usage happened, timezone-aware. None means now. A model
+            with dated prices is priced at the row in force then.
 
     Returns:
         Pricing dict with various structures depending on model type:
@@ -341,17 +374,22 @@ def get_model_pricing(model_name: str) -> Optional[dict]:
 
         Returns None if model not found or pricing not available
     """
-    from evaluations.decision_models import is_decision_model
-
-    if is_decision_model(model_name):
-        from evaluations.decision_pricing import calculate_decision_cost
-
-        cost = calculate_decision_cost(model_name, {"input_tokens": 1000000})
-        return {"input_per_1M_tokens": cost["total_cost"], "output_per_1M_tokens": 0.0}
-    model_info = get_model_info(model_name)
-    if model_info and "pricing" in model_info:
-        return model_info["pricing"].copy()  # Return a copy to prevent mutations
-    return None
+    if at is None:
+        at = _utc_now()
+    elif at.utcoffset() is None:
+        raise ValueError(
+            "The usage time has no time zone; pass an aware datetime (UTC)."
+        )
+    found = _catalogue_pricing(model_name)
+    if found is None:
+        return None
+    resolved_name, pricing = found
+    priced = dict(pricing)
+    if resolved_name:
+        rates = dated_rates(resolved_name, at)
+        if rates:
+            priced.update(rates)
+    return priced
 
 
 def list_available_models(
@@ -393,4 +431,4 @@ def list_available_models(
 #     Useful for testing or if AVAILABLE_MODELS is updated at runtime.
 #     """
 #     get_model_info.cache_clear()
-#     get_model_pricing.cache_clear()
+#     _catalogue_pricing.cache_clear()

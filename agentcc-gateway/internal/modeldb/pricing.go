@@ -1,5 +1,7 @@
 package modeldb
 
+import "time"
+
 // PricingInfo contains a model's pricing in USD: per token, and for speech models per second of
 // audio transcribed or per character synthesised.
 type PricingInfo struct {
@@ -25,8 +27,13 @@ type PricingInfo struct {
 
 // CostOptions controls which pricing tier to use.
 type CostOptions struct {
-	Cached bool // use cached input rate
-	Batch  bool // use batch rates
+	Cached bool      // use cached input rate
+	Batch  bool      // use batch rates
+	At     time.Time // when the usage happened, for dated prices; zero means now
+
+	// TablePrice prices at the table's own rate, never a dated one: set when the
+	// reseller serving the request has its own entry for the model.
+	TablePrice bool
 }
 
 // Calculate returns the total cost for the given token counts.

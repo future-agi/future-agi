@@ -4083,7 +4083,11 @@ OSS_AVAILABLE_MODELS = [
             "tokens_per_minute": 250000,
         },
         "latency": 40,
-        "pricing": {"input_per_1M_tokens": 1.5, "output_per_1M_tokens": 7.5},
+        "pricing": {
+            "input_per_1M_tokens": 0.75,
+            "cached_input_per_1M_tokens": 0.075,
+            "output_per_1M_tokens": 3.75,
+        },
         "notes": "Gemini 3.6 Flash; 1M context, 64K max output. Live API supported.",
     },
     {
