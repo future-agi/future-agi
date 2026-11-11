@@ -266,7 +266,9 @@ def _settings_ttl(raw):
     )
 
 
-@pytest.mark.parametrize("raw", ["thirty-days", "1.5", "0", "-60"])
+@pytest.mark.parametrize(
+    "raw", ["thirty-days", "1.5", "0", "-60", "1000000000000", "9" * 30]
+)
 def test_malformed_refresh_ttl_falls_back_to_the_default(raw):
     result = _settings_ttl(raw)
 
@@ -275,7 +277,10 @@ def test_malformed_refresh_ttl_falls_back_to_the_default(raw):
     assert "MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS" in result.stderr
 
 
-@pytest.mark.parametrize("raw,expected", [("7200", 7200), (" 3600 ", 3600)])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("7200", 7200), (" 3600 ", 3600), ("1", 1), ("315360000", 315360000)],
+)
 def test_valid_refresh_ttl_is_used(raw, expected):
     result = _settings_ttl(raw)
 

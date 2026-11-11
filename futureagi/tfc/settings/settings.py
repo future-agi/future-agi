@@ -1349,23 +1349,27 @@ APP_BASE_URL = _app_base_url(APP_URL, _APP_URL_SCHEME, _ssl)
 
 
 def _mcp_oauth_refresh_token_ttl(raw: str | None) -> int:
-    """MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS as a positive int. Unset or blank
-    means the default; a malformed or non-positive value logs a warning and
-    falls back to the default instead of crashing settings import."""
+    """MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS as a positive int of at most ten
+    years. Unset or blank means the default; a malformed, non-positive or
+    larger value logs a warning and falls back to the default instead of
+    crashing settings import (or, for huge values, every token request when
+    the expiry date overflows)."""
     default = 30 * 24 * 3600
+    maximum = 10 * 365 * 24 * 3600
     if raw is None or not raw.strip():
         return default
     try:
         value = int(raw.strip())
     except ValueError:
         value = 0
-    if value < 1:
+    if not 1 <= value <= maximum:
         import logging
 
         logging.getLogger("tfc.settings").warning(
-            "MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS=%r is not a positive integer "
-            "number of seconds; using the default of %d",
+            "MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS=%r is not a whole number of "
+            "seconds between 1 and %d; using the default of %d",
             raw,
+            maximum,
             default,
         )
         return default
