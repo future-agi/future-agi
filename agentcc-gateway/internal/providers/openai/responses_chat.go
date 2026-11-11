@@ -553,7 +553,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 			Index:    index,
 			ID:       ev.Item.CallID,
 			Type:     "function",
-			Function: &models.FunctionCall{Name: ev.Item.Name, Arguments: ev.Item.Arguments},
+			Function: &models.FunctionCallDelta{Name: ev.Item.Name, Arguments: ev.Item.Arguments},
 		}}}, nil)}, nil
 
 	case "response.function_call_arguments.delta":
@@ -563,7 +563,7 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 		}
 		return []models.StreamChunk{c.chunk(models.Delta{ToolCalls: []models.ToolCallDelta{{
 			Index:    index,
-			Function: &models.FunctionCall{Arguments: ev.Delta},
+			Function: &models.FunctionCallDelta{Arguments: ev.Delta},
 		}}}, nil)}, nil
 
 	case "response.completed", "response.incomplete":
