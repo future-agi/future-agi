@@ -76,6 +76,37 @@ for (const [name, mutate] of unsafeRoutes) {
   });
 }
 
+test('managed mock expects exactly the guardrail engine switch org checks need', () => {
+  expect(parse(source).guardrails).toEqual({ enabled: true, fail_open: true, default_timeout: '5s' });
+  validateMockRouting(source);
+  validateMockRouting(source, true);
+});
+
+// Anything beyond that switch is refused, with the reason, before registration.
+const unsafeGuardrails: [string, (cfg: any) => void, string][] = [
+  ['static guardrail rule', c => { c.guardrails.rules = [{ name: 'external', stage: 'pre', mode: 'sync',
+    action: 'block', config: { url: 'https://guardrail.invalid/check' } }]; }, 'unexpected guardrails configuration'],
+  ['streaming guardrail check', c => { c.guardrails.streaming = { enabled: true, check_interval: 1 }; },
+    'unexpected guardrails configuration'],
+  ['guardrail engine off', c => { c.guardrails.enabled = false; }, 'unexpected guardrails configuration'],
+  ['non-boolean failure default', c => { c.guardrails.fail_open = 'true'; }, 'unexpected guardrails configuration'],
+  ['changed guardrail timeout', c => { c.guardrails.default_timeout = '30s'; }, 'unexpected guardrails configuration'],
+  ['env-expanded guardrail timeout', c => { c.guardrails.default_timeout = '${GUARDRAIL_TIMEOUT}'; },
+    'unexpected guardrails configuration'],
+  ['empty guardrails section', c => { c.guardrails = null; }, 'unexpected guardrails configuration'],
+  ['missing guardrails section', c => { delete c.guardrails; }, 'unexpected gateway sections'],
+];
+for (const [name, mutate, reason] of unsafeGuardrails) {
+  test(`managed mock rejects a ${name} before registration`, async () => {
+    const cfg = parse(source); mutate(cfg);
+    const fake = registrationDouble();
+    await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(stringify(cfg))))
+      .rejects.toThrow(`STOP: managed mock ${reason}`);
+    expect(fake.calls).toEqual([]);
+    expect(fake.readCount()).toBe(0);
+  });
+}
+
 test('managed mock rejects duplicate YAML keys before registration', async () => {
   const fake = registrationDouble();
   await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(`${source}\nproviders: {}\n`)))

@@ -23,8 +23,9 @@ export const requireSafe = (ok: unknown, reason: string): void => {
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Strict safety contract, not a general gateway config validator. No env expansion,
- * aliases, extra providers, presets, model maps, mirrors, tools or control plane.
- * Gateway config.Load expands env; registry.NewRegistry applies these routing knobs.
+ * aliases, extra providers, presets, model maps, mirrors, tools, control plane or
+ * static guardrail rules. Gateway config.Load expands env; registry.NewRegistry
+ * applies these routing knobs.
  */
 export function validateMockRouting(source: string, evalBackground = false): void {
   const doc = parseDocument(source, { uniqueKeys: true });
@@ -32,7 +33,14 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   let cfg;
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
-  requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
+  requireSafe(cfg && same(Object.keys(cfg).sort(), ['guardrails', 'logging', 'providers', 'server']),
+    'unexpected gateway sections');
+  // The engine switch lets org-configured checks run (GW-E2E-004). Static rules and
+  // streaming checks are refused: a rule names its own upstream, outside the mock.
+  const guardrails = cfg.guardrails ?? {};
+  requireSafe(same(Object.keys(guardrails).sort(), ['default_timeout', 'enabled', 'fail_open']) &&
+    guardrails.enabled === true && guardrails.fail_open === true && guardrails.default_timeout === '5s',
+  'unexpected guardrails configuration');
   requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'perplexity', 'typesafe']),
     'provider set is not mock-only');
   for (const [name, provider] of Object.entries(cfg.providers) as [string, any][]) {
