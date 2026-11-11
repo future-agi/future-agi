@@ -20,6 +20,8 @@ export class SkillsFixtures {
   readonly namespace: string;
   private readonly origin: string;
   fixtureHash = '';
+  /** Leave the scenario registered for a later registered-driver run. */
+  keep = false;
 
   /** `namespace` pins a runtime-owned synthetic credential (the native runtime's provider key). */
   constructor(namespace?: string) {

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
 import { E2E } from '../../lib/env';
@@ -61,18 +61,54 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     return body.result;
   };
   const prefix = `e2e-j2n-${Date.now().toString(36)}`;
+  let seededRef: any;
+  const prepare = async (contextId: string) => {
+    // Configured prerequisites for a registered-driver run: nothing the responder does is done here.
+    const { skills } = seededRef;
+    fixtures.keep = true;
+    // A crashed earlier run may have left its runtime-owned scenario registered.
+    await fixtures.dispose().catch(() => undefined);
+    await fixtures.register(modelRules(skills));
+    const started = await req('POST', `contexts/${contextId}/draft/start/`, { revision: 0, from_version: 6 });
+    await req('PUT', `contexts/${contextId}/draft/`, { revision: started.revision, base_version: 6, files: [{ path: 'AGENTS.md', content: '# Personal draft\nKeep my unfinished unrelated work.\n' }], description: 'Private work to preserve', note: 'Unrelated personal note' });
+    const projectName = `${prefix}-incident`;
+    const start = BigInt(Math.floor(Date.now() / 1000)) * 1_000_000_000n + 123456000n;
+    const v4 = seededRef.releases[3];
+    const trace = await sendTrace(request, { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey, projectName, rootName: 'Synthetic refund failure', startTimeUnixNano: start,
+      rootAttributes: { 'input.value': JSON.stringify({ messages: [{ role: 'system', content: 'Hidden system' }, { role: 'user', content: REQUESTS.refund }, { role: 'tool', content: JSON.stringify({ 'support-order': STATE.refund }) }, { role: 'assistant', content: 'False refund success' }] }),
+        'output.value': 'False refund success', 'fi.context.id': contextId, 'fi.context.version_id': v4.id, 'fi.context.digest': v4.digest } });
+    await expect.poll(async () => (await probe.ch<{ n: string }>('SELECT count() AS n FROM spans FINAL WHERE trace_id={t:String}', { t: trace.traceId }))[0].n, POLL.SPAN_VISIBLE).toBe('2');
+    const projects = await probe.pg<{ id: string }>('SELECT id FROM tracer_project WHERE name=$1 AND organization_id=$2', [projectName, actor.organizationId]);
+    if (process.env.J2_COHORT === 'configured') {
+      const created = await req('POST', `contexts/${contextId}/native/targets/`, { version: 4 });
+      const configuration = (await req('GET', `contexts/${contextId}/native/runtime-configuration/`)).configuration;
+      await req('PUT', `contexts/${contextId}/native/targets/${created.binding_id}/`, { revision: created.revision, configuration });
+    }
+    await writeFile(process.env.J2_PREPARE_OUT!, JSON.stringify({
+      appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, pgUrl: E2E.pgUrl, fixtureOrigin: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28082'}`,
+      providerNamespace: PROVIDER_NAMESPACE, runtimeContainer: RUNTIME_CONTAINER, contextId, contextName: `${prefix}-support`,
+      versions: { recorded: 4, head: 6 }, skills, requests: REQUESTS, recordedRoot: ROOT.recorded, recordedRootSha256: createHash('sha256').update(ROOT.recorded).digest('hex'),
+      controlRoots: { wordingOnly: ROOT.wordingOnly, overbroad: ROOT.overbroad },
+      projectName, projectId: projects[0].id, traceId: trace.traceId, spanId: trace.spanIds[0],
+      actor: { access: actor.tokens.access, refresh: actor.tokens.refresh, organizationId: actor.organizationId, workspaceId: actor.workspaceId },
+    }), { mode: 0o600 });
+  };
   const fixtures = new SkillsFixtures(PROVIDER_NAMESPACE);
   try {
     // Prerequisite: a funded workspace policy, a fifteen-member application context with recorded v4 failing and v6 head.
     const spend = await req('GET', 'spend-policy/');
     await req('PUT', 'spend-policy/', { revision: spend.revision, enabled: true, period_limit_usd: '20.00' });
     const seeded = await seedApplication(req, prefix);
+    seededRef = seeded;
     const { contextId, skills } = seeded;
     const suite = await req('PUT', `contexts/${contextId}/tests/`, { revision: 0, cases: [neighborCase('chargeback', skills), neighborCase('shipping', skills)] });
+    const prepareOut = process.env.J2_PREPARE_OUT;
+    if (prepareOut) return prepare(contextId);
     const v7 = await publishRoot(req, contextId, 4, ROOT.repaired, 'Repair refund limit from recorded v4');
     const v8 = await publishRoot(req, contextId, 4, ROOT.wordingOnly, 'Control: wording-only repair');
     const v9 = await publishRoot(req, contextId, 4, ROOT.overbroad, 'Control: overbroad routing repair');
     expect([v7.version.number, v8.version.number, v9.version.number]).toEqual([7, 8, 9]);
+    await fixtures.dispose().catch(() => undefined);
     await fixtures.register(modelRules(skills));
 
     // The retained failure: a physical span whose request and business state tool result the responder captures.
@@ -211,5 +247,5 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(noState.missing_inputs[0].input).toContain('business state fixture');
     await testInfo.attach('J2-native-independent', { body: JSON.stringify({ evidenceClass: 'synthetic fixture', run, textOnly: textOnly.decision, nearMiss: nearMiss.decision, noState, business, suite: suite.revision }), contentType: 'application/json' });
     if (process.env.J2_DRIVER_FIXTURE_OUTPUT) await writeFile(process.env.J2_DRIVER_FIXTURE_OUTPUT, JSON.stringify({ contextId }), { mode: 0o600 });
-  } finally { await fixtures.dispose().catch(() => undefined); }
+  } finally { if (!process.env.J2_PREPARE_OUT) await fixtures.dispose().catch(() => undefined); }
 });
