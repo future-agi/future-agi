@@ -629,7 +629,7 @@ type stubPricer struct {
 	cost      float64
 }
 
-func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32, at time.Time) (float64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -637,8 +637,8 @@ func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c in
 	return s.cost, true
 }
 
-func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
-	return s.TokenCost(ctx, orgID, model, p, c)
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32, at time.Time) (float64, bool) {
+	return s.TokenCost(ctx, orgID, model, p, c, at)
 }
 
 func (s *stubPricer) snapshot() (calls int, lastOrgID string) {

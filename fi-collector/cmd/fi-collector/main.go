@@ -237,6 +237,10 @@ func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
 	if table != nil && table.Skipped > 0 {
 		log.Warn("pricing table loaded with skipped entries", "skipped", table.Skipped)
 	}
+	if table != nil && len(table.MissingDated) > 0 {
+		log.Warn("pricing table lacks models that have dated prices; their dated prices are not billed",
+			"keys", table.MissingDated)
+	}
 	return table
 }
 

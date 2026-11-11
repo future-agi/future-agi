@@ -849,3 +849,36 @@ def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypat
     assert harness_usage.check_harness_action(organization_id, "voice_call") == {
         "allowed": True
     }
+
+
+def _stage(model):
+    return {
+        "stage": "build-environment",
+        "models": [model],
+        "tokens_in": 1_000_000,
+        "tokens_out": 100_000,
+        "tokens_cached": 800_000,
+    }
+
+
+@pytest.mark.requires_ee
+@pytest.mark.parametrize(("at", "cost"), AT_EACH_PRICE)
+def test_authoring_accepts_a_model_the_gateway_table_prices(monkeypatch, at, cost):
+    _ai_credits_equal_usd(monkeypatch)
+
+    record = harness_usage._authoring_stage_record(_stage("gemini-3.7-flash"), at=at)
+
+    assert record["pricing_source"] == "gateway_table"
+    assert record["cost_usd"] == pytest.approx(cost)
+
+
+@pytest.mark.requires_ee
+def test_authoring_refuses_a_model_no_table_prices(monkeypatch):
+    _ai_credits_equal_usd(monkeypatch)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_usage._authoring_stage_record(
+            _stage("gemini-3.7-flash-lite"), at=STARTED_IN_2026
+        )
+
+    assert refused.value.code == "authoring_model_unpriced"

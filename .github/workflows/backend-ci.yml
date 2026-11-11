@@ -45,6 +45,7 @@ jobs:
               - 'api_contracts/gateway/decision-cases.json'
               - 'api_contracts/gateway/decision-providers.json'
               - 'agentcc-gateway/internal/modeldb/price_schedule.json'
+              - 'agentcc-gateway/internal/modeldb/litellm.json'
               - 'docker-compose*.yml'
               - 'fi-collector/Dockerfile'
               - 'bin/install*'

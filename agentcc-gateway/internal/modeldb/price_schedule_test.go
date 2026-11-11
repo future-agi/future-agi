@@ -304,7 +304,7 @@ func bigTableDrift(table map[string]*ModelInfo, schedule map[string][]scheduleRo
 	for _, key := range keys {
 		m, ok := table[key]
 		if !ok {
-			drift = append(drift, fmt.Sprintf("%s: litellm.json does not list this key, which price_schedule.json dates. Restore the key or remove it from both copies of price_schedule.json.", key))
+			drift = append(drift, fmt.Sprintf("%s: litellm.json does not list this key, which price_schedule.json dates. Restore the key or remove it from all three copies of price_schedule.json.", key))
 			continue
 		}
 		rows := schedule[key]
@@ -313,7 +313,7 @@ func bigTableDrift(table map[string]*ModelInfo, schedule map[string][]scheduleRo
 		if got == rowRates(first) || (!now.Before(last.start) && got == rowRates(last)) {
 			continue
 		}
-		drift = append(drift, fmt.Sprintf("%s: litellm.json equals neither the dated file's first row nor, from %s, its last row (input %g, output %g, cached %g, batch %g / %g). If a refresh moved this price before its date, fix the refresh: the dated row keeps billing the old price until then. If the price changed again, update price_schedule.json in both copies.",
+		drift = append(drift, fmt.Sprintf("%s: litellm.json equals neither the dated file's first row nor, from %s, its last row (input %g, output %g, cached %g, batch %g / %g). If a refresh moved this price before its date, fix the refresh: the dated row keeps billing the old price until then. If the price changed again, update price_schedule.json in all three copies.",
 			key, last.From, got[0], got[1], got[2], got[3], got[4]))
 	}
 	return drift
@@ -398,7 +398,7 @@ func TestDatedKeysAreEveryGoogleKeyOfTheseModels(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(extra)
 	if len(missing) > 0 {
-		t.Errorf("litellm.json keys of these models with no dated rows (add them to both copies of price_schedule.json, or to the other-model list here): %v", missing)
+		t.Errorf("litellm.json keys of these models with no dated rows (add them to all three copies of price_schedule.json, or to the other-model list here): %v", missing)
 	}
 	if len(extra) > 0 {
 		t.Errorf("price_schedule.json keys that are not Google keys of these models: %v", extra)

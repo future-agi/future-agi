@@ -86,3 +86,17 @@ def test_compute_cost_does_not_charge_for_zero_generated_images(monkeypatch):
     _compute_cost(entry)
 
     assert captured["images_generated"] == 0
+
+
+def test_compute_cost_bills_a_chat_model_at_the_gateways_price():
+    # The entry's usage dict always carries input_characters, often as 0. That is
+    # not speech, so the gateway's 2.5/10 applies, not the catalogue's 5/15.
+    entry = {
+        "cost": 0,
+        "model": "gpt-4o",
+        "prompt_tokens": 1_000_000,
+        "completion_tokens": 1_000_000,
+        "metadata": {},
+    }
+
+    assert _compute_cost(entry) == 12.5

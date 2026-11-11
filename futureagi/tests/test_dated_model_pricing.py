@@ -14,10 +14,7 @@ import pytest
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt import model_pricing
-from agentic_eval.core_evals.run_prompt.model_pricing import (
-    get_model_info,
-    get_model_pricing,
-)
+from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
 
 T26 = datetime(2026, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
 T27 = datetime(2027, 1, 1, tzinfo=UTC)
@@ -139,12 +136,32 @@ def test_calculate_total_cost_prices_at_the_usage_time(at, cost):
     result = calculate_total_cost("gemini-3.7-flash", USAGE, at=at)
 
     assert result["total_cost"] == pytest.approx(cost)
-    assert result["pricing_source"] == "available_models"
+    assert result["pricing_source"] == "gateway_table"
 
 
-@pytest.mark.parametrize("model_name", ["gpt-4o", "gemini/gemini-3.5-flash"])
-def test_models_without_dated_rows_are_unchanged(model_name):
-    static = get_model_info(model_name)["pricing"]
-
-    assert get_model_pricing(model_name, at=T27) == static
-    assert get_model_pricing(model_name, at=T26) == static
+@pytest.mark.parametrize(
+    ("model_name", "rates"),
+    [
+        (
+            "gpt-4o",
+            {
+                "input_per_1M_tokens": 2.5,
+                "output_per_1M_tokens": 10.0,
+                "cached_input_per_1M_tokens": 1.25,
+            },
+        ),
+        (
+            "gemini/gemini-3.5-flash",
+            {
+                "input_per_1M_tokens": 1.5,
+                "output_per_1M_tokens": 9.0,
+                "cached_input_per_1M_tokens": 0.15,
+            },
+        ),
+    ],
+)
+def test_models_without_dated_rows_are_unchanged(model_name, rates):
+    # Billed from the gateway's table, which has no dated rows for these names:
+    # the price is the same either side of midnight.
+    assert get_model_pricing(model_name, at=T27) == rates
+    assert get_model_pricing(model_name, at=T26) == rates

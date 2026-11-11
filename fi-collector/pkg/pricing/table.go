@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"time"
 )
 
 //go:embed model_prices.json
@@ -50,6 +52,11 @@ type Table struct {
 	// logs this so a malformed litellm entry doesn't silently disable
 	// pricing for every other model.
 	Skipped int
+
+	// MissingDated lists, sorted, the keys of the dated price schedule that
+	// this table's file does not hold. Their dated prices are not billed:
+	// an operator's file may omit a model. main logs them.
+	MissingDated []string
 }
 
 // LoadTable parses the price file at path, or the embedded snapshot when
@@ -97,7 +104,14 @@ func LoadTable(path string) (*Table, error) {
 			providers[name] = meta.Provider
 		}
 	}
-	return &Table{prices: m, providers: providers, Skipped: skipped}, nil
+	var missing []string
+	for key := range schedule {
+		if _, ok := m[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	return &Table{prices: m, providers: providers, Skipped: skipped, MissingDated: missing}, nil
 }
 
 // Cost prices a call by exact model-key lookup — the same gate Django used
@@ -110,10 +124,21 @@ func LoadTable(path string) (*Table, error) {
 // side's above-128k rate is non-zero, ALL tokens on that side price at the
 // above-rate (not just the marginal tokens past the threshold); a zero or
 // absent above-rate falls back to the base rate.
-func (t *Table) Cost(model string, promptTokens, completionTokens int32) (float64, bool) {
+//
+// at is when the usage happened; a zero at means now. A key with a dated row in
+// force at at is priced at that row, whatever the table's own file says, and
+// the 128k tier does not apply to it (the dated keys have no above-128k rate),
+// so an operator's file cannot override a dated rate.
+func (t *Table) Cost(model string, promptTokens, completionTokens int32, at time.Time) (float64, bool) {
 	p, ok := t.prices[model]
 	if !ok {
 		return 0, false
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	if in, out, dated := datedRates(model, at); dated {
+		return float64(promptTokens)*in + float64(completionTokens)*out, true
 	}
 
 	inRate := p.InputCostPerToken
@@ -139,7 +164,7 @@ func (t *Table) Cost(model string, promptTokens, completionTokens int32) (float6
 //
 // This is a collector-only fallback; Django priced exact keys only. Pricer
 // tries it after the exact table and per-org custom lookups miss.
-func (t *Table) ProviderPrefixedCost(model string, promptTokens, completionTokens int32) (float64, bool) {
+func (t *Table) ProviderPrefixedCost(model string, promptTokens, completionTokens int32, at time.Time) (float64, bool) {
 	prefix, name, ok := strings.Cut(model, "/")
 	if !ok || prefix == "" || name == "" {
 		return 0, false
@@ -147,7 +172,7 @@ func (t *Table) ProviderPrefixedCost(model string, promptTokens, completionToken
 	if t.providers[name] != prefix {
 		return 0, false
 	}
-	return t.Cost(name, promptTokens, completionTokens)
+	return t.Cost(name, promptTokens, completionTokens, at)
 }
 
 // openRouterPrefix namespaces OpenRouter's own rates in the litellm table
@@ -162,12 +187,12 @@ const openRouterPrefix = "openrouter/"
 //
 // Collector-only, like ProviderPrefixedCost; Pricer uses it only for spans
 // that came through OpenRouter.
-func (t *Table) OpenRouterCost(slug string, promptTokens, completionTokens int32) (float64, bool) {
+func (t *Table) OpenRouterCost(slug string, promptTokens, completionTokens int32, at time.Time) (float64, bool) {
 	if slug == "" {
 		return 0, false
 	}
 	if !strings.HasPrefix(slug, openRouterPrefix) {
 		slug = openRouterPrefix + slug
 	}
-	return t.Cost(slug, promptTokens, completionTokens)
+	return t.Cost(slug, promptTokens, completionTokens, at)
 }

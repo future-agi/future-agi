@@ -60,8 +60,8 @@ class TestTokenBasedPricing:
         assert pricing is not None
         assert "input_per_1M_tokens" in pricing
         assert "output_per_1M_tokens" in pricing
-        assert pricing["input_per_1M_tokens"] == 5
-        assert pricing["output_per_1M_tokens"] == 15
+        assert pricing["input_per_1M_tokens"] == 2.5
+        assert pricing["output_per_1M_tokens"] == 10
 
     def test_gpt4o_mini_pricing_lookup(self):
         """Test that gpt-4o-mini pricing is found correctly."""
@@ -70,8 +70,8 @@ class TestTokenBasedPricing:
         assert pricing is not None
         assert "input_per_1M_tokens" in pricing
         assert "output_per_1M_tokens" in pricing
-        assert pricing["input_per_1M_tokens"] == 2
-        assert pricing["output_per_1M_tokens"] == 4
+        assert pricing["input_per_1M_tokens"] == 0.15
+        assert pricing["output_per_1M_tokens"] == 0.6
 
     def test_calculate_cost_llm_model(self):
         """Test cost calculation for LLM model with token usage."""
@@ -87,16 +87,17 @@ class TestTokenBasedPricing:
         assert "completion_cost" in result
         assert "pricing_source" in result
 
-        # gpt-4o: $5/1M input, $15/1M output
-        # prompt_cost = 1000/1M * 5 = 0.005
-        # completion_cost = 500/1M * 15 = 0.0075
-        expected_prompt = round((1000 / 1_000_000) * 5, 6)
-        expected_completion = round((500 / 1_000_000) * 15, 6)
+        # gpt-4o: $2.5/1M input, $10/1M output (the gateway's price)
+        # prompt_cost = 1000/1M * 2.5 = 0.0025
+        # completion_cost = 500/1M * 10 = 0.005
+        expected_prompt = round((1000 / 1_000_000) * 2.5, 6)
+        expected_completion = round((500 / 1_000_000) * 10, 6)
 
         assert result["prompt_cost"] == expected_prompt
         assert result["completion_cost"] == expected_completion
         assert result["total_cost"] == round(expected_prompt + expected_completion, 6)
-        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == 0.0075
+        assert result["pricing_source"] == "gateway_table"
 
     def test_calculate_cost_zero_tokens(self):
         """Test cost calculation with zero tokens."""
@@ -125,7 +126,7 @@ class TestTokenBasedPricing:
         assert result["prompt_cost"] == 0.00021
         assert result["completion_cost"] == 0.000375
         assert result["total_cost"] == 0.000585
-        assert result["pricing_source"] == "available_models"
+        assert result["pricing_source"] == "gateway_table"
 
 
     def test_calculate_cost_prices_gemini_38_flash(self):
@@ -140,7 +141,7 @@ class TestTokenBasedPricing:
         )
 
         assert result["total_cost"] == 0.000585
-        assert result["pricing_source"] == "available_models"
+        assert result["pricing_source"] == "gateway_table"
 
     @pytest.mark.requires_ee
     def test_turing_alias_pricing_lookup(self):
