@@ -36,15 +36,34 @@ changes none of them.
   `agent-learning-kit` also produce deployed images and had the setting on
   (read-only check, 11 Nov); turn it off there too. Their workflows were not
   checked for anything that relies on it.
-- **Last-push approval.** On the ruleset that covers main and dev, require
-  approval of the most recent reviewable push. Without it, a writer can push
-  to someone else's PR branch and then approve that PR.
+- **Last-push approval.** Add a repository ruleset on `main` and `dev` with
+  `require_last_push_approval: true`. Do not edit organisation ruleset
+  2289447, which covers other repositories. Without it, a writer can push to
+  someone else's PR branch and then approve that PR. A branch workflow can
+  still push onto another person's PR as a bot (workflow token or App token),
+  and the writer's own approval then probably counts (inferred, not tested).
+  Test that on a scratch repository before relying on this rule; until the
+  test shows that it does not count, this setting is not met.
 - **Approver App.** The release PR is approved by a dedicated GitHub App, not
   by the workflow token:
   - The owner creates an App used only for autopilot approvals, distinct from
     the release-bot App (a PR's author cannot approve it), and installs it on
-    `future-agi/future-agi` only. Reusing the deployment repository's approver
-    App would let either repository's key approve in the other.
+    `future-agi/future-agi` only. The low-risk PR autopilot
+    (`docs/pr-autopilot.md`) uses the same App. Reusing the deployment
+    repository's approver App would let either repository's key approve in
+    the other.
+  - **Order.** The key is added last. While one writer can still get a PR
+    approved without another person, that writer can land a job that names
+    `release-autopilot` on `main`, run it and read the key, and a leaked key
+    outlives the later settings. So the owner first turns Actions approvals
+    off, adds the last-push ruleset, creates the environments with their
+    branch rules and completes the release-bot key custody below. Then the
+    owner confirms on a throwaway PR into `dev` that GitHub refuses an
+    approval by a branch workflow's `GITHUB_TOKEN`, and only then adds the
+    approver variable and key. If the key was stored anywhere a branch
+    workflow could read before that, generate a new private key, delete the
+    old one and store only the new one. `docs/pr-autopilot.md` (Approver App
+    and owner settings) numbers these steps.
   - GitHub counts a required approval only from a reviewer with write access.
     A GitHub community report and an independent reproduction say that an App
     installed with only "Pull requests: write" gives approvals that do not
@@ -74,8 +93,9 @@ changes none of them.
   reviewers or wait timer. Add the variable `AUTOPILOT_APPROVER_CLIENT_ID`
   (the App's client ID) and the secret `AUTOPILOT_APPROVER_PRIVATE_KEY`, plus
   copies of `RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY` as environment
-  secrets. Create the branch rule before adding any secret: GitHub creates a
-  missing environment, with no rules, the first time a job names it. Only the
+  secrets, in the order above. Create the branch rule before adding any
+  secret: GitHub creates a missing environment, with no rules, the first time
+  a job names it. Only the
   `merge` job names this environment, and it runs only when the `check` job
   finds an eligible release PR, so idle polls read no key and record no
   deployment. Until the copies are added, the job still reads the
@@ -85,20 +105,50 @@ changes none of them.
   approver variable and secret in its approving job, from an environment named
   `pr-autopilot` whose deployment branch rule allows only `dev`.
 - **Release-bot App key custody.** `RELEASE_BOT_APP_ID` and
-  `RELEASE_BOT_PRIVATE_KEY` are organisation secrets today, readable by any
-  writer's branch workflow, which could then push or approve as the release
-  bot. Move them into environment secrets whose deployment branch rules allow
-  only protected branches and release tags. A job names one environment, so
+  `RELEASE_BOT_PRIVATE_KEY` are organisation secrets today, shared with
+  deployment, future-agi, docs, agent-learning-kit and ee, and readable by
+  any writer's branch workflow there, which could then push or approve as the
+  release bot, here and in `future-agi/deployment`. futureagi-sdk holds a
+  repository copy, and internal-tools has repository secrets with both names.
+  This custody is also a precondition of the deployment repository's deploy
+  identity, so it is done before that repository's `deploy_github.tf` is
+  applied. The text below matches the header of
+  `us/gcp/terraform/deploy_github.tf` and `docs/auto-deploy.md`
+  (Administrator setup step 1) in `future-agi/deployment`; where they differ,
+  that header is the later text.
+  Hold the key only in environment secrets whose deployment branch policy
+  admits only refs that one writer cannot create or merge into alone, and
+  delete the organisation secret and the repository copies. "Protected
+  branches only" is not enough: `fix/nightly-dev-27-05` is protected here with
+  one approval and no status checks, and any writer can push a tag at their
+  own commit until a tag ruleset exists. A run started by a tag uses the
+  workflow files at that commit. Use "Selected branches and tags", make each
+  admitted branch need a person's review (Actions approvals off and last-push
+  approval on, with the same untested bot-push caveat), and add the tag
+  ruleset below before an environment that admits tags gets the key. A job
+  that names an environment still reads organisation secrets, so every job
+  below names its environment first, and the organisation secret is deleted
+  last. Then generate a new private key for the release-bot App and delete the
+  old ones, because any branch workflow could read the old key. The other
+  remedy, a separate App for deployment bumps under the same custody, is
+  described in those deployment documents. A job names one environment, so
   this repository needs three holders:
   - `production-auto`, for `release-worker` in `release-images.yml`, which
-    already names it. Restrict `production-auto` (next item) **before** adding
-    the copy; it has no branch rule today.
+    already names it. Restrict `production-auto` (see "`Production` and
+    `production-auto`" below) **before** adding the copy; it has no branch
+    rule today.
   - `release-autopilot`, for this workflow's `merge` job (above).
-  - a third environment, for example `release-bot`, for `bump-deployment`,
-    `dispatch-ee` and `dispatch-docs` in `release-images.yml`, plus
-    `release-please.yml`, `sdk-sync.yml` and `refresh-disposable-domains.yml`.
-    These jobs name no environment yet, so the organisation secrets must stay
-    until they do.
+  - a third environment, called `release-bot` in these documents, on
+    "Selected branches and tags" with `main` and `v*` tags, for
+    `bump-deployment`, `dispatch-ee` and `dispatch-docs` in
+    `release-images.yml`, plus `release-please.yml`, `sdk-sync.yml` and
+    `refresh-disposable-domains.yml`. These jobs name no environment yet (a
+    workflow change), so the organisation secrets must stay until they do.
+
+  Other readers are docs `changelog-sync.yml`, agent-learning-kit
+  `publish-pypi.yml` (`release-pr`, `deployment-bump`) and futureagi-sdk
+  `promote.yml` (on `dev`) and `release-please.yml`; each needs an environment
+  of the same kind in its repository.
 
   The App merges the release PR, because a merge made with the workflow token
   does not start push workflows, so release-please would not tag the release.
@@ -107,8 +157,8 @@ changes none of them.
   secret value.
 - **`Production` and `production-auto`.** Keep `Production`'s required
   reviewers and allowed release tags. Verify that `production-auto` exists and
-  has **no reviewers**. Limit `production-auto` to `v*` tags plus the protected
-  `main` branch. `main` is needed because `release-worker` runs in
+  has **no reviewers**. Set `production-auto` to "Selected branches and tags"
+  with `main` and `v*` tags. `main` is needed because `release-worker` runs in
   `production-auto` for the `components=bump` retry, which the guard allows
   from any ref, and the dispatch form defaults to `main`. With a tags-only rule
   GitHub would refuse `release-worker` on a dispatch from `main`, and the bump
@@ -135,8 +185,11 @@ changes none of them.
   `blocked` until the PR has its approval; then the first run approves and
   defers the merge at its recheck, and later runs wait. Either way the release
   waits, with green runs, until a person updates the release branch.
-- Restrict release-tag creation to the release App and trusted release managers;
-  protect `main` and release tags from force updates/deletion. A tag containing
+- Restrict release-tag creation to the release App and trusted release managers
+  with a tag ruleset on `v*` (which also covers beta and rc tags); protect
+  `main` and release tags from force updates/deletion. This ruleset is part of
+  the key custody above, so it is added before any environment that admits
+  tags gets a key copy. A tag containing
   a different workflow could omit any in-file guard, so tag creation authority
   must be controlled outside this workflow. The guard verifies the tag's commit
   against the push event and rechecks it after approval, but unchanged downstream
@@ -348,7 +401,14 @@ write access can edit a PR body.
   still publishes its images once approved, but its bump PR then waits. If the
   release changes ClickHouse schema, apply the schema first, then merge the
   bump PR by hand. Django migrations are also stopped at deploy time by the
-  deployment's `migrate --check`.
+  deployment's `migrate --check`; the operator then applies them with the
+  procedure in `future-agi/deployment`'s `docs/auto-deploy.md`, "Applying
+  migrations after a failed check".
+- **Older bumps.** While an older release's bump PR that does not clear
+  migrations is open, the deployment autopilot keeps it open and newer bumps
+  wait at `older-release-has-migrations`. A hold label does not release them;
+  a person merges or closes the older PR. The count is taken against the
+  previous shipped release, not against the version deployment `main` pins.
 - **Cost.** A release whose baseline is unknown but which changes no schema
   also needs a hand merge. About 6 of the last 39 releases had an unknown
   baseline (review measurement, 11 Nov). Holding the bump PR keeps deployment
@@ -378,8 +438,9 @@ run by this bot.
   pre-merge audit/review, but an operator must repair the success annotation.
 - Before `RELEASE_AUTO_APPROVE=on`, add a tag ruleset on `v*` so only the release
   App (and named release managers) can create, update or delete release tags,
-  and limit the `production-auto` environment to `v*` tags plus `main` (see
-  the prerequisites for why `main`). The in-code actor check is defence in
+  and set the `production-auto` environment to "Selected branches and tags"
+  with `main` and `v*` tags (see the prerequisites for why `main`). The
+  in-code actor check is defence in
   depth; the ruleset is the control that matters. Also complete the approver
   App, environment and Actions-approval settings above, so that no writer can
   approve a change into main without a person.
