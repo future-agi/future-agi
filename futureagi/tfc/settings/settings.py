@@ -290,11 +290,16 @@ if has_ee("ee.cloud.control_plane") and is_cloud_env():
 # Site ID for django.contrib.sites
 SITE_ID = 1
 
+STARTUP_SCHEMA_GUARD_ENABLED = os.getenv(
+    "STARTUP_SCHEMA_GUARD_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",  #
     "tfc.middleware.cors_origin.OriginCheckMiddleware",
+    "tfc.middleware.schema_readiness.SchemaReadinessMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
