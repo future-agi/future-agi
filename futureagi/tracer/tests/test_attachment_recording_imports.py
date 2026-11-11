@@ -695,3 +695,52 @@ def test_stereo_derivatives_isolate_channels_and_fence_on_deletion(env):
     )
     with pytest.raises(AttachmentError, match="validation_fenced"):
         derivatives.generate(segments[0].pk, scope_id=env[0].id, storage=store)
+
+
+def test_published_segments_survive_read_path_readmission_once_bound(env, user):
+    """occurrences.get_occurrence re-runs admit_audio with the stored kind."""
+    from django.db import transaction
+
+    from tracer.services.attachments import occurrences
+
+    data = wav_bytes(seconds=35)
+    current = session(env)
+    _, job = imports.submit(
+        env[2],
+        scope_id=env[0].id,
+        body=body(current, data=data, envelope_id=envelope(env, data)),
+    )
+    assert drive(job, Store(), data) == "ready"
+    scope = env[0]
+    parent = occurrences.Parent(uuid.UUID(TRACE), SPAN)
+    state = occurrences.SourceState(
+        scope.id,
+        parent,
+        1,
+        timezone.now() - timedelta(minutes=5),
+        timezone.now() + timedelta(hours=1),
+        True,
+    )
+    viewer = occurrences.Viewer(
+        user.id, uuid.uuid4(), scope.organization_id, scope.workspace_id,
+        scope.project_id,
+    )  # fmt: skip
+
+    class Authority:
+        def session_is_live(self, candidate):
+            return candidate == viewer
+
+        def source(self, candidate, scope_row, wanted):
+            return state if wanted == parent else None
+
+    rows = list(AttachmentOccurrence.objects.filter(scope=scope))
+    assert {row.attachment.source_kind for row in rows} == {"imported_recording"}
+    for row in rows:
+        with pytest.raises(AttachmentError):  # unbound: not readable yet
+            occurrences.get_occurrence(viewer, Authority(), row.client_id, parent)
+        with transaction.atomic():
+            retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
+        found, _, _ = occurrences.get_occurrence(
+            viewer, Authority(), row.client_id, parent, ready=True
+        )
+        assert found.pk == row.pk

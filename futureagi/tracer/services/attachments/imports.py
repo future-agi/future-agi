@@ -57,6 +57,7 @@ from tracer.services.attachments.contract import (
 from tracer.services.attachments.uploads import _lock_budgets
 
 MAX_ATTEMPTS = 3
+IMPORTED_SOURCE_KIND = "imported_recording"
 JOB_HOURS = 3
 IMPORT_MIME_TYPES = {
     "audio/wav",
@@ -421,7 +422,9 @@ def _admit_policy(scope, session, direction):
         # Import needs its own explicit source permission; recording opt-in
         # (record_audio) is a different switch and never implies it.
         raise AttachmentError("source_unavailable", 403)
-    admit_audio(scope, policy, direction=direction, source_kind="bytes")
+    admit_audio(
+        scope, policy, direction=direction, source_kind=IMPORTED_SOURCE_KIND
+    )
 
 
 def submit(importer, *, scope_id, body):
@@ -756,9 +759,8 @@ def _publish(job, recording, facts, manifest, rows):
             attachment = Attachment.objects.create(
                 **common,
                 client_id=row.attachment_client_id,
-                source_kind=(
-                    "ProviderFile" if job.source_kind == "ProviderFile" else "RemoteUrl"
-                ),
+                # The read path re-admits with this value (occurrences.py).
+                source_kind=IMPORTED_SOURCE_KIND,
             )
             Attachment.objects.filter(pk=attachment.pk).update(
                 state=AttachmentState.VALIDATING

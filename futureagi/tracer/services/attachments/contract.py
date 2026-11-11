@@ -76,7 +76,10 @@ def admit_audio(
         raise AttachmentError("policy_denied", 403)
     if direction not in {"input", "output", "mixed"}:
         raise AttachmentError("invalid_direction")
-    if source_kind not in {"bytes", "owned_recording_file"}:
+    # "imported_recording": server-produced, sandbox-validated segments of a
+    # completed-recording import. Admission for the import itself also needs
+    # the separate ``allow_import`` permission (imports.submit/_fence).
+    if source_kind not in {"bytes", "owned_recording_file", "imported_recording"}:
         raise AttachmentError("source_unavailable", 403)
     if creates_recording and not policy.record_audio:
         raise AttachmentError("recording_disabled", 403)

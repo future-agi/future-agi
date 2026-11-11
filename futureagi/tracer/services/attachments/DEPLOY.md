@@ -17,6 +17,13 @@ Compose service is needed. Two Temporal schedules
 Jobs are durable database rows. A lost tick or a worker restart only delays
 progress. Each job gets at most 3 attempts and a deadline of at most 3 hours.
 
+Each schedule has the default `ScheduleOverlapPolicy.SKIP`, so at most one
+tick of a schedule runs at a time. That is the only thing stopping two
+workers from running the same job at once: there is no per-job lease yet.
+Never trigger these activities by hand next to the schedule. If a second
+`run()` did start, the `(recording, index)` unique constraint would make it
+fail instead of duplicating a segment.
+
 When attachments are enabled, each tick first runs `readiness.check()`. If any
 requirement below is missing, the tick does nothing and logs
 `attachment_worker_not_ready` with a reason code. No media is processed.
