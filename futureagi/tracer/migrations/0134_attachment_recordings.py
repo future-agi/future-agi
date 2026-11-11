@@ -9,7 +9,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("tracer", "0133_attachment_playback_records"),
+        ("tracer", "0132_attachment_fences"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -28,6 +28,16 @@ class Migration(migrations.Migration):
             model_name="attachmentbudget",
             name="object_count",
             field=models.PositiveIntegerField(default=0),
+        ),
+        migrations.AddField(
+            model_name="attachmentrecording",
+            name="sample_rate",
+            field=models.PositiveIntegerField(null=True),
+        ),
+        migrations.AddField(
+            model_name="attachmentrecording",
+            name="channels",
+            field=models.PositiveSmallIntegerField(null=True),
         ),
         migrations.CreateModel(
             name="AttachmentProviderConnection",
@@ -158,76 +168,6 @@ class Migration(migrations.Migration):
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.PROTECT,
                         to="tracer.attachmentproviderconnection",
-                    ),
-                ),
-                (
-                    "scope",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.PROTECT,
-                        to="tracer.attachmentscope",
-                    ),
-                ),
-            ],
-        ),
-        migrations.CreateModel(
-            name="AttachmentRecording",
-            fields=[
-                (
-                    "id",
-                    models.UUIDField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        primary_key=True,
-                        serialize=False,
-                    ),
-                ),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("client_id", models.UUIDField()),
-                ("trace_id", models.UUIDField()),
-                ("span_id", models.CharField(max_length=16)),
-                ("capture_session_client_id", models.UUIDField()),
-                ("correlation_nonce", models.UUIDField()),
-                (
-                    "direction",
-                    models.CharField(
-                        choices=[
-                            ("input", "Input"),
-                            ("output", "Output"),
-                            ("mixed", "Mixed"),
-                        ],
-                        max_length=8,
-                    ),
-                ),
-                (
-                    "state",
-                    models.CharField(
-                        choices=[
-                            ("importing", "Importing"),
-                            ("validating", "Validating"),
-                            ("ready", "Ready"),
-                            ("failed", "Failed"),
-                            ("rejected", "Rejected"),
-                            ("expired", "Expired"),
-                            ("deleted", "Deleted"),
-                        ],
-                        default="importing",
-                        max_length=16,
-                    ),
-                ),
-                ("policy_version", models.PositiveBigIntegerField()),
-                ("deletion_generation", models.PositiveBigIntegerField()),
-                ("sample_rate", models.PositiveIntegerField(null=True)),
-                ("channels", models.PositiveSmallIntegerField(null=True)),
-                ("duration_ms", models.PositiveIntegerField(null=True)),
-                ("capture_complete", models.BooleanField(default=False)),
-                ("manifest", models.JSONField(null=True)),
-                ("published_at", models.DateTimeField(null=True)),
-                ("deleted_at", models.DateTimeField(null=True)),
-                (
-                    "capture_session",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.PROTECT,
-                        to="tracer.capturesession",
                     ),
                 ),
                 (
@@ -478,12 +418,6 @@ class Migration(migrations.Migration):
             constraint=models.UniqueConstraint(
                 fields=("connection", "egress_id"),
                 name="attachment_provider_egress_unique",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="attachmentrecording",
-            constraint=models.UniqueConstraint(
-                fields=("scope", "client_id"), name="attachment_recording_unique"
             ),
         ),
         migrations.AddIndex(

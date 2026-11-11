@@ -149,8 +149,8 @@ def server_limits():
 
 
 def policy_token(scope):
-    """Opaque policy token for the scope's current policy version."""
-    return f"p{scope.policy_version}"
+    """The F01 ``Policy.version`` token bootstrap issues for this scope."""
+    return str(scope.policy_version)
 
 
 @dataclass(frozen=True)
@@ -399,18 +399,16 @@ def _apply(rows, amounts, sign):
 
 
 def _session(scope, importer, recording):
+    # A capture session has no parent of its own: the recording's parent
+    # comes from the request, exactly as every upload names its own parent.
     session = CaptureSession.objects.filter(
         scope=scope,
         client_id=recording["capture_session_id"],
+        correlation_nonce=recording["correlation_nonce"],
         writer_kind=importer.kind,
         writer_id=importer.id,
     ).first()
-    if (
-        session is None
-        or session.correlation_nonce != recording["correlation_nonce"]
-        or session.trace_id != recording["trace_id"]
-        or session.span_id != recording["span_id"]
-    ):
+    if session is None:
         raise AttachmentError("not_found", 404)
     check_session(session)
     return session
@@ -477,6 +475,8 @@ def submit(importer, *, scope_id, body):
             capture_session_client_id=recording["capture_session_id"],
             correlation_nonce=recording["correlation_nonce"],
             direction=direction,
+            # The shared recording row defaults to a streamed upload's state.
+            state=RecordingState.IMPORTING,
             policy_version=scope.policy_version,
             deletion_generation=scope.deletion_generation,
         )

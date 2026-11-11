@@ -1,0 +1,2215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/future-agi/traceAI/dev/spec/attachments/v1/contract.schema.json",
+  "title": "fi.attachments.v1",
+  "description": "Normative closed wire shapes. Cross-field authorization and byte limits also require the conformance tables. This is not an implementation or support declaration.",
+  "$defs": {
+    "UUID": {
+      "type": "string",
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "maxLength": 36
+    },
+    "TraceInput": {
+      "type": "string",
+      "oneOf": [
+        {
+          "pattern": "^(?!0{32}$)[0-9a-f]{32}$",
+          "maxLength": 32
+        },
+        {
+          "$ref": "#/$defs/UUID"
+        }
+      ]
+    },
+    "SpanID": {
+      "type": "string",
+      "pattern": "^(?!0{16}$)[0-9a-f]{16}$",
+      "maxLength": 16
+    },
+    "Token": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+      "maxLength": 128
+    },
+    "SafeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "Direction": {
+      "enum": [
+        "input",
+        "output",
+        "mixed"
+      ]
+    },
+    "Modality": {
+      "enum": [
+        "audio",
+        "image",
+        "video",
+        "document",
+        "file"
+      ]
+    },
+    "MIME": {
+      "enum": [
+        "audio/wav",
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/webm",
+        "audio/flac",
+        "audio/L16",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "video/mp4",
+        "video/webm",
+        "application/pdf",
+        "application/octet-stream"
+      ]
+    },
+    "Purpose": {
+      "enum": [
+        "conversation_recording",
+        "turn_recording",
+        "model_input",
+        "model_output",
+        "tool_result",
+        "computer_screenshot",
+        "diagnostic",
+        "document"
+      ]
+    },
+    "SourceKind": {
+      "enum": [
+        "Bytes",
+        "Blob",
+        "RemoteUrl",
+        "LocalFile",
+        "OwnedRecordingFile",
+        "ProviderFile"
+      ]
+    },
+    "Status": {
+      "enum": [
+        "pending_upload",
+        "importing",
+        "validating",
+        "ready",
+        "failed",
+        "rejected",
+        "expired",
+        "deleted"
+      ]
+    },
+    "Reason": {
+      "enum": [
+        "queued",
+        "disabled",
+        "bootstrap_pending",
+        "policy_denied",
+        "credential_scope_unsupported",
+        "source_unavailable",
+        "unsampled",
+        "too_large",
+        "queue_full",
+        "unsupported_version",
+        "endpoint_unconfigured",
+        "scope_unresolved",
+        "correlation_unavailable",
+        "redaction_unavailable",
+        "recording_disabled",
+        "binding_pending",
+        "not_found",
+        "conflict",
+        "throttled",
+        "validation_failed",
+        "expired",
+        "deleted",
+        "incomplete",
+        "ready"
+      ]
+    },
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "workspace_id",
+        "project_id"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "project_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "Parent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_id",
+        "span_id"
+      ],
+      "properties": {
+        "trace_id": {
+          "$ref": "#/$defs/TraceInput"
+        },
+        "span_id": {
+          "$ref": "#/$defs/SpanID"
+        }
+      }
+    },
+    "Association": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture_session_id",
+        "correlation_nonce",
+        "parent"
+      ],
+      "properties": {
+        "capture_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "correlation_nonce": {
+          "$ref": "#/$defs/UUID"
+        },
+        "parent": {
+          "$ref": "#/$defs/Parent"
+        }
+      }
+    },
+    "Reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attachment_id",
+        "occurrence_id",
+        "direction",
+        "modality",
+        "mime_type"
+      ],
+      "properties": {
+        "attachment_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/MIME"
+        },
+        "purpose": {
+          "$ref": "#/$defs/Purpose"
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "part_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool",
+            "system",
+            "unknown"
+          ]
+        },
+        "channel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "conversation_id": {
+          "$ref": "#/$defs/Token"
+        },
+        "turn_id": {
+          "$ref": "#/$defs/Token"
+        },
+        "tool_call_id": {
+          "$ref": "#/$defs/Token"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "audio/wav",
+                  "audio/ogg",
+                  "audio/mpeg",
+                  "audio/mp4",
+                  "audio/webm",
+                  "audio/flac",
+                  "audio/L16"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "video/mp4",
+                  "video/webm"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "document"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/pdf"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/octet-stream"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "References": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/Reference"
+      },
+      "uniqueItems": true
+    },
+    "SpanAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fi.attachment.schema_version",
+        "fi.attachment.refs"
+      ],
+      "properties": {
+        "fi.attachment.schema_version": {
+          "const": 1
+        },
+        "fi.attachment.refs": {
+          "type": "string",
+          "maxLength": 16384,
+          "contentMediaType": "application/json",
+          "contentSchema": {
+            "$ref": "#/$defs/References"
+          }
+        },
+        "fi.attachment.capture_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "fi.attachment.correlation_nonce": {
+          "$ref": "#/$defs/UUID"
+        }
+      },
+      "dependentRequired": {
+        "fi.attachment.capture_session_id": [
+          "fi.attachment.correlation_nonce"
+        ],
+        "fi.attachment.correlation_nonce": [
+          "fi.attachment.capture_session_id"
+        ]
+      }
+    },
+    "MessageURI": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "modality",
+        "mime_type",
+        "uri"
+      ],
+      "properties": {
+        "type": {
+          "const": "uri"
+        },
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/MIME"
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^fi-attachment:(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "maxLength": 50
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "audio/wav",
+                  "audio/ogg",
+                  "audio/mpeg",
+                  "audio/mp4",
+                  "audio/webm",
+                  "audio/flac",
+                  "audio/L16"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "video/mp4",
+                  "video/webm"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "document"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/pdf"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/octet-stream"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BootstrapRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_versions",
+        "project_name",
+        "project_type",
+        "capture_session_id",
+        "correlation_nonce"
+      ],
+      "properties": {
+        "schema_versions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "project_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "project_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "capture_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "correlation_nonce": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "Policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "enabled",
+        "allowed_sources",
+        "allowed_modalities",
+        "require_media_redaction",
+        "require_metadata_removal",
+        "allow_unredacted_media_with_text_pii",
+        "record_audio",
+        "record_video"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/Token"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "allowed_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/SourceKind"
+          }
+        },
+        "allowed_modalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/Modality"
+          }
+        },
+        "require_media_redaction": {
+          "type": "boolean"
+        },
+        "require_metadata_removal": {
+          "type": "boolean"
+        },
+        "allow_unredacted_media_with_text_pii": {
+          "type": "boolean"
+        },
+        "record_audio": {
+          "type": "boolean"
+        },
+        "record_video": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_upload_bytes",
+        "segment_bytes",
+        "segment_duration_ms",
+        "recording_bytes",
+        "recording_duration_ms",
+        "active_transfers",
+        "active_recordings",
+        "reserved_bytes",
+        "validation_jobs",
+        "initializations_per_minute",
+        "links_per_minute",
+        "upload_bytes_per_second",
+        "playback_bytes_per_second",
+        "transfer_timeout_seconds",
+        "grant_ttl_seconds",
+        "revocation_check_seconds"
+      ],
+      "properties": {
+        "max_upload_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "segment_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        "segment_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        },
+        "recording_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "recording_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200000
+        },
+        "active_transfers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "active_recordings": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "reserved_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "validation_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "initializations_per_minute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "links_per_minute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "upload_bytes_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "playback_bytes_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "transfer_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "grant_ttl_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "revocation_check_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
+    },
+    "BootstrapResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "scope",
+        "capture_session_id",
+        "policy",
+        "limits",
+        "expires_at",
+        "transfer_modes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "capture_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "policy": {
+          "$ref": "#/$defs/Policy"
+        },
+        "limits": {
+          "$ref": "#/$defs/Limits"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "transfer_modes": {
+          "const": [
+            "authenticated_stream"
+          ]
+        }
+      }
+    },
+    "UploadRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attachment_id",
+        "occurrence_id",
+        "association",
+        "policy_version",
+        "deletion_generation",
+        "mime_type",
+        "modality",
+        "direction",
+        "source_kind",
+        "declared_bytes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "attachment_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "association": {
+          "$ref": "#/$defs/Association"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/MIME"
+        },
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "purpose": {
+          "$ref": "#/$defs/Purpose"
+        },
+        "declared_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "part_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "segment_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "conversation_id": {
+          "$ref": "#/$defs/Token"
+        },
+        "turn_id": {
+          "$ref": "#/$defs/Token"
+        },
+        "tool_call_id": {
+          "$ref": "#/$defs/Token"
+        }
+      },
+      "dependentRequired": {
+        "recording_id": [
+          "segment_index"
+        ],
+        "segment_index": [
+          "recording_id"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "audio/wav",
+                  "audio/ogg",
+                  "audio/mpeg",
+                  "audio/mp4",
+                  "audio/webm",
+                  "audio/flac",
+                  "audio/L16"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "image/png",
+                  "image/jpeg",
+                  "image/webp"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "video/mp4",
+                  "video/webm"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "document"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/pdf"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mime_type": {
+                "enum": [
+                  "application/octet-stream"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "modality": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "declared_bytes": {
+                "maximum": 20971520
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "recording_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "declared_bytes": {
+                "maximum": 8388608
+              }
+            }
+          }
+        }
+      ]
+    },
+    "UploadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upload_id",
+        "attachment_id",
+        "occurrence_id",
+        "state",
+        "reserved_bytes",
+        "expires_at",
+        "transfer_mode",
+        "write_capability"
+      ],
+      "properties": {
+        "upload_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "attachment_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "state": {
+          "const": "pending_upload"
+        },
+        "reserved_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "transfer_mode": {
+          "const": "authenticated_stream"
+        },
+        "write_capability": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 4096,
+          "pattern": "^[a-zA-Z0-9_.-]+$",
+          "description": "Secret broker-issued capability for this exact upload/occurrence; never log/export/cache this private response or reuse it for another job."
+        }
+      }
+    },
+    "CompleteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_version",
+        "deletion_generation"
+      ],
+      "properties": {
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        }
+      }
+    },
+    "StatusResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upload_id",
+        "state",
+        "reason"
+      ],
+      "properties": {
+        "upload_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "state": {
+          "$ref": "#/$defs/Status"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        }
+      }
+    },
+    "ImportSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "envelope_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "RemoteUrlEnvelope"
+            },
+            "envelope_id": {
+              "$ref": "#/$defs/UUID"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "connection_id",
+            "registered_output_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ProviderFile"
+            },
+            "connection_id": {
+              "$ref": "#/$defs/UUID"
+            },
+            "registered_output_id": {
+              "$ref": "#/$defs/UUID"
+            }
+          }
+        }
+      ]
+    },
+    "ImportRequest": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SingleAttachmentImportRequest"
+        },
+        {
+          "$ref": "#/$defs/RecordingImportRequest"
+        }
+      ]
+    },
+    "ImportResponse": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SingleAttachmentImportResponse"
+        },
+        {
+          "$ref": "#/$defs/RecordingImportResponse"
+        }
+      ]
+    },
+    "LinkRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_occurrence_id",
+        "source_parent",
+        "target_parent",
+        "occurrence_id",
+        "policy_version",
+        "deletion_generation"
+      ],
+      "properties": {
+        "source_occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "source_parent": {
+          "$ref": "#/$defs/Parent"
+        },
+        "target_parent": {
+          "$ref": "#/$defs/Parent"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        }
+      }
+    },
+    "Occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "scope",
+        "parent",
+        "state",
+        "binding",
+        "capture_complete",
+        "policy_version",
+        "deletion_generation",
+        "expires_at"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/Reference"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "parent": {
+          "$ref": "#/$defs/CanonicalParent"
+        },
+        "state": {
+          "$ref": "#/$defs/Status"
+        },
+        "binding": {
+          "enum": [
+            "pending",
+            "bound"
+          ]
+        },
+        "capture_complete": {
+          "type": "boolean"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "OccurrencePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/Occurrence"
+          }
+        },
+        "next_cursor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/Token"
+            }
+          ]
+        }
+      }
+    },
+    "ResolveItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "occurrence_id",
+        "parent",
+        "representation"
+      ],
+      "properties": {
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "parent": {
+          "$ref": "#/$defs/Parent"
+        },
+        "representation": {
+          "enum": [
+            "original",
+            "playable",
+            "channel",
+            "peaks",
+            "thumbnail"
+          ]
+        },
+        "channel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "representation": {
+                "const": "channel"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "channel"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "channel"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ResolveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/ResolveItem"
+          }
+        }
+      }
+    },
+    "ResolveResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "occurrence_id",
+            "status",
+            "gateway_path",
+            "expires_at"
+          ],
+          "properties": {
+            "occurrence_id": {
+              "$ref": "#/$defs/UUID"
+            },
+            "status": {
+              "const": "ready"
+            },
+            "gateway_path": {
+              "type": "string",
+              "pattern": "^/tracer/v1/attachment-media/(?!00000000-0000-0000-0000-000000000000/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[a-zA-Z0-9_-]{1,128}$",
+              "maxLength": 194
+            },
+            "expires_at": {
+              "$ref": "#/$defs/Timestamp"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "occurrence_id",
+            "status"
+          ],
+          "properties": {
+            "occurrence_id": {
+              "$ref": "#/$defs/UUID"
+            },
+            "status": {
+              "enum": [
+                "not_found",
+                "pending",
+                "failed",
+                "expired",
+                "deleted"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ResolveResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/ResolveResult"
+          }
+        }
+      }
+    },
+    "WriteCapabilityClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audience",
+        "actor_id",
+        "scope",
+        "association",
+        "upload_id",
+        "attachment_id",
+        "occurrence_id",
+        "policy_version",
+        "deletion_generation",
+        "reserved_bytes",
+        "operations",
+        "expires_at"
+      ],
+      "properties": {
+        "audience": {
+          "const": "fi-attachment-write"
+        },
+        "actor_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "association": {
+          "$ref": "#/$defs/CanonicalAssociation"
+        },
+        "upload_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "attachment_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        },
+        "reserved_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "create",
+              "upload",
+              "complete",
+              "abort",
+              "status"
+            ]
+          }
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "PlaybackGrantClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audience",
+        "viewer_id",
+        "application_session_id",
+        "media_session_id",
+        "scope",
+        "occurrence_id",
+        "parent",
+        "representation",
+        "methods",
+        "policy_version",
+        "deletion_generation",
+        "expires_at"
+      ],
+      "properties": {
+        "audience": {
+          "const": "fi-attachment-playback"
+        },
+        "viewer_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "application_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "media_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "parent": {
+          "$ref": "#/$defs/CanonicalParent"
+        },
+        "representation": {
+          "enum": [
+            "original",
+            "playable",
+            "channel",
+            "peaks",
+            "thumbnail"
+          ]
+        },
+        "channel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "methods": {
+          "const": [
+            "GET",
+            "HEAD"
+          ]
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "representation": {
+                "const": "channel"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "channel"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "channel"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "track_id",
+        "channels",
+        "direction",
+        "role"
+      ],
+      "properties": {
+        "track_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "channels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          }
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "mixed",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "Segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "occurrence_id",
+        "index",
+        "start_ms",
+        "duration_ms"
+      ],
+      "properties": {
+        "occurrence_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7200000
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        },
+        "track_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "Gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_ms",
+        "duration_ms",
+        "reason"
+      ],
+      "properties": {
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7200000
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200000
+        },
+        "reason": {
+          "enum": [
+            "queue_full",
+            "bootstrap_pending",
+            "source_unavailable",
+            "policy_denied",
+            "truncated",
+            "incomplete"
+          ]
+        },
+        "track_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "PlayoutInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_ms",
+        "duration_ms",
+        "evidence"
+      ],
+      "properties": {
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7200000
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200000
+        },
+        "evidence": {
+          "enum": [
+            "generated",
+            "played",
+            "unknown",
+            "truncated"
+          ]
+        }
+      }
+    },
+    "RecordingManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "recording_id",
+        "timebase",
+        "sample_format",
+        "sample_rate_hz",
+        "channels",
+        "codec",
+        "container",
+        "layout",
+        "tracks",
+        "segments",
+        "gaps",
+        "playout",
+        "capture_complete",
+        "duration_ms"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "timebase": {
+          "const": "session_relative_ms"
+        },
+        "sample_format": {
+          "enum": [
+            "s16le",
+            "s24le",
+            "s32le",
+            "f32le",
+            "encoded"
+          ]
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "minimum": 8000,
+          "maximum": 192000
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "codec": {
+          "enum": [
+            "pcm",
+            "opus",
+            "mp3",
+            "aac",
+            "flac"
+          ]
+        },
+        "container": {
+          "enum": [
+            "wav",
+            "ogg",
+            "mp3",
+            "mp4",
+            "webm",
+            "flac",
+            "raw"
+          ]
+        },
+        "layout": {
+          "enum": [
+            "mixed",
+            "stereo",
+            "separate_tracks"
+          ]
+        },
+        "tracks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/Track"
+          }
+        },
+        "segments": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": {
+            "$ref": "#/$defs/Segment"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": {
+            "$ref": "#/$defs/Gap"
+          }
+        },
+        "playout": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": {
+            "$ref": "#/$defs/PlayoutInterval"
+          }
+        },
+        "capture_complete": {
+          "type": "boolean"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7200000
+        }
+      }
+    },
+    "OperationRegistryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "language",
+        "operation",
+        "upstream_version",
+        "source_kind",
+        "direction",
+        "modality",
+        "lifecycle",
+        "span_capability",
+        "attachment_capability",
+        "policy_requirements",
+        "component_test_state",
+        "integrated_gate"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^[a-z0-9@_./-]{1,128}$",
+          "maxLength": 128
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript"
+          ]
+        },
+        "operation": {
+          "$ref": "#/$defs/Token"
+        },
+        "upstream_version": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([.-][a-zA-Z0-9.]+)?$",
+              "maxLength": 64
+            }
+          ]
+        },
+        "source_kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "lifecycle": {
+          "enum": [
+            "application_consumed",
+            "explicit_session_binding",
+            "completed_provider_output"
+          ]
+        },
+        "span_capability": {
+          "enum": [
+            "native",
+            "instrumented",
+            "unsupported",
+            "unqualified"
+          ]
+        },
+        "attachment_capability": {
+          "enum": [
+            "capture",
+            "reference_only",
+            "unsupported",
+            "unqualified"
+          ]
+        },
+        "policy_requirements": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 8,
+          "items": {
+            "enum": [
+              "enabled",
+              "source_authorized",
+              "pii_intersection",
+              "metadata_policy",
+              "record_audio",
+              "record_video",
+              "provider_connection",
+              "owned_file_lease"
+            ]
+          }
+        },
+        "component_test_state": {
+          "enum": [
+            "not_run",
+            "passed",
+            "failed",
+            "blocked"
+          ]
+        },
+        "integrated_gate": {
+          "enum": [
+            "integrated_not_run",
+            "Q01",
+            "Q02",
+            "Q03",
+            "Q04",
+            "blocked"
+          ]
+        },
+        "evidence_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "attachment_capability": {
+                "const": "capture"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "evidence_digest"
+            ],
+            "properties": {
+              "upstream_version": {
+                "type": "string"
+              },
+              "component_test_state": {
+                "const": "passed"
+              },
+              "integrated_gate": {
+                "enum": [
+                  "Q02",
+                  "Q03",
+                  "Q04"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "request_id"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/Reason"
+        },
+        "request_id": {
+          "$ref": "#/$defs/UUID"
+        }
+      }
+    },
+    "AttachmentMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attachment_id",
+        "modality",
+        "source_kind",
+        "provider",
+        "purpose",
+        "policy_version",
+        "state",
+        "created_at"
+      ],
+      "properties": {
+        "attachment_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "modality": {
+          "$ref": "#/$defs/Modality"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "provider": {
+          "enum": [
+            "pipecat",
+            "livekit",
+            "unknown"
+          ]
+        },
+        "purpose": {
+          "$ref": "#/$defs/Purpose"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "state": {
+          "$ref": "#/$defs/Status"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "CanonicalParent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_id",
+        "span_id"
+      ],
+      "properties": {
+        "trace_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "span_id": {
+          "$ref": "#/$defs/SpanID"
+        }
+      }
+    },
+    "CanonicalAssociation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture_session_id",
+        "correlation_nonce",
+        "parent"
+      ],
+      "properties": {
+        "capture_session_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "correlation_nonce": {
+          "$ref": "#/$defs/UUID"
+        },
+        "parent": {
+          "$ref": "#/$defs/CanonicalParent"
+        }
+      }
+    },
+    "SingleAttachmentImportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upload",
+        "source"
+      ],
+      "properties": {
+        "upload": {
+          "$ref": "#/$defs/UploadRequest"
+        },
+        "source": {
+          "$ref": "#/$defs/ImportSource"
+        }
+      }
+    },
+    "SingleAttachmentImportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "upload_id",
+        "state"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "upload_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "state": {
+          "const": "importing"
+        }
+      }
+    },
+    "CompletedRecordingImport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "association",
+        "policy_version",
+        "deletion_generation",
+        "mime_type",
+        "direction",
+        "source_kind",
+        "recording_id",
+        "modality",
+        "declared_bytes",
+        "declared_duration_ms"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "association": {
+          "$ref": "#/$defs/Association"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/Token"
+        },
+        "deletion_generation": {
+          "$ref": "#/$defs/SafeInteger"
+        },
+        "mime_type": {
+          "enum": [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16"
+          ]
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "source_kind": {
+          "enum": [
+            "ProviderFile",
+            "RemoteUrl"
+          ]
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "modality": {
+          "const": "audio"
+        },
+        "declared_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "declared_duration_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200000
+        }
+      },
+      "description": "Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply."
+    },
+    "RecordingImportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "recording",
+        "source"
+      ],
+      "properties": {
+        "mode": {
+          "const": "completed_recording"
+        },
+        "recording": {
+          "$ref": "#/$defs/CompletedRecordingImport"
+        },
+        "source": {
+          "$ref": "#/$defs/ImportSource"
+        }
+      }
+    },
+    "RecordingImportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "job_id",
+        "recording_id",
+        "state"
+      ],
+      "properties": {
+        "mode": {
+          "const": "completed_recording"
+        },
+        "job_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "recording_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "state": {
+          "const": "importing"
+        }
+      }
+    },
+    "ImportStatusResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "state",
+        "reason"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/UUID"
+        },
+        "state": {
+          "$ref": "#/$defs/Status"
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        }
+      }
+    }
+  }
+}

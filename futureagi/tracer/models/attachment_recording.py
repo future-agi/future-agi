@@ -8,7 +8,12 @@ provider credential or source metadata is stored in plain text anywhere here.
 
 from django.db import models
 
-from tracer.models.attachment import ScopedAttachmentRecord
+# The recording timeline row is shared with streamed recordings and lives in
+# tracer.models.attachment; imports set its state to ``importing`` explicitly.
+from tracer.models.attachment import (  # noqa: F401
+    AttachmentRecording,
+    ScopedAttachmentRecord,
+)
 
 DIRECTIONS = [("input", "Input"), ("output", "Output"), ("mixed", "Mixed")]
 
@@ -30,41 +35,6 @@ TERMINAL_RECORDING_STATES = {
     RecordingState.EXPIRED,
     RecordingState.DELETED,
 }
-
-
-class AttachmentRecording(ScopedAttachmentRecord):
-    client_id = models.UUIDField()
-    capture_session = models.ForeignKey(
-        "tracer.CaptureSession", on_delete=models.PROTECT
-    )
-    trace_id = models.UUIDField()
-    span_id = models.CharField(max_length=16)
-    # Non-secret association carriers; ingestion authenticates their writer.
-    capture_session_client_id = models.UUIDField()
-    correlation_nonce = models.UUIDField()
-    direction = models.CharField(max_length=8, choices=DIRECTIONS)
-    state = models.CharField(
-        max_length=16,
-        choices=RecordingState.choices,
-        default=RecordingState.IMPORTING,
-    )
-    policy_version = models.PositiveBigIntegerField()
-    deletion_generation = models.PositiveBigIntegerField()
-    sample_rate = models.PositiveIntegerField(null=True)
-    channels = models.PositiveSmallIntegerField(null=True)
-    duration_ms = models.PositiveIntegerField(null=True)
-    capture_complete = models.BooleanField(default=False)
-    # Set only at fenced publication; never readable before that.
-    manifest = models.JSONField(null=True)
-    published_at = models.DateTimeField(null=True)
-    deleted_at = models.DateTimeField(null=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["scope", "client_id"], name="attachment_recording_unique"
-            )
-        ]
 
 
 class RecordingSegmentState(models.TextChoices):

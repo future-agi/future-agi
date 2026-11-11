@@ -1,8 +1,11 @@
-"""Unrouted gateway adapters for qualification, not yet public API views.
+"""Same-origin media gateway: cookie exchange and authorized byte ranges.
 
-HTTP authentication must supply the original application Viewer and a qualified
-live Authority. No request field constructs either. Keep these handlers unmounted
-until current-session/CH authority and per-principal egress limits are deployed.
+``tracer.views.attachments`` mounts these handlers with the live authority
+(current application session plus ClickHouse source state) and the trusted
+media origin from ``FI_ATTACHMENTS_MEDIA_ORIGIN``. No request field constructs a
+Viewer or an Authority. Every GET/HEAD/Range/conditional request re-authorizes
+before any status or metadata is sent, and open streams re-authorize before and
+after every bounded read. Bytes are charged to the viewer's egress budget first.
 """
 
 import re
@@ -14,7 +17,7 @@ from django.utils.crypto import salted_hmac
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import PermissionDenied
 
-from tracer.services.attachments import playback
+from tracer.services.attachments import egress, playback
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import not_found
 from tracer.services.attachments.storage import ObjectIdentity
@@ -33,7 +36,7 @@ def private(response):
     return response
 
 
-def same_origin(request, origin, *, issuance=False):
+def same_origin(request, origin, *, issuance=False, csrf=True):
     parsed = urlsplit(origin)
     if (
         parsed.scheme != "https"
@@ -56,16 +59,23 @@ def same_origin(request, origin, *, issuance=False):
     if issuance:
         if supplied != origin or request.method != "POST":
             raise not_found()
-        try:
-            SessionAuthentication().enforce_csrf(request)
-        except PermissionDenied:
-            raise not_found() from None
+        if csrf:
+            try:
+                SessionAuthentication().enforce_csrf(request)
+            except PermissionDenied:
+                raise not_found() from None
 
 
 def exchange_response(request, viewer, authority, *, origin):
-    """Only a dedicated authenticated POST adapter may call this function."""
+    """Only a dedicated authenticated POST adapter may call this function.
+
+    The exchange is authenticated by the application bearer token, which a
+    browser never attaches by itself, plus an exact Origin match. A Django
+    session cookie is not an accepted credential here, so CSRF-by-cookie does
+    not apply; ``csrf`` re-enables the cookie check for session-backed callers.
+    """
     try:
-        same_origin(request, origin, issuance=True)
+        same_origin(request, origin, issuance=True, csrf=False)
         _, token = playback.exchange(viewer, authority)
     except AttachmentError:
         return private(HttpResponse(status=404))
@@ -112,11 +122,16 @@ class RevocableBody:
     alone cannot promise that bound for a blocked database/socket.
     """
 
-    def __init__(self, check, storage, blob, start, end):
-        self.check, self.storage, self.blob = check, storage, blob
+    def __init__(self, check, storage, blob, start, end, *, charge=None):
+        self.authorize, self.storage, self.blob = check, storage, blob
         self.start, self.end, self.remaining = start, end, end - start + 1
         self.body, self.closed = None, False
         self.deadline = time.monotonic() + MAX_RESPONSE_SECONDS
+        self.charge = charge
+
+    def check(self):
+        # Every bounded read is bracketed by a full live re-authorization.
+        self.authorize()
 
     def __iter__(self):
         return self
@@ -134,7 +149,10 @@ class RevocableBody:
                     end=self.end,
                     expected_length=self.blob.byte_length,
                 )
-            chunk = self.body.read(min(CHUNK_BYTES, self.remaining))
+            size = min(CHUNK_BYTES, self.remaining)
+            if self.charge is not None:
+                self.charge(size)
+            chunk = self.body.read(size)
             self.check()
             if (
                 time.monotonic() >= self.deadline
@@ -175,9 +193,16 @@ def media_response(request, *, occurrence_id, grant_token, authority, storage, o
 
     try:
         same_origin(request, origin)
-        grant, blob = check()
+        grant, blob, viewer = check()
     except AttachmentError:
         return private(HttpResponse(status=404))
+    principal = str(viewer.user_id)
+    try:
+        egress.admit(principal)
+    except egress.EgressDenied as denied:
+        response = private(HttpResponse(status=429))
+        response["Retry-After"] = str(denied.retry_after)
+        return response
     # Not the object hash: opaque ETag varies by grant and immutable blob identity.
     etag = (
         '"'
@@ -205,7 +230,14 @@ def media_response(request, *, occurrence_id, grant_token, authority, storage, o
         HttpResponse(status=200)
         if request.method == "HEAD"
         else StreamingHttpResponse(
-            RevocableBody(check, storage, blob, start, end),
+            RevocableBody(
+                check,
+                storage,
+                blob,
+                start,
+                end,
+                charge=lambda size: egress.consume(principal, size),
+            ),
             status=206 if partial else 200,
         )
     )

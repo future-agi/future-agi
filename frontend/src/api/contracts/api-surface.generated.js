@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1128,
+  endpointCount: 1142,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1319,7 +1319,32 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/user-alerts/{id}/graph/": ["get"],
       "/tracer/users/": ["get", "post"],
       "/tracer/users/get_code_example/": ["get"],
+      "/tracer/v1/attachment-media-sessions": ["post"],
+      "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
+      "/tracer/v1/attachment-sessions": ["post"],
       "/tracer/v1/health": ["get"],
+      "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],
+      "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": [
+        "get",
+      ],
+      "/tracer/v1/projects/{project_id}/attachments/occurrences": [
+        "get",
+        "post",
+      ],
+      "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}":
+        ["delete"],
+      "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
+        ["get", "put"],
+      "/tracer/v1/projects/{project_id}/attachments/resolve": ["post"],
+      "/tracer/v1/projects/{project_id}/attachments/uploads": ["post"],
+      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort":
+        ["post"],
+      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete":
+        ["post"],
+      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content":
+        ["put"],
+      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status":
+        ["get"],
     },
     usage: {
       "/usage/admin/custom-plan/": ["get", "post", "put"],
@@ -2668,7 +2693,34 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/user-alerts/{id}/graph/": ["get"],
   "/tracer/users/": ["get", "post"],
   "/tracer/users/get_code_example/": ["get"],
+  "/tracer/v1/attachment-media-sessions": ["post"],
+  "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
+  "/tracer/v1/attachment-sessions": ["post"],
   "/tracer/v1/health": ["get"],
+  "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],
+  "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": [
+    "get",
+  ],
+  "/tracer/v1/projects/{project_id}/attachments/occurrences": ["get", "post"],
+  "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}": [
+    "delete",
+  ],
+  "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
+    ["get", "put"],
+  "/tracer/v1/projects/{project_id}/attachments/resolve": ["post"],
+  "/tracer/v1/projects/{project_id}/attachments/uploads": ["post"],
+  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort": [
+    "post",
+  ],
+  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete": [
+    "post",
+  ],
+  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content": [
+    "put",
+  ],
+  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status": [
+    "get",
+  ],
   "/usage/admin/custom-plan/": ["get", "post", "put"],
   "/usage/admin/entitlements/": ["delete", "get", "post"],
   "/usage/admin/invoice/generate/": ["post"],

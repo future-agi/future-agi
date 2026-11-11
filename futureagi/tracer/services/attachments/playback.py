@@ -1,8 +1,13 @@
 """Session-bound opaque grants; no storage location leaves this service.
 
-Only bounded validated PCM WAV originals/playable are implemented. Channels,
-peaks, manifests, application-session lookup and HTTP routing remain independent
-integration gates. A grant never substitutes for a current source permission.
+Only bounded validated PCM WAV originals/playable are served. Channel, peaks
+and thumbnail representations resolve to ``not_found`` until server-produced
+derivatives are bound. A grant never substitutes for a current source
+permission: every gateway request re-runs the full occurrence authorization.
+
+A media session belongs to one viewer and one application session. Resolution
+issues grants against the viewer's newest live media session; the cookie path
+is narrowed to the gateway, so resolve never sees the cookie itself.
 """
 
 import hashlib
@@ -17,8 +22,10 @@ from tracer.models.attachment import (
     AttachmentBlob,
     AttachmentMediaSession,
     AttachmentPlaybackGrant,
+    AttachmentState,
 )
 from tracer.services.attachments.accounting import audit
+from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import (
     Parent,
     Viewer,
@@ -31,6 +38,15 @@ MEDIA_PATH = "/tracer/v1/attachment-media/"
 COOKIE_NAME = "fi_media_session"
 SESSION_SECONDS = 300
 GRANT_SECONDS = 60
+SERVED_REPRESENTATIONS = ("original", "playable")
+NOT_READY = {
+    AttachmentState.PENDING: "pending",
+    AttachmentState.VALIDATING: "pending",
+    AttachmentState.FAILED: "failed",
+    AttachmentState.REJECTED: "failed",
+    AttachmentState.EXPIRED: "expired",
+    AttachmentState.DELETED: "deleted",
+}
 
 
 def digest(token):
@@ -39,43 +55,28 @@ def digest(token):
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
-def viewer_for(session):
-    scope = session.scope
-    return Viewer(
-        session.user_id,
-        session.application_session_id,
-        scope.organization_id,
-        scope.workspace_id,
-        scope.project_id,
-    )
-
-
-def media_session(token, authority):
-    session = (
-        AttachmentMediaSession.objects.select_related("scope")
-        .filter(
-            token_digest=digest(token),
+def live_media_session(user_id, application_session_id):
+    return (
+        AttachmentMediaSession.objects.filter(
+            user_id=user_id,
+            application_session_id=application_session_id,
             revoked_at__isnull=True,
             expires_at__gt=timezone.now(),
         )
+        .order_by("-expires_at")
         .first()
     )
-    if session is None:
-        raise not_found()
-    viewer = viewer_for(session)
-    scope = scope_for(viewer, authority)
-    if scope.id != session.scope_id:
-        raise not_found()
-    return session, viewer
 
 
 @transaction.atomic
 def exchange(viewer, authority):
-    scope = scope_for(viewer, authority)
+    """Mint the opaque media cookie for a live application session."""
+    if not authority.session_is_live(viewer):
+        raise not_found()
     token = secrets.token_urlsafe(32)
     session = AttachmentMediaSession.objects.create(
-        scope=scope,
         user_id=viewer.user_id,
+        organization_id=viewer.organization_id,
         application_session_id=viewer.application_session_id,
         token_digest=digest(token),
         expires_at=timezone.now() + timedelta(seconds=SESSION_SECONDS),
@@ -92,34 +93,14 @@ def revoke_application_session(*, user_id, application_session_id):
 
 
 @transaction.atomic
-def issue(
-    viewer,
-    authority,
-    *,
-    media_session_id,
-    occurrence_id,
-    parent,
-    representation="original",
-):
-    if representation not in {"original", "playable"}:
+def issue(viewer, authority, *, media_session, row, scope, expiry, representation):
+    if representation not in SERVED_REPRESENTATIONS:
         raise not_found()
-    session = (
-        AttachmentMediaSession.objects.select_related("scope")
-        .filter(
-            pk=media_session_id,
-            user_id=viewer.user_id,
-            application_session_id=viewer.application_session_id,
-            revoked_at__isnull=True,
-            expires_at__gt=timezone.now(),
-        )
-        .first()
-    )
-    if session is None or viewer_for(session) != viewer:
-        raise not_found()
-    row, scope, expiry = get_occurrence(
-        viewer, authority, occurrence_id, parent, ready=True
-    )
-    if scope.id != session.scope_id:
+    if (
+        media_session.user_id != viewer.user_id
+        or media_session.application_session_id != viewer.application_session_id
+        or media_session.organization_id != scope.organization_id
+    ):
         raise not_found()
     if not AttachmentBlob.objects.filter(
         attachment=row.attachment, scope=scope, mime_type="audio/wav"
@@ -127,11 +108,13 @@ def issue(
         raise not_found()
     token = secrets.token_urlsafe(32)
     expiry = min(
-        expiry, session.expires_at, timezone.now() + timedelta(seconds=GRANT_SECONDS)
+        expiry,
+        media_session.expires_at,
+        timezone.now() + timedelta(seconds=GRANT_SECONDS),
     )
     grant = AttachmentPlaybackGrant.objects.create(
         scope=scope,
-        media_session=session,
+        media_session=media_session,
         occurrence=row,
         token_digest=digest(token),
         representation=representation,
@@ -155,20 +138,80 @@ def issue(
     }
 
 
+def resolve(viewer, authority, items):
+    """F01 ``resolveAttachmentOccurrences``: per-item authorization, in order.
+
+    A batch never inherits the first item's authorization. Unauthorized and
+    nonexistent items are both ``not_found``.
+    """
+    scope_for(viewer, authority)
+    media_session = live_media_session(viewer.user_id, viewer.application_session_id)
+    results = []
+    for item in items:
+        occurrence_id = item["occurrence_id"]
+        try:
+            row, scope, expiry = get_occurrence(
+                viewer, authority, occurrence_id, Parent.parse(item["parent"])
+            )
+        except AttachmentError:
+            results.append({"occurrence_id": occurrence_id, "status": "not_found"})
+            continue
+        state = row.attachment.state
+        if state != AttachmentState.READY:
+            results.append(
+                {
+                    "occurrence_id": occurrence_id,
+                    "status": NOT_READY.get(state, "not_found"),
+                }
+            )
+            continue
+        try:
+            if media_session is None:
+                raise not_found()
+            results.append(
+                issue(
+                    viewer,
+                    authority,
+                    media_session=media_session,
+                    row=row,
+                    scope=scope,
+                    expiry=expiry,
+                    representation=item["representation"],
+                )
+            )
+        except AttachmentError:
+            results.append({"occurrence_id": occurrence_id, "status": "not_found"})
+    return results
+
+
 def authorize(cookie, grant_token, occurrence_id, authority):
-    session, viewer = media_session(cookie, authority)
+    """Re-authorize the media session, grant, viewer and occurrence together."""
+    session = AttachmentMediaSession.objects.filter(
+        token_digest=digest(cookie),
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).first()
+    if session is None:
+        raise not_found()
     grant = (
-        AttachmentPlaybackGrant.objects.select_related("occurrence")
+        AttachmentPlaybackGrant.objects.select_related("occurrence", "scope")
         .filter(
             token_digest=digest(grant_token),
             media_session=session,
-            scope_id=session.scope_id,
             expires_at__gt=timezone.now(),
         )
         .first()
     )
     if grant is None or str(grant.occurrence.client_id) != str(occurrence_id):
         raise not_found()
+    scope = grant.scope
+    viewer = Viewer(
+        session.user_id,
+        session.application_session_id,
+        scope.organization_id,
+        scope.workspace_id,
+        scope.project_id,
+    )
     original = grant.occurrence
     row, scope, _ = get_occurrence(
         viewer,
@@ -181,7 +224,7 @@ def authorize(cookie, grant_token, occurrence_id, authority):
         grant.policy_version != scope.policy_version
         or grant.deletion_generation != scope.deletion_generation
         or grant.source_generation != row.source_generation
-        or grant.representation not in {"original", "playable"}
+        or grant.representation not in SERVED_REPRESENTATIONS
     ):
         raise not_found()
     blob = AttachmentBlob.objects.filter(
@@ -193,4 +236,4 @@ def authorize(cookie, grant_token, occurrence_id, authority):
         or not 0 < blob.byte_length <= 8 * 1024 * 1024
     ):
         raise not_found()
-    return grant, blob
+    return grant, blob, viewer

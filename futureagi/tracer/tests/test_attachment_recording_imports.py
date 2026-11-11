@@ -25,6 +25,7 @@ from tracer.models.attachment import (
     AttachmentBudget,
     AttachmentOccurrence,
     AttachmentScope,
+    CaptureSession,
 )
 from tracer.models.attachment_recording import (
     AttachmentImportJob,
@@ -43,7 +44,7 @@ from tracer.services.attachments import (
     provider_recordings,
     retention,
 )
-from tracer.services.attachments.contract import AttachmentError, CapturePolicy
+from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.storage import ObjectIdentity
 
 pytestmark = [
@@ -130,17 +131,34 @@ def env(project, user, settings, tmp_path):
 
 
 def session(env, **policy):
+    """A live capture session of the env writer, bootstrapped through F01.
+
+    The stored policy snapshot carries the requested restrictions so the
+    server's deny-wins re-check is exercised on every later step.
+    """
     scope, writer, _, _ = env
-    values = {"enabled": True, "allow_import": True, **policy}
     current, _ = broker.bootstrap(
         writer,
-        scope_id=scope.id,
-        client_id=uuid.uuid4(),
-        trace_id=TRACE,
-        parent_span_id=SPAN,
-        policy=CapturePolicy(**values),
+        {
+            "schema_versions": [1],
+            "project_name": scope.project.name,
+            "project_type": scope.project.trace_type,
+            "capture_session_id": str(uuid.uuid4()),
+            "correlation_nonce": str(uuid.uuid4()),
+        },
     )
-    return current
+    return CaptureSession.objects.create(
+        scope_id=current.scope_id,
+        client_id=uuid.uuid4(),
+        correlation_nonce=uuid.uuid4(),
+        writer_kind=current.writer_kind,
+        writer_id=current.writer_id,
+        capture_policy={**current.capture_policy, "allow_import": True, **policy},
+        policy_version=current.policy_version,
+        deletion_generation=current.deletion_generation,
+        expires_at=current.expires_at,
+        request_fingerprint=uuid.uuid4().hex,
+    )
 
 
 def envelope(env, data, *, url=None, direction="mixed"):
