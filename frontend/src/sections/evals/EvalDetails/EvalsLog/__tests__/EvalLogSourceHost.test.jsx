@@ -2,6 +2,8 @@ import React from "react";
 import {
   QueryClient,
   QueryClientProvider,
+  focusManager,
+  onlineManager,
   useQueryClient,
 } from "@tanstack/react-query";
 import { Drawer } from "@mui/material";
@@ -222,6 +224,8 @@ describe("eval-owned source host", () => {
     cleanup();
     client?.clear();
     vi.restoreAllMocks();
+    focusManager.setFocused(undefined);
+    onlineManager.setOnline(true);
   });
 
   it("S01 revalidates before opening and pins the fresh trace/project/span instead of chips", async () => {
@@ -748,5 +752,89 @@ describe("eval-owned source host", () => {
         exact: true,
       }),
     ).toBeDefined();
+  });
+
+  const baseCalls = () =>
+    axios.get.mock.calls.filter(
+      ([url, config]) =>
+        url === endpoints.develop.eval.getEvalLogs &&
+        !config?.params?.include_source_navigation,
+    );
+  // Later base-log reads wait for the test, so the in-flight state renders.
+  // An instant mock settles inside one batched notify and hides the loader.
+  function holdBaseRefetches() {
+    const pending = [];
+    const passThrough = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url, config) =>
+      url === endpoints.develop.eval.getEvalLogs &&
+      !config?.params?.include_source_navigation
+        ? new Promise((resolve) => pending.push(resolve))
+        : passThrough(url, config),
+    );
+    return pending;
+  }
+  const tabRefocus = () => {
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+  };
+  const reconnect = () => {
+    onlineManager.setOnline(false);
+    onlineManager.setOnline(true);
+  };
+  async function openSource(kind) {
+    if (kind === "voice_call") {
+      nav = { ...ready, kind: "voice_call" };
+      destination = voiceData;
+    }
+    mount(true);
+    await activate(kind);
+    return screen.findByTestId(kind === "trace" ? "trace-body" : "voice-body");
+  }
+
+  it.each([
+    { kind: "trace", via: "tab refocus", trigger: tabRefocus },
+    { kind: "trace", via: "reconnect", trigger: reconnect },
+    { kind: "voice_call", via: "tab refocus", trigger: tabRefocus },
+    { kind: "voice_call", via: "reconnect", trigger: reconnect },
+  ])(
+    "R2C-02 keeps an open $kind viewer while a $via refetch revalidates the log",
+    async ({ kind, trigger }) => {
+      const body = await openSource(kind);
+      const dialog = screen.getByRole("dialog");
+      const destinations = destinationCalls().length;
+      expect(baseCalls()).toHaveLength(1);
+      const pending = holdBaseRefetches();
+
+      await act(async () => trigger());
+      // The log is still revalidated (a revoked log must stop showing)...
+      await waitFor(() => expect(baseCalls()).toHaveLength(2));
+      // ...but the log, the source host and its viewer stay mounted meanwhile.
+      expect(body.isConnected).toBe(true);
+      expect(dialog.isConnected).toBe(true);
+      expect(screen.getByTestId("eval-output")).toBeInTheDocument();
+
+      await act(async () => pending[0](envelope(baseLog)));
+      expect(body.isConnected).toBe(true);
+      expect(dialog.isConnected).toBe(true);
+      expect(
+        screen.getByRole("button", { name: "Back to evaluation" }),
+      ).toBeInTheDocument();
+      expect(destinationCalls()).toHaveLength(destinations);
+      expect(screen.queryByText("Checking source...")).not.toBeInTheDocument();
+    },
+  );
+
+  it("R2C-02 still drops the log and its viewer when a background refetch returns no log", async () => {
+    const body = await openSource("trace");
+    const pending = holdBaseRefetches();
+    await act(async () => tabRefocus());
+    await waitFor(() => expect(baseCalls()).toHaveLength(2));
+    expect(body.isConnected).toBe(true);
+
+    await act(async () => pending[0](envelope([])));
+    await screen.findByText("Evaluation log is unavailable.");
+    expect(body.isConnected).toBe(false);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("eval-output")).not.toBeInTheDocument();
   });
 });

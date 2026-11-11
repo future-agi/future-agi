@@ -290,7 +290,7 @@ const LogsDrawer = ({
     currentWorkspaceId,
     selectedRow?.logId,
   ];
-  const { data, isPending, isRefetching, isLoading, isFetching } = useQuery({
+  const { data, isPending, isFetching } = useQuery({
     queryKey,
     queryFn: async ({ signal }) =>
       axios.get(endpoints.develop.eval.getEvalLogs, {
@@ -307,6 +307,11 @@ const LogsDrawer = ({
   });
 
   const covered = useDrawerCovered(open);
+  const hasLog = Boolean(data?.data?.result?.log_id);
+  // Skeleton only while there is no log to show. A background refetch (tab
+  // focus, reconnect) keeps the log mounted, and with it any open source
+  // viewer; its result still replaces the log, or the unavailable state.
+  const showLoader = isPending || (isFetching && !hasLog);
 
   return (
     <Drawer
@@ -331,9 +336,9 @@ const LogsDrawer = ({
         },
       }}
     >
-      {isPending || isRefetching || isLoading || isFetching ? (
+      {showLoader ? (
         <LoaderDrawer onClose={onClose} />
-      ) : open && data?.data?.result?.log_id ? (
+      ) : open && hasLog ? (
         <LogsDrawerChild
           key={JSON.stringify(queryKey)}
           selectedRow={selectedRow}
