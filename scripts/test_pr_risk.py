@@ -1736,6 +1736,36 @@ class ControllerTests(unittest.TestCase):
         risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("pulls/42/merge"))
 
+    def test_unreviewable_diff_tells_the_pr_once_and_clears_on_a_new_diff(self):
+        oversized = "@@ -0,0 +1,200 @@\n" + "\n".join(["+" + "x" * 700] * 200)
+        cases = {
+            "empty added file": dict(additions=0, status="added", patch=None),
+            "oversized diff": dict(additions=200, patch=oversized),
+            "patch shorter than its counts": dict(additions=2),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                self.api = FakeGitHub()
+                patch_text = change.pop("patch", "@@ -1 +1 @@\n+new")
+                self.api.files = [file("futureagi/tests/test_empty.py", **change)]
+                self.api.files[0]["patch"] = patch_text
+                if patch_text is None:
+                    del self.api.files[0]["patch"]
+                self.api.pr.update(additions=self.api.files[0]["additions"])
+                for _ in range(3):
+                    self.prepare()  # green: no exception
+                    self.assertEqual(self.outputs["review"], "false")
+                [escalation] = self.escalations()
+                self.assertIn("A person must review this PR", escalation)
+                self.assertFalse(self.reservations())
+                # A new, reviewable diff clears it.
+                self.api.files = [file("futureagi/tests/test_empty.py")]
+                self.api.pr.update(additions=1)
+                self.new_head("1" * 40, "a reviewable change")
+                self.prepare()
+                self.assertEqual(self.outputs["review"], "true")
+                self.assertTrue(self.escalations()[0].startswith(risk.RESOLVED))
+
     def test_check_conclusions_are_not_evidence(self):
         # A blocked run's check flipped to success does not free the diff.
         context = self.prepare()
@@ -2334,10 +2364,76 @@ class ControllerTests(unittest.TestCase):
     def test_approval_is_idempotent_on_retry(self):
         context = self.passing_review()
         self.api.pr["mergeable_state"] = "blocked"
+        # Blocked right after approving may be GitHub catching up: red, retried.
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         for _ in range(2):
-            with self.assertRaises(risk.PolicyError):
-                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertEqual(len(self.api.writes("pulls/42/reviews")), 1)
+
+    def merge_blocked_notes(self):
+        return [c["body"] for c in self.api.comments if c["body"].startswith(risk.MERGE_BLOCKED_MARKER)]
+
+    def test_blocked_after_an_earlier_approval_tells_the_pr_once_and_keeps_polling(self):
+        context = self.passing_review()
+        self.api.pr["mergeable_state"] = "blocked"
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertFalse(self.merge_blocked_notes())
+        # Later sweeps: the approval already existed, so a rule needs a person.
+        for _ in range(3):
+            self.assertNotIn("check_id", self.prepare())
+            risk.merge(self.api, POLICY, settings(), self.outputs["context"], self.api.approver)
+        [note] = self.merge_blocked_notes()
+        self.assertIn(f"`{HEAD}`", note)
+        self.assertIn("`blocked`", note)
+        self.assertFalse(self.escalations())
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+        # A person supplies what the rule needs: the next sweep merges.
+        self.api.pr["mergeable_state"] = "clean"
+        self.prepare()
+        risk.merge(self.api, POLICY, settings(), self.outputs["context"], self.api.approver)
+        self.assertTrue(self.api.writes("pulls/42/merge"))
+        self.assertEqual(len(self.api.approver.calls), 1)
+        # Other states on a later run still fail the run and post nothing.
+        for state in ("unknown", "behind", "dirty"):
+            with self.subTest(state=state):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.pr["mergeable_state"] = state
+                for _ in range(2):
+                    with self.assertRaises(risk.PolicyError):
+                        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertFalse(self.merge_blocked_notes())
+
+    def test_a_refused_approval_posts_one_audit_comment(self):
+        for status in (422, 403):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.refuse_approval = status
+                for _ in range(3):
+                    with self.assertRaisesRegex(risk.PolicyError, "refused the approver App"):
+                        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                audits = [c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)]
+                self.assertEqual(len(audits), 1)
+                self.assertFalse(self.api.reviews)
+                self.assertFalse(self.api.writes("pulls/42/merge"))
+                # Once GitHub accepts it, the approval and merge go ahead.
+                self.api.refuse_approval = None
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertTrue(self.api.writes("pulls/42/merge"))
+                self.assertEqual(len([c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)]), 1)
+        # A server error is not a refusal: it fails as itself, and still posts
+        # no second audit comment on the next run.
+        self.api = FakeGitHub()
+        context = self.passing_review()
+        self.api.refuse_approval = 502
+        for _ in range(2):
+            with self.assertRaises(risk.ApiError) as caught:
+                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+            self.assertNotIn("refused", str(caught.exception))
+        self.assertEqual(len([c for c in self.api.comments if c["body"].startswith(risk.APPROVAL_MARKER)]), 1)
 
     def test_dismissed_bot_approval_is_a_hold(self):
         context = self.passing_review()

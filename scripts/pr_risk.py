@@ -32,6 +32,7 @@ ROUND_MARKER = "<!-- pr-autopilot:round:"
 TIER_MARKER = "<!-- pr-autopilot:tier -->"
 ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
 APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
+MERGE_BLOCKED_MARKER = "<!-- pr-autopilot:merge-blocked -->"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATCH_ID = re.compile(r"[0-9a-f]{32}\Z")
 ZERO_SHA = "0" * 40
@@ -1175,26 +1176,35 @@ def tier_audit(api, pr, risk, policy, comments):
 
 
 def review_patches(files, policy):
-    # GitHub omits patches for binaries and large diffs. Never ask the model to
-    # certify a partial review or let it fetch more data with a privileged token.
+    # GitHub omits patches for binaries, empty files and large diffs. Never ask
+    # the model to certify a partial review or let it fetch more data with a
+    # privileged token. NeedsPerson: prepare tells the PR that a person must
+    # review it, instead of failing on every sweep with nothing on the PR.
     patches = []
     for file in files:
         patch = file.get("patch")
         if not isinstance(patch, str) or not patch.strip():
-            raise PolicyError(
-                "complete textual patches are unavailable; human review is needed"
+            raise NeedsPerson(
+                "GitHub gives no complete textual patch for at least one file (for "
+                "example an empty or binary file), so the AI review cannot see the "
+                "whole diff. A person must review this PR."
             )
         # Compare hunk line counts with API stats to detect omitted/truncated data.
         lines = patch.splitlines()
         additions = sum(line.startswith("+") for line in lines)
         deletions = sum(line.startswith("-") for line in lines)
         if additions != file["additions"] or deletions != file["deletions"]:
-            raise PolicyError("patch statistics are incomplete; human review is needed")
+            raise NeedsPerson(
+                "GitHub's patch for at least one file does not match its line counts, "
+                "so the AI review cannot see the whole diff. A person must review this PR."
+            )
         patches.append(
             {"path": file["filename"], "status": file["status"], "patch": patch}
         )
     if len(json.dumps(patches, ensure_ascii=True).encode()) > policy["max_diff_bytes"]:
-        raise PolicyError("diff exceeds the review byte limit; human review is needed")
+        raise NeedsPerson(
+            "The diff is larger than the AI review's byte limit. A person must review this PR."
+        )
     return patches
 
 
@@ -1631,11 +1641,20 @@ def validate_live(api, policy, settings, context):
 
 def approve(approver, login, number, head, body):
     """Post the approval as the approver App and confirm GitHub recorded it so."""
-    review = approver.request(
-        "POST",
-        f"pulls/{number}/reviews",
-        {"event": "APPROVE", "commit_id": head, "body": body},
-    )
+    try:
+        review = approver.request(
+            "POST",
+            f"pulls/{number}/reviews",
+            {"event": "APPROVE", "commit_id": head, "body": body},
+        )
+    except ApiError as exc:
+        if exc.status not in (403, 422):
+            raise
+        raise PolicyError(
+            f"GitHub refused the approver App's approval (HTTP {exc.status}). Check that "
+            "the App is installed on this repository with Pull requests: write; nothing "
+            "was merged"
+        ) from None
     user = (review.get("user") or {}) if isinstance(review, dict) else {}
     # A review recorded under another login would never be found as this
     # autopilot's own again: every later run would approve once more.
@@ -1663,7 +1682,15 @@ def merge(api, policy, settings, context, approver):
     reviews = api.pages(f"pulls/{number}/reviews")
     already = any(approval_review(r, context["head"], "APPROVED", login) for r in reviews)
     if not already:
-        comment(api, number, APPROVAL_MARKER + "\n" + audit)
+        # One audit comment per head, even when every approval is refused. This
+        # only suppresses a repeat; approval evidence is the review itself.
+        if not any(
+            bot_comment(c)
+            and (c.get("body") or "").startswith(APPROVAL_MARKER)
+            and context["head"] in c.get("body", "")
+            for c in api.pages(f"issues/{number}/comments")
+        ):
+            comment(api, number, APPROVAL_MARKER + "\n" + audit)
         # The audit writes and duplicate-approval lookup can race a new hold or
         # change request. Refresh every gate after them, immediately before APPROVE.
         validate_live(api, policy, settings, context)
@@ -1675,7 +1702,13 @@ def merge(api, policy, settings, context, approver):
     # "unstable" means only non-required checks are failing or pending (E2E is
     # advisory); validate_live just re-verified every required check and the
     # review on this head. blocked, behind, dirty and unknown still wait.
-    if pr.get("mergeable_state") not in {"clean", "unstable"}:
+    state = pr.get("mergeable_state")
+    if state not in {"clean", "unstable"}:
+        if already and state == "blocked":
+            # The approval was there before this run, so this is not GitHub
+            # catching up: a rule needs something the bot cannot give.
+            merge_blocked(api, number, context["head"], state)
+            return
         raise PolicyError(
             "GitHub protection is not clean after approval; wait for a fresh run"
         )
@@ -1730,6 +1763,34 @@ def merge(api, policy, settings, context, approver):
     )
     if missed:
         raise PolicyError("merged, but follow-ups did not complete: " + ", ".join(missed))
+
+
+def merge_blocked(api, number, head, state):
+    """Say once per head why an approved PR does not merge, and exit green.
+    Not an escalation: a later run that reuses the pass would mark that as no
+    longer applying on every sweep. The sweep keeps dispatching the PR, because
+    only it notices when a person supplies what the rule needs."""
+    body = (
+        f"{MERGE_BLOCKED_MARKER}\nThe autopilot approved head `{head}`, but GitHub still "
+        f"reports this PR as `{safe_text(str(state))}`. A branch rule needs something the "
+        "autopilot cannot give, for example a code-owner review, another approval, "
+        "resolved conversations, or an approval GitHub does not count. A person must "
+        "review or merge this PR. The autopilot keeps checking and merges it if the rule "
+        "is satisfied later."
+    )
+    previous = next(
+        (
+            c
+            for c in api.pages(f"issues/{number}/comments")
+            if bot_comment(c) and (c.get("body") or "").startswith(MERGE_BLOCKED_MARKER)
+        ),
+        None,
+    )
+    if previous and previous["body"] != body:
+        api.request("PATCH", f"issues/comments/{previous['id']}", {"body": body})
+    elif not previous:
+        comment(api, number, body)
+    summary(f"Waiting: approved, but GitHub reports the PR as {state}; a person was told.")
 
 
 def post_merge_plan(policy, files, settings):
