@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test, expect } from '../../lib/scope-actors';
 import { E2E } from '../../lib/env';
@@ -11,8 +11,9 @@ import { buildJ6Registration } from '../../lib/skills-r3/j6-registration.mjs';
 
 // Synthetic fixture on the owned cloud VM stack. The registered J6 driver runs the
 // whole job through public UI, CLI and packaged-application interfaces; this flow
-// prepares its retained incident and independently re-reads PG, API and guest
-// ledgers afterwards. A VM container guest is not an E2B/Simulation qualification.
+// prepares its retained incident, then re-reads Postgres and the independent oracle
+// artifacts the driver wrote (it read the guest ledgers itself before teardown).
+// A VM container guest is not an E2B/Simulation qualification.
 test('SKILLS-E2E-063: recover an incident through the declared eight-fault matrix without false recovery or duplicate business effects', {
   tag: ['@flow'],
   annotation: flowAnnotation({ id: 'SKILLS-E2E-063', area: 'skills',
@@ -47,25 +48,19 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
   const prefix = `e2e-j6-${Date.now().toString(36)}`;
   const dir = testInfo.outputPath('j6');
   await mkdir(dir, { recursive: true });
+  const inputPath = resolve(dir, 'driver-input.private.json'); // credential-bearing: removed below
   const guest = await startGuest({ runId: prefix, wheelsDir: wheels!, fixtureDir: resolve('fixtures/skills-r3/j6-guest') });
-  let stopped = false;
   try {
     const egress = await guest.egress();
     expect(egress, 'the guest reaches only its sidecar').toEqual({ 'skills-fakes': 'open', '1.1.1.1': 'closed', '8.8.8.8': 'closed' });
     const seed = await prepareJ6Scenario({ apiUrl: E2E.apiUrl, appUrl: E2E.appUrl, author, reviewer, probe, guest, python: python!,
       projectDir: resolve(dir, 'project'), prefix, log: (line: string) => console.log(`[j6-prepare] ${line}`) });
-    const inputPath = resolve(dir, 'driver-input.private.json');
     const outputDir = resolve(dir, 'observations');
     const provenance = JSON.parse(await readFile(process.env.J6_PROVENANCE ?? '/dev/null', 'utf8').catch(() => 'null') ?? 'null');
     const { registration, provenance: filled } = await buildJ6Registration({ seed, provenance, wheelsDir: wheels!, guest, author, apiUrl: E2E.apiUrl });
     await writeFile(resolve(dir, 'registration.json'), JSON.stringify(registration, null, 2), { mode: 0o600 });
     await writeFile(inputPath, JSON.stringify({ ...seed, outputDir, provenance: filled, python, guest: guest.describe(),
       actors: { author, reviewer }, appUrl: E2E.appUrl, apiUrl: E2E.apiUrl }), { mode: 0o600 });
-    if (process.env.J6_PREPARE_ONLY) {
-      console.log(`[j6-prepare] prepared only; guest left running; input ${inputPath}`);
-      stopped = true; // development rehearsal: run the driver by hand, then stop the guest
-      return;
-    }
     const runId = `j6-${randomBytes(4).toString('hex')}`;
     const code = await new Promise<number>((done, reject) => {
       const child = spawn('node', [resolve('benchmarks/context-hub/cli.mjs'), 'run', 'J6', runId, resolve(dir, 'registration.json'), 'registered', outputDir],
@@ -73,7 +68,6 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
       child.once('error', reject);
       child.once('exit', (exit) => done(exit ?? 1));
     });
-    stopped = true; // the driver's own teardown destroys the guest
     expect(code, 'registered J6 driver exit code').toBe(0);
     const report = JSON.parse(await readFile(resolve(outputDir, `${runId}.json`), 'utf8'));
     expect(report.status).toBe('completed');
@@ -97,7 +91,9 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     expect(rollbacks, 'one lower-number rollback event').toHaveLength(process.env.J6_ORACLE_FAULT === 'rollback' ? 2 : 1);
     await testInfo.attach('j6-run-summary', { body: JSON.stringify({ evidence_class: 'synthetic fixture, VM container guest, not E2B/Simulation', measurement: report.measurement, checks: report.checks, matrix }), contentType: 'application/json' });
   } finally {
-    if (!stopped) await guest.stop().catch(() => {});
-    void createHash; void randomUUID;
+    // The driver's own teardown already destroyed the guest; stopping again is idempotent and
+    // guarantees nothing leaks if the driver died before it could clean up.
+    await guest.stop().catch(() => {});
+    await unlink(inputPath).catch(() => {});
   }
 });

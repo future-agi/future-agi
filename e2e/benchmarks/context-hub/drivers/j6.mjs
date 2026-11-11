@@ -149,13 +149,14 @@ export async function createDriver({ jobId, runId, registration }) {
     await admin.click(page.getByRole('combobox', { name: 'Request status' }), `open-status-filter-${target}`);
     await admin.click(page.getByRole('option', { name: 'Pending', exact: true }), `filter-pending-${target}`);
     await expect(page.getByRole('table', { name: 'Assigned release reviews' }).getByRole('row').nth(1)).toBeVisible();
-    // Which row is the wanted packet: read the same ordering the screen shows from the public inbox.
+    // Rows share the context name; the Updated stamp the screen shows tells them apart.
     const inbox = await call(reviewer, 'GET', 'review-inbox/?status=pending&page=1&page_size=50', undefined, signal);
-    const index = inbox.result.results.findIndex((row) => row.id === id);
-    requireValue(index >= 0, 'The wanted packet is not pending in the inbox');
-    await writeFile(resolve(output, `inbox-order-${target}.json`), JSON.stringify({ wanted: id, index, rows: inbox.result.results.map((row) => ({ id: row.id, status: row.status, revision: row.revision, updated_at: row.updated_at, candidate: row.candidate_version_id })) }, null, 2), { mode: 0o600 }).catch(() => {});
-    await expect(page.getByRole('button', { name: input.contextName, exact: true })).toHaveCount(inbox.result.results.length);
-    await admin.click(page.getByRole('button', { name: input.contextName, exact: true }).nth(index), `open-${target}`);
+    const wanted = inbox.result.results.find((row) => row.id === id);
+    requireValue(wanted, 'The wanted packet is not pending in the inbox');
+    const stamp = `${new Date(wanted.updated_at).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+    await writeFile(resolve(output, `inbox-order-${target}.json`), JSON.stringify({ wanted: id, stamp, rows: inbox.result.results.map((row) => ({ id: row.id, status: row.status, revision: row.revision, updated_at: row.updated_at })) }, null, 2), { mode: 0o600 }).catch(() => {});
+    const row = page.getByRole('table', { name: 'Assigned release reviews' }).getByRole('row').filter({ hasText: `updated ${stamp}` });
+    await admin.click(row.getByRole('button', { name: input.contextName, exact: true }), `open-${target}`);
   };
   // Evidence images never show a one-time credential: readonly fields are masked in the capture only.
   const shot = async (page, name) => {
@@ -200,6 +201,23 @@ export async function createDriver({ jobId, runId, registration }) {
       if (page >= value.total_pages) break;
     }
     return Object.fromEntries(Object.entries(input.bindings).map(([key, binding]) => [key, results.find((row) => row.binding.id === binding.id)]));
+  };
+  // Independent re-derivation from the sidecar business/model ledgers and the public closure (never memoized).
+  const policySha = (closure, skillId) => {
+    const descriptor = JSON.parse(closure.files.find((file) => file.path === '.futureagi/context.json').content);
+    const link = descriptor.links.find((item) => item.skill_id === skillId);
+    const policy = closure.files.find((file) => file.path === `${link.mount}references/policy.md`);
+    return sha256(Buffer.from(policy.content, 'utf8'));
+  };
+  const originalCase = async (signal) => {
+    const business = await guest.business();
+    const o0 = business.operations.filter((row) => row.order_id === input.orders.o0);
+    const model = (await guest.ledger()).model;
+    const decided = model.filter((row) => row.decision.rule === 'refund_within_window').at(-1);
+    const expected = policySha(await readCompleteClosure(read, input.contextId, 1, signal), input.leaves[0].skillId);
+    const child = decided?.delivered_files.find((file) => file.skill_id === input.leaves[0].skillId && file.path === 'references/policy.md');
+    return { status: o0.length === 1 ? o0[0].status : `operations:${o0.length}`, amount: o0[0]?.amount, rule: decided?.decision.rule, delivered_root_sha256: decided?.system_sha256,
+      retired_child_bytes_delivered: Boolean(child) && child.sha256 === expected, model_requests: model.length };
   };
   const faultSeen = (ledger, key, artifactHash, observed) => {
     ledger.fault(FAULTS[key], `${FAULTS[key]}-1`);
@@ -338,6 +356,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const rejected = await call(reviewer, 'POST', `release-requests/${stale.id}/execute/`, { revision: stale.revision, expected_fingerprint: stale.fingerprint }, signal);
         const afterReject = await labelEvents();
         requireValue(rejected.status === 409 && afterReject.length === afterAba.length, 'The stale ABA packet must be rejected without a label event');
+        state.stalePacket = { id: stale.id, revision: stale.revision, fingerprint: stale.fingerprint };
         state.stale = { status: rejected.status, label_events_added: afterReject.length - afterAba.length, hop_events: afterAba.slice(eventsBefore.length).map((row) => [row.from_version, row.to_version]) };
         const abaHash = await record('aba-rejection', state.stale);
         faultSeen(ledger, 'aba', abaHash, state.stale);
@@ -386,7 +405,9 @@ export async function createDriver({ jobId, runId, registration }) {
         state.replacement = await secretBox.inputValue();
         requireValue(typeof state.replacement === 'string' && state.replacement.length >= 32, 'The replacement credential was not shown');
         await operator.handoff('application-secret-store', async () => {});
-        await authorPage.getByRole('textbox', { name: 'New credential (shown once)' }).evaluate((node) => { node.value = ''; }).catch(() => {});
+        // The secret is configured in two places: the application's environment and the CLI's.
+        await operator.configurationEdit('configure-application-credential', async () => { state.appCredential = state.replacement; });
+        await operator.configurationEdit('configure-cli-credential', async () => { state.cliCredential = state.replacement; });
         await shot(authorPage, '05-replacement-credential-issued');
         // Exact checked-in lock: restore the last reviewed commit's lock, preserve local work.
         const before = {
@@ -398,10 +419,10 @@ export async function createDriver({ jobId, runId, registration }) {
         const retained = resolve(input.project, '..', 'retained-lock.json');
         await writeFile(retained, exported.stdout, { mode: 0o600 });
         const plan = resolve(input.project, '..', 'restore-plan.json');
-        await hostCli(stage, ledger, 'plan-locked-restore', ['restore', '--allow-preview', '--lock', retained, '--project', '.', '--plan', plan], state.replacement);
-        await hostCli(stage, ledger, 'inspect-restore-plan', ['inspect', '--plan', plan, '--diff'], state.replacement);
-        await hostCli(stage, ledger, 'apply-locked-restore', ['apply', '--plan', plan, '--quiescent'], state.replacement);
-        await hostCli(stage, ledger, 'verify-locked-restore', ['verify', '--project', '.'], state.replacement);
+        await hostCli(stage, ledger, 'plan-locked-restore', ['restore', '--allow-preview', '--lock', retained, '--project', '.', '--plan', plan], state.cliCredential);
+        await hostCli(stage, ledger, 'inspect-restore-plan', ['inspect', '--plan', plan, '--diff'], state.cliCredential);
+        await hostCli(stage, ledger, 'apply-locked-restore', ['apply', '--plan', plan, '--quiescent'], state.cliCredential);
+        await hostCli(stage, ledger, 'verify-locked-restore', ['verify', '--project', '.'], state.cliCredential);
         const lock = JSON.parse(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8'));
         const files = closureFiles(await readCompleteClosure(read, input.contextId, 1, signal));
         const notes = await readFile(resolve(input.project, 'docs', 'local-notes.md'), 'utf8');
@@ -431,7 +452,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const businessStart = await guest.business();
         await guest.faults({ available: true, arm_after_business: true });
         const reportA = input.credentials.report.A.secret;
-        const envFile = await guestEnv(state.replacement, reportA, 'A');
+        const envFile = await guestEnv(state.appCredential, reportA, 'A');
         await guest.put('/state/requests/t1.json', JSON.stringify(requestFor(input.threads.t1, order)) + '\n');
         const paused = await guestCommand(stage, ledger, 'incident-operator', 'run-application-thread', envFile, entrypoint('/state/requests/t1.json', '/state/t1.sqlite', '/state/out/t1-1.json'), [2]);
         const out = await guestJson('/state/out/t1-1.json');
@@ -464,7 +485,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const names = (await run('docker', ['exec', guest.names.guest, 'sh', '-c', `ls -t /state/out/${key}-inspect-*.json | head -1`], { encoding: 'utf8' })).stdout.trim();
           return guestJson(names);
         };
-        const t1Env = await inspect('t1', 'inspect-paused-thread', 'A', state.replacement, t.t1);
+        const t1Env = await inspect('t1', 'inspect-paused-thread', 'A', state.appCredential, t.t1);
         const t1Inspect = await latest('t1');
         // The refund call is still pending in the transcript, but its business receipt is already durable.
         requireValue(t1Inspect.resumable === true && t1Inspect.reason === 'original_identity_available' && t1Inspect.pending_tool_calls.length === 1
@@ -508,8 +529,8 @@ export async function createDriver({ jobId, runId, registration }) {
             await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: `reconstruct-${key}-${field}` }, async () => { fields[field] = value; });
           }
           await guest.put(`/state/requests/review-${key}.json`, JSON.stringify({ schema: 1, case: fields, reconstruction_reviewed: true }) + '\n');
-          await guestCommand(stage, ledger, 'incident-operator', `prepare-clean-thread-${key}`, await guestEnv(state.replacement, reports[binding].secret, binding), ['python', '-m', 'ctxhub_support.recovery', `/state/requests/review-${key}.json`, '--output', `/state/requests/clean-${key}.json`]);
-          const cleanEnv = await guestEnv(state.replacement, reports[binding].secret, binding);
+          await guestCommand(stage, ledger, 'incident-operator', `prepare-clean-thread-${key}`, await guestEnv(state.appCredential, reports[binding].secret, binding), ['python', '-m', 'ctxhub_support.recovery', `/state/requests/review-${key}.json`, '--output', `/state/requests/clean-${key}.json`]);
+          const cleanEnv = await guestEnv(state.appCredential, reports[binding].secret, binding);
           await guestCommand(stage, ledger, 'incident-operator', `run-clean-thread-${key}`, cleanEnv, entrypoint(`/state/requests/clean-${key}.json`, `/state/clean-${key}.sqlite`, `/state/out/clean-${key}.json`), [0]);
           clean[key] = { output: await guestJson(`/state/out/clean-${key}.json`), request: JSON.parse(await guest.read(`/state/requests/clean-${key}.json`)), elapsed_ms: Math.round(performance.now() - started), abandoned_thread: thread };
           requireValue(clean[key].output.status === 'completed' && clean[key].output.version_id === v1.id && clean[key].request.thread !== thread, 'The clean thread must run the recovery release as a new thread');
@@ -538,7 +559,7 @@ export async function createDriver({ jobId, runId, registration }) {
       if (stage.id === 'verify-original-case') {
         const reports = input.credentials.report;
         // The abandoned incident thread is closed, never counted as recovered.
-        const oldEnv = await guestEnv(state.replacement, reports.A.secret, 'A');
+        const oldEnv = await guestEnv(state.appCredential, reports.A.secret, 'A');
         await guestCommand(stage, ledger, 'incident-operator', 'close-incident-thread', oldEnv, ['python', '-m', 'ctxhub_support.lifecycle', 'close', '--state', '/state/t0.sqlite', '--thread', input.threads.t0, '--reason', 'incident_superseded', '--output', '/state/out/t0-closed.json']);
         const fields = { case_id: 'original-case-recheck', order_id: input.orders.o0, request: REFUND_REQUEST };
         for (const field of Object.keys(fields)) await ledger.measure({ dimension: 'A', primitive: 'field_edit', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: `reconstruct-original-${field}` }, async () => {});
@@ -549,13 +570,9 @@ export async function createDriver({ jobId, runId, registration }) {
         const business = await guest.business();
         const o0 = business.operations.filter((row) => row.order_id === input.orders.o0);
         requireValue(out.status === 'completed' && out.version_id === v1.id && o0.length === 1 && o0[0].status === 'applied' && o0[0].amount === 25, 'The original case must be refunded exactly once under the recovery release');
-        const model = (await guest.ledger()).model;
-        const policy = (await guestJson('/state/out/clean-o0.json')).events.find((event) => event.kind === 'file_read' && event.body.path === 'references/policy.md');
-        const lastModel = model.at(-1);
-        const decided = model.filter((row) => row.decision.rule === 'refund_within_window').at(-1);
-        requireValue(decided && decided.delivered_files.some((file) => file.skill_id === input.leaves[0].skillId && file.path === 'references/policy.md'), 'The retired child policy must be delivered at the model boundary');
-        state.original = { status: o0[0].status, amount: o0[0].amount, rule: decided.decision.rule, delivered_root_sha256: decided.system_sha256, retired_child_bytes_delivered: true, policy_digest: policy?.body.content_digest ?? null, last_model_decision: lastModel.decision.rule };
-        const hash = await record('original-case', { ...state.original, model_requests: model.length });
+        state.original = await originalCase(signal);
+        requireValue(state.original.retired_child_bytes_delivered === true, 'The retired child policy bytes were not delivered at the model boundary');
+        const hash = await record('original-case', state.original);
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'guest', artifactHash: hash, actionSequences: [] });
         return;
       }
@@ -605,10 +622,14 @@ export async function createDriver({ jobId, runId, registration }) {
       if (check.id === 'rollback-event-and-aba') {
         const events = await labelEvents();
         const rollbacks = events.filter((row) => row.from_version === 3 && row.to_version === 1);
+        // Re-probe now: the stale packet is still refused and the quarantined alternative still cannot be previewed.
+        const staleAgain = await call(reviewer, 'POST', `release-requests/${state.stalePacket.id}/execute/`, { revision: state.stalePacket.revision, expected_fingerprint: state.stalePacket.fingerprint }, signal);
+        const after = await labelEvents();
+        const refusedAgain = await call(author, 'POST', 'release-requests/preview/', { resource_id: input.contextId, kind: 'agent_context', candidate_version_id: v2.id, label: 'production', target: null, evidence: [], external_pipeline: null }, signal);
         const value = { rollback: { from_version: 3, to_version: 1, events: rollbacks.length },
-          aba_rejected: { status: state.stale?.status, label_events_added: state.stale?.label_events_added },
-          quarantined_preview_refused: { code: state.quarantine?.code } };
-        return { source: 'pg', value, artifact_sha256: await record('rollback-oracle', { events, value }) };
+          aba_rejected: { status: staleAgain.status, label_events_added: after.length - events.length },
+          quarantined_preview_refused: { code: JSON.stringify(refusedAgain.body).includes('context_quarantined') ? 'context_quarantined' : null } };
+        return { source: 'pg', value, artifact_sha256: await record('rollback-oracle', { events, stale_status: staleAgain.status, refused_status: refusedAgain.status, value }) };
       }
       if (check.id === 'original-checkpoint-identity') {
         const first = await guestJson('/state/out/t1-1.json');
@@ -629,8 +650,9 @@ export async function createDriver({ jobId, runId, registration }) {
         return { source: 'guest', value, artifact_sha256: await record('business-oracle', { business, value }) };
       }
       if (check.id === 'original-case-recovered') {
-        return { source: 'guest', value: { status: state.original.status, amount: state.original.amount, rule: state.original.rule, delivered_root_sha256: state.original.delivered_root_sha256, retired_child_bytes_delivered: state.original.retired_child_bytes_delivered },
-          artifact_sha256: await record('original-case-oracle', state.original) };
+        const actual = await originalCase(signal);
+        return { source: 'guest', value: { status: actual.status, amount: actual.amount, rule: actual.rule, delivered_root_sha256: actual.delivered_root_sha256, retired_child_bytes_delivered: actual.retired_child_bytes_delivered },
+          artifact_sha256: await record('original-case-oracle', actual) };
       }
       if (check.id === 'unknown-consumer-remains-unknown') {
         const cohort = await consumers(signal);

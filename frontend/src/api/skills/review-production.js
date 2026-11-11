@@ -48,7 +48,7 @@ const preview = () => apiPath('/model-hub/skills/release-requests/preview/');
 const decisions = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/decisions/', { request_id });
 const execute = (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/execute/', { request_id });
 export const reviewsReady = () => getContractedApiMethods('/model-hub/skills/review-inbox/').includes('get') && getContractedApiMethods('/model-hub/skills/release-requests/{request_id}/').includes('get');
-const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id });
+const mapRequest = (value) => ({ id: value.id, revision: value.revision, status: value.status, subjectId: value.subject_id, subjectKind: value.subject_kind, name: value.name, unread: value.unread, authorId: value.author_id, updatedAt: value.updated_at });
 export function useReviewInbox({ page = 1, status = '' } = {}) {
   return useSkillV11Query({ parts: ['review-inbox', page, status], url: inbox, params: { page, ...(status ? { status } : {}) }, enabled: reviewsReady(), mapper: (value) => ({ ...mapV11Page(value, mapRequest), unreadCount: value.unread_count }) });
 }

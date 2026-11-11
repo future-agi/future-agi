@@ -130,6 +130,52 @@ def test_failure_after_delivery_is_not_recovered_until_new_delivery(
     assert "matches_target" in summary(principal, context)["states"]
 
 
+def failure_with_trace(version, instance, sequence):
+    row = receipt_for(version, stage="failed", instance=instance, sequence=sequence)
+    row["details"]["diagnostic_codes"] = ["refund_window_regression"]
+    row["details"]["trace_ref"] = {
+        "project_id": str(uuid4()),
+        "trace_id": "j6-incident-trace",
+        "span_id": "refund-decision",
+        "start_time": timezone.now().isoformat(),
+    }
+    return row
+
+
+def test_retained_incident_is_a_pointer_not_a_verdict_and_survives_recovery(
+    principal, context, context_version, binding
+):
+    version = context_version(context)
+    point(context, version)
+    assert summary(principal, context)["latest_failure"] is None
+    instance = str(uuid4())
+    report(
+        principal,
+        binding,
+        receipt_for(version, stage="instructions_delivered", instance=instance),
+    )
+    report(principal, binding, failure_with_trace(version, instance, 1))
+    row = summary(principal, context)
+    failure = row["latest_failure"]
+    # Only bounded codes and the physical trace reference, never message text.
+    assert failure["diagnostic_codes"] == ["refund_window_regression"]
+    assert failure["trace_ref"]["trace_id"] == "j6-incident-trace"
+    assert failure["version_id"] == str(version.pk)
+    assert_unrecovered(row)
+    # A later delivery recovers the state, but the incident pointer is retained
+    # evidence: recovery never erases what failed.
+    report(
+        principal,
+        binding,
+        receipt_for(
+            version, stage="instructions_delivered", instance=instance, sequence=2
+        ),
+    )
+    row = summary(principal, context)
+    assert "matches_target" in row["states"]
+    assert row["latest_failure"]["trace_ref"]["trace_id"] == "j6-incident-trace"
+
+
 @pytest.mark.parametrize("same_instance", [True, False])
 def test_new_heartbeat_cannot_refresh_old_delivery(
     principal, context, context_version, binding, same_instance
