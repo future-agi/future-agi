@@ -1,4 +1,11 @@
-"""Resolve the browser's selected organization without widening its credential."""
+"""Resolve the browser's selected organization without widening its credential.
+
+Without an explicit selection, a socket follows the user's current
+OrganizationMembership rows, as HTTP authentication does. The legacy
+``user.organization`` FK only identifies accounts that predate membership rows:
+a removed member keeps that FK next to a deactivated membership and must not
+regain the former organization's broadcast or targeted groups through it.
+"""
 
 from urllib.parse import parse_qs
 from uuid import UUID
@@ -30,6 +37,29 @@ async def resolve_socket_organization(scope, user):
     return await _resolve_legacy_socket_organization(user)
 
 
+def membership_organization(user):
+    """Return the user's current organization from the membership model.
+
+    Mirrors ``APIKeyAuthentication._resolve_organization``: the first active
+    membership wins, and the legacy FK is used only when the user has no
+    membership rows at all. Synchronous; call it from a database thread.
+    """
+
+    if user is None:
+        return None
+    from accounts.models.organization_membership import OrganizationMembership
+
+    memberships = OrganizationMembership.no_workspace_objects.filter(user=user)
+    membership = (
+        memberships.filter(is_active=True).select_related("organization").first()
+    )
+    if membership is not None:
+        return membership.organization
+    if getattr(user, "organization_id", None) is not None and not memberships.exists():
+        return user.organization
+    return None
+
+
 @database_sync_to_async
 def _resolve_requested_socket_organization(user, organization_id):
     from accounts.models import Organization
@@ -44,15 +74,5 @@ def _resolve_requested_socket_organization(user, organization_id):
 
 @database_sync_to_async
 def _resolve_legacy_socket_organization(user):
-    if user is None:
-        return None
-    from accounts.models.organization_membership import OrganizationMembership
-
-    membership = (
-        OrganizationMembership.objects.filter(user=user, is_active=True)
-        .select_related("organization")
-        .first()
-    )
-    if membership is not None:
-        return membership.organization_id
-    return getattr(user, "organization_id", None)
+    organization = membership_organization(user)
+    return organization.id if organization is not None else None
