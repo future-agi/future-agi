@@ -2013,7 +2013,7 @@ def approver_unavailable(api, context, exc):
             api.pages(f"issues/{context['pr']}/comments"),
             APPROVER_UNAVAILABLE_MARKER,
             f"The AI review of this head passed, but the approver App could not approve "
-            f"it: {exc.cause} Nothing was approved or merged.\n\nThe repository owner must "
+            f"it: {exc.cause} Nothing was merged.\n\nThe repository owner must "
             "check the approver App setup in `docs/pr-autopilot.md` (Approver App and "
             "owner settings): the environment `pr-autopilot`, its variable "
             "`AUTOPILOT_APPROVER_CLIENT_ID` and secret `AUTOPILOT_APPROVER_PRIVATE_KEY`, "

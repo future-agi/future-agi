@@ -2640,6 +2640,9 @@ class ControllerTests(unittest.TestCase):
                 self.assertIn(cause, note)
                 self.assertIn(f"Head: `{HEAD}`.", note)
                 self.assertIn("A person may approve or merge this PR", note)
+                # True in every case, also when an approval exists under another login.
+                self.assertIn("Nothing was merged.", note)
+                self.assertNotIn("approved or merged", note)
                 posts = [w for w in self.api.writes("issues/42/comments")
                          if w[2]["body"].startswith(risk.APPROVER_UNAVAILABLE_MARKER)]
                 self.assertEqual(len(posts), 1)

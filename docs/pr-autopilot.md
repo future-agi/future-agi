@@ -182,8 +182,10 @@ How the workflow uses the App:
   refuses a job (for example a branch rule that does not allow `dev`) or
   holds it (required reviewers, a wait timer) therefore cannot stop a verdict
   from being recorded. A refused `approve-and-merge` job does not start,
-  approves nothing and fails the run. It cannot post a note, so only the
-  failed run shows it.
+  approves nothing and fails the run. A job that never starts cannot post a
+  note, so only the failed run shows it, and the sweep dispatches the PR
+  again on every sweep, each run failing the same way, until the owner fixes
+  the environment.
 - A step in that job mints a token for this repository only, with only "Pull
   requests: write" (`actions/create-github-app-token`, pinned by commit). The
   step has `continue-on-error`, so a missing variable, secret or installation
@@ -194,7 +196,8 @@ How the workflow uses the App:
 - If the token or login is missing, or the login is `github-actions[bot]`,
   the controller adds no label or audit comment and approves nothing. It
   posts one note per head with the workflow token, and the run fails. The
-  note says that the approver App could not approve this head and why, what
+  note says that the approver App could not approve this head and why, that
+  nothing was merged, what
   the owner must check, and that a person may approve or merge the PR. A
   refusal of the approval (HTTP 403 or 422) or an approval that GitHub
   records under another login posts the same note. A server error does not.
@@ -267,9 +270,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    get a PR approved without another person. Every job that reads the key
    must then name such an environment. A job names only one environment, so
    the key can need a copy in more than one. `docs/bot-pr-autopilot.md` in
-   `future-agi/deployment` lists the jobs. Then delete the organisation
+   `future-agi/deployment` and `docs/release-autopilot.md` here list the
+   jobs. Once every such job names an environment, delete the organisation
    secrets, generate a new private key for the release-bot App and delete
-   the old one, because any branch workflow could read the old key.
+   the old one, because any branch workflow could read the old key. Step 6
+   waits for this.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
