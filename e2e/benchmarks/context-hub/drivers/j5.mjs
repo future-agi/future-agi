@@ -64,7 +64,9 @@ export async function runInventory({ python, manifestPath, evidencePath, signal 
  * J5 public-interface driver. The explicit synthetic campaign mode exercises
  * real public authoring APIs, the installed SDK CLI and the public executor.
  * Native load is still a hard boundary, not an installed-files approximation.
- * The runner's Checkpoint-P and external-GitHub gates are deliberately unchanged.
+ * Without an explicit pre-Checkpoint-P measurement opt-in the runner refuses
+ * before any write; with it, counts are measured but the claim stays blocked and
+ * the external real-GitHub check is reported open, never observed from the fake.
  * Legacy registrations continue to exercise only their read-only inventory.
  */
 export async function createDriver({ jobId, runId, registration }) {
@@ -179,7 +181,7 @@ export const J5_MEASUREMENTS = Object.freeze({ cold_adoption: 'cold', recurring_
  * observations derive from the fixture, never from a run. Checkpoint P and real
  * GitHub conformance are external: no receipt or GitHub observation is supplied.
  */
-export function j5Registration({ label, provenance, python, evidenceDir, native }) {
+export function j5Registration({ label, provenance, python, evidenceDir, native, measurementOnly = false }) {
   const cohort = J5_MEASUREMENTS[label];
   assert.ok(cohort, 'unknown_j5_measurement');
   const job = getJob('J5'); const repos = fixtureRepositories();
@@ -187,6 +189,8 @@ export function j5Registration({ label, provenance, python, evidenceDir, native 
   const original = repos.filter((repo) => repo.disposition !== 'unavailable').flatMap((repo) => Object.entries(repo.files)
     .map(([path, text]) => ({ path: `${repo.id}/${path}`, sha256: hash(text), size_bytes: Buffer.byteLength(text) })));
   return { schema: 1, job: 'J5', cohort, evidence_scope: 'synthetic', population: job.population, fault_ids: job.fault_ids,
+    // Explicit pre-Checkpoint-P measurement opt-in (runner block); still no receipt and no GitHub observation.
+    ...(measurementOnly ? { pre_checkpoint_p_measurement: true } : {}),
     customer_input_hash: hash(canonical(repos)), initial_conditions_hash: hash(canonical(initial)),
     safety_requirements_hash: hash(canonical(job.checks)), complete_job_boundary_hash: hash(canonical(job.steps)),
     expected_observations: { 'exact-forty-targets': repos.map((repo) => repo.id), 'one-pr-per-target': { duplicates: 0 },

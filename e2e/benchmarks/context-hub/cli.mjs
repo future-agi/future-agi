@@ -31,7 +31,10 @@ export async function main(args) {
       requireValue(typeof createDriver === 'function', 'Driver must export createDriver');
       driver = await createDriver({ jobId, runId, registration });
     }
-    const result = await runJourney({ jobId, runId, registration, driver, outputDir });
+    // J5 pre-Checkpoint-P decision 2026-11-11: a job may document its own bounded
+    // journey deadline in its jobs.mjs integration entry; the global default is unchanged.
+    const { journey_deadline_ms: deadlineMs } = job.integration;
+    const result = await runJourney({ jobId, runId, registration, driver, outputDir, ...(deadlineMs === undefined ? {} : { deadlineMs }) });
     if (result.status === 'not_measured') {
       // The runner has no ledger when a driver/Checkpoint P is unavailable.
       // Retain that null-count result, not a fabricated zero-action run.
