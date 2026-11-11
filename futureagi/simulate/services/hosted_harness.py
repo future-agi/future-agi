@@ -2645,7 +2645,9 @@ def _store_authored_agent(
                 sdk_version=sent["sdk_version"],
                 replace_reading=seeded_from_reading(job),
             )
-        store_build_contract(job, agent_version_id=agent_version_id)
+        transaction.on_commit(
+            lambda: store_build_contract(job, agent_version_id=agent_version_id)
+        )
         return outcome, agent_version_id
     except AgentStoreError as exc:
         if exc.code == "setup_outcome_already_stored":

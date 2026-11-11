@@ -114,23 +114,25 @@ def _freeze(objects, contract=CONTRACT):
 
 
 def test_an_archive_saved_first_is_stored_when_the_agent_arrives(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
     _freeze(objects)
 
-    hosted_harness._store_authored_agent(
-        _job(organization, frozen=True), definition, _sent()
-    )
+    with django_capture_on_commit_callbacks(execute=True):
+        hosted_harness._store_authored_agent(
+            _job(organization, frozen=True), definition, _sent()
+        )
 
     assert stored_agent(version.id) is not None
     assert stored_version_contract(version.id) == CONTRACT
 
 
 def test_an_agent_stored_first_gets_the_contract_when_the_archive_is_saved(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
     job = _job(organization)
-    hosted_harness._store_authored_agent(job, definition, _sent())
+    with django_capture_on_commit_callbacks(execute=True):
+        hosted_harness._store_authored_agent(job, definition, _sent())
     assert stored_version_contract(version.id) is None
 
     stored = store_build_contract(
@@ -155,10 +157,11 @@ def test_no_contract_is_kept_for_a_version_without_a_stored_agent(
 
 
 def test_the_first_contract_stays_when_a_rebuild_sends_another(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
     job = _job(organization)
-    hosted_harness._store_authored_agent(job, definition, _sent())
+    with django_capture_on_commit_callbacks(execute=True):
+        hosted_harness._store_authored_agent(job, definition, _sent())
     store_build_contract(job, agent_version_id=version.id, archive=_archive(CONTRACT))
 
     again = store_build_contract(
@@ -172,24 +175,26 @@ def test_the_first_contract_stays_when_a_rebuild_sends_another(
 
 
 def test_a_storage_outage_keeps_the_agent_and_stores_no_contract(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
     _freeze(objects)
     objects.fail_put = True
 
-    hosted_harness._store_authored_agent(
-        _job(organization, frozen=True), definition, _sent()
-    )
+    with django_capture_on_commit_callbacks(execute=True):
+        hosted_harness._store_authored_agent(
+            _job(organization, frozen=True), definition, _sent()
+        )
 
     assert stored_agent(version.id) is not None
     assert stored_version_contract(version.id) is None
 
 
 def test_a_contract_is_filed_under_its_agent_and_version(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
     job = _job(organization)
-    hosted_harness._store_authored_agent(job, definition, _sent())
+    with django_capture_on_commit_callbacks(execute=True):
+        hosted_harness._store_authored_agent(job, definition, _sent())
 
     store_build_contract(job, agent_version_id=version.id, archive=_archive(CONTRACT))
 
@@ -223,21 +228,31 @@ def test_a_contract_is_kept_as_utf8_and_not_escaped():
         (None, False),
     ],
 )
-def test_a_build_used_its_seed_only_when_the_reading_record_survives(contract, used):
+def test_a_build_used_its_seed_only_when_the_reading_record_survives(
+    contract, used, django_capture_on_commit_callbacks
+):
     assert seed_was_used(contract) is used
 
 
-def _stored_first(objects, organization, definition, version, *, seeded):
+def _stored_first(objects, organization, definition, version, capture, *, seeded):
     job = _job(organization, seeded=seeded)
-    hosted_harness._store_authored_agent(job, definition, _sent())
+    with capture(execute=True):
+        hosted_harness._store_authored_agent(job, definition, _sent())
     store_build_contract(job, agent_version_id=version.id, archive=_archive(CONTRACT))
     return job
 
 
 def test_a_build_that_used_its_seed_replaces_the_reading(
-    objects, organization, definition, version
+    objects, organization, definition, version, django_capture_on_commit_callbacks
 ):
-    job = _stored_first(objects, organization, definition, version, seeded=True)
+    job = _stored_first(
+        objects,
+        organization,
+        definition,
+        version,
+        django_capture_on_commit_callbacks,
+        seeded=True,
+    )
     finished = {
         **CONTRACT,
         "agent": {"name": "finished"},
@@ -254,9 +269,21 @@ def test_a_build_that_used_its_seed_replaces_the_reading(
 
 @pytest.mark.parametrize("seeded", [True, False])
 def test_a_build_that_read_the_agent_again_keeps_the_reading(
-    objects, organization, definition, version, seeded
+    objects,
+    organization,
+    definition,
+    version,
+    seeded,
+    django_capture_on_commit_callbacks,
 ):
-    job = _stored_first(objects, organization, definition, version, seeded=seeded)
+    job = _stored_first(
+        objects,
+        organization,
+        definition,
+        version,
+        django_capture_on_commit_callbacks,
+        seeded=seeded,
+    )
     reread = {**CONTRACT, "agent": {"name": "read again"}}
     if not seeded:
         reread["reading_inputs"] = {"commit_sha": "a" * 40}
