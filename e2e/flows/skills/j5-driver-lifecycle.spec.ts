@@ -49,7 +49,7 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
     driver_config: { campaign_fixture: true, python, evidence_dir: evidence, native: nativeConfig } } });
   const ledger = new ActionLedger({ runId, job: 'J5', mode: 'product', path: join(evidence, `${runId}-partial.jsonl`) });
   const signal = AbortSignal.timeout(1_750_000); const job = getJob('J5');
-  const missingLoad: string[] = []; const storage: unknown[] = [];
+  const missingLoad: string[] = []; const storage: unknown[] = []; const qualifiedChecks: string[] = [];
   let cleanup;
   try {
     for (const stage of job.steps) {
@@ -102,19 +102,56 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
     expect(assertObservation(targetsCheck, ids, membership)).toBe(true);
     expect(() => assertObservation(targetsCheck, ids, { ...membership, value: membership.value.slice(1) })).toThrow();
     expect(assertObservation(targetsCheck, ids, membership)).toBe(true);
+    qualifiedChecks.push(targetsCheck.id);
     const policyCheck = job.checks.find((check: any) => check.id === 'local-policy-preserved');
     const policy = await driver.observe(policyCheck, { signal });
     const { createHash } = await import('node:crypto');
-    // Independent original fixture for unmanaged files; AGENTS contains managed
-    // segments and is separately checked against every merged Git tree by driver.
+    // Original local policy includes the adopted AGENTS segment as well as
+    // unmanaged files; managed additions are independently checked in Git.
     const original = driver.repos.filter((repo: any) => repo.disposition !== 'unavailable').flatMap((repo: any) =>
-      Object.entries(repo.files).filter(([path]) => path !== 'AGENTS.md').map(([path, text]) => ({ path: `${repo.id}/${path}`,
+      Object.entries(repo.files).map(([path, text]) => ({ path: `${repo.id}/${path}`,
         sha256: createHash('sha256').update(text as string).digest('hex'), size_bytes: Buffer.byteLength(text as string) })));
-    const unmanaged = { ...policy, value: policy.value.filter((row: any) => original.some((wanted: any) => wanted.path === row.path)) };
-    expect(assertObservation(policyCheck, original, unmanaged)).toBe(true);
-    const changed = structuredClone(unmanaged); changed.value[0].content = 'Local policy lost';
+    expect(assertObservation(policyCheck, original, policy)).toBe(true);
+    const changed = structuredClone(policy); changed.value[0].content = 'Local policy lost';
     expect(() => assertObservation(policyCheck, original, changed)).toThrow();
-    expect(assertObservation(policyCheck, original, unmanaged)).toBe(true);
+    expect(assertObservation(policyCheck, original, policy)).toBe(true);
+    qualifiedChecks.push(policyCheck.id);
+    const expectedChecks: Record<string, unknown> = { 'one-pr-per-target': { duplicates: 0 },
+      'authorized-base-preimages': { unauthorized_effects: 0 }, 'pins-retained': { deliberate_pins: 4, advanced_pins: 0 },
+      'stage-accounting': { target_count: 40, merge_install_load_distinct: true } };
+    for (const [id, expected] of Object.entries(expectedChecks)) {
+      const check = job.checks.find((row: any) => row.id === id);
+      if (id === 'stage-accounting' && !native) {
+        await expect(driver.observe(check, { signal })).rejects.toThrow('native_discovery_unobserved');
+        continue;
+      }
+      const observation = await driver.observe(check, { signal });
+      expect(assertObservation(check, expected, observation)).toBe(true);
+      expect(() => assertObservation(check, expected, { ...observation, value: { incomplete: true } })).toThrow();
+      expect(assertObservation(check, expected, observation)).toBe(true);
+      qualifiedChecks.push(id);
+    }
+    // Change only the independently observed PR head; the approved plan and
+    // expected check remain fixed. Restore it and prove the same check passes.
+    const firstPatch = driver.rounds[0].plans[0];
+    const branchKey = `${firstPatch.repository_id}/futureagi/context/${driver.rounds[0].campaign_id}/${firstPatch.binding_id}`;
+    const originalHead = driver.git.refs.get(branchKey);
+    const baseCheck = job.checks.find((check: any) => check.id === 'authorized-base-preimages');
+    try {
+      driver.git.refs.set(branchKey, firstPatch.plan.base_commit);
+      await expect(driver.observe(baseCheck, { signal })).rejects.toThrow('unauthorized_parent');
+    } finally { driver.git.refs.set(branchKey, originalHead); }
+    expect(assertObservation(baseCheck, expectedChecks[baseCheck.id], await driver.observe(baseCheck, { signal }))).toBe(true);
+    const rootPolicy = join(driver.projects.get(driver.repos[0].id), 'AGENTS.md');
+    const preservedPolicy = await readFile(rootPolicy);
+    try {
+      await writeFile(rootPolicy, 'Local policy was removed.\n');
+      await expect(driver.observe(policyCheck, { signal })).rejects.toThrow('local_segment_missing_or_duplicated');
+    } finally { await writeFile(rootPolicy, preservedPolicy); }
+    expect(assertObservation(policyCheck, original, await driver.observe(policyCheck, { signal }))).toBe(true);
+    await writeFile(join(evidence, 'observation-fallibility.json'), JSON.stringify({ evidence_class: 'synthetic fixture',
+      changed_git_head: { rejected: 'unauthorized_parent', restored: 'pass' },
+      changed_local_policy: { rejected: 'local_segment_missing_or_duplicated', restored: 'pass' }, qualified_checks: qualifiedChecks }, null, 2));
     for (const report of driver.rounds) {
       expect(report.installs).toHaveLength(33);
       const check = () => requireNativeDelivery(report.installs, report.installs.map((row: any) => row.repository_id), report.installs[0].version_id);
@@ -135,6 +172,21 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
       const installationOnly = report.installs.map((row: any) => ({ ...row, discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' }));
       expect(() => requireNativeDelivery(installationOnly, installationOnly.map((row: any) => row.repository_id), installationOnly[0].version_id))
         .toThrow('native_discovery_unobserved');
+    }
+    expect([...new Set(ledger.events().filter((event: any) => event.type === 'fault').map((event: any) => event.id))].sort())
+      .toEqual([...job.fault_ids].sort());
+    expect(driver.baseMovement.recovered).toBe(true);
+    expect(driver.baseMovement.after).not.toBe(driver.baseMovement.before);
+    expect(driver.campaigns).toHaveLength(4);
+    const abandoned = await probe.pg<{ status: string; targets: string }>(
+      'SELECT c.status, COUNT(t.id)::text AS targets FROM model_hub_hubskillcontextcampaign c JOIN model_hub_hubskillcontextcampaigntarget t ON t.campaign_id = c.id WHERE c.id = $1 GROUP BY c.status',
+      [driver.baseMovement.campaign_id]);
+    expect(abandoned).toEqual([{ status: 'cancelled', targets: '40' }]);
+    storage.push({ cancelled_campaign_id: driver.baseMovement.campaign_id, rows: abandoned });
+    expect(driver.reverseConflicts).toEqual({ dirty: 'local_modifications', stale: 'stale_plan', lock_unchanged: true, local_work_exported: true });
+    for (const kind of ['dirty', 'stale']) {
+      const retained = JSON.parse(await readFile(join(evidence, `${runId}-retained-${kind}-local-work.json`), 'utf8'));
+      expect(createHash('sha256').update(retained.content).digest('hex')).toBe(retained.sha256);
     }
     await expect(driver.observe(job.checks.find((check: any) => check.id === 'real-github-conformance'), { signal }))
       .rejects.toThrow('external_real_github_conformance_not_supplied');
@@ -175,7 +227,9 @@ test(`${id}: registered campaign driver ${native ? 'observes actual pinned nativ
     if (before.headers === undefined) delete process.env.J5_HUB_HEADERS_JSON; else process.env.J5_HUB_HEADERS_JSON = before.headers;
     await writeFile(join(evidence, 'driver-prefix.json'), JSON.stringify({ evidence_class: 'synthetic fixture', complete_job: false,
       measured_by_registered_runner: false, native_scope: native ? 'codex-0.167.1-linux-root-AGENTS-only' : 'not_observed',
-      missing_load_stages: missingLoad, storage, cleanup,
+      missing_load_stages: missingLoad, storage, cleanup, qualified_checks: qualifiedChecks,
+      exercised_faults: ledger.events().filter((event: any) => event.type === 'fault').map((event: any) => event.id),
+      base_movement: driver.baseMovement, reverse_conflicts: driver.reverseConflicts,
       partial_ledger_integrity: summarizeLedger(ledger.events()).integrity,
       limitations: ['No complete-job measurements: protected Checkpoint P gate is unchanged.',
         native ? 'Native evidence is bounded to the pinned Linux root-AGENTS fixture, not universal client compatibility or model behavior.' : 'Native discovery and actual model-boundary load remain unobserved.',

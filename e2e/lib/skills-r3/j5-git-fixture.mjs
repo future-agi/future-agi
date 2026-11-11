@@ -22,6 +22,18 @@ export class J5GitFixture {
       this.trees.set(sha, tree); this.commits.set(repo.base, { sha: repo.base, tree: { sha }, parents: [] });
     }
   }
+  // A synthetic concurrent contributor can advance main without changing any
+  // files. Keep a real immutable parent/tree so replanning uses the new base,
+  // rather than restoring an impossible old branch or inventing a commit ID.
+  advanceUnchangedBase(id) {
+    const current = this.base.inventory().find((repo) => repo.id === id)?.base;
+    const parent = this.commits.get(current);
+    if (!parent) throw new Error('unknown_fixture_base');
+    const sha = hash(JSON.stringify({ fixture: 'concurrent-empty-commit', repository: id, parent: current }));
+    this.commits.set(sha, { sha, tree: { ...parent.tree }, parents: [{ sha: current }] });
+    this.base.advanceBase(id, sha);
+    return sha;
+  }
   pulls(id) {
     const repo = this.repositories.find((row) => row.id === id);
     return this.base.pulls(id).map((pr) => this.enrich(repo, pr));

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { CampaignExecutor } from '../../../../bin/lib/context-campaign.mjs';
 import { repositoryFixture } from '../../../fixtures/skills-r3/library.mjs';
 import { J5GitFixture } from '../../../lib/skills-r3/j5-git-fixture.mjs';
-import { observeCodexLoad } from '../../../lib/skills-r3/j5-native-fixture.mjs';
+import { observeCodexLoad, assertCodexBoundary } from '../../../lib/skills-r3/j5-native-fixture.mjs';
 import { canonical } from '../../../lib/skills-r3/canonical.mjs';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -334,7 +334,7 @@ class CampaignJourney {
         this.campaign.decisions.push({ binding_id: binding.id, plan_digest: null, decision: 'exclude', reason: `Preserve deliberate ${repo.disposition}; no write authorized.` });
         continue;
       }
-      const path = join(this.scratch, `${this.campaign.label}-${repo.id}.json`);
+      const path = join(this.scratch, `${this.campaign.label}-${this.campaign.id}-${repo.id}.json`);
       if (reverse) await this.sdk(['restore', '--project', this.projects.get(repo.id), '--lock', join(this.scratch, `${repo.id}-original-lock.json`), '--allow-preview', '--out', path]);
       else await this.sdk(['plan', '--name', this.name, '--version', String(this.version.number), '--client', this.profile, '--project', this.projects.get(repo.id), '--adopt-local', '--allow-preview', '--out', path]);
       await this.sdk(['inspect', '--plan', path, '--diff']);
@@ -372,15 +372,54 @@ class CampaignJourney {
   }
 
   async createPRs() {
+    if (!this.baseMovement) {
+      // Fixture fault, not an operator action: a concurrent contributor advances
+      // main after review. The public executor must refuse the stale plan. Stop
+      // this batch before other writes; recovery must review a new campaign.
+      const repo = this.repos[0];
+      const before = this.bases.get(repo.id);
+      const after = this.git.advanceUnchangedBase(repo.id);
+      const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
+      const receipt = await this.executeTarget(0);
+      assert.equal(receipt.state, 'unknown'); assert.match(receipt.reason, /Base moved/);
+      assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes, 'stale_base_wrote_git');
+      assert.ok(this.repos.every((row) => this.git.pulls(row.id).length === 0), 'stale_base_created_pr');
+      this.campaign.receipts.set(0, receipt);
+      this.baseMovement = { repository_id: repo.id, before, after, campaign_id: this.campaign.id, receipt, recovered: false };
+      return { source: 'git', value: this.baseMovement };
+    }
     for (const [index] of this.campaign.patches) {
       const receipt = await this.executeTarget(index);
-      assert.equal(receipt.state, this.campaigns.length === 1 && this.repos[index].disposition === 'unknown_response' ? 'unknown' : 'pr_open');
+      assert.equal(receipt.state, this.rounds.length === 0 && this.repos[index].disposition === 'unknown_response' ? 'unknown' : 'pr_open');
       this.campaign.receipts.set(index, receipt);
     }
     return { source: 'git', value: this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) })) };
   }
 
   async reconcile() {
+    if (this.baseMovement && !this.baseMovement.recovered) {
+      const before = await this.api('GET', this.campaign.root);
+      await this.mutation('POST', `${this.campaign.root}cancel/`, { revision: before.revision,
+        reason: 'Concurrent base movement invalidated reviewed ancestry. Cancel before reviewing a replacement campaign.' }, 'recovery_decision');
+      const cancelled = await this.api('GET', this.campaign.root);
+      assert.equal(cancelled.status, 'cancelled');
+      const oldTargets = await this.targets();
+      assert.equal(oldTargets.length, 40, 'cancelled_target_accounting');
+      const repo = this.repos[0];
+      const actual = await this.action('reconcile', async () => {
+        const response = await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`);
+        assert.equal(response.status, 200); return response.json();
+      }, { dimension: 'R', repos: [repo] });
+      assert.equal(actual.sha, this.baseMovement.after);
+      assert.deepEqual(this.git.files(actual.sha), this.git.files(this.baseMovement.before), 'concurrent_instruction_change_unreviewed');
+      this.bases.set(repo.id, actual.sha);
+      this.baseMovement.recovered = true;
+      await this.save('base-movement', { ...this.baseMovement, cancelled, targets: oldTargets, duplicate_prs: 0 });
+      this.ledger.fault('base-movement', 'reviewed-replacement-campaign');
+      // Do not edit/retry the stale authorized plan or erase its uncertain
+      // receipt. All forty targets and every approval are counted again.
+      await this.freeze('cold'); await this.plans(); await this.authorize(); await this.createPRs();
+    }
     for (const [index, receipt] of this.campaign.receipts) {
       if (receipt.state !== 'unknown') continue;
       this.ledger.fault('unknown-pr-response', `campaign-${this.campaigns.length}`);
@@ -427,9 +466,13 @@ class CampaignJourney {
       }
       const lockBytes = await readFile(join(this.projects.get(repo.id), '.futureagi-context.lock.json'));
       assert.equal(JSON.parse(lockBytes).version_id, this.version.id);
-      if (this.campaigns.length === 1) await writeFile(join(this.scratch, `${repo.id}-original-lock.json`), lockBytes);
+      if (this.rounds.length === 0) await writeFile(join(this.scratch, `${repo.id}-original-lock.json`), lockBytes);
       this.bases.set(repo.id, merge.sha);
-      assert.equal(this.git.pulls(repo.id).length, this.campaigns.length, 'duplicate_pr');
+      // A cancelled stale-base campaign created no PR. Count successful rounds,
+      // and independently forbid duplicate branches in the retained Git history.
+      const pulls = this.git.pulls(repo.id);
+      assert.equal(pulls.length, this.rounds.length + 1, 'duplicate_pr');
+      assert.equal(new Set(pulls.map((pr) => pr.head.ref)).size, pulls.length, 'duplicate_pr_branch');
       let native = { discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' };
       if (this.config.native) {
         const boundary = await this.action('command', () => observeCodexLoad({ executable: this.config.native.executable,
@@ -443,7 +486,9 @@ class CampaignJourney {
     }
     await this.checkExcluded();
     const report = { evidence_class: 'synthetic fixture', complete_job: false, label: this.campaign.label,
-      campaign_id: this.campaign.id, targets: await this.targets(), installs };
+      campaign_id: this.campaign.id, targets: await this.targets(), installs,
+      plans: [...this.campaign.patches].map(([index, patch]) => ({ repository_id: this.repos[index].id,
+        binding_id: this.bindings[index].id, plan: patch.plan, contents: patch.contents })) };
     this.rounds.push(report); await this.save(this.campaign.label, report);
     return report;
   }
@@ -457,9 +502,51 @@ class CampaignJourney {
     }
   }
 
+  async reverseConflictChecks() {
+    const repo = this.repos[0]; const project = this.projects.get(repo.id);
+    const lockPath = join(project, '.futureagi-context.lock.json');
+    const lockBytes = await readFile(lockPath);
+    const lock = JSON.parse(lockBytes);
+    const managed = lock.materialization.files.find((row) => row.ownership === 'managed' && row.destination.endsWith('AGENTS.md'));
+    assert.ok(managed, 'managed_instruction_missing');
+    const managedPath = join(project, managed.destination); const original = await readFile(managedPath);
+    const dirtyBytes = 'Locally modified managed policy; retain for explicit conflict resolution.\n';
+    // Synthetic concurrent edit, never hidden setup for the measured recovery.
+    await writeFile(managedPath, dirtyBytes);
+    const dirtyPath = join(this.scratch, 'dirty-reverse.json');
+    const restoreArgs = ['restore', '--project', project, '--lock', join(this.scratch, `${repo.id}-original-lock.json`), '--allow-preview'];
+    const dirty = await this.sdk([...restoreArgs, '--out', dirtyPath], 5);
+    assert.equal(dirty.error.code, 'local_modifications');
+    await assert.rejects(lstat(dirtyPath), { code: 'ENOENT' });
+    assert.equal(await readFile(managedPath, 'utf8'), dirtyBytes, 'dirty_local_work_lost');
+    assert.deepEqual(await readFile(lockPath), lockBytes, 'dirty_check_mutated_lock');
+    await this.action('recovery_decision', async () => {
+      // Export the conflicting bytes before the scripted operator chooses the
+      // previous managed content. The export survives scratch-tree teardown.
+      await this.save('retained-dirty-local-work', { repository_id: repo.id, path: managed.destination, content: dirtyBytes, sha256: hash(dirtyBytes) });
+      await writeFile(managedPath, original);
+    }, { repos: [repo] });
+    const stalePath = join(this.scratch, 'stale-reverse.json');
+    await this.sdk([...restoreArgs, '--out', stalePath]);
+    const agentsPath = join(project, 'AGENTS.md'); const agents = await readFile(agentsPath);
+    const changedAgents = Buffer.concat([agents, Buffer.from('\nNew local work after review; retain for resolution.\n')]);
+    await writeFile(agentsPath, changedAgents);
+    const stale = await this.sdk(['apply', '--plan', stalePath, '--quiescent'], 5);
+    assert.equal(stale.error.code, 'stale_plan');
+    assert.deepEqual(await readFile(agentsPath), changedAgents, 'changed_preimage_lost');
+    assert.deepEqual(await readFile(lockPath), lockBytes, 'stale_apply_mutated_lock');
+    await this.action('recovery_decision', async () => {
+      await this.save('retained-stale-local-work', { repository_id: repo.id, path: 'AGENTS.md', content: changedAgents.toString(), sha256: hash(changedAgents) });
+      await writeFile(agentsPath, agents);
+    }, { repos: [repo] });
+    this.ledger.fault('dirty-managed-segment', 'reverse-refuses-local-conflict');
+    this.reverseConflicts = { dirty: dirty.error.code, stale: stale.error.code, lock_unchanged: true, local_work_exported: true };
+    await this.save('reverse-conflicts', this.reverseConflicts);
+  }
+
   async update(reverse) {
     assert.ok(this.rounds.length, 'initial_install_required');
-    if (reverse) this.version = this.first;
+    if (reverse) { await this.reverseConflictChecks(); this.version = this.first; }
     else {
       const draft = await this.mutation('POST', `${this.contextRoot}draft/start/`, { revision: 0, from_version: this.first.number });
       const saved = await this.mutation('PUT', `${this.contextRoot}draft/`, { revision: draft.revision, base_version: this.first.number,
@@ -509,31 +596,97 @@ class CampaignJourney {
     signal.throwIfAborted(); this.signal = signal;
     if (check.id === 'real-github-conformance') throw new Error('external_real_github_conformance_not_supplied');
     assert.ok(this.campaign, 'campaign_unobserved');
-    let source; let value;
+    let source; let value; let raw;
     if (check.id === 'exact-forty-targets') {
-      source = 'api'; value = (await this.targets()).map((row) => row.repository.repository_id);
+      source = 'api'; raw = await this.targets(); value = raw.map((row) => row.repository.repository_id);
     } else if (check.id === 'one-pr-per-target') {
-      source = 'git'; value = this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) }));
-    } else if (check.id === 'authorized-base-preimages') {
-      source = 'git'; value = [];
-      for (const repo of this.repos) for (const pr of this.git.pulls(repo.id)) {
-        const response = await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/git/commits/${pr.head.sha}`);
-        value.push({ repository_id: repo.id, pr: pr.number, commit: await response.json(), files: this.git.files(pr.head.sha) });
+      source = 'git'; raw = this.repos.map((repo) => ({ repository_id: repo.id, pulls: this.git.pulls(repo.id) }));
+      assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
+      for (const [index, repo] of this.repos.entries()) {
+        const expected = included(repo) ? this.rounds.map((round) => `futureagi/context/${round.campaign_id}/${this.bindings[index].id}`).sort() : [];
+        assert.deepEqual(raw[index].pulls.map((pr) => pr.head.ref).sort(), expected, 'pr_branch_accounting');
       }
+      value = { duplicates: raw.reduce((count, row) => count + row.pulls.length - new Set(row.pulls.map((pr) => pr.head.ref)).size, 0) };
+    } else if (check.id === 'authorized-base-preimages') {
+      source = 'git'; raw = [];
+      assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
+      for (const round of this.rounds) for (const patch of round.plans) {
+        const repo = this.repos.find((row) => row.id === patch.repository_id);
+        const branch = `futureagi/context/${round.campaign_id}/${patch.binding_id}`;
+        const matches = this.git.pulls(repo.id).filter((pr) => pr.head.ref === branch);
+        assert.equal(matches.length, 1, 'authorized_pr_unobserved');
+        const pr = matches[0];
+        const response = await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/git/commits/${pr.head.sha}`);
+        assert.equal(response.status, 200); const commit = await response.json();
+        assert.deepEqual(commit.parents, [{ sha: patch.plan.base_commit }], 'unauthorized_parent');
+        const before = this.git.files(patch.plan.base_commit); const expected = { ...before };
+        for (const change of patch.plan.changes) {
+          assert.equal(Object.hasOwn(before, change.path) ? hash(before[change.path]) : null, change.before_sha256, 'unauthorized_preimage');
+          if (change.action === 'remove') delete expected[change.path];
+          else {
+            const bytes = Buffer.from(patch.contents[change.path], 'base64');
+            assert.equal(hash(bytes), change.after_sha256, 'unauthorized_patch'); expected[change.path] = bytes.toString();
+          }
+        }
+        const files = this.git.files(pr.head.sha);
+        assert.deepEqual(files, expected, 'unauthorized_tree');
+        raw.push({ repository_id: repo.id, branch, commit, files, plan: patch.plan });
+      }
+      assert.equal(raw.length, 99, 'authorized_patch_denominator'); value = { unauthorized_effects: 0 };
     } else if (check.id === 'local-policy-preserved') {
-      source = 'filesystem'; value = [];
-      for (const repo of this.repos.filter((repo) => repo.disposition !== 'unavailable')) for (const path of Object.keys(repo.files)) {
-        value.push({ path: `${repo.id}/${path}`, content: await readFile(join(this.projects.get(repo.id), path), 'utf8') });
+      source = 'filesystem'; value = []; raw = [];
+      for (const repo of this.repos.filter((repo) => repo.disposition !== 'unavailable')) for (const [path, original] of Object.entries(repo.files)) {
+        const actual = await readFile(join(this.projects.get(repo.id), path), 'utf8');
+        raw.push({ path: `${repo.id}/${path}`, content: actual });
+        // The manifest is the original local policy, not the new managed text.
+        // Extract the observed original segment, never substitute expected bytes.
+        // Exact merged trees are independently checked above and at installation.
+        if (path === 'AGENTS.md' && included(repo)) {
+          const start = actual.indexOf(original);
+          assert.ok(start >= 0 && actual.indexOf(original, start + original.length) === -1, 'local_segment_missing_or_duplicated');
+          value.push({ path: `${repo.id}/${path}`, content: actual.slice(start, start + original.length) });
+        } else value.push({ path: `${repo.id}/${path}`, content: actual });
       }
     } else if (check.id === 'pins-retained') {
       source = 'filesystem'; await this.checkExcluded();
-      value = this.repos.filter((repo) => repo.disposition === 'pin').map((repo) => ({ repository_id: repo.id, unchanged: true }));
+      const targets = await this.targets(); raw = [];
+      for (const repo of this.repos.filter((repo) => repo.disposition === 'pin')) {
+        const target = targets.find((row) => row.repository.repository_id === repo.id);
+        assert.equal(target.decision, 'exclude'); assert.deepEqual(target.selector, { version: this.first.number });
+        raw.push({ repository_id: repo.id, selector: target.selector,
+          files: Object.fromEntries(await Promise.all(Object.keys(repo.files).map(async (path) => [path, await readFile(join(this.projects.get(repo.id), path), 'utf8')]))),
+          lock_present: false });
+      }
+      value = { deliberate_pins: raw.length, advanced_pins: 0 };
     } else if (check.id === 'stage-accounting') {
-      source = 'api'; value = [];
-      for (const binding of this.bindings) value.push({ binding_id: binding.id,
-        observations: await this.api('GET', `${this.campaign.root}targets/${binding.id}/observations/`) });
+      source = 'api'; raw = [];
+      const targets = await this.targets(); assert.equal(targets.length, 40);
+      for (const binding of this.bindings) {
+        const observations = await this.api('GET', `${this.campaign.root}targets/${binding.id}/observations/`);
+        assert.equal(observations.installed, null, 'git_must_not_imply_installation');
+        assert.equal(observations.instructions_delivered, null, 'git_must_not_imply_delivery');
+        raw.push({ binding_id: binding.id, observations });
+      }
+      assert.equal(this.rounds.length, 3, 'all_rollout_rounds_required');
+      for (const round of this.rounds) {
+        const version = round.targets[0]?.desired_version_id;
+        requireNativeDelivery(round.installs, this.repos.filter(included).map((repo) => repo.id), version);
+        for (const row of round.installs) {
+          assert.ok(row.installed && row.head !== row.merge, 'merge_install_boundary_missing');
+          const bytes = await readFile(join(this.config.evidence_dir, `${this.runId}-native-${round.label}-${row.repository_id}.json`));
+          assert.equal(hash(bytes), row.artifact_sha256, 'native_artifact_changed');
+          const boundary = JSON.parse(bytes);
+          const expectedInstructions = this.git.files(row.merge)['AGENTS.md'];
+          assert.equal(boundary.installed_sha256, hash(expectedInstructions), 'native_loaded_wrong_installation');
+          assertCodexBoundary({ requests: boundary.requests, events: boundary.process_events, expectedInstructions });
+        }
+      }
+      value = { target_count: targets.length, merge_install_load_distinct: true };
+      raw = { api: raw, independently_observed_rounds: this.rounds };
     } else throw new Error('j5_unknown_check');
-    return { source, value, artifact_sha256: await this.save(`observation-${check.id}-${++this.serial}`, value) };
+    // Equality checks compare preregisterable outcomes, not unpredictable UUIDs
+    // and timestamps. Hash the complete raw witnesses, not merely the summary.
+    return { source, value, artifact_sha256: await this.save(`observation-${check.id}-${++this.serial}`, { raw, value }) };
   }
 
   async teardown() {

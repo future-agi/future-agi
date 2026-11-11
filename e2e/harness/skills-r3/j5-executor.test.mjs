@@ -91,7 +91,11 @@ test('lost claim response can only reconcile, never recreate the uncertain write
 });
 
 test('base movement blocks publishing and reports uncertainty honestly', async () => {
-  const f = setup(); f.git.base.advanceBase(f.repo.id, 'b'.repeat(40));
+  const f = setup(); const moved = f.git.advanceUnchangedBase(f.repo.id);
+  assert.notEqual(moved, f.repo.base);
+  assert.deepEqual(f.git.files(moved), f.git.files(f.repo.base));
+  const commit = await (await f.git.fetch(`https://api.github.com/repos/${f.input.repository}/git/commits/${moved}`)).json();
+  assert.deepEqual(commit.parents, [{ sha: f.repo.base }]);
   const result = await f.executor.execute(f.input);
   assert.equal(result.state, 'unknown'); assert.match(result.reason, /Base moved/);
   assert.equal(f.git.pulls(f.repo.id).length, 0);
