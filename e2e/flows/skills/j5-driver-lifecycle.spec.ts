@@ -128,6 +128,14 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
             && JSON.stringify(event.decision) === JSON.stringify(receipt.decision));
           expect(reviews.flatMap((event: any) => event.items)).toHaveLength(40);
           expect(new Set(reviews.flatMap((event: any) => event.items)).size).toBe(40);
+          if (stage.id === 'establish-ownership') {
+            // Ownership is reviewed once per distinct shared instruction content
+            // (repo-1000's AGENTS.md differs) and once for the unavailable target.
+            expect(reviews.map((event: any) => event.items.length)).toEqual([1, 38, 1]);
+            const edits = events.filter((event: any) => event.type === 'start' && event.step === stage.id && event.primitive === 'field_edit');
+            // Two explicit local-modification holds and four deliberate pins stay counted edits.
+            expect(edits.map((event: any) => event.items[0]).sort()).toEqual(['repo-1032', 'repo-1033', 'repo-1034', 'repo-1035', 'repo-1036', 'repo-1037']);
+          }
           if (stage.id === 'review-plans') {
             const review = driver.campaign.review;
             if (configured) {
@@ -136,13 +144,17 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
               expect(review.groups.map((group: any) => group.members.length)).toEqual([33]);
               expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion',
                 'pinned_selector', 'pinned_selector', 'pinned_selector', 'pinned_selector', 'unavailable']);
-              expect(reviews).toHaveLength(8);
+              // One review for the proven group and one for the held list (pins,
+              // operator exclusions, unavailable), matching the comparator's granularity.
+              expect(driver.campaign.packet.units.map((unit: any) => [unit.kind, unit.repository_ids.length])).toEqual([['group', 33], ['held', 7]]);
+              expect(reviews).toHaveLength(2);
             } else {
               // Cold adoption at the pinned release: the four pins are adopted with
               // the 33 followers in one proven group; three individual exceptions.
               expect(review.groups.map((group: any) => group.members.length)).toEqual([37]);
               expect(review.exceptions.map((row: any) => row.kind).sort()).toEqual(['operator_exclusion', 'operator_exclusion', 'unavailable']);
-              expect(reviews).toHaveLength(4);
+              expect(driver.campaign.packet.units.map((unit: any) => [unit.kind, unit.repository_ids.length])).toEqual([['group', 37], ['held', 3]]);
+              expect(reviews).toHaveLength(2);
             }
           }
         }

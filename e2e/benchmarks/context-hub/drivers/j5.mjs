@@ -9,7 +9,8 @@ import { CampaignBatch } from '../../../../bin/lib/context-campaign-batch.mjs';
 import { ActionLedger, summarizeLedger } from '../../../lib/skills-r3/ledger.mjs';
 import { repositoryFixture } from '../../../fixtures/skills-r3/library.mjs';
 import { J5GitFixture } from '../../../lib/skills-r3/j5-git-fixture.mjs';
-import { observeCodexLoad, assertCodexBoundary } from '../../../lib/skills-r3/j5-native-fixture.mjs';
+import { assertCodexBoundary, assertQualifiedCodex, CODEX_VERSION, NATIVE_SCOPE } from '../../../lib/skills-r3/j5-native-fixture.mjs';
+import { ContextRollout, ownershipPacket } from '../../../../bin/lib/context-rollout.mjs';
 import { canonical } from '../../../lib/skills-r3/canonical.mjs';
 import { getJob } from '../jobs.mjs';
 import { promisify } from 'node:util';
@@ -262,6 +263,8 @@ class CampaignJourney {
     this.env = { ...process.env };
     this.repos = fixtureRepositories();
     this.git = new J5GitFixture(this.repos);
+    this.rollout = new ContextRollout({ hub: (method, path, data) => this.api(method, path, data), executor: this.executor,
+      python: this.config.python, env: this.env });
   }
 
   batch() {
@@ -306,10 +309,6 @@ class CampaignJourney {
     return this.campaign?.expected ? this.campaign.expected.includes(repo.id) : included(repo);
   }
 
-  mutation(method, path, data, primitive = 'command') {
-    return this.action(primitive, () => this.api(method, path, data));
-  }
-
   async sdk(args, expectedCode = 0) {
     return this.action('command', async () => {
       let stdout; let code = 0;
@@ -326,15 +325,35 @@ class CampaignJourney {
     return this.batch().targets(this.campaign.id);
   }
 
-  /** One decision per exposed unit; the packet hash binds all units of the stage. */
-  async review(primitive, units, packet, preconditions, effect = async () => {}) {
+  /**
+   * One decision per exposed review unit; the packet hash binds all units of the
+   * stage. A unit is a proven-identical group, the held-exception list or one
+   * individual exception, so actual review work is counted, never per-click.
+   */
+  async review(primitive, units, { packet, exposed, preconditions }, effect = async () => {}) {
     const decision = { packet_sha256: hash(canonical(packet)), preconditions_sha256: hash(canonical(preconditions)) };
-    for (const unit of units) await this.action(primitive, async () => {
-      assert.ok(unit.repos.length > 0 && unit.repos.every((repo) => packet.some((row) => row.repository_id === repo.id)), 'review_item_not_exposed');
+    const shown = new Set(exposed);
+    let result;
+    for (const [position, unit] of units.entries()) result = await this.action(primitive, async () => {
+      assert.ok(unit.repos.length > 0 && unit.repos.every((repo) => shown.has(repo.id)), 'review_item_not_exposed');
+      // The decision's effect, if any, is the last unit's act: it covers the whole reviewed packet.
+      return position === units.length - 1 ? effect() : undefined;
     }, { repos: unit.repos, decision });
-    await effect(); this.decision = decision;
+    this.decision = decision;
     await this.save(`decision-${this.stage.id}-${++this.serial}`, { decision, units: units.map((unit) => ({ kind: unit.kind, key: unit.key,
       repositories: unit.repos.map((repo) => repo.id) })), packet, preconditions });
+    return result;
+  }
+
+  /** Units of a product packet as fixture repositories; every exposed repository exactly once. */
+  packetUnits(packet, repos = this.repos) {
+    const byId = new Map(repos.map((repo) => [repo.id, repo]));
+    const units = packet.units.map((unit) => ({ kind: unit.kind, key: unit.key, repos: unit.repository_ids.map((id) => byId.get(id)) }));
+    const ids = units.flatMap((unit) => unit.repos.map((repo) => repo?.id));
+    assert.ok(ids.every(Boolean), 'review_item_unknown');
+    assert.equal(ids.length, repos.length, 'review_item_count');
+    assert.deepEqual([...new Set(ids)].sort(), repos.map((repo) => repo.id).sort(), 'review_items_not_exactly_once');
+    return units;
   }
 
   async prepareInventory() {
@@ -357,6 +376,7 @@ class CampaignJourney {
     const expected = this.repos.map((repo) => ({ id: repo.id, available: repo.disposition !== 'unavailable', lock_sha256: null,
       files: Object.fromEntries(Object.entries(repo.files).filter(([path]) => path !== 'references/local-policy.md').map(([path, text]) => [path, hash(text)])) }));
     assertInventory(observed.inventory, expected); assert.equal(observed.exitCode, 6);
+    this.inventory = observed.inventory;
     for (const repo of this.repos.filter((repo) => repo.disposition !== 'unavailable')) {
       for (const [path, text] of Object.entries(repo.files)) assert.equal(await readFile(join(this.projects.get(repo.id), path), 'utf8'), text);
       await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
@@ -366,56 +386,56 @@ class CampaignJourney {
     return { source: 'filesystem', value: expected };
   }
 
+  /** One review of the candidate release, then one approval bound to exactly that candidate. */
   async publish(revision, baseVersion) {
-    const head = await this.mutation('POST', `${this.contextRoot}draft/head-review/`, { revision });
-    const ack = await this.mutation('POST', `${this.contextRoot}draft/acknowledge-head/`, { revision: head.draft_revision,
-      expected_digest: head.candidate_digest, expected_head_version: head.expected_head_version, review_fingerprint: head.review_fingerprint }, 'review');
+    let reviewed;
+    await this.action('review', async () => { reviewed = await this.rollout.reviewRelease({ contextId: this.contextId, revision }); });
     this.releases += 1;
-    return (await this.mutation('POST', `${this.contextRoot}draft/publish/`, { revision: ack.revision, expected_digest: head.candidate_digest,
-      expected_head_version: head.expected_head_version, review_fingerprint: ack.review_fingerprint, base_version: baseVersion, note: '', acknowledge_warnings: true }, 'approve')).version;
+    return this.action('approve', () => this.rollout.publishReviewed({ review: reviewed, baseVersion }));
   }
 
   async publishNext() {
-    const draft = await this.mutation('POST', `${this.contextRoot}draft/start/`, { revision: 0, from_version: this.version.number });
-    const saved = await this.mutation('PUT', `${this.contextRoot}draft/`, { revision: draft.revision, base_version: this.version.number,
-      files: [{ path: 'AGENTS.md', content: `Reviewed managed release ${this.releases + 1}. Preserve all local instructions.\n` }], description: 'Synthetic fixture.', note: '' }, 'field_edit');
-    this.version = await this.publish(saved.revision, this.version.number); await this.grant();
-  }
-
-  async grant() {
-    const credential = await this.mutation('POST', `${ROOT}credentials/`, { purpose: 'consume', grants: [{ kind: 'agent_context',
-      resource_id: this.contextId, labels: [], version_ids: [...new Set([this.first.id, this.version.id])] }], binding_ids: [],
-      expires_at: new Date(Date.now() + 3_600_000).toISOString() }, 'configuration_edit');
-    this.credentials.push(credential.id);
-    this.env = { ...process.env, FI_CONTEXT_ORIGIN: this.hubUrl, FI_CONTEXT_ORGANIZATION_ID: this.headers['X-Organization-Id'],
-      FI_CONTEXT_WORKSPACE_ID: this.headers['X-Workspace-Id'], FI_CONTEXT_CREDENTIAL: credential.secret };
+    const saved = await this.action('field_edit', () => this.rollout.editDraft({ contextId: this.contextId, fromVersion: this.version.number,
+      files: [{ path: 'AGENTS.md', content: `Reviewed managed release ${this.releases + 1}. Preserve all local instructions.\n` }], description: 'Synthetic fixture.' }));
+    this.version = await this.publish(saved.revision, this.version.number);
   }
 
   async ownership() {
-    assert.ok(this.projects, 'inventory_required');
+    assert.ok(this.projects && this.inventory, 'inventory_required');
     const capability = await this.api('GET', `${ROOT}capabilities/`);
     assert.equal(capability.campaigns_enabled, true, 'enable_campaigns_only_in_test_stack');
-    const packet = [];
-    for (const repo of this.repos) {
-      const localFiles = {};
-      if (repo.disposition !== 'unavailable') {
-        for (const path of Object.keys(repo.files)) localFiles[path] = await readFile(join(this.projects.get(repo.id), path), 'utf8');
-        await assert.rejects(lstat(join(this.projects.get(repo.id), LOCK)), { code: 'ENOENT' });
+    // Independent oracle for the product's grouped ownership packet: every shared
+    // instruction file it groups is byte-identical on disk across the group, and
+    // every retained personal file it lists is the repository's actual file.
+    const packet = ownershipPacket(this.inventory);
+    for (const group of packet.groups) {
+      for (const member of group.members) {
+        const project = this.projects.get(member.repository_id);
+        await assert.rejects(lstat(join(project, LOCK)), { code: 'ENOENT' });
+        for (const file of [...group.shared, ...member.retained]) assert.equal(hash(await readFile(join(project, file.path))), file.sha256, 'ownership_packet_file_mismatch');
+        const listed = new Set([...group.shared, ...member.retained].map((file) => file.path));
+        const repo = this.repos.find((row) => row.id === member.repository_id);
+        for (const path of Object.keys(repo.files).filter((path) => path !== 'references/local-policy.md')) assert.ok(listed.has(path), 'ownership_packet_hid_instruction');
       }
-      packet.push({ repository_id: repo.id, disposition: repo.disposition, local_files: localFiles });
     }
-    // Ownership is decided per repository: local instructions differ, so no
-    // grouping is claimed for this cold decision.
-    await this.review('review', this.repos.map((repo) => ({ kind: 'ownership', key: repo.id, repos: [repo] })), packet,
-      { locks: 'absent', selected: this.repos.map((repo) => repo.id) });
-    this.exclusions = Object.fromEntries(this.repos.filter((repo) => repo.disposition === 'local_modification')
-      .map((repo) => [repo.id, 'Locally modified repository; retain local policy and hold until its owners adopt explicitly.']));
+    assert.deepEqual(packet.held.map((row) => row.repository_id), this.repos.filter((repo) => repo.disposition === 'unavailable').map((repo) => repo.id));
+    // Ownership is reviewed once per distinct shared instruction content, once
+    // for the held exceptions and individually for anything unproven.
+    await this.review('review', this.packetUnits(packet), { packet, exposed: this.repos.map((repo) => repo.id),
+      preconditions: { locks: 'absent', selected: this.repos.map((repo) => repo.id) } });
+    // Holding a locally modified repository is the operator's own per-repository
+    // decision (the inventory cannot see it): each is a counted field edit.
+    this.exclusions = {};
+    for (const repo of this.repos.filter((row) => row.disposition === 'local_modification')) {
+      await this.action('field_edit', async () => {
+        this.exclusions[repo.id] = 'Locally modified repository; retain local policy and hold until its owners adopt explicitly.';
+      }, { repos: [repo] });
+    }
     this.name = `e2e-j5-driver-${randomUUID().slice(0, 12)}`;
-    const created = await this.mutation('POST', ROOT, { name: this.name, description: 'Synthetic campaign driver.',
-      tags: [], files: [{ path: 'AGENTS.md', content: 'Reviewed managed release 1. Preserve all local instructions.\n' }] }, 'configuration_edit');
+    const created = await this.action('configuration_edit', () => this.rollout.createContext({ name: this.name, description: 'Synthetic campaign driver.',
+      files: [{ path: 'AGENTS.md', content: 'Reviewed managed release 1. Preserve all local instructions.\n' }] }));
     this.contextId = created.context_id; this.contextRoot = `${ROOT}${this.contextId}/`;
     this.first = this.version = await this.publish(created.revision, null);
-    await this.grant();
     const rows = [];
     for (const repo of this.repos) {
       const row = { name: repo.name, repository_id: repo.id, profile: this.profile, selector: { label: 'production' } };
@@ -425,26 +445,35 @@ class CampaignJourney {
     }
     this.bindings = await this.action('configuration_edit', () => this.batch().bindAll({ contextId: this.contextId, rows }));
     assert.deepEqual(this.bindings.map((row) => row.repository.repository_id), this.repos.map((repo) => repo.id), 'binding_order');
-    return { source: 'api', value: this.bindings };
+    return { source: 'api', value: { ownership: packet, bindings: this.bindings } };
   }
 
-  async freeze(label) {
-    assert.equal(this.bindings?.length, 40, 'forty_bindings_required');
-    const created = await this.mutation('POST', `${ROOT}campaigns/`, { name: `${this.name}-${label}`,
-      parent_campaign_id: this.campaigns.at(-1) ?? null, targets: this.bindings.map((binding) => ({ binding_id: binding.id, version: this.version.number })) });
-    this.campaigns.push(created.id);
-    this.campaign = { ...created, root: `${ROOT}campaigns/${created.id}/`, label, patches: new Map(), decisions: [], receipts: new Map(),
-      expected: this.expectedPlanned().map((repo) => repo.id) };
+  startRequest(label, reverse = false) {
+    const restoreLocks = reverse ? Object.fromEntries(this.repos.filter(included).map((repo) => [repo.id, join(this.scratch, `${repo.id}-original-lock.json`)])) : {};
+    return { contextId: this.contextId, contextName: this.name, campaignName: `${this.name}-${label}`, bindings: this.bindings, version: this.version.number,
+      selected: this.selected, exclusions: this.exclusions, mode: reverse ? 'restore' : 'plan', client: this.profile, restoreLocks, outDir: this.scratch };
+  }
+
+  /** Adopt a started (or replacement) campaign's frozen membership and plans; the product's output is checked, not trusted. */
+  async adoptStarted(label, started) {
+    this.campaigns.push(started.campaign_id); this.credentials.push(started.credential_id); this.env = { ...this.rollout.env };
+    this.campaign = { id: started.campaign_id, root: `${ROOT}campaigns/${started.campaign_id}/`, label, patches: new Map(), decisions: [], receipts: new Map(),
+      expected: this.expectedPlanned().map((repo) => repo.id), review: started.review, packet: started.packet };
     const targets = await this.targets();
     assert.deepEqual(targets.map((row) => row.binding_id).sort(), this.bindings.map((row) => row.id).sort());
-    return { source: 'api', value: targets };
+    assert.ok(targets.every((row) => row.desired_version === this.version.number), 'frozen_release_mismatch');
+    return targets;
   }
 
-  async plans(reverse = false) {
-    const restoreLocks = reverse ? Object.fromEntries(this.repos.filter(included).map((repo) => [repo.id, join(this.scratch, `${repo.id}-original-lock.json`)])) : {};
-    const review = await this.action('command', () => this.batch().planAll({ campaignId: this.campaign.id, selected: this.selected,
-      exclusions: this.exclusions, mode: reverse ? 'restore' : 'plan', name: this.name, version: this.version.number,
-      client: this.profile, restoreLocks, outDir: this.scratch }));
+  /** One command freezes all 40 bindings at the release, issues the implied planning credential and plans every target. */
+  async freeze(label, reverse = false) {
+    assert.equal(this.bindings?.length, 40, 'forty_bindings_required');
+    const started = await this.action('command', () => this.rollout.start({ ...this.startRequest(label, reverse), parentCampaignId: this.campaigns.at(-1) ?? null }));
+    return { source: 'api', value: await this.adoptStarted(label, started) };
+  }
+
+  async plans() {
+    const { review, packet } = this.campaign;
     const index = new Map(this.bindings.map((binding, i) => [binding.id, i]));
     // Independent expectation: exactly the deliberate followers are planned and
     // each exception is the product's own classification of the fixture case.
@@ -460,14 +489,18 @@ class CampaignJourney {
       assert.equal(patch.plan.desired_version_id, this.version.id);
       this.campaign.patches.set(index.get(bindingId), patch);
     }
-    this.campaign.decisions = review.decisions; this.campaign.review = review;
+    this.campaign.decisions = review.decisions;
     await this.observeExceptions(review);
     const targets = await this.targets();
-    this.campaign.units = reviewUnits(review, this.repos);
-    const packet = targets.map((row) => ({ ...row, repository_id: row.repository.repository_id }));
-    await this.review('review', this.campaign.units, packet, { campaign: await this.api('GET', this.campaign.root),
-      groups: review.groups, exceptions: review.exceptions });
-    return { source: 'api', value: { targets, groups: review.groups, exceptions: review.exceptions } };
+    // The packet is bound to the server's plan digests; check it independently.
+    for (const row of targets) assert.equal(packet.decisions.find((item) => item.binding_id === row.binding_id)?.plan_digest, row.plan_digest ?? null, 'packet_plan_digest');
+    assert.deepEqual(packet.held.map((row) => row.repository_id).sort(), review.exceptions.filter((row) => row.kind !== 'ungrouped').map((row) => row.repository_id).sort());
+    this.campaign.units = this.packetUnits(packet);
+    // Matches the comparator's granularity: one review per identical group, one
+    // for the held list, and each unproven exception individually.
+    await this.review('review', this.campaign.units, { packet, exposed: targets.map((row) => row.repository.repository_id),
+      preconditions: { campaign: await this.api('GET', this.campaign.root) } });
+    return { source: 'api', value: { targets, packet } };
   }
 
   /** The plan command, not the driver, must surface lockless local policy and unavailable targets. */
@@ -497,14 +530,16 @@ class CampaignJourney {
     this.ledger.fault('unavailable-target', `plan-${this.campaign.label}`);
   }
 
+  /** One approval over the reviewed packet with every exception explicitly acknowledged. */
   async authorize() {
     const before = await this.api('GET', this.campaign.root);
-    const targets = await this.targets();
-    const packet = targets.map((row) => ({ ...row, repository_id: row.repository.repository_id }));
-    // Approval mirrors the reviewed units: one per proven-identical group and
-    // one per exception. Each exposure still names every repository it covers.
-    await this.review('approve', this.campaign.units, packet, before, () => this.api('POST', `${this.campaign.root}authorize/`, {
-      revision: before.revision, expected_manifest_digest: before.manifest_digest, decisions: this.campaign.decisions, acknowledge_repository_writes: true }));
+    const { packet } = this.campaign;
+    const acknowledged = [...packet.held, ...packet.individual].map((row) => row.repository_id);
+    await this.review('approve', [{ kind: 'campaign', key: this.campaign.id, repos: this.repos }], { packet,
+      exposed: packet.units.flatMap((unit) => unit.repository_ids), preconditions: before },
+    () => this.rollout.authorizeReviewed({ packet, acknowledgedExceptions: acknowledged }));
+    const after = await this.api('GET', this.campaign.root);
+    assert.equal(after.status, 'authorized', 'campaign_not_authorized');
     return { source: 'api', value: await this.targets() };
   }
 
@@ -549,14 +584,9 @@ class CampaignJourney {
 
   async reconcile() {
     if (this.baseMovement && !this.baseMovement.recovered) {
-      const before = await this.api('GET', this.campaign.root);
-      await this.mutation('POST', `${this.campaign.root}cancel/`, { revision: before.revision,
-        reason: 'Concurrent base movement invalidated reviewed ancestry. Cancel before reviewing a replacement campaign.' }, 'recovery_decision');
-      const cancelled = await this.api('GET', this.campaign.root);
-      assert.equal(cancelled.status, 'cancelled');
-      const oldTargets = await this.targets();
-      assert.equal(oldTargets.length, 40, 'cancelled_target_accounting');
+      const stale = this.campaign;
       const repo = this.repos.find((row) => row.id === this.baseMovement.repository_id);
+      // The operator confirms the moved base and that no instruction file changed in it.
       const actual = await this.action('reconcile', async () => {
         const response = await this.git.fetch(`https://api.github.com/repos/synthetic/${repo.name}/commits/main`);
         assert.equal(response.status, 200); return response.json();
@@ -564,24 +594,33 @@ class CampaignJourney {
       assert.equal(actual.sha, this.baseMovement.after);
       assert.deepEqual(this.git.files(actual.sha), this.git.files(this.baseMovement.before), 'concurrent_instruction_change_unreviewed');
       this.bases.set(repo.id, actual.sha);
+      // One recovery decision: cancel the stale campaign (its uncertain receipt
+      // is retained) and plan a replacement linked to it. The stale authorized
+      // plan is never edited or retried; the replacement is reviewed and
+      // authorized again over all forty targets.
+      const replaced = await this.action('recovery_decision', () => this.rollout.replace({ ...this.startRequest(stale.label), campaignId: stale.id,
+        reason: 'Concurrent base movement invalidated reviewed ancestry. Cancel before reviewing a replacement campaign.' }));
+      assert.equal(replaced.cancelled.status, 'cancelled');
+      assert.equal((await this.api('GET', stale.root)).status, 'cancelled');
+      const oldTargets = await this.batch().targets(stale.id);
+      assert.equal(oldTargets.length, 40, 'cancelled_target_accounting');
+      await this.adoptStarted(stale.label, replaced);
+      assert.equal((await this.api('GET', this.campaign.root)).parent_campaign_id, stale.id, 'replacement_not_linked');
       this.baseMovement.recovered = true;
-      await this.save('base-movement', { ...this.baseMovement, cancelled, targets: oldTargets, duplicate_prs: 0 });
+      await this.save('base-movement', { ...this.baseMovement, cancelled: replaced.cancelled, targets: oldTargets, duplicate_prs: 0, replacement_campaign_id: this.campaign.id });
       this.ledger.fault('base-movement', 'reviewed-replacement-campaign');
-      // Do not edit/retry the stale authorized plan or erase its uncertain
-      // receipt. All forty targets and every review unit are decided again.
-      await this.freeze(this.campaign.label); await this.plans(); await this.authorize(); await this.createPRs();
+      await this.plans(); await this.authorize(); await this.createPRs();
     }
     for (const [index, receipt] of this.campaign.receipts) {
       if (receipt.state !== 'unknown') continue;
       this.ledger.fault('unknown-pr-response', `campaign-${this.campaigns.length}`);
-      const before = await this.api('GET', this.campaign.root);
-      await this.mutation('POST', `${this.campaign.root}pause/`, { revision: before.revision, reason: 'Inspect uncertain Git result before retry.' }, 'recovery_decision');
+      await this.action('recovery_decision', () => this.rollout.setStatus({ campaignId: this.campaign.id, action: 'pause', reason: 'Inspect uncertain Git result before retry.' }));
       const writes = this.git.requests.filter((row) => row.method !== 'GET').length;
       const [observed] = await this.action('reconcile', () => this.executeTargets([index]), { dimension: 'R', repos: [this.repos[index]] });
       assert.equal(observed.state, 'pr_open'); assert.equal(this.git.requests.filter((row) => row.method !== 'GET').length, writes);
       this.campaign.receipts.set(index, observed);
-      const paused = await this.api('GET', this.campaign.root);
-      await this.mutation('POST', `${this.campaign.root}resume/`, { revision: paused.revision, reason: 'Exact deterministic PR and complete tree reconciled.' }, 'recovery_decision');
+      const resumed = await this.action('recovery_decision', () => this.rollout.setStatus({ campaignId: this.campaign.id, action: 'resume', reason: 'Exact deterministic PR and complete tree reconciled.' }));
+      assert.ok(['authorized', 'running'].includes(resumed.status), 'campaign_not_resumed');
     }
     return { source: 'git', value: [...this.campaign.receipts.values()] };
   }
@@ -636,14 +675,16 @@ class CampaignJourney {
       }
     }
     assert.equal(merges.size, indices.length, 'planned_target_not_merged');
-    // One reconciliation command records every merged target; Git merge is
-    // never treated as installation or delivery.
-    const observed = await this.action('command', () => this.executeTargets(indices), { repos: indices.map((index) => this.repos[index]) });
-    assert.ok(observed.every((row) => row.state === 'merged' && row.delivered === false), 'merge_observation');
-    const applied = await this.action('command', () => this.batch().applyAll({ plans: indices.map((index) => ({
-      repository_id: this.repos[index].id, path: this.campaign.patches.get(index).path, project: this.projects.get(this.repos[index].id) })) }),
+    // One install command records every merged target from the Git host, applies
+    // each merged plan to its checkout and verifies its lock. Merge and
+    // installation receipts stay separate; neither is treated as delivery.
+    const settled = await this.action('command', () => this.rollout.install({ campaignId: this.campaign.id, targets: indices.map((index) => ({
+      binding_id: this.bindings[index].id, repository_id: this.repos[index].id, repository: `synthetic/${this.repos[index].name}`,
+      contents: this.campaign.patches.get(index).contents, plan_path: this.campaign.patches.get(index).path, project: this.projects.get(this.repos[index].id) })) }),
     { repos: indices.map((index) => this.repos[index]) });
-    assert.ok(applied.every((row) => row.state === 'installed' && row.delivery === 'not_observed' && row.verified === true), 'installation_unverified');
+    assert.ok(settled.merged.length === indices.length && settled.merged.every((row) => row.state === 'merged' && row.delivered === false), 'merge_observation');
+    assert.ok(settled.installed.length === indices.length
+      && settled.installed.every((row) => row.state === 'installed' && row.delivery === 'not_observed' && row.verified === true), 'installation_unverified');
     const installs = [];
     for (const index of indices) {
       const repo = this.repos[index]; const { pr, merge } = merges.get(index);
@@ -665,16 +706,31 @@ class CampaignJourney {
       const pulls = this.git.pulls(repo.id);
       assert.equal(pulls.length, this.prCount(repo) + 1, 'duplicate_pr');
       assert.equal(new Set(pulls.map((row) => row.head.ref)).size, pulls.length, 'duplicate_pr_branch');
-      let native = { discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' };
-      if (this.config.native && !this.setup) {
-        const boundary = await this.action('command', () => observeCodexLoad({ executable: this.config.native.executable,
-          executableSha256: this.config.native.sha256, project: this.projects.get(repo.id),
-          expectedInstructions: this.git.files(merge.sha)['AGENTS.md'], signal: this.signal }), { repos: [repo], target: 'native-host' });
-        native = { discovery: boundary.discovery, delivery: boundary.delivery, source: boundary.source,
-          scope: boundary.scope, artifact_sha256: await this.save(`native-${this.campaign.label}-${repo.id}`, boundary) };
-      }
       installs.push({ repository_id: repo.id, version_id: this.version.id, pr: pr.number, head: pr.head.sha, merge: merge.sha, hashes,
-        installed: true, ...native });
+        installed: true, discovery: 'not_observed', delivery: 'not_observed', source: 'filesystem' });
+    }
+    if (this.config.native && !this.setup) {
+      // One load-check command over every installed checkout (product path). Its
+      // verdict is not trusted: each raw capture is re-checked by the oracle
+      // against the merged Git tree before it is recorded.
+      await assertQualifiedCodex({ executable: this.config.native.executable, executableSha256: this.config.native.sha256 });
+      const repos = indices.map((index) => this.repos[index]);
+      const receipts = await this.action('command', () => this.rollout.loadCheck({
+        host: { executable: this.config.native.executable, sha256: this.config.native.sha256, version: CODEX_VERSION },
+        targets: indices.map((index) => {
+          const encoded = this.campaign.patches.get(index).contents['AGENTS.md'];
+          assert.ok(encoded, 'reviewed_instructions_missing');
+          return { repository_id: this.repos[index].id, project: this.projects.get(this.repos[index].id), expected_instructions: Buffer.from(encoded, 'base64').toString('utf8') };
+        }) }), { repos, target: 'native-host' });
+      assert.deepEqual(receipts.map((row) => row.repository_id), repos.map((repo) => repo.id), 'load_check_target_set');
+      for (const [position, receipt] of receipts.entries()) {
+        const install = installs[position]; assert.equal(install.repository_id, receipt.repository_id);
+        assert.ok(receipt.requests && receipt.process_events, `load_check_failed:${receipt.error ?? 'no_capture'}`);
+        assertCodexBoundary({ requests: receipt.requests, events: receipt.process_events, expectedInstructions: this.git.files(install.merge)['AGENTS.md'] });
+        const boundary = { evidence_class: 'synthetic fixture', ...receipt, scope: NATIVE_SCOPE };
+        Object.assign(install, { discovery: boundary.discovery, delivery: boundary.delivery, source: boundary.source,
+          scope: boundary.scope, artifact_sha256: await this.save(`native-${this.campaign.label}-${receipt.repository_id}`, boundary) });
+      }
     }
     if (this.campaign.expected.some((id) => this.repos.find((repo) => repo.id === id).disposition === 'pin')) this.pinsInstalled = true;
     await this.checkExcluded();
@@ -753,7 +809,7 @@ class CampaignJourney {
     assert.ok(this.rounds.length, 'initial_install_required');
     if (reverse) { await this.reverseConflictChecks(); this.version = this.first; }
     else await this.publishNext();
-    await this.freeze(reverse ? 'reverse' : 'second-update'); await this.plans(reverse);
+    await this.freeze(reverse ? 'reverse' : 'second-update', reverse); await this.plans();
     const reviewed = this.decision;
     await this.authorize(); await this.createPRs(); await this.reconcile();
     // Reverse-plan's required review must bind to its actual review action, not
@@ -812,7 +868,7 @@ class CampaignJourney {
   }
 
   async perform(stage, { ledger, signal }) {
-    this.stage = stage; this.ledger = ledger; this.signal = signal; this.decision = null;
+    this.stage = stage; this.ledger = ledger; this.signal = signal; this.decision = null; this.rollout.signal = signal;
     signal.throwIfAborted(); let result;
     if (this.cohort === 'configured' && !this.setupRounds.length) {
       assert.equal(stage.id, 'freeze-targets', 'configured_cohort_starts_at_recurring_rollout');

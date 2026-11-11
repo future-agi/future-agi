@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { ContextRollout, ownershipPacket, packetDigest } from '../../../bin/lib/context-rollout.mjs';
+
+const sha = (n) => String(n).repeat(64).slice(0, 64);
+const inventoried = (id, files, extra = {}) => ({ repository_id: id, state: 'inventoried', ownership: 'not_authorized',
+  observation: { inventory_complete: true, lock_sha256: null, findings: Object.entries(files).map(([path, sha256]) => ({ path, sha256 })) }, ...extra });
+
+test('ownership packet groups identical shared instructions and keeps personal files listed, not hidden', () => {
+  const inventory = { target_count: 5, targets: [
+    inventoried('1000', { 'AGENTS.md': sha(1), 'CLAUDE.local.md': sha(5), 'nested/AGENTS.md': sha(3) }),
+    inventoried('1001', { 'AGENTS.md': sha(2), 'CLAUDE.local.md': sha(6), 'nested/AGENTS.md': sha(3) }),
+    inventoried('1002', { 'AGENTS.md': sha(2), 'CLAUDE.local.md': sha(7), 'nested/AGENTS.md': sha(3) }),
+    { repository_id: '1003', state: 'unavailable' },
+    inventoried('1004', { 'AGENTS.md': sha(2) }, { observation: { inventory_complete: true, lock_sha256: sha(9), findings: [{ path: 'AGENTS.md', sha256: sha(2) }] } }),
+  ] };
+  const packet = ownershipPacket(inventory);
+  // Different personal CLAUDE.local.md bytes do not split a group; a different shared AGENTS.md does.
+  assert.deepEqual(packet.units.map((unit) => [unit.kind, unit.repository_ids]),
+    [['group', ['1000']], ['group', ['1001', '1002']], ['held', ['1003']], ['inventory_exception', ['1004']]]);
+  const group = packet.groups[1];
+  assert.deepEqual(group.members.map((row) => row.retained.map((file) => [file.path, file.sha256])), [[['CLAUDE.local.md', sha(6)]], [['CLAUDE.local.md', sha(7)]]]);
+  assert.deepEqual(group.shared.map((file) => file.path), ['AGENTS.md', 'nested/AGENTS.md']);
+  // A different set of personal files is a different proposal, so it is a different group.
+  const extra = structuredClone(inventory); extra.targets[2].observation.findings.push({ path: 'AGENTS.override.md', sha256: sha(8) });
+  assert.equal(ownershipPacket(extra).groups.length, 3);
+  const { units, packet_sha256: digest, ...body } = packet;
+  assert.equal(packetDigest(body), digest);
+  assert.throws(() => ownershipPacket({ target_count: 6, targets: inventory.targets }), /inventory_incomplete/);
+});
+
+const campaignId = '00000000-0000-4000-8000-000000000001';
+const binding = (n) => `00000000-0000-4000-8000-00000000010${n}`;
+function fakeHub({ campaign, targets }) {
+  const calls = [];
+  const hub = async (method, path, body) => {
+    calls.push([method, path, body]);
+    if (method === 'GET' && path.endsWith(`campaigns/${campaignId}/`)) return structuredClone(campaign);
+    if (method === 'GET' && path.includes('/targets/')) return { results: structuredClone(targets), total_pages: 1 };
+    if (method === 'POST' && path.endsWith('/authorize/')) { campaign.status = 'authorized'; campaign.revision += 1; return {}; }
+    if (method === 'POST' && path.endsWith('/credentials/')) return { id: 'credential-1', secret: 'synthetic-secret' };
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  return { hub, calls };
+}
+const review = () => ({
+  groups: [{ key: 'sha256:same', members: [{ binding_id: binding(1), repository_id: '1001', plan_digest: 'sha256:p1' }, { binding_id: binding(2), repository_id: '1002', plan_digest: 'sha256:p2' }] }],
+  exceptions: [{ binding_id: binding(3), repository_id: '1003', kind: 'pinned_selector', reason: 'Deliberate pin to version 1; no write authorized.', observed: {} },
+    { binding_id: binding(4), repository_id: '1004', kind: 'ungrouped', reason: 'local_segment_changed', observed: {} }],
+  decisions: [1, 2, 3, 4].map((n) => ({ binding_id: binding(n), plan_digest: n === 3 ? null : `sha256:p${n}`, decision: n === 3 ? 'exclude' : 'include', reason: 'r' })),
+});
+const state = () => ({ campaign: { status: 'draft', revision: 7, manifest_digest: 'sha256:manifest', target_count: 4 },
+  targets: [1, 2, 3, 4].map((n) => ({ binding_id: binding(n), plan_digest: n === 3 ? null : `sha256:p${n}`, desired_version_id: 'v2' })) });
+
+test('one approval authorizes the reviewed packet only with every exception acknowledged', async () => {
+  const world = state(); const { hub, calls } = fakeHub(world);
+  const rollout = new ContextRollout({ hub, executor: {} });
+  const packet = await rollout.packet({ campaignId, review: review() });
+  // Held exceptions are shown together; an unproven delta stays its own unit.
+  assert.deepEqual(packet.units.map((unit) => [unit.kind, unit.repository_ids]), [['group', ['1001', '1002']], ['held', ['1003']], ['ungrouped', ['1004']]]);
+  await assert.rejects(rollout.authorizeReviewed({ packet, acknowledgedExceptions: ['1003'] }), /exceptions_not_acknowledged/);
+  await assert.rejects(rollout.authorizeReviewed({ packet, acknowledgedExceptions: ['1003', '1004', '1001'] }), /exceptions_not_acknowledged/);
+  const altered = structuredClone(packet); altered.decisions[0].decision = 'exclude';
+  await assert.rejects(rollout.authorizeReviewed({ packet: altered, acknowledgedExceptions: ['1003', '1004'] }), /review_packet_altered/);
+  assert.equal(calls.filter(([method, path]) => method === 'POST' && path.endsWith('/authorize/')).length, 0, 'nothing authorized on refusal');
+  const authorized = await rollout.authorizeReviewed({ packet, acknowledgedExceptions: ['1004', '1003'] });
+  assert.equal(authorized.status, 'authorized');
+  const [, , body] = calls.find(([method, path]) => method === 'POST' && path.endsWith('/authorize/'));
+  assert.deepEqual(body, { revision: 7, expected_manifest_digest: 'sha256:manifest', decisions: packet.decisions, acknowledge_repository_writes: true });
+});
+
+test('a changed revision, manifest or plan after review refuses authorization', async () => {
+  for (const mutate of [(w) => { w.campaign.revision = 8; }, (w) => { w.campaign.manifest_digest = 'sha256:other'; },
+    (w) => { w.targets[1].plan_digest = 'sha256:changed'; }, (w) => { w.campaign.status = 'authorized'; }]) {
+    const world = state(); const { hub, calls } = fakeHub(world);
+    const rollout = new ContextRollout({ hub, executor: {} });
+    const packet = await rollout.packet({ campaignId, review: review() });
+    mutate(world);
+    await assert.rejects(rollout.authorizeReviewed({ packet, acknowledgedExceptions: ['1003', '1004'] }), /review_stale/);
+    assert.equal(calls.filter(([method, path]) => method === 'POST' && path.endsWith('/authorize/')).length, 0);
+  }
+});
+
+test('the planning credential covers exactly the frozen releases plus releases already locked in the checkouts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'j5-rollout-'));
+  await mkdir(join(dir, 'a')); await mkdir(join(dir, 'b'));
+  await writeFile(join(dir, 'a', '.futureagi-context.lock.json'), JSON.stringify({ version_id: 'v1' }));
+  await writeFile(join(dir, 'restore.json'), JSON.stringify({ version_id: 'v0' }));
+  const world = state(); const { hub, calls } = fakeHub(world);
+  const rollout = new ContextRollout({ hub, executor: {}, env: {} });
+  const credential = await rollout.planningCredential({ contextId: 'ctx', campaignId, restoreLocks: { 1001: join(dir, 'restore.json') },
+    selected: [{ project: join(dir, 'a') }, { project: join(dir, 'b') }, { project: join(dir, 'missing') }] });
+  assert.equal(credential.id, 'credential-1'); assert.equal(credential.secret, undefined, 'secret never returned');
+  assert.equal(rollout.env.FI_CONTEXT_CREDENTIAL, 'synthetic-secret');
+  const [, , body] = calls.find(([method, path]) => method === 'POST' && path.endsWith('/credentials/'));
+  assert.deepEqual(body.grants, [{ kind: 'agent_context', resource_id: 'ctx', labels: [], version_ids: ['v0', 'v1', 'v2'] }]);
+  assert.equal(body.purpose, 'consume');
+});
+
+test('one load check returns a receipt per target and never turns a failed probe into delivery', async () => {
+  const rollout = new ContextRollout({ hub: async () => null });
+  const probe = async ({ project }) => {
+    if (project === 'broken') throw new Error('native_preimage_changed');
+    return { source: 'model_boundary', discovery: 'observed', delivery: 'observed', requests: [{}], process_events: [] };
+  };
+  const receipts = await rollout.loadCheck({ host: { executable: '/x', sha256: sha(1) }, probe,
+    targets: [{ repository_id: '1', project: 'ok', expected_instructions: 'a' }, { repository_id: '2', project: 'broken', expected_instructions: 'a' }] });
+  assert.deepEqual(receipts.map((row) => [row.repository_id, row.delivery]), [['1', 'observed'], ['2', 'not_observed']]);
+  assert.equal(receipts[1].error, 'native_preimage_changed');
+  await assert.rejects(rollout.loadCheck({ host: {}, targets: [] }), /native_host_pin_required/);
+});

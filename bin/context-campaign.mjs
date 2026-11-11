@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { CampaignExecutor } from './lib/context-campaign.mjs';
 import { CampaignBatch } from './lib/context-campaign-batch.mjs';
+import { ContextRollout, ownershipPacket } from './lib/context-rollout.mjs';
 
 const execute = promisify(execFile);
 
@@ -25,6 +26,18 @@ export async function main(args, env = process.env) {
     console.log('plan-all input: {campaignId,selected:[{repository_id,repository,project}],exclusions,mode,name,version,client,restoreLocks,outDir}');
     console.log('plan-all prints review groups (identical managed delta, local bytes proven preserved) and individual exceptions.');
     console.log('Requires pre-authorized server plans; does not authorize, install or infer delivery. Only merge-reviewed merges.');
+    console.log('Rollout path (one command per step over the whole fixed campaign; review stays a separate decision):');
+    console.log('       node bin/context-campaign.mjs ownership-review INVENTORY.json      grouped ownership packet from `fi.context inventory` output');
+    console.log('       node bin/context-campaign.mjs context-create CONTEXT.json | context-edit EDIT.json');
+    console.log('       node bin/context-campaign.mjs release-review CONTEXT_ID REVISION   prints the candidate to review');
+    console.log('       node bin/context-campaign.mjs release-publish REVIEW.json BASE_VERSION|null   publishes exactly the reviewed candidate');
+    console.log('       node bin/context-campaign.mjs start|replace REQUEST.json   freeze every binding at one release, issue the implied planning credential, plan all;');
+    console.log('                                                                  replace first cancels {campaignId} with {reason}; both print a grouped review packet');
+    console.log('       node bin/context-campaign.mjs authorize-reviewed PACKET.json ACKNOWLEDGED.json   one approval; refused if anything changed or the');
+    console.log('                                                                  acknowledged exception repository ids differ from the packet');
+    console.log('       node bin/context-campaign.mjs status CAMPAIGN_ID pause|resume|cancel REASON');
+    console.log('       node bin/context-campaign.mjs install TARGETS.json        after merge-reviewed: record merges, apply and verify each lock (no delivery claim)');
+    console.log('       node bin/context-campaign.mjs load-check TARGETS.json     pinned native host per checkout (CONTEXT_NATIVE_HOST, CONTEXT_NATIVE_HOST_SHA256)');
     console.log('Environment: CONTEXT_HUB_URL, CONTEXT_HUB_HEADERS_JSON (human-bound API headers), GITHUB_TOKEN.');
     console.log('Keep each idempotencyKey for transport retries. A new key reconciles an uncertain prior attempt without repeating Git writes.');
     return 0;
@@ -53,6 +66,47 @@ export async function main(args, env = process.env) {
     };
     return new CampaignBatch({ hub, executor, python: env.CONTEXT_SDK_PYTHON, env });
   };
+  const rollout = () => {
+    const runner = batch();
+    return new ContextRollout({ hub: runner.hub, executor: runner.executor, python: env.CONTEXT_SDK_PYTHON, env });
+  };
+  const json = async (path) => JSON.parse(await readFile(path, 'utf8'));
+  const print = (value) => { console.log(JSON.stringify(value)); return 0; };
+  if (args[0] === 'ownership-review' && args.length === 2) {
+    const packet = ownershipPacket(await json(args[1]));
+    console.log(JSON.stringify(packet));
+    return packet.individual.length ? 6 : 0;
+  }
+  if (args[0] === 'context-create' && args.length === 2) return print(await rollout().createContext(await json(args[1])));
+  if (args[0] === 'context-edit' && args.length === 2) return print(await rollout().editDraft(await json(args[1])));
+  if (args[0] === 'release-review' && args.length === 3) return print(await rollout().reviewRelease({ contextId: args[1], revision: Number(args[2]) }));
+  if (args[0] === 'release-publish' && args.length === 3) {
+    return print(await rollout().publishReviewed({ review: await json(args[1]), baseVersion: args[2] === 'null' ? null : Number(args[2]) }));
+  }
+  if ((args[0] === 'start' || args[0] === 'replace') && args.length === 2) {
+    const request = await json(args[1]);
+    const started = args[0] === 'start' ? await rollout().start(request) : await rollout().replace(request);
+    // The planning credential's secret stays in this process; only its id is printed.
+    console.log(JSON.stringify({ ...started, review: { ...started.review, patches: Object.fromEntries(started.review.patches) } }));
+    return started.packet.individual.length ? 6 : 0;
+  }
+  if (args[0] === 'authorize-reviewed' && args.length === 3) {
+    return print(await rollout().authorizeReviewed({ packet: await json(args[1]), acknowledgedExceptions: await json(args[2]) }));
+  }
+  if (args[0] === 'status' && args.length === 4) return print(await rollout().setStatus({ campaignId: args[1], action: args[2], reason: args[3] }));
+  if (args[0] === 'install' && args.length === 2) {
+    const { campaignId, targets } = await json(args[1]);
+    const result = await rollout().install({ campaignId, targets });
+    console.log(JSON.stringify({ ...result, delivered: false }));
+    return result.installed.length === targets.length && result.installed.every((row) => row.state === 'installed' && row.verified === true) ? 0 : 6;
+  }
+  if (args[0] === 'load-check' && args.length === 2) {
+    const { targets } = await json(args[1]);
+    const receipts = await rollout().loadCheck({ host: { executable: env.CONTEXT_NATIVE_HOST, sha256: env.CONTEXT_NATIVE_HOST_SHA256,
+      version: env.CONTEXT_NATIVE_HOST_VERSION ?? null }, targets });
+    console.log(JSON.stringify({ receipts }));
+    return receipts.every((row) => row.delivery === 'observed') ? 0 : 6;
+  }
   if (args[0] === 'bind') {
     if (args.length !== 3) throw new Error('invalid_arguments');
     const bindings = await batch().bindAll({ contextId: args[1], rows: JSON.parse(await readFile(args[2], 'utf8')) });
