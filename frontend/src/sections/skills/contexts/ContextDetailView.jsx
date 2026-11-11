@@ -14,8 +14,8 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Hierarchy: selected/latest/production strip, AGENTS root, read-only provenance.
 // Palette/depth/surfaces: neutral source paper and divider, no delivery inference.
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
-function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state }) {
-  const [tab, setTab] = useState("context");
+function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state, initialTab }) {
+  const [tab, setTab] = useState(initialTab === 'tests' ? 'tests' : 'context');
   const [fileMode, setFileMode] = useState('source');
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || query.isLoading || state === "loading") return <ContentSkeleton />;
@@ -59,6 +59,6 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
     </>}
   </Stack>;
 }
-Detail.propTypes = { scopeKey: PropTypes.string.isRequired, query: PropTypes.object.isRequired, versionQuery: PropTypes.object.isRequired, fileQuery: PropTypes.object.isRequired, selectedPath: PropTypes.string, onSelectPath: PropTypes.func, onSelectVersion: PropTypes.func, versions: PropTypes.array, onEditViewed: PropTypes.func, onResumeDraft: PropTypes.func, onPreserveDraft: PropTypes.func, sections: PropTypes.object, state: PropTypes.string };
+Detail.propTypes = { scopeKey: PropTypes.string.isRequired, query: PropTypes.object.isRequired, versionQuery: PropTypes.object.isRequired, fileQuery: PropTypes.object.isRequired, selectedPath: PropTypes.string, onSelectPath: PropTypes.func, onSelectVersion: PropTypes.func, versions: PropTypes.array, onEditViewed: PropTypes.func, onResumeDraft: PropTypes.func, onPreserveDraft: PropTypes.func, sections: PropTypes.object, state: PropTypes.string, initialTab: PropTypes.string };
 export default function ContextDetailView(props) { return <Detail key={props.scopeKey} {...props} />; }
 ContextDetailView.propTypes = Detail.propTypes;

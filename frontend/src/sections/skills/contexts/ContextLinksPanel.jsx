@@ -54,9 +54,9 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
       const skill = availableSkills.find((entry) => entry.id === link.skillId);
       const newer = upstream[link.skillId];
       return <Box key={link.skillId} sx={{ borderBottom: 1, borderColor: "divider", py: 1, minWidth: 0 }}>
-        <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>{included?.mount || skill?.name || link.skillId}</Typography>
-        <Typography variant="s1">{selectorLabel(link.selector)} · {included ? `Included v${included.version}` : "Not yet accepted"}</Typography>
-        <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>{included?.digest || "Preview required to resolve this link"}</Typography>
+        <Typography variant="m3" display="block" sx={{ overflowWrap: "anywhere" }}>{included?.mount || skill?.name || link.skillId}</Typography>
+        <Typography variant="s1" display="block">{selectorLabel(link.selector)} · {included ? `Included v${included.version}` : "Not yet accepted"}</Typography>
+        <Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>{included?.digest || "Preview required to resolve this link"}</Typography>
         {newer && newer.version !== included?.version && <Typography variant="s3">v{newer.version} available; this draft still includes {included ? `v${included.version}` : "no version"}.</Typography>}
         {!readOnly && <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}

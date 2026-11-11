@@ -79,6 +79,7 @@ function Editor({ scopeKey, contextId }) {
     readOnlyFileQuery={{ ...readOnlyFile, scopeKey }} onSelectReadOnlyFile={selectReadOnlyFile}
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
+      renderTests: ({ session, onSave }) => <Stack spacing={1.5}><Alert severity="info">Test the saved standing root and accepted linked skills together. Opening tests does not publish or move production.</Alert><Button variant="outlined" disabled={Boolean(session.mutationError) || session.pendingMutations} onClick={async () => { const saved = await onSave(); if (saved) navigate(`${paths.dashboard.skills.contextDetail(contextId)}?tab=tests&draft=1`); }}>Save and open whole-context tests</Button></Stack>,
       availableSkills: skills.isError ? [] : skills.data || [],
       previewDependencies: previewDependencies.mutateAsync,
       applyDependencies: (input, options) => applyDependencies.mutateAsync({ ...input, ...options }),

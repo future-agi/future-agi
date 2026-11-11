@@ -109,10 +109,10 @@ export default function TestInventoryReview({
                     overflowWrap: "anywhere",
                   }}
                 >
-                  <Typography variant="s1" sx={{ fontFamily: "monospace" }}>
+                  <Typography variant="s1" display="block" sx={{ fontFamily: "monospace" }}>
                     {file.path}
                   </Typography>
-                  <Typography variant="s3" color="text.secondary">
+                  <Typography variant="s3" display="block" color="text.secondary">
                     {file.sizeBytes} bytes · SHA-256 {file.sha256}
                   </Typography>
                   {file.flags.length > 0 && (

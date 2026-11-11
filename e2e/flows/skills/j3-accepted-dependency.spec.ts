@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/scope-actors';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { E2E } from '../../lib/env';
 import { authInitScript } from '../../lib/auth';
+import { SkillsFixtures, answerRule, toolRule } from '../../lib/skills-fixtures';
 import type { ScopeActor } from '../../lib/scope-actors';
 
 const API = '/model-hub/skills/';
@@ -16,11 +17,13 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     userGoal: 'An author explicitly accepts a shared policy update into two followers while a third context keeps its deliberate pin, then publishes immutable parents without silently promoting them',
     steps: [
       'prepare three published contexts over fifteen synthetic skills, two followers and one deliberate v7 pin',
-      'publish shared policy v8 and open each follower from its exact viewed release',
-      'preview and explicitly accept the selected child update in the real context editor',
-      'advance upstream to v9, edit the standing root, and verify the accepted v8 lock survives autosave',
+      'publish shared policy v8 and inspect authorized dependents and deliberate pins in light and dark UI',
+      'open each follower from its exact viewed release, preview and explicitly accept the selected child update',
+      'hold an actual root autosave request in flight, advance upstream to v9, release that unchanged request, and verify accepted v8 and later purpose edits survive',
+      'test each complete saved draft against its historical parent and inspect actual model-boundary child delivery',
       'review and publish each parent independently without moving production',
       'inspect both immutable parent descriptors and the unchanged pinned context',
+      'request and independently approve each exact parent label move through the UI',
     ],
     backendChecks: [
       'the initial three immutable descriptors contain the exact fifteen-member set with shared policy v7',
@@ -28,6 +31,9 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       'root autosave advances revision while retaining accepted v8 after upstream reaches v9',
       'published descriptors and dependency projections agree on all fifteen identities, both followers retain v8 and the deliberate pin retains v7',
       'parent publication creates no label events or production assignment',
+      'dependent inventory contains exactly the three authorized parent identities and identifies the deliberate pin',
+      'whole-context jobs preserve the saved compiled digest, deliver v8 to candidate and v7 to reference at the model boundary, and never deliver v9',
+      'each label move requires an independently approved parent request and records the authorized reviewer in PostgreSQL',
     ],
   }),
 }, async ({ browser, request, scopeActors, scopeProbe }, testInfo) => {
@@ -37,6 +43,10 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
   const author = scopeActors.member;
   const prefix = `e2e-j3-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const events: unknown[] = [];
+  const fake = new SkillsFixtures();
+  const prompt = `${prefix}: explain a purchasing request`;
+  await fake.register([answerRule(prompt, 0, 'approved-response')]);
+  const connectionId = await fake.connect(owner.api);
   const req = async (actor: ScopeActor, method: string, path: string, data?: unknown): Promise<any> => {
     const response = await request.fetch(`${E2E.apiUrl}${API}${path}`, {
       method, headers: { ...scopeActors.headers(actor), 'Idempotency-Key': randomUUID() }, data,
@@ -100,6 +110,18 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     events.push({ stage: 'initial', childId, parents, leafIds: leaves.map(l => l.skill.id) });
     await testInfo.attach('j3-initial-identities', { body: JSON.stringify(events), contentType: 'application/json' });
     await leaf(`${prefix}-leaf-0`, 8);
+    await page.goto(`/dashboard/skills/${childId}?tab=dependents`);
+    await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
+    await expect(page.getByText('Pinned as intended', { exact: true })).toBeVisible();
+    const inventory = await req(author, 'GET', `${childId}/context-dependents/`);
+    expect(inventory.count).toBe(wrong === 'dependents' ? 99 : 3);
+    expect(inventory.results.map((row: any) => row.context_id).sort()).toEqual(parents.map(row => row.id).sort());
+    await shot('dependent-inventory-light');
+    await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'dark' })); });
+    await page.reload();
+    await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
+    await shot('dependent-inventory-dark');
+    await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...settings, themeMode: 'light' })); });
     for (const parent of parents.slice(0, 2)) {
       await page.goto(`${UI}/${parent.id}?version=1`);
       await page.getByRole('button', { name: 'Edit viewed v1', exact: true }).click();
@@ -113,11 +135,30 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       parent.before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       expect(parent.before.revision).toBeGreaterThan(before.revision);
       expect(parent.before.resolved_lock.links.find((l: any) => l.skill_id === childId).version).toBe(wrong === 'accepted' ? 99 : 8);
+      await page.getByText(`skills/${prefix}-leaf-0/`, { exact: true }).scrollIntoViewIfNeeded();
       await shot(`accepted-${parent.name}`);
     }
-    await leaf(`${prefix}-leaf-0`, 9);
-    for (const parent of parents.slice(0, 2)) {
+    for (const [index, parent] of parents.slice(0, 2).entries()) {
       await page.goto(`${UI}/${parent.id}/edit`);
+      // Hold only the first real PUT, without changing its body or response.
+      // The upstream publication completes before that same save is forwarded.
+      const savePattern = `**/contexts/${parent.id}/draft/`;
+      let raced = false;
+      let raceError: unknown;
+      if (index === 0) await page.route(savePattern, async (route) => {
+        if (route.request().method() !== 'PUT' || raced) return route.continue();
+        raced = true;
+        try {
+          const sent = route.request().postDataJSON();
+          expect(sent.revision).toBe(parent.before.revision);
+          const upstream = await leaf(`${prefix}-leaf-0`, 9);
+          const stillSaved = await req(author, 'GET', `contexts/${parent.id}/draft/`);
+          expect(stillSaved.revision).toBe(parent.before.revision);
+          expect(stillSaved.resolved_lock.links.find((link: any) => link.skill_id === childId).version).toBe(8);
+          events.push({ stage: 'upstream-during-inflight-save', parent: parent.id, pendingRevision: sent.revision, upstreamVersion: upstream.version.number });
+        } catch (error) { raceError = error; }
+        finally { await route.continue(); }
+      });
       const input = page.getByRole('textbox', { name: /Editor content/ });
       await expect(input).toBeVisible({ timeout: UI_READY });
       const root = '# Reviewed synthetic policy\nUse explicitly accepted policy, never upstream latest.\n';
@@ -125,10 +166,63 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.evaluate(text => navigator.clipboard.writeText(text), root);
       await input.press('Control+v');
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).files.find((f: any) => f.path === 'AGENTS.md').content, { timeout: UI_READY }).toBe(root);
+      if (index === 0) {
+        await page.unroute(savePattern);
+        if (raceError) throw raceError;
+        expect(raced).toBe(wrong !== 'inflight-save');
+        expect((await req(author, 'GET', `${childId}/`)).latest_version).toBe(9);
+      }
+      await page.getByRole('textbox', { name: 'Context purpose', exact: true }).fill('Reviewed purchasing purpose; retain the accepted shared policy.');
+      await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).context_spec.description, { timeout: UI_READY }).toBe('Reviewed purchasing purpose; retain the accepted shared policy.');
       const saved = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       expect(saved.revision).toBeGreaterThan(parent.before.revision);
       expect(saved.resolved_lock.links.find((l: any) => l.skill_id === childId).version).toBe(wrong === 'autosave' ? 99 : 8);
       events.push({ stage: 'autosave', parent: parent.id, revision: saved.revision, digest: saved.digest });
+      await page.getByRole('tab', { name: 'Tests', exact: true }).click();
+      await page.getByRole('button', { name: 'Save and open whole-context tests', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Test request', exact: true }).fill(prompt);
+      await page.getByRole('textbox', { name: 'Expected answer contains', exact: true }).fill('approved-response');
+      await page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check();
+      await page.getByRole('combobox', { name: 'Task model', exact: true }).click();
+      await page.getByRole('option', { name: 'gpt-4o-mini', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('2');
+      await page.getByRole('textbox', { name: 'Historical reference version (optional)', exact: true }).fill('1');
+      const previewResponse = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/preview/`) && res.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Preview whole-context test', exact: true }).click();
+      const testPreview = (await (await previewResponse).json()).result;
+      const handle = `s-${createHash('sha256').update(JSON.stringify([testPreview.fingerprint, childId])).digest('hex').slice(0, 16)}`;
+      // Fixture-only transport configuration. The real worker chooses and reads
+      // the accepted child from its immutable context snapshot, never a DB seed.
+      await fake.dispose();
+      await fake.register([toolRule(prompt, 0, 'load_skill', { skill_id: handle }), answerRule(prompt, 1, 'approved-response')]);
+      await page.getByRole('checkbox', { name: 'I know of no bundled answer keys or evaluation material', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'I reviewed the entire inventory and outbound inputs', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.', exact: true }).check();
+      await expect(page.getByRole('button', { name: 'Run whole-context test', exact: true })).toBeEnabled();
+      await shot(`whole-context-preview-${parent.name}`);
+      const started = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/`) && res.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Run whole-context test', exact: true }).click();
+      const startResponse = await started;
+      expect(startResponse.status()).toBe(202);
+      const runId = (await startResponse.json()).result.id;
+      await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/test-runs/${runId}/`)).status, { timeout: 180_000 }).toBe('completed');
+      const summary = await req(author, 'GET', `contexts/${parent.id}/test-runs/${runId}/`);
+      expect(summary.candidate.digest).toBe(wrong === 'tested-digest' ? 'not-the-reviewed-digest' : saved.digest);
+      expect(summary.reference.version).toBe(1);
+      const attempts = await scopeProbe.pg('SELECT variant, root_fully_delivered, answer_verdict FROM model_hub_hubskilltestattempt WHERE run_id = $1 ORDER BY variant', [runId]);
+      expect(attempts).toEqual(['candidate', 'reference'].map(variant => ({ variant, root_fully_delivered: true, answer_verdict: 'pass' })));
+      const modelLedger = await fake.ledger();
+      const delivered = modelLedger.filter(row => row.turn === 1).flatMap(row => (row.messages || []).filter(message => message.role === 'tool').map(message => JSON.parse(message.content!).text));
+      expect(delivered).toHaveLength(2);
+      expect(delivered.some(text => text.includes('policy revision 8.'))).toBe(true);
+      expect(delivered.some(text => text.includes('policy revision 7.'))).toBe(true);
+      expect(delivered.some(text => text.includes('policy revision 9.'))).toBe(wrong === 'model-child');
+      events.push({ stage: 'whole-context-test', parent: parent.id, summary, attempts, modelLedger });
+      await expect(page.getByText('Answer: pass', { exact: true })).toHaveCount(2, { timeout: UI_READY });
+      await expect(page.getByRole('button', { name: 'Cancel context test', exact: true })).not.toBeVisible();
+      await page.getByText('Whole-context result', { exact: true }).scrollIntoViewIfNeeded();
+      await shot(`whole-context-result-${parent.name}`);
+      await page.goto(`${UI}/${parent.id}/edit`);
       await page.getByRole('button', { name: 'Review changes', exact: true }).click();
       const reviewed = page.getByRole('checkbox', { name: 'I reviewed the saved candidate against its content origin and current publication head.', exact: true });
       await reviewed.check();
@@ -164,11 +258,51 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
     await page.goto(`${UI}/${parents[0].id}?version=2`);
     await page.getByRole('tab', { name: 'Linked skills', exact: true }).click();
     await shot('published-v8-with-upstream-v9');
+    const reviewerContext = await browser.newContext({ baseURL: E2E.appUrl, viewport: { width: 1440, height: 900 } });
+    await reviewerContext.addInitScript(authInitScript, { access: owner.tokens.access, refresh: owner.tokens.refresh, organizationId: owner.organizationId, workspaceId: owner.workspaceId });
+    await reviewerContext.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), owner.organizationId);
+    const reviewerPage = await reviewerContext.newPage();
+    reviewerPage.setDefaultTimeout(UI_READY);
+    try {
+      for (const parent of parents.slice(0, 2)) {
+        await page.goto(`${UI}/${parent.id}?version=2`);
+        await page.getByRole('tab', { name: 'Versions', exact: true }).click();
+        await page.getByRole('textbox', { name: 'Independent reviewer user ID', exact: true }).fill(owner.userId);
+        await page.getByRole('button', { name: 'Preview parent label move', exact: true }).click();
+        await page.getByRole('checkbox', { name: 'Request independent review of this exact parent transition. Do not move its label yet.', exact: true }).check();
+        const submitted = page.waitForResponse(res => res.url().endsWith('/release-requests/') && res.request().method() === 'POST');
+        await page.getByRole('button', { name: 'Send parent release request', exact: true }).click();
+        const response = await submitted;
+        expect(response.status()).toBe(201);
+        const release = (await response.json()).result;
+        expect((await req(author, 'GET', `contexts/${parent.id}/`)).context.labels).toEqual([]);
+        await reviewerPage.goto(`${UI}/${parent.id}/review?request=${release.id}`);
+        const reviewed = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
+        await expect(reviewed).toBeEnabled();
+        await reviewed.check();
+        await reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
+        await expect(reviewed).not.toBeChecked();
+        await reviewed.check();
+        await reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }).click();
+        await reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click();
+        await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
+        const labels = await scopeProbe.pg('SELECT to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id = $1', [parent.id]);
+        expect(labels).toEqual([{ to_version: wrong === 'authorized-label' ? 99 : 2, actor_id: owner.userId }]);
+        events.push({ stage: 'independent-parent-release', parent: parent.id, requestId: release.id, labels });
+        await expect(reviewerPage.getByRole('dialog')).toHaveCount(0);
+        await reviewerPage.getByText('Durable release receipt', { exact: true }).scrollIntoViewIfNeeded();
+        const image = await reviewerPage.screenshot();
+        if (evidence) await writeFile(`${evidence}/shots/authorized-${parent.name}.png`, image);
+      }
+    } finally { await reviewerContext.close(); }
+    events.push({ stage: 'model-boundary-text-tests-only', ledger: await fake.ledger(), limitation: 'Fresh/resumed native runtime sessions are not established by text test delivery.' });
   } finally {
     if (testInfo.status !== testInfo.expectedStatus) await shot('failure');
     await testInfo.attach('j3-observations', { body: JSON.stringify(events), contentType: 'application/json' });
     if (evidence) { await mkdir(evidence, { recursive: true }); await writeFile(`${evidence}/observations.json`, JSON.stringify(events, null, 2)); }
     await context.close();
+    await owner.api.delete(`/model-hub/api-keys/${connectionId}/`);
+    await fake.dispose();
     if (evidence && page.video()) await page.video()!.saveAs(`${evidence}/journey.webm`);
   }
 });
