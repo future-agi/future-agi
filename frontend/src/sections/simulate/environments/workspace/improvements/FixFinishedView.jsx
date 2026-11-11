@@ -7,6 +7,7 @@ import { CustomTabs } from "src/components/tabs/tabs";
 
 import FixVerdict from "./FixVerdict";
 import FixDecisionDrawer from "./FixDecisionDrawer";
+import LaunchFixDialog from "./LaunchFixDialog";
 import RetryButton from "./RetryButton";
 import ShipButton from "./ShipButton";
 import TrialChart from "./TrialChart";
@@ -104,6 +105,70 @@ function NoSafeNumbers({ fix }) {
 }
 NoSafeNumbers.propTypes = { fix: PropTypes.object.isRequired };
 
+// What is left to do when a fix found no safe improvement: keep the current
+// version, read the evidence, or start a new fix on other cases or parts of the
+// agent. Each is an action the product already has.
+function WhatToTryNext({ fix, onTab }) {
+  const [deciding, setDeciding] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  const tried = (fix.candidates || []).length > 0;
+  const line = { typography: "s2", color: "text.secondary" };
+  return (
+    <Box data-testid="what-to-try-next" sx={{ mb: 2 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
+        What to try next
+      </Typography>
+      <Stack spacing={0.5}>
+        <Typography sx={line}>
+          Keep the current version. This fix changed nothing: your agent changes
+          only when you ship a fix.
+        </Typography>
+        {tried && (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography sx={line}>Read why each trial was rejected.</Typography>
+            <Button size="small" onClick={() => onTab?.("trials")}>
+              See the trials
+            </Button>
+            <Button size="small" onClick={() => setDeciding(true)}>
+              How it was decided
+            </Button>
+          </Stack>
+        )}
+        {fix.source_run_id && (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography sx={line}>
+              Pick other failing cases, or let a fix change other parts of the
+              agent.
+            </Typography>
+            <Button size="small" onClick={() => setLaunching(true)}>
+              Start a new fix
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+      {tried && (
+        <FixDecisionDrawer
+          fix={fix}
+          open={deciding}
+          onClose={() => setDeciding(false)}
+        />
+      )}
+      {launching && (
+        <LaunchFixDialog
+          open
+          envId={fix.environment_id}
+          sourceRunId={fix.source_run_id}
+          onClose={() => setLaunching(false)}
+        />
+      )}
+    </Box>
+  );
+}
+WhatToTryNext.propTypes = {
+  fix: PropTypes.object.isRequired,
+  onTab: PropTypes.func,
+};
+
 // Screen 3: a finished fix. A ready fix leads with its verdict; any other
 // ending says why it ended, and nothing ships.
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
@@ -148,6 +213,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           {flaky}
         </Typography>
       )}
+      {noSafe && <WhatToTryNext fix={fix} onTab={onTab} />}
       <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (
           <Tab

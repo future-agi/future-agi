@@ -50,6 +50,18 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   };
 });
 
+// The launch form has its own tests; here it only shows which run and environment it opens on.
+vi.mock("../LaunchFixDialog", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ envId, sourceRunId }) => (
+    <div
+      data-testid="launch-fix-dialog"
+      data-env={envId}
+      data-source={sourceRunId}
+    />
+  ),
+}));
+
 const axios = (await import("src/utils/axios")).default;
 const { listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
@@ -336,6 +348,68 @@ describe("FixFinishedView, no safe improvement", () => {
         "Engine's note: No safe improvement: every candidate broke a must-pass scenario.",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe("FixFinishedView, what to try next", () => {
+  const view = (fix, onTab = vi.fn()) =>
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={onTab}
+        renderTab={() => null}
+      />,
+    );
+
+  it("offers the next steps on a fix with no safe improvement", async () => {
+    const user = userEvent.setup();
+    const onTab = vi.fn();
+    view(fixOf("fix-no-improvement"), onTab);
+    const next = within(screen.getByTestId("what-to-try-next"));
+    expect(
+      next.getByText(
+        "Keep the current version. This fix changed nothing: your agent changes only when you ship a fix.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(next.getByRole("button", { name: "See the trials" }));
+    expect(onTab).toHaveBeenCalledWith("trials");
+    await user.click(next.getByRole("button", { name: "How it was decided" }));
+    expect(await screen.findByTestId("fix-decision")).toBeInTheDocument();
+  });
+
+  it("starts a new fix from the same run, through the launch form", async () => {
+    view(fixOf("fix-no-improvement"));
+    expect(screen.queryByTestId("launch-fix-dialog")).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Start a new fix" }));
+    const dialog = screen.getByTestId("launch-fix-dialog");
+    expect(dialog).toHaveAttribute("data-env", "env-1");
+    expect(dialog).toHaveAttribute("data-source", "te-source-run-1");
+  });
+
+  it("offers no new fix when the run it started from was deleted", () => {
+    view(fixOf("fix-no-improvement", { source_run_id: null }));
+    expect(screen.getByTestId("what-to-try-next")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start a new fix" }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["a verified fix", "fix-ready-archive", {}],
+    [
+      "a limited validation fix",
+      "fix-ready-archive",
+      { limited_validation: true },
+    ],
+    ["a failed fix", "fix-failed", {}],
+  ])("says nothing about what to try next on %s", (_, id, extra) => {
+    view(fixOf(id, extra));
+    expect(screen.queryByTestId("what-to-try-next")).toBeNull();
   });
 });
 
