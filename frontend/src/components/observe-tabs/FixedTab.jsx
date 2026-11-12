@@ -17,9 +17,13 @@ const FixedTab = ({
   onClick,
 }) => (
   <CustomTooltip
-    show={!isActive}
+    show={!isActive && (Boolean(shortcut) || locked)}
     title={
-      locked ? `Enterprise feature · Press ${shortcut}` : `Press ${shortcut}`
+      locked
+        ? `Enterprise feature${shortcut ? ` · Press ${shortcut}` : ""}`
+        : shortcut
+          ? `Press ${shortcut}`
+          : label
     }
     placement="bottom"
     arrow
@@ -71,7 +75,7 @@ FixedTab.propTypes = {
   tabKey: PropTypes.string.isRequired,
   label: PropTypes.string.isRequired,
   icon: PropTypes.string,
-  shortcut: PropTypes.string.isRequired,
+  shortcut: PropTypes.string,
   isActive: PropTypes.bool.isRequired,
   locked: PropTypes.bool,
   onClick: PropTypes.func.isRequired,

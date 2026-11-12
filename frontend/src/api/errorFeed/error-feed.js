@@ -55,7 +55,10 @@ export const useErrorFeedList = (params, options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.list(params),
-    queryFn: () => axios.get(endpoints.errorFeed.list, { params }),
+    // Thread React Query's AbortSignal so a list read in flight is cancelled
+    // when the page unmounts or params change (TH-8209).
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.list, { params, signal }),
     select: (res) => res?.data?.result,
     staleTime: 30 * 1000,
     keepPreviousData: true,

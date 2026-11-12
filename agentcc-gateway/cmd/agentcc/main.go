@@ -179,11 +179,19 @@ func main() {
 		tracker := budgetpkg.NewTracker(cfg.Budgets)
 		pricing := budgetplugin.NewPricingLookup(cfg.CostTracking.CustomPricing)
 		budgetPlugin = budgetplugin.New(tracker, pricing, true, tenantStore)
+		sharedGlobal := false
 		if redisBudgetStore != nil {
 			budgetPlugin.SetRedisBudget(redisBudgetStore)
+			// Global levels join the shared ledger only when video is on, so
+			// video reservations and ordinary spend count against one ceiling.
+			// Without video, global levels stay pod-local as before.
+			if cfg.Video.Enabled {
+				budgetPlugin.ShareGlobalBudgets()
+				sharedGlobal = true
+			}
 		}
 		plugins = append(plugins, budgetPlugin)
-		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil)
+		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil, "shared_global_levels", sharedGlobal)
 
 		// Seed budget counters from historical spend in Postgres (with retry).
 		if cfg.ControlPlane.URL != "" {

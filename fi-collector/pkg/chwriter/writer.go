@@ -568,10 +568,9 @@ func (w *Writer) appendDeadLetter(rows []map[string]any) error {
 			return err
 		}
 	}
-	// Sync to ensure the dead-letter is durable before we report the
-	// upstream error. If the kernel crashes before this returns, the row
-	// is lost — that's the at-least-once boundary we accept (matches
-	// SigNoz's own collector dead-letter behavior).
+	// Sync the dead-letter before reporting the upstream error. A crash before
+	// this completes can lose these rows; this is not a durable pre-ack queue
+	// and does not provide automatic replay or an exactly-once guarantee.
 	return w.dlFile.Sync()
 }
 
@@ -586,6 +585,32 @@ func (w *Writer) Close() error {
 	err := w.dlFile.Close()
 	w.dlFile = nil
 	return err
+}
+
+// Policy is the writer's insert mode and retry policy after defaults, without
+// the URL, credentials or dead-letter path, so a benchmark report can disclose
+// what "durable" meant for the run: with async_insert the writer does not wait
+// for the flush (wait_for_async_insert=0), so an acknowledged insert is not a
+// stored one.
+type Policy struct {
+	Table            string `json:"table"`
+	InsertSettings   string `json:"insert_settings"`
+	MaxRetries       int    `json:"max_retries"`
+	InitialBackoffMS int64  `json:"initial_backoff_ms"`
+	MaxBackoffMS     int64  `json:"max_backoff_ms"`
+	RequestTimeoutMS int64  `json:"request_timeout_ms"`
+	DeadLetter       bool   `json:"dead_letter_after_retries"`
+}
+
+// Policy returns the writer's effective insert mode and retry policy.
+func (w *Writer) Policy() Policy {
+	settings := "async_insert=0"
+	if w.cfg.AsyncInsert {
+		settings = "async_insert=1&wait_for_async_insert=0"
+	}
+	return Policy{Table: w.cfg.Table, InsertSettings: settings, MaxRetries: w.cfg.MaxRetries,
+		InitialBackoffMS: w.cfg.InitialBackoff.Milliseconds(), MaxBackoffMS: w.cfg.MaxBackoff.Milliseconds(),
+		RequestTimeoutMS: w.cfg.RequestTimeout.Milliseconds(), DeadLetter: true}
 }
 
 // Snapshot returns a copy of the lifetime stats. Cheap; safe to call often.

@@ -3,6 +3,7 @@ import {
   projectConversation,
   conversationInFlight,
   conversationWaiting,
+  conversationStopping,
 } from "../conversationProjection";
 
 const msg = (over = {}) => ({
@@ -193,23 +194,13 @@ describe("projectConversation", () => {
     expect(turns[1]).toMatchObject({ title: "Background run activity" });
   });
 
-  it("appends a heartbeat while the run is actively working and not blocked", () => {
-    const turns = projectConversation({
-      state: "responding",
-      messages: [],
-      events: [evt({ event_id: "e1", kind: "authoring_activity", emitted_at: "2026-09-22T10:00:00Z", payload: { event_type: "read" } })],
-    });
-    expect(turns.at(-1).steps.at(-1)).toMatchObject({ kind: "heartbeat", since: "2026-09-22T10:00:00Z" });
-  });
-
-  it("does NOT heartbeat while waiting for the user", () => {
-    const turns = projectConversation({
-      state: "waiting_for_user",
-      blocking_input: { message_id: "q1", kind: "question_requested" },
-      messages: [msg({ message_id: "q1", kind: "question", payload: { options: [] } })],
-      events: [],
-    });
-    expect(turns.flatMap((t) => t.steps).some((s) => s.kind === "heartbeat")).toBe(false);
+  it("counts a Stop as on its way only until the server settles it", () => {
+    const stop = (state) => ({ messages: [msg({ state, payload: { command_kind: "interrupt" } })] });
+    expect(conversationStopping(stop("queued"))).toBe(true);
+    expect(conversationStopping(stop("delivered"))).toBe(true);
+    expect(conversationStopping(stop("completed"))).toBe(false);
+    expect(conversationStopping(stop("failed"))).toBe(false);
+    expect(conversationStopping({ messages: [msg({ state: "queued" })] })).toBe(false);
   });
 
   it("omits interrupt/cancel control messages from the transcript", () => {
@@ -356,7 +347,7 @@ describe("projectConversation nudge cards", () => {
         }),
       ],
     });
-    expect(turns.map((t) => t.role)).toEqual(["builder", "system", "builder"]);
+    expect(turns.map((t) => t.role)).toEqual(["builder", "system"]);
     expect(turns[0].steps[0]).toMatchObject({
       label: "Read",
       state: "running",

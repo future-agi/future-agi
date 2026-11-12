@@ -1249,7 +1249,7 @@ class TestReviewFollowUps:
         _certify(environment, storage)
 
         with patch.object(
-            evidence.archives, "get_archive", side_effect=EOFError("truncated")
+            evidence.archives, "stream_members", side_effect=EOFError("truncated")
         ) as fetched:
             first = _report(environment)
             second = _report(environment)
@@ -1257,6 +1257,57 @@ class TestReviewFollowUps:
         assert fetched.call_count == 1
         assert first["pairing"]["evidence"] == "pair_certificate"
         assert _rows(second)["tool_routing"]["targets"] == []
+
+    def test_only_the_certification_files_are_read_off_the_archive_stream(
+        self, storage
+    ):
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        body = archives.pack_archive(
+            {
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+                harness_readiness.ACTION_CERTIFICATION: json.dumps(
+                    {"actions": ACTIONS}
+                ).encode(),
+                "zz/large.bin": os.urandom(2 * 1024 * 1024),
+            }
+        )
+        # The archive's tail is lost: a full read fails, a streamed one never gets there.
+        storage.objects["harness-sealed/stream/a.tar.gz"] = body[: len(body) // 2]
+
+        files = evidence._certification_files("harness-sealed/stream/a.tar.gz")
+
+        assert files == {"tools": TOOLS, "actions": ACTIONS}
+
+    def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
+        import hashlib
+
+        from simulate.services.harness_readiness import evidence
+
+        key = "harness-sealed/stream/busy.tar.gz"
+        cache_key = (
+            "harness-readiness-certification:"
+            + hashlib.sha256(key.encode()).hexdigest()
+        )
+        cache.add(cache_key + ":reading", 1)
+        read = {"tools": TOOLS, "actions": []}
+
+        def first_reader_finishes(_seconds):
+            cache.set(cache_key, read)
+
+        with (
+            patch.object(evidence.time, "sleep", side_effect=first_reader_finishes),
+            patch.object(evidence.archives, "stream_members") as streamed,
+        ):
+            files = evidence._certification_files(key)
+
+        assert files == read
+        assert streamed.call_count == 0
+        cache.delete(cache_key + ":reading")
 
     def test_recheck_needs_build_usage_unless_already_certified(
         self, user, workspace, storage, auth_client
@@ -1666,6 +1717,20 @@ class TestCancel:
         environment = _environment(user, workspace, storage, "rd-cancel-early")
         _certify(environment, storage)
         _stopped(environment, key="early", sandbox=False)
+
+        assert _rows(_report(environment))["cancel"]["status"] == "untested"
+
+    def test_a_stop_with_no_sandbox_ref_recorded_proves_nothing(
+        self, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessAttempt
+
+        environment = _environment(user, workspace, storage, "rd-cancel-null")
+        _certify(environment, storage)
+        job = _stopped(environment, key="null")
+        HostedHarnessAttempt.no_workspace_objects.filter(job=job).update(
+            provider_ref=None
+        )
 
         assert _rows(_report(environment))["cancel"]["status"] == "untested"
 

@@ -314,6 +314,30 @@ def read_members(body: bytes, paths: set[str], max_size: int) -> dict[str, bytes
     return found
 
 
+def stream_members(key: str, paths: set[str], max_size: int) -> dict[str, bytes]:
+    """The named regular members of at most ``max_size`` bytes, read off the stored
+    archive as it streams: reading stops once every named member has been passed, and
+    nothing but those members is held in memory."""
+    found: dict[str, bytes] = {}
+    passed: set[str] = set()
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
+    try:
+        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+            for path, member in _regular_members(archive):
+                if path not in paths:
+                    continue
+                if member.size <= max_size:
+                    source = archive.extractfile(member)
+                    found[path] = source.read() if source is not None else b""
+                passed.add(path)
+                if passed >= paths:
+                    break
+    finally:
+        response.close()
+        response.release_conn()
+    return found
+
+
 def get_archive(key: str) -> bytes:
     response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
     try:
