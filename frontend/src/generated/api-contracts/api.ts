@@ -432,6 +432,7 @@ import type {
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
+  EntityTagsResponseApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
   EvalApiLogTableResponseApi,
@@ -1289,6 +1290,7 @@ import type {
   SpanObserveListQueryApi,
   SpanObserveListResponseApi,
   SpanPrototypeListResponseApi,
+  SpanTagsUpdateApi,
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
@@ -80201,24 +80203,55 @@ export const tracerObservationSpanSubmitFeedbackActionType = async (
   );
 };
 
-export type tracerObservationSpanUpdateTagsResponse201 = {
-  data: ObservationSpanApi;
-  status: 201;
+export type tracerObservationSpanUpdateTagsResponse200 = {
+  data: EntityTagsResponseApi;
+  status: 200;
+};
+
+export type tracerObservationSpanUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerObservationSpanUpdateTagsResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerObservationSpanUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerObservationSpanUpdateTagsResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerObservationSpanUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerObservationSpanUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 503>;
 };
 
 export type tracerObservationSpanUpdateTagsResponseSuccess =
-  tracerObservationSpanUpdateTagsResponse201 & {
+  tracerObservationSpanUpdateTagsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerObservationSpanUpdateTagsResponseError =
-  tracerObservationSpanUpdateTagsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerObservationSpanUpdateTagsResponseError = (
+  | tracerObservationSpanUpdateTagsResponse400
+  | tracerObservationSpanUpdateTagsResponse403
+  | tracerObservationSpanUpdateTagsResponse404
+  | tracerObservationSpanUpdateTagsResponse409
+  | tracerObservationSpanUpdateTagsResponse503
+  | tracerObservationSpanUpdateTagsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerObservationSpanUpdateTagsResponse =
   | tracerObservationSpanUpdateTagsResponseSuccess
@@ -80229,10 +80262,10 @@ export const getTracerObservationSpanUpdateTagsUrl = () => {
 };
 
 /**
- * Update tags for an observation span.
+ * Assign tags to an exact CH span; verified roots alias trace assignments.
  */
 export const tracerObservationSpanUpdateTags = async (
-  observationSpanApi: NonReadonly<ObservationSpanApi>,
+  spanTagsUpdateApi: SpanTagsUpdateApi,
   options?: RequestInit,
 ): Promise<tracerObservationSpanUpdateTagsResponse> => {
   return apiMutator<tracerObservationSpanUpdateTagsResponse>(
@@ -80241,7 +80274,7 @@ export const tracerObservationSpanUpdateTags = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observationSpanApi),
+      body: JSON.stringify(spanTagsUpdateApi),
     },
   );
 };
@@ -82337,11 +82370,11 @@ export type tracerSavedSqlQueryListResponseDefault = {
 
 export type tracerSavedSqlQueryListResponseSuccess =
   tracerSavedSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryListResponseError =
   tracerSavedSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryListResponse =
@@ -82395,11 +82428,11 @@ export type tracerSavedSqlQueryCreateResponseDefault = {
 
 export type tracerSavedSqlQueryCreateResponseSuccess =
   tracerSavedSqlQueryCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryCreateResponseError =
   tracerSavedSqlQueryCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryCreateResponse =
@@ -82437,11 +82470,11 @@ export type tracerSavedSqlQueryReadResponseDefault = {
 
 export type tracerSavedSqlQueryReadResponseSuccess =
   tracerSavedSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryReadResponseError =
   tracerSavedSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryReadResponse =
@@ -82497,11 +82530,11 @@ export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
 
 export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
   tracerSavedSqlQueryPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryPartialUpdateResponseError =
   tracerSavedSqlQueryPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryPartialUpdateResponse =
@@ -82540,11 +82573,11 @@ export type tracerSavedSqlQueryDeleteResponseDefault = {
 
 export type tracerSavedSqlQueryDeleteResponseSuccess =
   tracerSavedSqlQueryDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryDeleteResponseError =
   tracerSavedSqlQueryDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryDeleteResponse =
@@ -82600,11 +82633,11 @@ export type tracerSavedSqlQueryAddWidgetResponseDefault = {
 
 export type tracerSavedSqlQueryAddWidgetResponseSuccess =
   tracerSavedSqlQueryAddWidgetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryAddWidgetResponseError =
   tracerSavedSqlQueryAddWidgetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryAddWidgetResponse =
@@ -83600,11 +83633,11 @@ export type tracerSqlQueryListResponseDefault = {
 
 export type tracerSqlQueryListResponseSuccess =
   tracerSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryListResponseError =
   tracerSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryListResponse =
@@ -83659,11 +83692,11 @@ export type tracerSqlQueryCatalogResponseDefault = {
 
 export type tracerSqlQueryCatalogResponseSuccess =
   tracerSqlQueryCatalogResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCatalogResponseError =
   tracerSqlQueryCatalogResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCatalogResponse =
@@ -83720,11 +83753,11 @@ export type tracerSqlQueryEstimateResponseDefault = {
 
 export type tracerSqlQueryEstimateResponseSuccess =
   tracerSqlQueryEstimateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryEstimateResponseError =
   tracerSqlQueryEstimateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryEstimateResponse =
@@ -83765,11 +83798,11 @@ export type tracerSqlQueryRunSavedResponseDefault = {
 
 export type tracerSqlQueryRunSavedResponseSuccess =
   tracerSqlQueryRunSavedResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryRunSavedResponseError =
   tracerSqlQueryRunSavedResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunSavedResponse =
@@ -83809,11 +83842,11 @@ export type tracerSqlQueryRunResponseDefault = {
 };
 
 export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerSqlQueryRunResponseError =
   tracerSqlQueryRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunResponse =
@@ -83851,11 +83884,11 @@ export type tracerSqlQueryReadResponseDefault = {
 
 export type tracerSqlQueryReadResponseSuccess =
   tracerSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryReadResponseError =
   tracerSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryReadResponse =
@@ -83914,11 +83947,11 @@ export type tracerSqlQueryCancelResponseDefault = {
 
 export type tracerSqlQueryCancelResponseSuccess =
   tracerSqlQueryCancelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCancelResponseError =
   tracerSqlQueryCancelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCancelResponse =
@@ -83975,7 +84008,7 @@ export type tracerSqlQueryDownloadResponseDefault = {
 
 export type tracerSqlQueryDownloadResponseSuccess =
   tracerSqlQueryDownloadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse409
@@ -83983,7 +84016,7 @@ export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse503
   | tracerSqlQueryDownloadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSqlQueryDownloadResponse =
@@ -86780,23 +86813,54 @@ export const tracerTraceDelete = async (
 };
 
 export type tracerTraceUpdateTagsResponse200 = {
-  data: TraceTagsUpdateApi;
+  data: EntityTagsResponseApi;
   status: 200;
+};
+
+export type tracerTraceUpdateTagsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerTraceUpdateTagsResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerTraceUpdateTagsResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerTraceUpdateTagsResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerTraceUpdateTagsResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
 };
 
 export type tracerTraceUpdateTagsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 503>;
 };
 
 export type tracerTraceUpdateTagsResponseSuccess =
   tracerTraceUpdateTagsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerTraceUpdateTagsResponseError =
-  tracerTraceUpdateTagsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerTraceUpdateTagsResponseError = (
+  | tracerTraceUpdateTagsResponse400
+  | tracerTraceUpdateTagsResponse403
+  | tracerTraceUpdateTagsResponse404
+  | tracerTraceUpdateTagsResponse409
+  | tracerTraceUpdateTagsResponse503
+  | tracerTraceUpdateTagsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerTraceUpdateTagsResponse =
   | tracerTraceUpdateTagsResponseSuccess
@@ -86807,7 +86871,7 @@ export const getTracerTraceUpdateTagsUrl = (id: string) => {
 };
 
 /**
- * Update tags for a trace.
+ * Assign manual tags to a verified ClickHouse root, without PG telemetry.
  */
 export const tracerTraceUpdateTags = async (
   id: string,

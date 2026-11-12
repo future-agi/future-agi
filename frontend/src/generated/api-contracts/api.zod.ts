@@ -70787,7 +70787,9 @@ export const tracerSavedSqlQueryCreateBodyChartXMax = 128;
 
 export const tracerSavedSqlQueryCreateBodyChartYMax = 128;
 
-export const tracerSavedSqlQueryCreateBodyChartDefault = { type: "table" };
+export const tracerSavedSqlQueryCreateBodyChartDefault = {
+  type: "table" as const,
+};
 export const tracerSavedSqlQueryCreateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryCreateBodyWindowHoursMax = 744;
 
@@ -70857,7 +70859,7 @@ export const tracerSavedSqlQueryPartialUpdateBodyChartXMax = 128;
 export const tracerSavedSqlQueryPartialUpdateBodyChartYMax = 128;
 
 export const tracerSavedSqlQueryPartialUpdateBodyChartDefault = {
-  type: "table",
+  type: "table" as const,
 };
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursMax = 744;

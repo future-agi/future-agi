@@ -141,6 +141,11 @@ function normalizeTypedStringOrObject(schema) {
   return result;
 }
 
+// Schemas whose typed string-or-object union is already produced by a
+// dedicated post-processing rewrite below; normalizing them here as well would
+// remove that rewrite's anchor.
+const TYPED_STRING_OR_OBJECT_REWRITTEN = new Set(["GatewayHealthErrorResult"]);
+
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
@@ -150,14 +155,17 @@ function normalizeHostStatusSpec(spec) {
     components: {
       ...spec.components,
       schemas: Object.fromEntries(
-        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
-          name,
-          normalizeTypedStringOrObject(
-            name.startsWith("HostUpdateStatusResponse")
-              ? normalizeHostStatusSchema(schema)
-              : schema,
-          ),
-        ]),
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => {
+          const normalized = name.startsWith("HostUpdateStatusResponse")
+            ? normalizeHostStatusSchema(schema)
+            : schema;
+          return [
+            name,
+            TYPED_STRING_OR_OBJECT_REWRITTEN.has(name)
+              ? normalized
+              : normalizeTypedStringOrObject(normalized),
+          ];
+        }),
       ),
     },
   };
