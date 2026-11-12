@@ -6,8 +6,9 @@ REPEATABLE READ snapshot. Rows written after the freeze are on the primary
 only, as on a streaming standby that has not applied them yet.
 
 Covered consumers: the error localizer's Observe write-back (C13), eval-result
-clustering (C29), inline SDK evals (C56), the experiment eval scheduler (C61),
-the trace error-analysis task API (D05) and feedback re-evaluation (D20).
+clustering (C29), inline SDK evals (C56), the experiment eval scheduler and
+the runner it dispatches (C61), the trace error-analysis task API (D05) and
+feedback re-evaluation (D20).
 
 Only external boundaries are replaced: the localizer model call and its
 billing hooks, embedding/serving and the ClickHouse centroid store, the
@@ -45,6 +46,7 @@ from tracer.models.custom_eval_config import (
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
+from tracer.models.trace import Trace
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.models.trace_error_analysis_task import (
     TraceErrorAnalysisTask,
@@ -413,6 +415,107 @@ def test_c61_second_poll_keeps_what_the_runner_wrote(
     span = ObservationSpan.objects.using("default").get(pk=scheduled_span.pk)
     assert (span.eval_status, span.tags) == (StatusType.COMPLETED.value, ["scored"])
     assert dispatched == [scheduled_span.id]
+
+
+@pytest.fixture
+def runner_inline(monkeypatch):
+    """Run each span the scheduler dispatches in place, as its worker would."""
+    from tracer.utils.eval import eval_observation_span_runner
+
+    # The scheduler imported this same activity object, so it sees the patch.
+    monkeypatch.setattr(
+        eval_observation_span_runner,
+        "delay",
+        eval_observation_span_runner._original_func,
+    )
+
+
+@pytest.mark.parametrize("read_source", ["postgres", "clickhouse"])
+def test_c61_runner_scores_experiment_span_ingested_after_freeze(
+    lagging_replica,  # noqa: F811
+    settings,
+    ch_seed,
+    project,
+    eval_template,
+    runner_inline,
+    stub_run_eval,
+    stub_cost_log,
+    read_source,
+):
+    from tracer.utils.otel import get_or_create_project_version
+    from tracer.utils.span import run_evals_on_spans
+
+    settings.EVAL_SPAN_READ_SOURCE = read_source
+    lagging_replica.freeze()
+    # A new experiment run: ingestion creates its eval config and version,
+    # then its trace and span, all after the replica's snapshot.
+    eval_name = "experiment-" + uuid.uuid4().hex[:6]
+    version = get_or_create_project_version(
+        project_id=project.id,
+        project_version_name="run after freeze",
+        project_version_id=None,
+        eval_tags=[
+            {
+                "custom_eval_name": eval_name,
+                "eval_name": eval_template.name,
+                "mapping": {"input": "input", "output": "output"},
+                "type": "OBSERVATION_SPAN_TYPE",
+                "value": "llm",
+            }
+        ],
+        metadata={},
+        project_type="experiment",
+    )
+    config = CustomEvalConfig.objects.using("default").get(
+        project=project, name=eval_name
+    )
+    trace = Trace.objects.create(
+        project=project, project_version=version, name="experiment trace"
+    )
+    span = ObservationSpan.objects.create(
+        id="span_" + uuid.uuid4().hex[:16],
+        project=project,
+        project_version=version,
+        trace=trace,
+        name="experiment span",
+        observation_type="llm",
+        eval_status=StatusType.NOT_STARTED.value,
+        start_time=timezone.now() - timedelta(seconds=2),
+        input={"question": "What is the capital of France?"},
+        output={"answer": "Paris"},
+    )
+    if read_source == "clickhouse":
+        ch_seed(span)
+    # The replica has none of it yet.
+    assert not CustomEvalConfig.objects.filter(pk=config.pk).exists()
+    assert not ObservationSpan.objects.filter(pk=span.pk).exists()
+
+    # The scheduled worker runs without a request's workspace context.
+    clear_workspace_context()
+    run_evals_on_spans._original_func()
+
+    result = EvalLogger.objects.using("default").get(observation_span_id=span.id)
+    assert (result.custom_eval_config_id, result.trace_id, result.error) == (
+        config.id,
+        trace.id,
+        False,
+    )
+    assert result.eval_explanation == "stubbed pass"
+    assert len(stub_run_eval.requests) == 1
+    if read_source == "postgres":
+        # A span read from ClickHouse does not write its status back to
+        # Postgres (see eval_loader), so only this mode records it.
+        stored = ObservationSpan.objects.using("default").get(pk=span.pk)
+        assert stored.eval_status == StatusType.COMPLETED.value
+
+
+def test_c61_runner_raises_the_load_error_for_a_missing_span():
+    from tracer.utils.eval import eval_observation_span_runner
+
+    tags = [{"type": "OBSERVATION_SPAN_TYPE", "value": "llm"}]
+    # Raised, not swallowed, so the activity retries a failed span read.
+    with pytest.raises(ObservationSpan.DoesNotExist):
+        eval_observation_span_runner._original_func("span_missing", tags)
 
 
 # -- D05: the trace error-analysis task API -----------------------------------

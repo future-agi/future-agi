@@ -30,6 +30,7 @@ from sdk.utils.helpers import (
 )
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.ee_gates import jev_error_message
+from tfc.routers import primary_required
 from tfc.temporal import temporal_activity
 from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -2319,7 +2320,12 @@ def evaluate_observation_span_observe(
     time_limit=3600,
     queue="tasks_s",
 )
+# Primary for the whole run: the scheduler (run_evals_on_spans) finds the span
+# on the primary and dispatches it at once, so the span, its eval configs and
+# the rows this run writes may not be on the replica yet.
+@primary_required
 def eval_observation_span_runner(observation_span_id, eval_tags):
+    observation_span = None
     try:
         # Goes via CH 25.3 when EVAL_SPAN_READ_SOURCE=clickhouse (CH 25.3
         # span point-read replaces the heavy JSONB select on tracer_observation_span);
@@ -2379,6 +2385,10 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
     except Exception as e:
         traceback.print_exc()
         logger.error(f"Error during evaluation in eval_observation_span_runner: {e}")
+        if observation_span is None:
+            # The span did not load, so there is nothing to mark failed. Raise
+            # the load error so the activity retries it.
+            raise
         observation_span.eval_status = StatusType.FAILED.value
         observation_span.save()
 
