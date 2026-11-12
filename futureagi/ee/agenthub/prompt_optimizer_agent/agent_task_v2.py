@@ -276,7 +276,7 @@ class PromptOptimizer:
                 cols = Column.objects.filter(
                     id__in=user_eval_metric_config["mapping"].values()
                 ).values("id", "data_type")
-                col_map = {col["id"]: col["data_type"] for col in cols}
+                col_map = {str(col["id"]): col["data_type"] for col in cols}
                 input_types = {
                     key: col_map.get(str(value))
                     if col_map.get(str(value)) in ["image", "audio"]
