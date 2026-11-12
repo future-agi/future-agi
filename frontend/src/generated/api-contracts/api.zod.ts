@@ -36540,6 +36540,12 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
       name: zod.string().min(1),
       passed: zod.boolean(),
       failing_sub_goals: zod.array(zod.string().min(1)),
+      evidence_import_id: zod
+        .string()
+        .uuid()
+        .describe(
+          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence.",
+        ),
     }),
   ),
   suggested: zod.object({

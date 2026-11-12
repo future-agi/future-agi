@@ -18224,6 +18224,8 @@ export interface AgentFixLaunchScenarioApi {
   name: string;
   passed: boolean;
   failing_sub_goals: string[];
+  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence. */
+  evidence_import_id: string;
 }
 
 export interface AgentFixLaunchSuggestedApi {

@@ -49,6 +49,10 @@ import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import LaunchFixDialog from "../../improvements/LaunchFixDialog";
+import {
+  importedFailingKeys,
+  useFixLaunchOptions,
+} from "src/api/simulate-environments/fixRuns";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
@@ -103,6 +107,8 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [fixLaunching, setFixLaunching] = useState(false);
+  // Set by Improve agent: the imported failing cases the fix starts from.
+  const [fixTargets, setFixTargets] = useState(null);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
@@ -165,6 +171,12 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
+  // A finished run whose failures include cases an evidence import added offers
+  // Improve agent on them; the launch form reads the same cached options.
+  const { options: fixOptions } = useFixLaunchOptions(executionId, {
+    enabled: fixAllowed && !!identity && !live && !fixRun,
+  });
+  const improvable = importedFailingKeys(fixOptions);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -379,6 +391,19 @@ export default function RunDetail({
             Run again
           </Button>
         )}
+        {improvable.length > 0 && (
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => {
+              setFixTargets(improvable);
+              setFixLaunching(true);
+            }}
+            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={15} />}
+          >
+            Improve agent
+          </Button>
+        )}
         {!fixRun && (
           <Button
             variant="contained"
@@ -575,6 +600,7 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
+          setFixTargets(null);
           setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
@@ -589,6 +615,7 @@ export default function RunDetail({
           onClose={() => setFixLaunching(false)}
           envId={env.id}
           sourceRunId={executionId}
+          initialTargets={fixTargets}
         />
       )}
 

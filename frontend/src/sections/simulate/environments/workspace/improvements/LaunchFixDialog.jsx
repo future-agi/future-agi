@@ -135,7 +135,15 @@ LockedFiles.propTypes = {
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
 // parts that may change and the limit; everything else is shown, not asked.
-export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
+// ``initialTargets`` (Improve agent) picks the cases to fix instead of the
+// suggested ones.
+export default function LaunchFixDialog({
+  open,
+  onClose,
+  envId,
+  sourceRunId,
+  initialTargets,
+}) {
   const navigate = useNavigate();
   const { options, error: optionsError } = useFixLaunchOptions(sourceRunId, {
     enabled: open,
@@ -150,14 +158,18 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const [picking, setPicking] = useState(false);
 
   useEffect(() => {
-    if (!options) return;
-    setTargets(options.suggested.target_scenario_keys);
+    if (!options || !open) return;
+    setTargets(
+      initialTargets?.length
+        ? initialTargets
+        : options.suggested.target_scenario_keys,
+    );
     setProtectedKeys(options.suggested.protected_scenario_keys);
     setSurfaces(options.defaults.surfaces);
     setLocked([]);
     setBudget(options.defaults.budget_credits);
     setMinutes(options.defaults.max_minutes);
-  }, [options]);
+  }, [options, open, initialTargets]);
 
   if (!options) {
     return (
@@ -417,4 +429,5 @@ LaunchFixDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
   envId: PropTypes.string.isRequired,
   sourceRunId: PropTypes.string,
+  initialTargets: PropTypes.arrayOf(PropTypes.string),
 };

@@ -137405,7 +137405,8 @@
                 "key",
                 "name",
                 "passed",
-                "failing_sub_goals"
+                "failing_sub_goals",
+                "evidence_import_id"
             ],
             "type": "object",
             "properties": {
@@ -137430,6 +137431,13 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "evidence_import_id": {
+                    "title": "Evidence import id",
+                    "description": "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },

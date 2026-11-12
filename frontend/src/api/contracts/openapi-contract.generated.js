@@ -93356,7 +93356,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixLaunchScenario: {
-      required: ["key", "name", "passed", "failing_sub_goals"],
+      required: [
+        "key",
+        "name",
+        "passed",
+        "failing_sub_goals",
+        "evidence_import_id",
+      ],
       type: "object",
       properties: {
         key: {
@@ -93380,6 +93386,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        evidence_import_id: {
+          title: "Evidence import id",
+          description:
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },

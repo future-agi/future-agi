@@ -18,6 +18,7 @@ from django.db.models import Count, Q, QuerySet
 
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
+from simulate.pydantic_schemas.agent_fix import FixEvidence
 from simulate.pydantic_schemas.evidence_import import (
     DatasetColumns,
     StoredRedaction,
@@ -220,6 +221,36 @@ def _open_status(evidence_import) -> str:
     if evidence_import.drafted_count:
         return "drafted"
     return "waiting"
+
+
+def evidence_origins(environment: HostedHarnessJob, scenario_keys) -> list[FixEvidence]:
+    """The evidence imports of ``environment`` that added any of ``scenario_keys`` to its
+    suite, oldest first, each with those cases' sources in import order. A scenario no
+    import added has no origin."""
+    cases = (
+        EvidenceImportCase.no_workspace_objects.filter(
+            evidence_import__environment=environment,
+            evidence_import__deleted=False,
+            status=EvidenceImportCase.Status.ADDED,
+            scenario_key__in=list(scenario_keys),
+        )
+        .select_related("evidence_import")
+        .order_by("evidence_import__created_at", "position")
+    )
+    origins: dict[str, FixEvidence] = {}
+    for case in cases:
+        origin = origins.setdefault(
+            str(case.evidence_import_id),
+            FixEvidence(
+                import_id=str(case.evidence_import_id),
+                source_kind=case.evidence_import.source_kind,
+                source_ids=[],
+                scenario_keys=[],
+            ),
+        )
+        origin.source_ids.append(case.source_id)
+        origin.scenario_keys.append(case.scenario_key)
+    return list(origins.values())
 
 
 def import_evidence(

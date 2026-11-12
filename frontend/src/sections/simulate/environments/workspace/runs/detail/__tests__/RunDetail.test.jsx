@@ -63,6 +63,13 @@ vi.mock("notistack", async (importOriginal) => {
   };
 });
 
+// The run's fix launch options; Improve agent reads which failing cases came
+// from evidence. None by default.
+const fixLaunchOptions = vi.fn();
+vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFixLaunchOptions: (id, opts) => fixLaunchOptions(id, opts),
+}));
 // Self-improvement is in beta; the launch-flow tests below open it explicitly.
 const useSelfImprovementOpen = vi.fn();
 // Fix my agent is a beta capability; each test sets whether the org has it.
@@ -97,11 +104,18 @@ vi.mock(
 );
 
 // The fix launch form reads launch-options itself; stub it to a marker that
-// names the run it was opened for.
+// names the run it was opened for, and the cases Improve agent picked.
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) =>
-    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
+  default: ({ open, sourceRunId, initialTargets }) =>
+    open ? (
+      <>
+        <div>{`launch-fix:${sourceRunId}`}</div>
+        {initialTargets ? (
+          <div>{`fix-targets:${initialTargets.join(",")}`}</div>
+        ) : null}
+      </>
+    ) : null,
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -468,6 +482,8 @@ const locationText = () => screen.getByTestId("location").textContent;
 const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 
 beforeEach(() => {
+  fixLaunchOptions.mockReset();
+  fixLaunchOptions.mockReturnValue({ options: undefined });
   useSelfImprovementOpen.mockReturnValue(true);
   fixMyAgentAllowed.mockReturnValue(true);
   enqueueSnackbar.mockReset();
@@ -765,6 +781,75 @@ describe("RunDetail", () => {
     for (const name of [/Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
+  });
+
+  describe("Improve agent", () => {
+    const scenario = (key, evidence, failing) => ({
+      key,
+      name: key,
+      passed: !failing,
+      failing_sub_goals: failing ? ["booked"] : [],
+      evidence_import_id: evidence,
+    });
+    const finished = () =>
+      useRunDetail.mockReturnValue({
+        identity: IDENTITY,
+        stats: STATS,
+        isLoading: false,
+      });
+
+    it("starts a fix on the failing cases an evidence import added", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary", null, true),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: /Improve agent/ }));
+
+      expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+      expect(screen.getByText("fix-targets:evidence-a")).toBeInTheDocument();
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: true,
+      });
+    });
+
+    it("is not offered when no failing case came from evidence", () => {
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("ordinary", null, true),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      expect(
+        screen.queryByRole("button", { name: /Improve agent/ }),
+      ).toBeNull();
+    });
+
+    it("reads nothing for an org without Fix my agent", () => {
+      finished();
+      fixMyAgentAllowed.mockReturnValue(false);
+      renderDetail();
+
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: false,
+      });
+      expect(
+        screen.queryByRole("button", { name: /Improve agent/ }),
+      ).toBeNull();
+    });
   });
 
   it("enables the header actions once the run has finished", () => {
