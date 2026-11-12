@@ -52015,6 +52015,32 @@
             ]
         },
         "/simulate/api/harness-environments/{id}/evidence-imports/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_list_evidence_imports",
+                "description": "This environment's imports a person can still finish, newest first.\nRead from what each import stores: no source is read again.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/EvidenceImportListItem"
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
             "post": {
                 "operationId": "simulate_api_harness-environments_evidence_imports",
                 "description": "Freeze Observe sessions or calls or dataset rows, or store transcripts\na person added, as evidence for this environment's tests; returns what\neach holds and lacks, and what redaction replaces. Nothing is drafted or\nrun.",
@@ -52080,6 +52106,25 @@
                     "simulate"
                 ],
                 "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness-environments_discard_evidence_import",
+                "description": "Discard an import never added, and a transcript's stored text with it.\nOf an import with added cases, only the cases not added are discarded.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": "Discarded"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
             },
             "parameters": [
                 {
@@ -141955,6 +142000,81 @@
                 }
             }
         },
+        "EvidenceImportListItem": {
+            "required": [
+                "id",
+                "source_kind",
+                "source_name",
+                "source_available",
+                "case_count",
+                "added_count",
+                "status",
+                "created_at",
+                "can_discard"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "call",
+                        "transcript",
+                        "dataset"
+                    ]
+                },
+                "source_name": {
+                    "title": "Source name",
+                    "description": "The Observe project's or dataset's name; null for transcripts.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_available": {
+                    "title": "Source available",
+                    "description": "False once the Observe project or dataset was deleted.",
+                    "type": "boolean"
+                },
+                "case_count": {
+                    "title": "Case count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "added_count": {
+                    "title": "Added count",
+                    "description": "Cases already added to the suite.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "status": {
+                    "title": "Status",
+                    "description": "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.",
+                    "type": "string",
+                    "enum": [
+                        "waiting",
+                        "drafting",
+                        "drafted",
+                        "partly_added"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "can_discard": {
+                    "title": "Can discard",
+                    "description": "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+                    "type": "boolean"
+                }
+            }
+        },
         "EvidenceDatasetColumns": {
             "description": "Dataset imports: the columns to read.",
             "required": [
@@ -142434,7 +142554,8 @@
                         "unavailable",
                         "drafted",
                         "blocked",
-                        "added"
+                        "added",
+                        "discarded"
                     ]
                 },
                 "reason": {

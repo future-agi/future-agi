@@ -19969,6 +19969,53 @@ export interface SimulateEvalConfigResponseApi {
   readonly editable?: boolean;
 }
 
+export type EvidenceImportListItemApiSourceKind =
+  (typeof EvidenceImportListItemApiSourceKind)[keyof typeof EvidenceImportListItemApiSourceKind];
+
+export const EvidenceImportListItemApiSourceKind = {
+  session: "session",
+  call: "call",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+/**
+ * drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.
+ */
+export type EvidenceImportListItemApiStatus =
+  (typeof EvidenceImportListItemApiStatus)[keyof typeof EvidenceImportListItemApiStatus];
+
+export const EvidenceImportListItemApiStatus = {
+  waiting: "waiting",
+  drafting: "drafting",
+  drafted: "drafted",
+  partly_added: "partly_added",
+} as const;
+
+export interface EvidenceImportListItemApi {
+  id: string;
+  source_kind: EvidenceImportListItemApiSourceKind;
+  /**
+   * The Observe project's or dataset's name; null for transcripts.
+   * @minLength 1
+   */
+  source_name: string;
+  /** False once the Observe project or dataset was deleted. */
+  source_available: boolean;
+  /** @minimum 0 */
+  case_count: number;
+  /**
+   * Cases already added to the suite.
+   * @minimum 0
+   */
+  added_count: number;
+  /** drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. */
+  status: EvidenceImportListItemApiStatus;
+  created_at: string;
+  /** False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added. */
+  can_discard: boolean;
+}
+
 export type EvidenceImportCreateApiSourceKind =
   (typeof EvidenceImportCreateApiSourceKind)[keyof typeof EvidenceImportCreateApiSourceKind];
 
@@ -20065,6 +20112,7 @@ export const EvidenceImportCaseApiStatus = {
   drafted: "drafted",
   blocked: "blocked",
   added: "added",
+  discarded: "discarded",
 } as const;
 
 /**

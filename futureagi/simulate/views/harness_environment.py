@@ -508,6 +508,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         request_serializer=EvidenceImportCreateSerializer,
         responses={201: EvidenceImportSerializer},
         reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_evidence_imports",
     )
     @action(detail=True, methods=["post"], url_path="evidence-imports")
     def evidence_imports(self, request, pk=None):
@@ -586,7 +587,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             EvidenceImportListItemSerializer(open_evidence_imports(job), many=True).data
         )
 
-    @validated_request(responses={200: EvidenceImportSerializer})
+    @validated_request(
+        responses={200: EvidenceImportSerializer},
+        operation_id="simulate_api_harness-environments_evidence_import",
+    )
     @action(
         detail=True,
         methods=["get"],

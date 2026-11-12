@@ -883,8 +883,12 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
-      "/simulate/api/harness-environments/{id}/evidence-imports/": ["post"],
+      "/simulate/api/harness-environments/{id}/evidence-imports/": [
+        "get",
+        "post",
+      ],
       "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+        "delete",
         "get",
       ],
       "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
@@ -2255,8 +2259,9 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
-  "/simulate/api/harness-environments/{id}/evidence-imports/": ["post"],
+  "/simulate/api/harness-environments/{id}/evidence-imports/": ["get", "post"],
   "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+    "delete",
     "get",
   ],
   "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": [

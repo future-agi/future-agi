@@ -28805,6 +28805,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evidence-imports/": {
+      get: {
+        operationId: "simulate_api_harness-environments_list_evidence_imports",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/EvidenceImportListItem",
+            },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       post: {
         operationId: "simulate_api_harness-environments_evidence_imports",
         runtimeRequestValidation: true,
@@ -28834,6 +28852,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/EvidenceImport",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId:
+          "simulate_api_harness-environments_discard_evidence_import",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -63717,6 +63748,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
             enum: ["failure", "success", "partial"],
           },
           default: {},
+        },
+      },
+    },
+    EvidenceImportListItem: {
+      required: [
+        "id",
+        "source_kind",
+        "source_name",
+        "source_available",
+        "case_count",
+        "added_count",
+        "status",
+        "created_at",
+        "can_discard",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["session", "call", "transcript", "dataset"],
+        },
+        source_name: {
+          title: "Source name",
+          description:
+            "The Observe project's or dataset's name; null for transcripts.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source_available: {
+          title: "Source available",
+          description: "False once the Observe project or dataset was deleted.",
+          type: "boolean",
+        },
+        case_count: {
+          title: "Case count",
+          type: "integer",
+          minimum: 0,
+        },
+        added_count: {
+          title: "Added count",
+          description: "Cases already added to the suite.",
+          type: "integer",
+          minimum: 0,
+        },
+        status: {
+          title: "Status",
+          description:
+            "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.",
+          type: "string",
+          enum: ["waiting", "drafting", "drafted", "partly_added"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        can_discard: {
+          title: "Can discard",
+          description:
+            "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+          type: "boolean",
         },
       },
     },
@@ -99632,7 +99731,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["pending", "unavailable", "drafted", "blocked", "added"],
+          enum: [
+            "pending",
+            "unavailable",
+            "drafted",
+            "blocked",
+            "added",
+            "discarded",
+          ],
         },
         reason: {
           title: "Reason",

@@ -40196,6 +40196,58 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
+ * This environment's imports a person can still finish, newest first.
+Read from what each import stores: no source is read again.
+ */
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin = 0;
+
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem =
+  zod.object({
+    id: zod.string().uuid(),
+    source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
+    source_name: zod
+      .string()
+      .min(1)
+      .describe(
+        "The Observe project's or dataset's name; null for transcripts.",
+      ),
+    source_available: zod
+      .boolean()
+      .describe("False once the Observe project or dataset was deleted."),
+    case_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseCaseCountMin,
+      ),
+    added_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsListEvidenceImportsResponseAddedCountMin,
+      )
+      .describe("Cases already added to the suite."),
+    status: zod
+      .enum(["waiting", "drafting", "drafted", "partly_added"])
+      .describe(
+        "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.",
+      ),
+    created_at: zod.string().datetime({ offset: true }),
+    can_discard: zod
+      .boolean()
+      .describe(
+        "False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added.",
+      ),
+  });
+export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponse =
+  zod.array(SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem);
+
+/**
  * Freeze Observe sessions or calls or dataset rows, or store transcripts
 a person added, as evidence for this environment's tests; returns what
 each holds and lacks, and what redaction replaces. Nothing is drafted or
@@ -40357,6 +40409,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
         "drafted",
         "blocked",
         "added",
+        "discarded",
       ]),
       reason: zod.string(),
       source_available: zod
@@ -40558,6 +40611,16 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
 });
 
 /**
+ * Discard an import never added, and a transcript's stored text with it.
+Of an import with added cases, only the cases not added are discarded.
+ */
+export const SimulateApiHarnessEnvironmentsDiscardEvidenceImportParams =
+  zod.object({
+    id: zod.string(),
+    import_id: zod.string(),
+  });
+
+/**
  * Add an import's drafted cases to the suite: saved with them when the
 review saw no unsaved changes, else beside those changes in the draft.
  */
@@ -40672,6 +40735,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
             "drafted",
             "blocked",
             "added",
+            "discarded",
           ]),
           reason: zod.string(),
           source_available: zod
