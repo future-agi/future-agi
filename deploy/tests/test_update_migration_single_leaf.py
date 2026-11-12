@@ -68,7 +68,10 @@ def load_graph(backend=BACKEND):
     """Return ({(app_label, name)}, [(child, parent)]) for every migration under backend."""
     nodes, edges, replaced, labels = set(), [], set(), {}
     for path in sorted(backend.glob('**/migrations/[0-9]*.py')):
-        if 'node_modules' in path.parts:
+        relative = path.relative_to(backend).parts
+        # Only first-party apps: a local virtualenv (futureagi/.venv) carries
+        # third-party migrations whose graphs are not ours to check.
+        if any(part.startswith('.') or part in ('node_modules', 'site-packages') for part in relative):
             continue
         attributes = _migration_attributes(path)
         if attributes is None:
@@ -114,6 +117,7 @@ class SingleMigrationLeafTests(unittest.TestCase):
         apps = {app for app, _ in nodes}
         self.assertIn('prism', apps)
         self.assertNotIn('agentcc', apps)
+        self.assertNotIn('token_blacklist', apps)
         missing = sorted({parent for child, parent in edges
                           if parent[0] in apps and parent[1] not in ('__first__', '__latest__') and parent not in nodes})
         self.assertEqual(missing, [])
