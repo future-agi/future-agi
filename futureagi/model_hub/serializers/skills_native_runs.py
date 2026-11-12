@@ -139,3 +139,40 @@ class GuestAccepted(ContextSerializer):
 
 class ShareNativeInput(ContextSerializer):
     acknowledge_snapshot_sharing = s.BooleanField()
+
+
+# --- Authenticated guest channel request bodies (documentation contract) ---
+# The services keep the exact validation (health must equal the planned execution
+# spec; observations must carry exactly these fields and a matching digest). These
+# serializers publish the same shapes in the OpenAPI contract.
+
+
+class GuestHealthInput(s.Serializer):
+    protocol = s.CharField()
+    adapter_module = s.CharField()
+    configuration_digest = s.CharField()
+    execution_fingerprint = s.CharField()
+    code_digest = s.CharField()
+    image_digest = s.CharField()
+    packages = s.JSONField()
+    checkpoint_digest = s.CharField()
+    read_only_source = s.BooleanField()
+    read_only_context = s.BooleanField()
+    separate_writable_state = s.BooleanField()
+    controlled_paid_egress = s.BooleanField()
+
+
+class GuestObservationInput(s.Serializer):
+    schema = s.IntegerField()
+    protocol = s.CharField()
+    execution_fingerprint = s.CharField()
+    case_id = s.CharField()
+    variant = s.CharField()
+    repeat_index = s.IntegerField(min_value=0)
+    application = s.DictField()
+    business = s.DictField()
+    observation_digest = s.CharField()
+
+
+class GuestFailureInput(s.Serializer):
+    reason = s.CharField(required=False, max_length=64)

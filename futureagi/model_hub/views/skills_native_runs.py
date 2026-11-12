@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -205,6 +206,7 @@ class NativeGuestView(APIView):
 
 
 class NativeGuestHealthView(NativeGuestView):
+    @swagger_auto_schema(request_body=s.GuestHealthInput)
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
@@ -213,6 +215,7 @@ class NativeGuestHealthView(NativeGuestView):
 
 
 class NativeGuestObservationView(NativeGuestView):
+    @swagger_auto_schema(request_body=s.GuestObservationInput)
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
@@ -221,6 +224,7 @@ class NativeGuestObservationView(NativeGuestView):
 
 
 class NativeGuestFailureView(NativeGuestView):
+    @swagger_auto_schema(request_body=s.GuestFailureInput)
     def post(self, request: Request, attempt_id: UUID) -> Response:
         reason = request.data.get("reason") if isinstance(request.data, dict) else None
         return self.reply(
