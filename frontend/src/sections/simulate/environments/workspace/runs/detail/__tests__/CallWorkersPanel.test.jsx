@@ -783,11 +783,11 @@ describe("CallWorkersPanel", () => {
       expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(1);
       expect(screen.getAllByTestId("turn")[1]).toContainElement(chip);
       expect(chip).toHaveTextContent("past its action deadline");
+      // Past its deadline is not "cut short": its execution was never stopped.
       expect(
-        screen.getByText(
-          "Cut short: Order-lookup worker (past its action deadline)",
-        ),
+        screen.getByText("Past their action deadline: Order-lookup worker"),
       ).toBeInTheDocument();
+      expect(screen.queryByText(/^Cut short:/)).toBeNull();
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });
 

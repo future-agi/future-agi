@@ -2769,9 +2769,11 @@ def test_a_worker_with_one_hand_off_back_and_another_still_out_takes_the_trial_s
 
 
 def test_a_worker_seen_only_in_the_world_s_refusals_is_past_its_deadline_not_unobserved():
-    states, _ = _ended("ended", past_deadline={"notifier"})
+    states, timeline = _ended("ended", past_deadline={"notifier"})
     # The world refusing it is the world seeing it, so it is never "Not observed".
     assert states["notifier"] == "deadline_passed"
+    notifier = next(one for one in timeline["workers"] if one["id"] == "notifier")
+    assert notifier["observed"] is True
 
 
 def test_a_trial_s_ending_is_read_from_its_call_its_receipt_and_its_job():
@@ -2806,6 +2808,15 @@ def test_a_trial_s_ending_is_read_from_its_call_its_receipt_and_its_job():
         == "ended"
     )
     assert trial_ending(call("completed", {"failure": None}), stopping) == "ended"
+    # A scenario's own problem is not an infrastructure fault.
+    for failure in (
+        {"domain": "simulator", "code": "worker_limits_not_enforced"},
+        {"domain": "simulator", "code": "evidence_missing"},
+        {"domain": "environment"},
+    ):
+        assert (
+            trial_ending(call("completed", {"failure": failure}), stopping) == "ended"
+        )
     # A call the job closed without a receipt ended the way the job did.
     assert trial_ending(call(CallExecution.CallStatus.FAILED), lost) == "infrastructure"
 

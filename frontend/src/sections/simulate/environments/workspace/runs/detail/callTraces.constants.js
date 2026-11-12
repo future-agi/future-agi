@@ -113,5 +113,7 @@ export const CALL_WORKERS_COPY = {
     infrastructure: "infrastructure fault",
   },
   workersCutShort: (list) => `Cut short: ${list}`,
+  // Past its action deadline: the world refused its later calls; its execution was not stopped.
+  workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
 };

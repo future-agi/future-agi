@@ -990,6 +990,8 @@ def _span_dict(span: Any) -> WorkerSpan:
 
 # How a trial ended, for the workers still out when it did, as the call recorded it: it ended with no return from them,
 # it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it).
+_SCENARIO_DOMAINS = frozenset({"simulator", "environment"})
+
 _STILL_OUT = {
     "ended": "no_return",
     "infrastructure": "infrastructure",
@@ -1047,7 +1049,9 @@ def worker_states(
                 else "completed"
             )
         elif worker["id"] in late:
-            state = "deadline_passed"
+            # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
+            workers.append({**worker, "observed": True, "state": "deadline_passed"})
+            continue
         elif not worker["observed"]:
             state = "not_observed"
         elif out:
@@ -1080,6 +1084,7 @@ def deadline_refused(call: CallExecution) -> set[str]:
 def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
     """How one call's trial ended, from the call row, its receipt and the job."""
     from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.hosted_harness_ingestion import SCENARIO_FAILURE_CODES
 
     if call.status == CallExecution.CallStatus.CANCELLED:
         # Confirmed only once the platform has stopped the run; stopping our observation is not a confirmed cancel.
@@ -1090,6 +1095,12 @@ def trial_ending(call: CallExecution, job: HostedHarnessJob | None) -> str:
     failure = (
         receipt.get("failure") if receipt else (getattr(job, "failure", None) or {})
     ) or {}
+    # A scenario's own problem (simulator or environment side, or a scenario hold) is not an infrastructure fault.
+    if (
+        failure.get("code") in SCENARIO_FAILURE_CODES
+        or failure.get("domain") in _SCENARIO_DOMAINS
+    ):
+        return "ended"
     return "infrastructure" if failure.get("domain") not in (None, "agent") else "ended"
 
 

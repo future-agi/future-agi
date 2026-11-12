@@ -805,8 +805,9 @@ export default function CallWorkersPanel({
       .join(", ");
   const notObserved = named((one) => !one.observed);
   // Workers the trial's end stopped before they returned; their steps so far are kept above.
+  const pastDeadline = named((one) => one.state === "deadline_passed");
   const cutShort = data.workers
-    .filter((one) => C.cutShort[one.state])
+    .filter((one) => one.state !== "deadline_passed" && C.cutShort[one.state])
     .map((one) => `${one.name} (${C.cutShort[one.state]})`)
     .join(", ");
   const notDeclared = named((one) => one.undeclared);
@@ -920,6 +921,11 @@ export default function CallWorkersPanel({
       {cutShort ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersCutShort(cutShort)}
+        </Typography>
+      ) : null}
+      {pastDeadline ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.workersPastDeadline(pastDeadline)}
         </Typography>
       ) : null}
       {notDeclared ? (
