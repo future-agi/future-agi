@@ -38,8 +38,8 @@ FILES = [{"filename": path, "status": "modified"} for path in sorted(policy.RELE
 APPROVER = "futureagi-release-approver[bot]"
 CHECK = {"id": 1, "name": "Backend Tests Pass", "head_sha": SHA,
          "app": {"id": 1}, "status": "completed", "conclusion": "success"}
-# Required on main since 12 Nov 2026; on a release PR the stack jobs are
-# path-filtered out and this aggregate still concludes success.
+# Required on main since 12 Nov 2026. A release PR runs the full suite: its
+# Chart.yaml change matches the deploy/** path filter in e2e-ci.yml.
 E2E_CHECK = {**CHECK, "id": 20, "name": "E2E Tests Pass"}
 
 
@@ -207,6 +207,35 @@ class MergePolicyTests(unittest.TestCase):
         self.assertTrue(self.decide(checks=[failure, {**CHECK, "id": 3}, E2E_CHECK]))
         self.assertFalse(self.decide(checks=[CHECK, {**failure, "app": {"id": 2}}, E2E_CHECK]))
         self.assertFalse(self.decide(checks=[CHECK, {**CHECK, "id": 3, "status": "queued"}, E2E_CHECK]))
+
+    def reason(self, checks=None, statuses=None):
+        return policy.merge_decision(deepcopy(PR), FILES, [CHECK, E2E_CHECK] if checks is None else checks,
+                                     statuses or [], METADATA, CONFIG, NOW)
+
+    def test_a_red_required_check_is_named_and_a_running_one_is_not_finished(self):
+        red = {**E2E_CHECK, "conclusion": "failure"}
+        for checks, statuses in (([CHECK, red], []), ([CHECK, {**red, "conclusion": "cancelled"}], []),
+                                 ([E2E_CHECK], [{"context": "Backend Tests Pass", "sha": SHA, "id": 1,
+                                                 "state": "error"}])):
+            with self.subTest(checks=checks, statuses=statuses):
+                allowed, reason = self.reason(checks, statuses)
+                self.assertFalse(allowed)
+                self.assertIn("did not succeed on this head: ", reason)
+                self.assertIn("a person re-runs it", reason)
+        self.assertIn(": E2E Tests Pass.", self.reason([CHECK, red])[1])
+        # A queued re-run of the red check, or no result yet, is not finished.
+        rerun = {**E2E_CHECK, "id": 21, "status": "queued", "conclusion": None}
+        for checks in ([CHECK, red, rerun], [CHECK], [CHECK, {**E2E_CHECK, "status": "in_progress"}]):
+            with self.subTest(checks=checks):
+                allowed, reason = self.reason(checks)
+                self.assertFalse(allowed)
+                self.assertEqual(reason, "required checks have not finished on this head: E2E Tests Pass")
+        pending = {"context": "Backend Tests Pass", "sha": SHA, "id": 1, "state": "pending"}
+        self.assertEqual(self.reason([E2E_CHECK], [pending])[1],
+                         "required checks have not finished on this head: Backend Tests Pass")
+        self.assertEqual(self.reason([CHECK, {**E2E_CHECK, "id": None}])[1], "required check data is malformed")
+        # A re-run that passes clears the wait.
+        self.assertTrue(self.reason([CHECK, red, {**E2E_CHECK, "id": 21}])[0])
 
     def test_legacy_statuses_are_bound_to_the_same_commit(self):
         status = {"context": "Backend Tests Pass", "sha": SHA, "id": 1, "state": "success"}
@@ -1066,7 +1095,9 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(merge.kwargs["data"], {"sha": SHA, "merge_method": "squash"})
         labels = [call.kwargs["data"]["labels"] for call in calls if call.args[0] == "issues/42/labels"]
         self.assertEqual(labels, [[policy.APPROVED_LABEL], [policy.LABEL]])
-        self.assertIn("Backend Tests Pass", approval.kwargs["data"]["body"])
+        body = approval.kwargs["data"]["body"]
+        self.assertIn("Required checks on this SHA: Backend Tests Pass, E2E Tests Pass (success).", body)
+        self.assertNotIn("advisory", body)
 
     def test_missing_or_unsafe_approver_identity_makes_no_request(self):
         for login in ("", "github-actions[bot]", policy.AUTHOR, "someone", "Upper[bot]",
@@ -1235,6 +1266,36 @@ class ExecutionTests(unittest.TestCase):
                     patch.object(policy, "api") as api, patch("sys.stdout", new_callable=io.StringIO):
                 policy.autopilot()
                 api.assert_not_called()
+
+    def poll(self, checks):
+        """Run the check job's command on one release PR; return its outputs, summary and mocks."""
+        with tempfile.TemporaryDirectory() as temp:
+            output, summary = Path(temp) / "output", Path(temp) / "summary"
+            env = {**CONFIG, "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
+            with patch.dict(os.environ, env, clear=True), patch.object(policy, "datetime", FrozenDatetime), \
+                    patch.object(policy, "pages", return_value=[{"number": 42}]), \
+                    patch.object(policy, "snapshot", return_value=(deepcopy(PR), FILES, checks, [], METADATA)), \
+                    patch.object(policy, "api") as api, \
+                    patch.object(policy, "release_gates", return_value=(False, "synthetic gate")) as gates, \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                policy.autopilot()
+            return output.read_text(), summary.read_text(), api, gates
+
+    def test_a_red_required_check_is_a_quiet_wait_that_names_the_check(self):
+        output, summary, api, gates = self.poll([CHECK, {**E2E_CHECK, "conclusion": "failure"}])
+        # No exception, so the run is green; no write and no further read.
+        self.assertEqual(output, f"eligible=false\nnumber=42\nsha={SHA}\n")
+        self.assertIn("required check did not succeed on this head: E2E Tests Pass.", summary)
+        api.assert_not_called()
+        gates.assert_not_called()
+        # A running check gives a different reason; a green one goes on to the live gates.
+        output, summary, api, gates = self.poll([CHECK, {**E2E_CHECK, "status": "in_progress"}])
+        self.assertIn("have not finished on this head: E2E Tests Pass", summary)
+        self.assertNotIn("did not succeed", summary)
+        gates.assert_not_called()
+        output, summary, api, gates = self.poll([CHECK, E2E_CHECK])
+        gates.assert_called_once()
+        self.assertIn("synthetic gate", summary)
 
 
 def activity_row(kind, after, login=policy.AUTHOR, user_type="Bot", before="0" * 40, **fields):
@@ -1466,9 +1527,29 @@ class WorkflowContractTests(unittest.TestCase):
                     self.assertEqual([line for line in text.splitlines() if self.LINE.fullmatch(line)],
                                      ["Migrations: unknown new files"])
 
+    WORKFLOWS = Path(__file__).resolve().parents[1] / ".github/workflows"
+
+    def test_the_autopilot_wakes_when_either_required_check_finishes(self):
+        import yaml
+
+        workflows = {path.name: yaml.safe_load(path.read_text()) for path in sorted(self.WORKFLOWS.glob("*.y*ml"))}
+        names = {data.get("name"): data for data in workflows.values() if isinstance(data, dict)}
+        # PyYAML reads the "on" key as True.
+        wake = yaml.safe_load(self.AUTOPILOT.read_text())[True]["workflow_run"]["workflows"]
+        self.assertEqual(wake, ["Backend CI", "E2E CI"])
+        # Each name is a real workflow, and together they produce the required checks.
+        jobs = set()
+        for name in wake:
+            self.assertIn(name, names)
+            jobs |= {job.get("name") for job in names[name]["jobs"].values()}
+        self.assertLessEqual(set(policy.MIN_REQUIRED_CHECKS), jobs)
+        # A job name is not a workflow name, so it would never wake the autopilot.
+        self.assertNotIn("E2E Tests Pass", names)
+        self.assertEqual(workflows["e2e-ci.yml"]["name"], "E2E CI")
+
     def test_autopilot_is_default_branch_only_and_has_required_triggers(self):
         text = self.AUTOPILOT.read_text()
-        for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI"]', "workflow_dispatch:",
+        for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI", "E2E CI"]', "workflow_dispatch:",
                          "github.event.repository.default_branch", "persist-credentials: false", "checks: read",
                          "statuses: read", "actions: read", "permission-contents: write", "permission-pull-requests: write",
                          "python3 -m pip install --disable-pip-version-check PyYAML==6.0.3"):
@@ -1540,6 +1621,113 @@ class WorkflowContractTests(unittest.TestCase):
         # these names and reads COMMON_PATHS from the job env.
         self.assertEqual(len([step for step in steps if step.get("name", "").startswith("Bump platform tags")]), 1)
         self.assertEqual(len([step for step in steps if step.get("id") == "catalog-images"]), 1)
+
+    CHECKS = Path(__file__).resolve().parents[1] / ".github/workflows/worker-release-checks.yml"
+    RELEASE_TEST_MODULES = ["test_release_autopilot", "test_release_error_feed_worker",
+                            "test_verify_platform_image_tags"]
+
+    @staticmethod
+    def unittest_modules(workflow):
+        """The test modules the job names, or None when it does not name them one by one."""
+        runs = [step for step in workflow["jobs"]["test"]["steps"] if "unittest" in step.get("run", "")]
+        if len(runs) != 1 or runs[0].get("working-directory") != "scripts":
+            return None
+        argv = shlex.split(runs[0]["run"])
+        modules = argv[4:]
+        if argv[:4] != ["python3", "-m", "unittest", "-v"] or not modules:
+            return None
+        return modules if all(re.fullmatch(r"test_[a-z0-9_]+", name) for name in modules) else None
+
+    def test_release_script_checks_run_exactly_the_tests_of_the_files_they_watch(self):
+        import yaml
+
+        workflow = yaml.safe_load(self.CHECKS.read_text())
+        modules = self.unittest_modules(workflow)
+        self.assertEqual(modules, self.RELEASE_TEST_MODULES)
+        paths = set(workflow[True]["pull_request"]["paths"])
+        scripts = Path(__file__).resolve().parent
+        for name in modules:
+            self.assertTrue((scripts / f"{name}.py").is_file(), name)
+            self.assertIn(f"scripts/{name}.py", paths)
+        # Every watched script has its test module in the list, and nothing else is run.
+        subjects = {path for path in paths if path.startswith("scripts/") and "/test_" not in path}
+        self.assertEqual({"test_" + Path(path).stem.replace("-", "_") for path in subjects}, set(modules))
+        for workflow_file in ("release-images.yml", "release-autopilot.yml", "sdk-sync.yml",
+                              "worker-release-checks.yml"):
+            self.assertIn(f".github/workflows/{workflow_file}", paths)
+
+    def test_a_discover_run_or_an_unrelated_module_is_not_the_release_set(self):
+        import yaml
+
+        workflow = yaml.safe_load(self.CHECKS.read_text())
+        step = next(step for step in workflow["jobs"]["test"]["steps"] if "unittest" in step.get("run", ""))
+        # The shape that picked up dev's ruff canary test on run 43154266035.
+        step["run"] = "python3 -m unittest discover -s scripts -p 'test_*.py' -v"
+        self.assertIsNone(self.unittest_modules(workflow))
+        step["run"] = "python3 -m unittest -v " + " ".join(self.RELEASE_TEST_MODULES + ["test_check_python_lint_delta"])
+        self.assertNotEqual(self.unittest_modules(workflow), self.RELEASE_TEST_MODULES)
+        del step["working-directory"]
+        self.assertIsNone(self.unittest_modules(workflow))
+
+
+class SdkSyncWorkflowTests(unittest.TestCase):
+    """sdk-sync holds the release-bot key and runs sdkgen code from its futureagi-sdk checkout."""
+
+    WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/sdk-sync.yml"
+
+    def setUp(self):
+        import yaml
+
+        self.workflow = yaml.safe_load(self.WORKFLOW.read_text())
+        self.steps = self.workflow["jobs"]["sync"]["steps"]
+
+    def resolve(self, *, dispatched="", run_ref="", sdk_base="dev"):
+        """Run the real "Resolve the release" script as GitHub does (bash -e)."""
+        step = self.steps[0]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "output"
+            output.touch()
+            env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(output),
+                   "DISPATCHED": dispatched, "RUN_REF": run_ref, "SDK_BASE": sdk_base}
+            result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, text=True, capture_output=True)
+            return result.returncode, output.read_text().splitlines(), result.stdout + result.stderr
+
+    def test_dev_is_the_only_base_and_it_is_checked_before_any_token_or_checkout(self):
+        sdk_base = self.workflow[True]["workflow_dispatch"]["inputs"]["sdk-base"]
+        self.assertEqual((sdk_base["type"], sdk_base["options"], sdk_base["default"]), ("choice", ["dev"], "dev"))
+        first = self.steps[0]
+        self.assertEqual((first.get("id"), first["env"]["SDK_BASE"]), ("release", "${{ inputs.sdk-base || 'dev' }}"))
+        self.assertNotIn("uses", first)
+        # Later steps read only the validated output, never the input.
+        for step in self.steps[1:]:
+            self.assertNotIn("inputs.sdk-base", repr(step))
+        sdk = next(step for step in self.steps if step.get("with", {}).get("repository") == "future-agi/futureagi-sdk")
+        self.assertEqual(sdk["with"]["ref"], "${{ steps.release.outputs.sdk-base }}")
+        opener = next(step for step in self.steps if step.get("name") == "Open the pull request")
+        self.assertEqual(opener["env"]["BASE"], "${{ steps.release.outputs.sdk-base }}")
+        # A dispatch and a release-images completion both resolve with dev.
+        for kwargs in ({"dispatched": "v1.58.0"}, {"run_ref": "v1.58.0"}):
+            with self.subTest(**kwargs):
+                code, outputs, _ = self.resolve(**kwargs)
+                self.assertEqual((code, outputs), (0, ["version=v1.58.0", "sdk-base=dev"]))
+
+    def test_any_other_base_fails_before_writing_an_output(self):
+        # feat/sdk-docs-reference is the value of the one real dispatch (run 41805312254).
+        for base in ("feat/sdk-docs-reference", "main", "refs/pull/50/head", "Dev", "dev ", " dev",
+                     "dev\nmain", ""):
+            with self.subTest(base=base):
+                code, outputs, log = self.resolve(dispatched="v1.58.0", sdk_base=base)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(outputs, [])
+                self.assertIn("::error::sdk-base must be dev", log)
+
+    def test_only_a_whole_release_tag_is_a_version(self):
+        for version in ("v1.58.0\nsdk-base=feat/x", "v1.58.0\n", "x\nv1.58.0", "v1.58", "release-images"):
+            with self.subTest(version=version):
+                code, outputs, log = self.resolve(dispatched=version)
+                self.assertEqual((code, outputs), (0, ["skip=true"]))
+                self.assertNotIn("\nsdk-base=feat/x", log)
+        self.assertEqual(self.resolve(run_ref="v2.0.0")[1], ["version=v2.0.0", "sdk-base=dev"])
 
 
 def yq_stub(directory):

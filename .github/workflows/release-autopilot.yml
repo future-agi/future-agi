@@ -3,8 +3,10 @@ name: Release autopilot
 on:
   schedule:
     - cron: "*/15 * * * *"
+  # Wake-up signals for the two required checks. On a release PR, E2E CI
+  # often finishes after Backend CI, by up to about 45 minutes.
   workflow_run:
-    workflows: ["Backend CI"]
+    workflows: ["Backend CI", "E2E CI"]
     types: [completed]
   workflow_dispatch:
 

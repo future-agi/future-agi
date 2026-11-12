@@ -14,6 +14,13 @@ name: sdk-sync
 #
 # Needs the release bot app installed on futureagi-sdk (RELEASE_BOT_APP_ID /
 # RELEASE_BOT_PRIVATE_KEY, the secrets release-please.yml uses).
+#
+# This job holds the release-bot key and runs sdkgen code from the SDK checkout.
+# So it checks out only futureagi-sdk dev, never a ref the dispatcher chooses:
+# code on such a ref would run with the key. The key custody therefore also
+# needs every merge into futureagi-sdk dev to need a person's review, which is
+# an owner setting (docs/release-autopilot.md). To sync a feature branch, run
+# sdkgen/sync_contract.py and sdkgen/generate.py on that branch locally.
 
 on:
   workflow_run:
@@ -26,9 +33,10 @@ on:
         required: true
         type: string
       sdk-base:
-        description: futureagi-sdk branch to open the pull request against
+        description: futureagi-sdk branch to open the pull request against (only dev; see the header)
         default: dev
-        type: string
+        type: choice
+        options: [dev]
 
 permissions:
   contents: read
@@ -55,9 +63,18 @@ jobs:
           RUN_REF: ${{ github.event.workflow_run.head_branch }}
           SDK_BASE: ${{ inputs.sdk-base || 'dev' }}
         run: |
+          set -euo pipefail
+          # Checked before any token or checkout, and as a whole string. The
+          # choice input already offers only dev; this also covers API callers.
+          if [ "$SDK_BASE" != dev ]; then
+            echo "::error::sdk-base must be dev: this job holds the release-bot key and runs code from that branch"
+            exit 1
+          fi
           version="${DISPATCHED:-$RUN_REF}"
-          if ! echo "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "not a release tag: $version"
+          # =~ matches the whole value. A per-line match would let a
+          # multi-line value add its own lines to GITHUB_OUTPUT.
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'not a release tag: %q\n' "$version"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

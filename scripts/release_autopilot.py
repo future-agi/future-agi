@@ -151,11 +151,24 @@ def window_allows(now, value):
     return start <= hour < end if start < end else hour >= start or hour < end
 
 
-def checks_pass(sha, names, checks, statuses):
+def result_state(kind, row):
+    """One latest check run or status: success, not finished, or did not succeed."""
+    if kind == "check":
+        if row.get("status") != "completed":
+            return "not finished"
+        return "success" if row.get("conclusion") == "success" else "did not succeed"
+    if row.get("state") == "pending":
+        return "not finished"
+    return "success" if row.get("state") == "success" else "did not succeed"
+
+
+def check_results(sha, names, checks, statuses):
     """Latest attempt per check name/app or status context, on this exact SHA.
 
     Distinct producers with the same name must all succeed. A queued rerun
     supersedes its old green result; skipped and neutral are not success.
+    Returns (did_not_succeed, not_finished) as lists of required names, both
+    empty when every name passed, or None when the data is malformed.
     """
     latest = {}
     for row in checks:
@@ -163,7 +176,7 @@ def checks_pass(sha, names, checks, statuses):
             continue
         key = (row["name"], "check", row.get("app", {}).get("id"))
         if type(row.get("id")) is not int:
-            return False
+            return None
         if key not in latest or row["id"] > latest[key]["id"]:
             latest[key] = row
     for row in statuses:
@@ -173,20 +186,18 @@ def checks_pass(sha, names, checks, statuses):
             continue
         key = (row["context"], "status", None)
         if type(row.get("id")) is not int:
-            return False
+            return None
         if key not in latest or row["id"] > latest[key]["id"]:
             latest[key] = row
+    did_not_succeed, not_finished = [], []
     for name in names:
-        matches = [(key, row) for key, row in latest.items() if key[0] == name]
-        if not matches:
-            return False
-        for key, row in matches:
-            if key[1] == "check":
-                if row.get("status") != "completed" or row.get("conclusion") != "success":
-                    return False
-            elif row.get("state") != "success":
-                return False
-    return True
+        states = {result_state(kind, row) for (key_name, kind, _), row in latest.items() if key_name == name}
+        if "did not succeed" in states:
+            did_not_succeed.append(name)
+        elif states != {"success"}:
+            # No result yet, or a run that is queued or in progress.
+            not_finished.append(name)
+    return did_not_succeed, not_finished
 
 
 def merge_decision(pr, files, checks, statuses, metadata, config, now):
@@ -244,8 +255,16 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
         return False, "PR was updated too recently or has a future update time"
     if pr.get("mergeable") is not True:
         return False, "PR mergeability is false or unknown"
-    if not checks_pass(head["sha"], names, checks, statuses):
-        return False, "required checks are missing, stale, pending or unsuccessful"
+    # A red required check is a wait, not an error: the run stays green and
+    # names the check, and a passing re-run lets a later poll merge.
+    results = check_results(head["sha"], names, checks, statuses)
+    if results is None:
+        return False, "required check data is malformed"
+    if results[0]:
+        return False, (f"required check did not succeed on this head: {', '.join(results[0])}. The autopilot "
+                       "waits until a person re-runs it and it passes, or an administrator merges by hand")
+    if results[1]:
+        return False, f"required checks have not finished on this head: {', '.join(results[1])}"
     return True, "release metadata, author, age, hours, hold and current-head checks passed"
 
 
@@ -524,7 +543,7 @@ def autopilot(merge=False):
              f"weekends: {'on' if os.environ.get('RELEASE_AUTOPILOT_WEEKENDS') == 'on' else 'off'}.\n"
              "Trusted release App, same-repository release branch, stable title, release-metadata "
              "content/mode allowlist, title-aligned versions, no release-hold (case-insensitive) "
-             "and mergeability verified. E2E is advisory unless listed in the required-check variable.\n\n"
+             "and mergeability verified.\n\n"
              f"Run: {os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPOSITORY}/actions/runs/"
              f"{os.environ.get('GITHUB_RUN_ID', '')}")
     # Audit/approval are idempotent per head/base pair. They can reset updated_at, so the

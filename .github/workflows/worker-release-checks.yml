@@ -9,6 +9,7 @@ on:
       - "scripts/verify-platform-image-tags.py"
       - "scripts/test_verify_platform_image_tags.py"
       - ".github/workflows/release-autopilot.yml"
+      - ".github/workflows/sdk-sync.yml"
       - "scripts/release_autopilot.py"
       - "scripts/test_release_autopilot.py"
 permissions:
@@ -22,4 +23,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      # Only the tests of the files listed above. Other scripts/test_*.py files
+      # run in their own workflows with their own tools, such as ruff for the
+      # lint-gate test in python-lint.yml.
+      - working-directory: scripts
+        run: python3 -m unittest -v test_release_autopilot test_release_error_feed_worker test_verify_platform_image_tags
