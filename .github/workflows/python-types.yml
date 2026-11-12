@@ -1,11 +1,25 @@
 name: Python types (advisory)
 
-# Independent of the required backend job. Old errors are not a PR's debt.
+# Whole-repo mypy against the committed baseline, futureagi/mypy-baseline.txt,
+# the way PostHog ran it: known errors are listed with their line numbers set
+# to 0, and an error beyond the baseline's count for its file, message and code
+# fails the job. It also catches errors a change causes in files it did not
+# touch. See scripts/mypy_baseline.py.
+#
+# Advisory for now: "Python Types Pass" is not a required check. It reports on
+# every PR (no workflow-level paths filter), so it can be made required later
+# without changes here. A PR that changes none of the paths in the changes job
+# skips mypy, and the summary still passes.
+#
+# No .mypy_cache is restored: every run is a cold whole-repo run, so a stale
+# cache can never hide an error.
+#
+# No branches filter: stacked PRs into feature branches get the check too.
+
 on:
   pull_request:
+    # edited: a PR moved to another base branch is checked against that base.
     types: [opened, synchronize, reopened, edited]
-    paths:
-      - "futureagi/**/*.py"
 
 permissions:
   contents: read
@@ -15,19 +29,46 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # futureagi/uv.lock; the self-test checks this pin.
+  # The mypy in futureagi/uv.lock; a test checks they match. The baseline is
+  # only valid for this mypy and the stubs locked with it.
   MYPY_VERSION: "1.19.1"
 
 jobs:
-  mypy-delta:
-    name: Mypy (new errors only, advisory)
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny/paths-filter reads the PR's file list
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          filters: |
+            python:
+              - 'futureagi/**/*.py'
+              - 'futureagi/pyproject.toml'
+              - 'futureagi/uv.lock'
+              - 'futureagi/mypy-baseline.txt'
+              - 'scripts/mypy_baseline.py'
+              - 'scripts/test_mypy_baseline.py'
+              - '.github/workflows/python-types.yml'
+
+  mypy-baseline:
+    name: Mypy (baseline)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The merge commit (the default): the code and the baseline as they
+      # would be after merging, so an error that only appears in combination
+      # with the current base is caught too.
+      - uses: actions/checkout@v4
+        with:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -38,13 +79,69 @@ jobs:
           cache-dependency-glob: futureagi/uv.lock
       - name: Install backend and typing dependencies
         working-directory: futureagi
-        # Same frozen OSS install as backend-ci, plus its typing extra. No ML extras or test services.
+        # Same frozen OSS install as backend-ci, plus its typing extra. No ML
+        # extras or test services. futureagi/ee/cloud is never present here.
         run: uv sync --frozen --no-dev --extra dev
-      - name: Self-test the delta gate
-        run: futureagi/.venv/bin/python -I scripts/test_check_python_types_delta.py
-      - name: Report new type errors and wall time
+      - name: Self-test the baseline script
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The real-mypy tests run this mypy on throwaway projects.
+          MYPY_BIN: futureagi/.venv/bin/mypy
+        run: python3 -I scripts/test_mypy_baseline.py
+      - name: Check the mypy version
+        working-directory: futureagi
         run: |
-          futureagi/.venv/bin/python -I scripts/check_python_types_delta.py \
-            --base "$PR_BASE_SHA" --expect-mypy-version "$MYPY_VERSION"
+          version="$(.venv/bin/mypy --version)"
+          echo "$version"
+          case "$version" in
+            "mypy ${MYPY_VERSION} "*) ;;
+            *) echo "::error::Expected mypy ${MYPY_VERSION}, found: $version"; exit 1 ;;
+          esac
+      - name: Run mypy and compare with the baseline
+        working-directory: futureagi
+        run: |
+          started=$SECONDS
+          status=0
+          .venv/bin/mypy . > "$RUNNER_TEMP/mypy-output.txt" || status=$?
+          echo "mypy exited $status after $((SECONDS - started))s"
+          python3 -I ../scripts/mypy_baseline.py filter \
+            --mypy-exit-code "$status" --input "$RUNNER_TEMP/mypy-output.txt"
+      - name: Upload mypy's output
+        # The output to sync the baseline from: download it and run
+        # scripts/mypy_baseline.py sync --input <file> in futureagi/.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypy-output
+          path: ${{ runner.temp }}/mypy-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  python-types-pass:
+    name: Python Types Pass
+    needs: [changes, mypy-baseline]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless the change check ran and mypy passed or was not needed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
+          MYPY: ${{ needs.mypy-baseline.result }}
+        run: |
+          echo "changes: $CHANGES, python paths changed: ${PYTHON_CHANGED:-<none>}, mypy-baseline: $MYPY"
+          # Stricter than "every dependency succeeded or was skipped": a skipped
+          # or failed changes job, or a mypy skip that changes did not ask for,
+          # fails the check.
+          if [ "$CHANGES" != success ]; then
+            echo "::error::The changes job did not succeed ($CHANGES)."
+            exit 1
+          fi
+          if [ "$MYPY" = success ]; then
+            echo "mypy found no errors beyond the baseline."
+          elif [ "$MYPY" = skipped ] && [ "$PYTHON_CHANGED" = false ]; then
+            echo "No Python type paths changed, so mypy was not needed."
+          else
+            echo "::error::mypy did not pass (mypy-baseline: $MYPY, python paths changed: ${PYTHON_CHANGED:-<none>})."
+            exit 1
+          fi
