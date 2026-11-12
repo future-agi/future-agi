@@ -347,7 +347,7 @@ contract an external datastore has to meet:
   `server_reset_query_always=1`,
   `ignore_startup_parameters=extra_float_digits,search_path`); the bootstrap
   job always connects directly. `postgres.readReplica` routes opted-in reads
-  to a replica.
+  to a replica (see [Read replica](#read-replica)).
 - Connections: every backend thread and every worker activity slot may hold
   one. Keep `max_connections` above
   `backend pods × backend.granian.workers × backend.granian.threads` plus,
@@ -382,6 +382,47 @@ fiCollector:
   extraVolumes: *pgCaVolume
   extraVolumeMounts: *pgCaMount
 ```
+
+#### Read replica
+
+`postgres.readReplica` adds a streaming replica, or a pooler in front of one,
+as a second database for the backend and workers. Nothing reads from it until
+`optIn` (`READ_REPLICA_OPT_IN`) names something:
+
+- A `feature:` key moves one listing (projects, dashboards, datasets, saved
+  views and the like; each app's `db_routing.py` declares its keys) to the
+  replica.
+- A model class name moves every read the app does not pin for that model,
+  including a re-read of a row written a moment ago. A `transaction.atomic()`
+  block does not keep reads on the primary, and an `on_commit` callback can run
+  before the replica has the commit, so code that reads its own write of an
+  opted-in model has to read the primary (`.using("default")`). Only list
+  models whose code has been checked for that.
+
+The models checked and tested this way (TH-3119), with the feature keys, are
+the rollout candidate below. Try it in staging and watch the error tracker
+before production. List and detail pages can show data a few seconds old
+while the replica catches up.
+
+```yaml
+postgres:
+  readReplica:
+    enabled: true
+    host: pgbouncer-read
+    optIn: [ObservationSpan, Trace, EvalLogger, EndUser, CustomEvalConfig,
+      ErrorMemory, TraceAnnotation, EvalTaskLogger, TraceErrorAnalysisTask,
+      "feature:project_list", "feature:org_config_bulk",
+      "feature:eval_group_list", "feature:dashboard_list",
+      "feature:saved_view_list", "feature:dataset_list",
+      "feature:replay_session_list", "feature:custom_eval_config_list",
+      "feature:project_version_ids"]
+```
+
+Pods read the value when they start, so a change takes effect as the backend
+and worker pods restart. To roll back, set `optIn` to the previous list (the
+feature keys only), or to `[]` (or `enabled: false`) to read everything from
+the primary again. Other model names, and the user, organization and
+membership models in particular, need the same review first.
 
 ### ClickHouse
 
@@ -1199,7 +1240,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `postgres.readReplica.host` | `""` | [PGBOUNCER_READ_HOST] host of the replica, or of its pooler. Same user and password as the primary. |
 | `postgres.readReplica.port` | `5432` | [PGBOUNCER_READ_PORT] |
 | `postgres.readReplica.database` | `""` | [PG_READ_DB] database on the replica. Empty: `postgres.database`. |
-| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it. |
+| `postgres.readReplica.optIn` | `[]` | [READ_REPLICA_OPT_IN] `feature:` keys and model class names routed to the replica. Empty: nothing reads from it. A model name sends every ordinary read of that model there, so list only models whose read-after-write paths read the primary; the chart README's "Read replica" section has the tested list. |
 | `postgres.bundled.image.registry` | `"docker.io"` | Registry of the bundled PostgreSQL image. |
 | `postgres.bundled.image.repository` | `"library/postgres"` | Repository of the bundled PostgreSQL image. Debian-based, like the compose setups, so data directories are interchangeable. |
 | `postgres.bundled.image.tag` | `"16.15-trixie"` | Tag of the bundled PostgreSQL image: an exact 16.x release on Debian (the compose setups run `postgres:16`, also Debian). |
