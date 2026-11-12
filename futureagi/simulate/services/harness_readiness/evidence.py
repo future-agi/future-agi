@@ -77,6 +77,8 @@ class Evidence:
     # Whether a build certificate covered the pairing's suite version; ``None`` when
     # it cannot be told.
     covers_suite: bool | None = None
+    # The certification archive could not be read, so its rows read as unmeasured.
+    unreadable: bool = False
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -99,7 +101,7 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
     )
 
 
-def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
+def _certification_files(object_key: str) -> dict[str, Any]:
     """The per-tool and per-action certification an archive holds, read once per
     object by one reader: archives are content-addressed, so a key never changes what
     it holds. Only the two files are read, off the stream. An archive that cannot be
@@ -126,9 +128,7 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             cache.delete(reading)
 
 
-def _read_certification_files(
-    object_key: str, cache_key: str
-) -> dict[str, list[Mapping[str, Any]]]:
+def _read_certification_files(object_key: str, cache_key: str) -> dict[str, Any]:
     try:
         found = archives.stream_members(
             object_key,
@@ -141,11 +141,12 @@ def _read_certification_files(
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: dict[str, list[Mapping[str, Any]]] = {
+        unreadable: dict[str, Any] = {
             "tools": [],
             "actions": [],
             "routed": [],
             "unobserved": [],
+            "unreadable": True,
         }
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
@@ -208,6 +209,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             # Kept on the bundle by the check, else sealed in its archive.
             routed=kept.get("tools") or files.get("routed", []),
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
+            unreadable=bool(files.get("unreadable")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -232,6 +234,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         unobserved=files.get("unobserved", []),
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
+        unreadable=bool(files.get("unreadable")),
     )
 
 
@@ -445,6 +448,7 @@ def _routed(evidence: Evidence, routed: bool) -> list[str]:
 
 _UNOBSERVED_REASONS = {
     "reaches_outside": "its contract says it leaves the test world, so it was not asked",
+    "has_effects": "its contract says it changes something, so the check did not call it",
     "not_called": "asked, but not called",
     "request_failed": "asked, but the agent did not answer",
     "not_asked": "not asked: the check's time for tool requests ran out",

@@ -64,7 +64,9 @@ def release_checks_for(documents: Mapping[str, Any]) -> ReleaseChecks:
         "starts": (
             "failed"
             if "failed" in started
-            else "passed" if started == ["passed", "passed"] else "pending"
+            else "passed"
+            if started == ["passed", "passed"]
+            else "pending"
         ),
         "resets": _result(checks.get("reset_equivalence")),
         **{name: _result(recorded.get(name)) for name in RELEASE_CHECKS[2:]},
@@ -72,7 +74,9 @@ def release_checks_for(documents: Mapping[str, Any]) -> ReleaseChecks:
     status: Literal["ready", "checks_pending", "failed"] = (
         "failed"
         if "failed" in results.values()
-        else "ready" if set(results.values()) == {"passed"} else "checks_pending"
+        else "ready"
+        if set(results.values()) == {"passed"}
+        else "checks_pending"
     )
     return {"status": status, "checks": results}
 

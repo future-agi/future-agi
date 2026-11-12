@@ -186,7 +186,8 @@ def agent_findings(
     ``agent_tools`` ``None`` means the version's tools were never read. A tool the
     agent has and the world lacks blocks every case (targets of kind ``agent_tool``);
     a world tool the agent lacks, or one it calls with other argument names, blocks
-    the cases that use it. An empty list was read and shows no gap.
+    the cases that use it. An empty list was read: the agent has none of the world's
+    tools.
     """
     if agent_tools is None:
         return {
@@ -196,8 +197,6 @@ def agent_findings(
                 "This agent version's tools have not been read yet",
             )
         }
-    if not agent_tools:
-        return {}
     agent = _named(agent_tools)
     world = _named((contract or {}).get("tools"))
     found: dict[str, Reading] = {}
