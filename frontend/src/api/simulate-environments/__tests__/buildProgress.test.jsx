@@ -54,12 +54,19 @@ describe("jobToBuildProgress", () => {
   it("maps a failure stage to its milestone's first pipeline step", () => {
     const out = jobToBuildProgress(
       jobAt("failed", {
-        failure: { stage: "building_environment", message: "boom", domain: "infrastructure" },
+        failure: {
+          stage: "building_environment",
+          message: "boom",
+          domain: "infrastructure",
+        },
       }),
     );
     expect(out.running).toBe(false);
     expect(out.done).toEqual(["understand"]);
-    expect(out.failure).toMatchObject({ stepId: "generate-env", retryable: true });
+    expect(out.failure).toMatchObject({
+      stepId: "generate-env",
+      retryable: true,
+    });
     // Our infrastructure's failure reads as ours, not the agent's; "boom" stays on the record.
     expect(out.failure.detail).toBe(
       "Our infrastructure failed, not the agent. Counts neither for nor against it.",
@@ -114,7 +121,11 @@ describe("jobToBuildProgress", () => {
   });
 
   it("returns an empty slice for a job with no status", () => {
-    expect(jobToBuildProgress(undefined)).toEqual({ done: [], running: false, failure: null });
+    expect(jobToBuildProgress(undefined)).toEqual({
+      done: [],
+      running: false,
+      failure: null,
+    });
   });
 });
 
@@ -128,7 +139,12 @@ describe("useBuildProgress — real poll", () => {
   it("derives the slice from the live job and narrates milestones", async () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: true }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: true,
+        }),
       { wrapper: makeWrapper() },
     );
     await waitFor(() =>
@@ -141,7 +157,12 @@ describe("useBuildProgress — real poll", () => {
   it("does not fetch while disabled", () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     expect(getHarnessJob).not.toHaveBeenCalled();
@@ -150,13 +171,24 @@ describe("useBuildProgress — real poll", () => {
 
   it("answers a console ask with a fixture reply (no build API)", () => {
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     act(() => result.current.send("what did you seed?"));
     const [userTurn, builderTurn] = result.current.turns;
-    expect(userTurn).toMatchObject({ role: "user", text: "what did you seed?" });
-    expect(builderTurn.steps[0]).toMatchObject({ kind: "json", label: "seeded" });
+    expect(userTurn).toMatchObject({
+      role: "user",
+      text: "what did you seed?",
+    });
+    expect(builderTurn.steps[0]).toMatchObject({
+      kind: "json",
+      label: "seeded",
+    });
   });
 });
 
