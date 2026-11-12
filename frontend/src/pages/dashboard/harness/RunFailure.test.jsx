@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { render } from "src/utils/test-utils";
 
-import RunFailure, { CAUSE_WORDS, INFRASTRUCTURE_LINE } from "./RunFailure";
+import { CAUSE_WORDS, INFRASTRUCTURE_LINE } from "./failureWords";
+import RunFailure from "./RunFailure";
 import ScenarioOutcome from "./ScenarioOutcome";
 
 const certify = {

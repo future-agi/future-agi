@@ -7,7 +7,8 @@ import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
 
 import { callSummary, readable } from "./harnessShared";
-import RunFailure, { failureHeadline } from "./RunFailure";
+import { failureHeadline } from "./failureWords";
+import RunFailure from "./RunFailure";
 
 const chipStatus = (status) => {
   if (status === "passed") return STATUS_TYPES.PASS;
