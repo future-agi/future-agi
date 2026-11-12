@@ -29,7 +29,7 @@ def unavailable_model_message(model_name=None):
         subject = "The selected model is"
     return (
         f"{subject} not available in the current model catalog. "
-        "It may be deprecated or retired. Please select a supported model "
+        "It may be deprecated or retired. Please choose a supported model "
         "from the latest available models list."
     )
 

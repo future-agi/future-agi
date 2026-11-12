@@ -195,7 +195,7 @@ class TestLiteLLMImageModelManager:
         get_custom_model.side_effect = CustomAIModel.DoesNotExist
         manager = LiteLLMModelManager(model_name="standard/1024-x-1024/dall-e-3")
 
-        with pytest.raises(ValueError, match="Please select a supported model"):
+        with pytest.raises(ValueError, match="Please choose a supported model"):
             manager.get_provider("standard/1024-x-1024/dall-e-3")
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")

@@ -11,6 +11,7 @@ eval configuration is prepared, before any LLM request.
 """
 
 import json
+import re
 
 import pytest
 
@@ -38,6 +39,21 @@ pytestmark = pytest.mark.django_db
 RETIRED_MODEL = "perplexity/pplx-7b-chat"
 CATALOG_MISS = "not available in the current model catalog"
 
+# The eval Test panels show a 400 message only if it passes the frontend's
+# getSafeActionErrorMessage (frontend/src/utils/errorUtils.js); otherwise they
+# fall back to "Failed to run evaluation. Please retry.". Mirror its rules.
+UI_INTERNAL_ERROR_MARKERS = re.compile(
+    r"DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|"
+    r"maximum:\s*\d+|elapsed\s+\d+",
+    re.IGNORECASE,
+)
+
+
+def assert_ui_shows(message):
+    assert len(message) <= 240, message
+    assert "\n" not in message and "\r" not in message, message
+    assert not UI_INTERNAL_ERROR_MARKERS.search(message), message
+
 
 @pytest.mark.parametrize("model", [RETIRED_MODEL, "not-a-catalog-model"])
 def test_catalog_miss_names_the_model(model):
@@ -46,7 +62,8 @@ def test_catalog_miss_names_the_model(model):
 
     assert raised.value.model_name == model
     assert str(raised.value).startswith(f"Model '{model}' is {CATALOG_MISS}. ")
-    assert "Please select a supported model" in str(raised.value)
+    assert_ui_shows(str(raised.value))
+    assert "Please choose a supported model" in str(raised.value)
 
 
 @pytest.mark.parametrize("model", ["", "   ", None], ids=["blank", "spaces", "none"])
@@ -56,6 +73,7 @@ def test_catalog_miss_without_a_model_name_stays_generic(model):
 
     assert raised.value.model_name == model
     assert str(raised.value).startswith(f"The selected model is {CATALOG_MISS}. ")
+    assert_ui_shows(str(raised.value))
 
 
 @pytest.fixture

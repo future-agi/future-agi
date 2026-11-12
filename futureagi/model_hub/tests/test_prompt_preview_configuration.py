@@ -116,7 +116,7 @@ def test_unavailable_model_is_actionable_client_error(
     body = str(response.json())
     message = body.lower()
     assert "model" in message
-    assert "select" in message and "supported" in message
+    assert "choose" in message and "supported" in message
     if model and model.strip():
         # The response names the model that is missing from the catalog.
         assert f"Model '{model}' is not available" in body, body
