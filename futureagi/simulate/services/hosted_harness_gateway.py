@@ -3598,13 +3598,18 @@ class HostedHarnessGateway:
                 f"head -c {_FAILURE_CAUSE_MAX_BYTES} {_FAILURE_CAUSE_PATH} 2>/dev/null",
                 timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
             )
-            if read.exit_code:
-                return None
-            body = json.loads(str(read.result or ""))
         except Exception:  # noqa: BLE001 - the cause is optional; the exit code decides
             logger.exception(
                 "could not read the guest failure cause attempt=%s", attempt.id
             )
+            return None
+        if read.exit_code:
+            return None
+        try:
+            body = json.loads(str(read.result or ""))
+        except ValueError:
+            # The guest wrote this file; what it holds is the guest's, not a platform fault.
+            logger.warning("unreadable guest failure cause attempt=%s", attempt.id)
             return None
         return body.get("cause") if isinstance(body, dict) else None
 
