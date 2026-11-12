@@ -296,6 +296,148 @@ def test_missing_provider_preview_logs_once(
     assert_one_warning(logs)
 
 
+# Removed from the runtime catalog (a retired Perplexity model) and with no
+# custom-model row: an evaluator saved with it can no longer run.
+RETIRED_MODEL = "perplexity/pplx-7b-chat"
+CATALOG_MISS = f"Model '{RETIRED_MODEL}' is not available in the current model catalog"
+
+
+def retired_judge_template(organization, workspace):
+    """A saved LLM-as-a-judge evaluator whose model has since been retired."""
+    template = template_for(organization, workspace, "Grade {{input}}")
+    template.config.update(eval_type_id="CustomPromptEvaluator")
+    template.model = RETIRED_MODEL
+    template.save(update_fields=["config", "model"])
+    return template
+
+
+def assert_names_retired_model(message):
+    assert CATALOG_MISS in message, message
+    # Retrying cannot bring a retired model back.
+    assert "retry" not in message.lower(), message
+
+
+def test_playground_catalog_miss_names_the_retired_model(
+    auth_client, organization, workspace, configured_runner
+):
+    template = retired_judge_template(organization, workspace)
+    with capture_logs() as logs:
+        response = auth_client.post(
+            "/model-hub/eval-playground/",
+            {
+                "template_id": str(template.id),
+                "model": RETIRED_MODEL,
+                "mapping": {"input": "Synthetic content"},
+                "config": {},
+            },
+            format="json",
+        )
+    assert response.status_code == 400
+    assert_names_retired_model(response.data["message"])
+    assert_one_warning(logs)
+    configured_runner[1].chat.completions.create.assert_not_called()
+
+
+def template_test_payload(model, config_model):
+    return {
+        "name": "configuration-fixture",
+        "template_type": "Llm",
+        "output_type": "Pass/Fail",
+        "required_keys": ["input"],
+        "criteria": "Grade {{input}}",
+        "model": model,
+        "config": {"model": config_model, "mapping": {"input": "Synthetic content"}},
+    }
+
+
+@pytest.mark.parametrize(
+    "config_model",
+    # The Test panel sends the judge model in both places, so the miss comes
+    # from resolving its provider before the runner; with a different model in
+    # the config it comes from the runner. Either way: one warning.
+    [RETIRED_MODEL, "gpt-4o-mini"],
+    ids=["while-preparing", "in-runner"],
+)
+def test_template_test_catalog_miss_names_the_retired_model(
+    auth_client, configured_runner, config_model
+):
+    with capture_logs() as logs:
+        response = auth_client.post(
+            "/model-hub/test-evaluation/",
+            template_test_payload(RETIRED_MODEL, config_model),
+            format="json",
+        )
+    assert response.status_code == 400
+    assert_names_retired_model(response.data["message"])
+    assert_one_warning(logs)
+    configured_runner[1].chat.completions.create.assert_not_called()
+
+
+def test_trace_catalog_miss_failed_result_names_the_retired_model(
+    organization, workspace, configured_runner, monkeypatch
+):
+    import uuid
+
+    from model_hub.views.separate_evals import TraceEvalView
+    from tracer.models.trace import Trace
+
+    template = retired_judge_template(organization, workspace)
+    trace_id = uuid.uuid4()
+    monkeypatch.setattr(
+        Trace.objects,
+        "get",
+        lambda **kw: SimpleNamespace(
+            id=trace_id, input={"input": "Synthetic content"}, output={}
+        ),
+    )
+    request = SimpleNamespace(
+        data={"trace_id": str(trace_id), "model": RETIRED_MODEL},
+        organization=organization,
+    )
+    with capture_logs() as logs:
+        response = TraceEvalView().post(request, template.id)
+    assert response.status_code == 200
+    assert response.data["result"]["status"] == "failed"
+    assert_names_retired_model(response.data["result"]["reason"])
+    assert_one_warning(logs)
+
+
+@pytest.mark.parametrize("endpoint", ["playground", "template-test"])
+def test_other_catalog_lookup_failures_stay_private_errors(
+    auth_client, organization, workspace, configured_runner, monkeypatch, endpoint
+):
+    """Only the typed catalog miss is shown: any other failure while looking a
+    model up keeps the generic message and its ERROR log."""
+    from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+
+    monkeypatch.setattr(
+        LiteLLMModelManager,
+        "get_provider",
+        MagicMock(side_effect=ValueError("private catalog detail")),
+    )
+    if endpoint == "playground":
+        template = retired_judge_template(organization, workspace)
+        path = "/model-hub/eval-playground/"
+        payload = {
+            "template_id": str(template.id),
+            "model": RETIRED_MODEL,
+            "mapping": {"input": "Synthetic content"},
+            "config": {},
+        }
+    else:
+        path = "/model-hub/test-evaluation/"
+        payload = template_test_payload(RETIRED_MODEL, RETIRED_MODEL)
+    with capture_logs() as logs:
+        response = auth_client.post(path, payload, format="json")
+    assert response.status_code == 400
+    assert "private catalog detail" not in str(response.data)
+    assert "not available in the current model catalog" not in str(response.data)
+    LiteLLMModelManager.get_provider.assert_called()
+    assert any(e.get("log_level") in {"error", "exception"} for e in logs)
+    events = {e.get("event") for e in logs}
+    assert "evaluation_configuration_invalid" not in events
+
+
 def test_alternate_engine_does_not_require_deterministic_attributes():
     from model_hub.utils.eval_input_validation import validate_eval_configuration
 

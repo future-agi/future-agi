@@ -342,6 +342,9 @@ def test_eval_runs_show_exception_text_only_for_safe_setup_errors():
 
     EvalConfigError joins CodeEvalSetupError as an explicit safe type; arbitrary
     ValueError and provider exceptions must still use the private-error boundary.
+    UnavailableModelError is safe too: its text is the backend's own catalog-miss
+    template, quoting only the model name the caller saved or sent (the prompt
+    preview and SDK paths already return the same text).
     """
     run_evals = set()
     for (view, _), method in zip(_TARGET_METHODS, _target_method_nodes(), strict=True):
@@ -360,6 +363,7 @@ def test_eval_runs_show_exception_text_only_for_safe_setup_errors():
                     assert isinstance(handler.type, ast.Name) and handler.type.id in {
                         "CodeEvalSetupError",
                         "EvalConfigError",
+                        "UnavailableModelError",
                     }, f"{view}.{method.name} line {handler.lineno}"
     assert run_evals == {
         "TraceEvalView",
