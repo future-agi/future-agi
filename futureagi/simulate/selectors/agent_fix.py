@@ -488,6 +488,7 @@ def _record(
         spans_seen=usage.llm_spans if usage else 0,
         agent_cost_usd=usage.cost_usd if usage else None,
         unpriced_models=usage.unpriced_models if usage else [],
+        instrumentation_partial=usage.partial if usage else False,
         reply_latency_ms=reply_latency_ms,
     )
 

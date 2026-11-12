@@ -147,9 +147,14 @@ def test_a_call_the_sandbox_could_not_wholly_measure_has_no_known_cost(
 
     usage = run_traces_v3.run_usage(SimpleNamespace())
 
-    assert usage[measured] == CallUsage(models=["m1"], llm_spans=1, cost_usd=None)
-    # No LLM or embedding span: the call is missing, so it reads unmeasured as before.
-    assert marker_only not in usage
+    assert usage[measured] == CallUsage(
+        models=["m1"], llm_spans=1, cost_usd=None, partial=True
+    )
+    # No LLM or embedding span, but the marker says a model call went unmeasured: the
+    # call is kept, so it never reads as one that exported nothing.
+    assert usage[marker_only] == CallUsage(
+        models=[], llm_spans=0, cost_usd=None, partial=True
+    )
 
 
 @pytest.mark.integration

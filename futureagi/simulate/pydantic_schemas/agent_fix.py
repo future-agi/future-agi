@@ -190,6 +190,9 @@ class CheckRecord(BaseModel):
     agent_cost_usd: float | None = None
     # The models of its spans that carried no cost: an unpriced model leaves the cost none.
     unpriced_models: list[str] = Field(default_factory=list)
+    # The sandbox could not measure one of its model calls: its spans arrived, so none is
+    # lost, and its cost is none.
+    instrumentation_partial: bool = False
     # The median time from a user turn to the agent's first reply to it; for a voice call,
     # the agent's average latency. None when the conversation does not say.
     reply_latency_ms: float | None = None

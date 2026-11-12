@@ -2356,18 +2356,27 @@ class TestMeasuredConversations:
             str(unpriced.id): CallUsage(
                 models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
             ),
+            str(silent.id): CallUsage(
+                models=[], llm_spans=0, cost_usd=None, partial=True
+            ),
         }
 
         with patch(TRACED, _usage(usage)):
             status = check_run_status(run)
 
         assert [
-            (one.models, one.spans_seen, one.agent_cost_usd, one.unpriced_models)
+            (
+                one.models,
+                one.spans_seen,
+                one.agent_cost_usd,
+                one.unpriced_models,
+                one.instrumentation_partial,
+            )
             for one in sorted(status.records, key=lambda one: one.trial)
         ] == [
-            (["m1", "m2"], 3, 0.03, []),
-            (["m1"], 1, None, ["m1"]),
-            ([], 0, None, []),
+            (["m1", "m2"], 3, 0.03, [], False),
+            (["m1"], 1, None, ["m1"], False),
+            ([], 0, None, [], True),
         ]
         assert status.usage_unreadable is False
 

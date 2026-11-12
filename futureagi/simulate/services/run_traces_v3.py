@@ -63,6 +63,9 @@ class CallUsage:
     cost_usd: float | None
     # The models named by its spans that carried no cost, so had no price.
     unpriced_models: list[str] = field(default_factory=list)
+    # The sandbox could not measure one of its model calls: its spans say so, so none
+    # is lost, and its cost is unknown.
+    partial: bool = False
 
 
 def run_traces_source(execution: TestExecution) -> RunTracesSource | None:
@@ -209,7 +212,7 @@ def run_usage_sql() -> str:
 
 def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
     """Each call's model calls in a run, by call id; a call that exported no LLM or
-    embedding span is missing. None when the run's agent is not traced, so none of its
+    embedding span, and that the sandbox did not flag partial, is missing. None when the run's agent is not traced, so none of its
     calls can be seen. A span with no cost leaves its call's cost unknown: it may be an
     unpriced model, and an unpriced model is not free. A call the sandbox could not wholly
     measure (a span stamped partial) reads unknown too: some of its model calls sent no
@@ -226,6 +229,7 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
             llm_spans=int(llm_spans),
             cost_usd=None if unpriced or partial else float(cost),
             unpriced_models=sorted(unpriced_models),
+            partial=bool(partial),
         )
         for (
             call_id,
@@ -237,7 +241,9 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
             unpriced_models,
             partial,
         ) in rows
-        if billed_spans
+        # A call the sandbox flagged partial is kept with no billed span: its model call
+        # went unmeasured, so it is not a call that exported nothing.
+        if billed_spans or partial
     }
 
 
