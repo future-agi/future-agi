@@ -11,10 +11,17 @@ a Voice `conversation` only when it is on):
 
 - Docker Compose (standalone): in `.env`. The collector runs in the `app`
   container and inherits it.
-- Docker Compose (distributed, production overlay, e2e): in `.env`; the
-  `fi-collector` service reads `${FI_ATTACHMENTS_ENABLED}` from the same file.
+- Docker Compose (distributed, e2e): in `.env`; the `fi-collector` service
+  reads `${FI_ATTACHMENTS_ENABLED}` from the same file. With the production
+  overlay (`--env-file deploy/.env.production`), compose interpolates the
+  collector's value from that file while the backend still reads `.env`: set
+  it in both.
 - Helm: `config.extraEnv` (or `backend.extraEnv`). The collector takes the
   backend's value; `fiCollector.extraEnv` overrides it.
+
+Binding reads a parent span only if it started at most
+`FI_ATTACHMENTS_BIND_LOOKBACK_HOURS` (default 48) before its upload, so a late
+attach or import to an older trace needs a wider lookback.
 
 ## Lifecycle schedules
 

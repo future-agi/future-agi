@@ -76,9 +76,15 @@ MAX_READ_ROWS = MAX_PER_PARENT
 # uploads it claims. The parent span normally starts before its upload; the
 # lookback covers long calls and the slack covers SDK clock skew. A span that
 # started outside it reads as absent: the row stays pending and expires after
-# ``binding.MAX_PENDING_AGE`` like any parent that never arrives.
-BIND_LOOKBACK = timedelta(hours=48)
+# ``binding.MAX_PENDING_AGE`` like any parent that never arrives. So a late
+# attach or import must name a parent that started at most the lookback before
+# the upload; ``FI_ATTACHMENTS_BIND_LOOKBACK_HOURS`` (default 48) widens it.
 BIND_CLOCK_SLACK = timedelta(hours=1)
+
+
+def bind_lookback():
+    hours = int(getattr(settings, "FI_ATTACHMENTS_BIND_LOOKBACK_HOURS", 48))
+    return timedelta(hours=max(1, hours))
 
 
 def read_spans(
@@ -342,15 +348,16 @@ class ClickHouseParentReader:
         """One ``spans FINAL`` read per (scope, project), keyed by its traces.
 
         The read is bounded to the partitions around the claimed uploads'
-        creation times (``BIND_LOOKBACK`` before the oldest, ``BIND_CLOCK_SLACK``
-        after the newest), so a growing backlog never widens a FINAL merge to
-        the whole project.
+        creation times (``bind_lookback()`` before the oldest,
+        ``BIND_CLOCK_SLACK`` after the newest), so a growing backlog never
+        widens a FINAL merge to the whole project.
         """
         groups = {}
         for link in links:
             groups.setdefault((link.scope_id, link.scope.project_id), []).append(link)
         scopes = AttachmentScope.objects.in_bulk([scope_id for scope_id, _ in groups])
         retention = Retention()
+        lookback = bind_lookback()
         result = {}
         for (scope_id, project_id), group in groups.items():
             scope = scopes.get(scope_id)
@@ -363,7 +370,7 @@ class ClickHouseParentReader:
                 with_attributes=True,
                 trace_ids={link.parent.trace_id for link in group},
                 started=(
-                    min(created) - BIND_LOOKBACK,
+                    min(created) - lookback,
                     max(created) + BIND_CLOCK_SLACK,
                 ),
             )
@@ -638,7 +645,9 @@ class ControlPlaneReader:
 
         The same gate as every other read (``get_occurrence`` with
         ``ready=True``) for this exact parent, so a denial, a tombstone or a
-        stale policy reads as None. Never media, never a URL.
+        stale policy reads as None. Never media, never a URL. Any purpose
+        qualifies here: the facts are metadata that gate already authorizes,
+        and the Voice projection itself only asks for conversation recordings.
         """
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
             return None

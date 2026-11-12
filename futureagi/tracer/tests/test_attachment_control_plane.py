@@ -841,21 +841,39 @@ def test_binder_reads_spans_by_trace_within_a_start_window(setup, monkeypatch):
     (traces, (low, high)), *_ = spans.batches
     assert traces == {str(row.trace_id) for row in rows}
     created = [row.created_at for row in rows]
-    assert low == min(created) - control_plane.BIND_LOOKBACK
+    assert low == min(created) - control_plane.bind_lookback()
     assert high == max(created) + control_plane.BIND_CLOCK_SLACK
 
 
-def test_binder_window_leaves_a_span_outside_it_pending(setup, monkeypatch):
+def test_binder_window_leaves_a_span_outside_it_pending(setup, monkeypatch, settings):
     """A parent that started before the lookback reads as absent, never bound."""
     scope, _ = setup
     row = occurrence(setup, monkeypatch)
     spans = Spans()
-    old = timezone.now() - control_plane.BIND_LOOKBACK - timedelta(hours=3)
+    old = timezone.now() - control_plane.bind_lookback() - timedelta(hours=3)
     spans.put(scope.project_id, span_for(row, start_time=old))
     counts = control_plane.reconcile_tick(span_reader=spans)
     assert (counts["pending"], counts["bound"]) == (1, 0)
     row.refresh_from_db()
     assert row.bound_at is None and row.deleted_at is None
+    # A deployment that late-attaches to older traces widens the lookback.
+    settings.FI_ATTACHMENTS_BIND_LOOKBACK_HOURS = 24 * 7
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+
+
+def test_batch_retention_equals_retention_for(setup):
+    """One lookup per organization derives what retention_for derives."""
+    from tracer.services.attachments.authority import retention_for
+
+    scope, _ = setup
+    retention = control_plane.Retention()
+    for started in (
+        retention.now - timedelta(days=3),
+        retention.now - timedelta(minutes=5),
+    ):
+        assert retention(scope.organization_id, started) == retention_for(
+            scope.organization_id, started, now=retention.now
+        )
 
 
 def test_claim_is_bounded_per_scope_and_uses_its_index(setup, monkeypatch):
