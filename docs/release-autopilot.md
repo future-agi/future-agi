@@ -329,8 +329,8 @@ changes none of them.
   the tag's own workflow files, and `production-auto` and `release-bot` admit
   `v*` tags with the key, so a beta tag at a `dev` commit would run `dev`'s
   workflow files with the key. Step 1 of "Image publication environment"
-  below still accepts a prerelease tag that `dev` reaches; the ruleset and
-  this rule are the control, not that check. A preview tag at a PR head uses
+  below refuses any tag, prereleases included, whose commit is not on `main`;
+  the ruleset and the sweep cover tags that never reach that step. A preview tag at a PR head uses
   a name that no key environment admits. A ruleset does not remove tags that
   exist already, so the tag sweep above runs after it is active.
   future-agi had no beta or rc tag on 11 Nov (read-only tag list). In
@@ -520,9 +520,9 @@ The existing component/version guard still runs verbatim both before and after
 approval. New steps then fetch full history and execute the policy from `main`:
 
 1. Resolve the requested tag to a commit, including annotated tags. Refuse it if
-   it is not reachable from `refs/remotes/origin/main` (a prerelease tag may
-   also be reachable from `refs/remotes/origin/dev`). The check reads these
-   remote-tracking refs by their full names. Git reads a short name such as
+   it is not reachable from `refs/remotes/origin/main`. Prerelease tags too:
+   a tag at a `dev` commit would run `dev`'s workflow files with the key. The
+   check reads the remote-tracking ref by its full name. Git reads a short name such as
    `origin/main` as a tag first, and any writer can push a tag named
    `origin/main`. On a push, require that the tag still resolves to the
    triggering event commit. After an approval wait, require the same commit

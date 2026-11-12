@@ -582,17 +582,21 @@ class GitEvidenceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.release(event="workflow_dispatch", version="v1.2.0")
 
-    def test_prerelease_from_dev_is_allowed_with_human_review(self):
+    def test_prerelease_is_refused_from_dev_and_reviewed_from_main(self):
+        # A key environment admits v* tags, so every tag must be on main.
+        self.git("tag", "v1.1.1-rc.1")
+        text = self.release(version="v1.1.1-rc.1", sha=self.git("rev-parse", "HEAD").strip())
+        self.assertIn("environment=Production\n", text)
         self.git("checkout", "-b", "dev")
         self.write("dev.txt")
         self.commit()
         self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
-        self.git("tag", "v1.2.0-rc.1")
-        text = self.release(version="v1.2.0-rc.1", sha=self.git("rev-parse", "HEAD").strip())
-        self.assertIn("environment=Production\n", text)
-        self.git("tag", "v1.2.0")
-        with self.assertRaises(RuntimeError):
-            self.release(version="v1.2.0", sha=self.git("rev-parse", "HEAD").strip())
+        for version in ("v1.2.0-rc.1", "v1.2.0"):
+            with self.subTest(version=version):
+                self.git("tag", version)
+                (self.root / "summary").unlink(missing_ok=True)
+                with self.assertRaises(RuntimeError):
+                    self.release(version=version, sha=self.git("rev-parse", "HEAD").strip())
 
     def decoy(self, name, commit):
         """A tag spelled like a remote-tracking branch, as any writer can push one."""
@@ -612,16 +616,12 @@ class GitEvidenceTests(unittest.TestCase):
                     self.assertEqual(self.guard_count(), ("v1.0.0", "0"))
                 finally:
                     self.git("tag", "-d", name)
-        # A prerelease cut from dev passes even when origin/dev names an older commit.
+        # A prerelease on main passes even when a tag named origin/dev exists.
         with self.subTest(tag="origin/dev"):
-            self.git("checkout", "-b", "dev")
-            self.write("dev.txt")
-            self.commit()
-            self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
-            self.git("tag", "v1.2.0-rc.1")
+            self.git("tag", "v1.1.1-rc.1")
             self.decoy("origin/dev", old)
             self.assertIn("environment=Production\n",
-                          self.release(version="v1.2.0-rc.1", sha=self.git("rev-parse", "HEAD").strip()))
+                          self.release(version="v1.1.1-rc.1", sha=self.git("rev-parse", "HEAD").strip()))
 
     def test_a_tag_named_like_main_on_an_unreviewed_commit_does_not_admit_it(self):
         self.git("checkout", "-b", "unreviewed")

@@ -805,13 +805,16 @@ def release_environment(version, expected_sha=None, approved_environment=None):
         raise RuntimeError("tag does not resolve to a commit")
     # Ancestry is mandatory even when automatic approval is off or this is a
     # dispatch. A valid tag spelling alone does not prove the code was reviewed.
-    # Stable tags must be on main. Prerelease tags may be cut from dev; they
-    # always keep human review (environment_decision), but still must come
-    # from a reviewed branch. The remote-tracking refs are spelled in full: Git
+    # Every tag, prereleases included, must be on main. A run on a tag uses
+    # the tag's own workflow files, and the environments that hold the
+    # release-bot key admit v* tags, so a tag at a dev commit would run dev's
+    # files with the key; dev also takes merges from the low-risk autopilot
+    # that no person reviewed. Prereleases still keep human review
+    # (environment_decision). The remote-tracking ref is spelled in full: Git
     # reads a short name such as origin/main as a tag first, and any writer can
     # push a tag named origin/main.
-    main, dev = "refs/remotes/origin/main", "refs/remotes/origin/dev"
-    branches = [main] if version_tuple(version) else [main, dev]
+    main = "refs/remotes/origin/main"
+    branches = [main]
     if not any(reachable(sha, branch) for branch in branches):
         summary("Release refused: tag commit reachability from " + " or ".join(branches) + " could not be proved.")
         raise RuntimeError("tag commit is not on a reviewed branch")
