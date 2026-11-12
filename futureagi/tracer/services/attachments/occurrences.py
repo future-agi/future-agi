@@ -154,26 +154,14 @@ def source_for(viewer, authority, scope, parent, *, write=False):
     return state
 
 
-def get_occurrence(
-    viewer, authority, occurrence_id, parent, *, write=False, ready=False
-):
-    scope = scope_for(viewer, authority, write=write)
-    state = source_for(viewer, authority, scope, parent, write=write)
-    try:
-        occurrence_id = UUID(str(occurrence_id))
-    except (ValueError, TypeError, AttributeError):
-        raise not_found() from None
-    row = (
-        AttachmentOccurrence.objects.select_related("attachment", "capture_session")
-        .filter(
-            scope=scope,
-            client_id=occurrence_id,
-            trace_id=parent.trace_id,
-            span_id=parent.span_id,
-        )
-        .first()
-    )
-    now = timezone.now()
+def check_readable(row, scope, state, now, *, ready=False):
+    """Raise not_found unless ``row`` is readable under ``scope`` and ``state``.
+
+    The one per-row gate behind every occurrence read: ``get_occurrence`` and
+    the batched trace/Voice reader (``control_plane.list_authorized``) both
+    call it, so a prefetched row is authorized exactly like a fetched one.
+    ``row`` needs ``attachment`` and ``capture_session`` loaded.
+    """
     if (
         row is None
         or row.deleted_at
@@ -204,6 +192,28 @@ def get_occurrence(
         )
     except (AttachmentError, TypeError):
         raise not_found() from None
+
+
+def get_occurrence(
+    viewer, authority, occurrence_id, parent, *, write=False, ready=False
+):
+    scope = scope_for(viewer, authority, write=write)
+    state = source_for(viewer, authority, scope, parent, write=write)
+    try:
+        occurrence_id = UUID(str(occurrence_id))
+    except (ValueError, TypeError, AttributeError):
+        raise not_found() from None
+    row = (
+        AttachmentOccurrence.objects.select_related("attachment", "capture_session")
+        .filter(
+            scope=scope,
+            client_id=occurrence_id,
+            trace_id=parent.trace_id,
+            span_id=parent.span_id,
+        )
+        .first()
+    )
+    check_readable(row, scope, state, timezone.now(), ready=ready)
     return row, scope, min(row.expires_at, row.source_expires_at, state.expires_at)
 
 

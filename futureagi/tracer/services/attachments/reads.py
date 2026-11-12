@@ -65,6 +65,14 @@ class AuthorizedAttachmentReader(Protocol):
         """The authorized RecordingManifest for one parent, or None. Never media."""
         ...
 
+    def standalone_recording(self, viewer, target: ReadTarget, occurrence_id: str):
+        """Validated blob facts of one READY standalone audio occurrence.
+
+        ``{mime_type, sample_rate, channels, frame_count}`` after the full
+        per-occurrence authorization for this parent, or None. Never media.
+        """
+        ...
+
 
 def attachment_statuses(
     *, viewer, targets, reader: AuthorizedAttachmentReader | None, now: datetime

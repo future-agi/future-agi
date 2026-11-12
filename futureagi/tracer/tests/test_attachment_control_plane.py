@@ -7,7 +7,7 @@ Negative controls mutate one fact of a fixture that otherwise binds.
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -58,15 +58,33 @@ class Spans:
     """``read_spans`` double: one dict per project, keyed by span id."""
 
     def __init__(self):
-        self.by_project, self.calls = {}, []
+        self.by_project, self.calls, self.batches = {}, [], []
 
     def put(self, project_id, span):
         self.by_project.setdefault(str(project_id), {})[span.id] = span
 
-    def __call__(self, project_id, span_ids, *, with_attributes=False):
+    def __call__(
+        self, project_id, span_ids, *, with_attributes=False, trace_ids=(), started=()
+    ):
         self.calls.append((str(project_id), frozenset(span_ids), with_attributes))
+        self.batches.append(
+            (frozenset(str(trace_id) for trace_id in trace_ids), tuple(started))
+        )
         rows = self.by_project.get(str(project_id), {})
-        return {span_id: rows[span_id] for span_id in span_ids if span_id in rows}
+        return {
+            span_id: rows[span_id]
+            for span_id in span_ids
+            if span_id in rows
+            # Like the real read: the batch is keyed by trace and time window.
+            and (not trace_ids or str(rows[span_id].trace_id) in self.batches[-1][0])
+            and (not started or _hour(started[0]) <= _hour(rows[span_id].start_time))
+            and (not started or _hour(rows[span_id].start_time) <= _hour(started[1]))
+        }
+
+
+def _hour(value):
+    """``toStartOfHour``: the real read's window is in whole hour buckets."""
+    return value.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
 
 
 def ref_for(row, **changes):
@@ -394,8 +412,7 @@ class Reader(control_plane.ControlPlaneReader):
             return None
         return self.viewer
 
-    def _authority(self, viewer, span_ids):
-        spans = self.span_reader(viewer.project_id, span_ids)
+    def _memo(self, spans):
         return control_plane._MemoAuthority(
             LiveSession(span_reader=lambda project_id, span_id: spans.get(span_id))
         )
@@ -642,3 +659,220 @@ def test_one_scope_is_capped_per_tick(setup, other_setup, monkeypatch):
     assert store.claim_pending(timezone.now(), 4) == []
     counts = control_plane.reconcile_tick(span_reader=Spans())
     assert counts["pending"] == 2
+
+
+# --- I04 batch read, placement, standalone recordings, windowed spans --------
+
+PLACEMENT = {
+    "message_index": 3,
+    "part_index": 1,
+    "conversation_id": "conv-1",
+    "turn_id": "turn_2",
+    "tool_call_id": "call-9",
+}
+
+
+def occurrence_at(setup, monkeypatch, span_id, **overrides):
+    """An occurrence on another span of TRACE, with upload overrides."""
+    current, _ = core.session(setup)
+    association = {
+        "capture_session_id": str(current.client_id),
+        "correlation_nonce": str(current.correlation_nonce),
+        "parent": {"trace_id": core.TRACE, "span_id": span_id},
+    }
+    return occurrence(
+        setup, monkeypatch, current=current, association=association, **overrides
+    )
+
+
+def bound_rows(setup, monkeypatch, count):
+    scope, _ = setup
+    spans_ids = [f"{index + 1:016x}" for index in range(count)]
+    rows = [
+        occurrence_at(setup, monkeypatch, span_id, message_index=index, part_index=0)
+        for index, span_id in enumerate(spans_ids)
+    ]
+    spans = Spans()
+    for row in rows:
+        spans.put(scope.project_id, span_for(row))
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == count
+    return rows, spans
+
+
+def test_reader_emits_the_occurrence_placement(setup, user, monkeypatch):
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch, **PLACEMENT)
+    spans = Spans()
+    spans.put(scope.project_id, span_for(row))
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+    reader = Reader(viewer_for(scope, user), spans)
+    (status,) = reader.list_authorized(
+        object(), (target_for(scope, row),), per_parent_limit=64
+    )
+    assert {key: status.reference[key] for key in PLACEMENT} == PLACEMENT
+    # Absent placement stays absent, never null.
+    assert "role" not in status.reference and "channel" not in status.reference
+
+
+def test_reader_authorizes_a_scope_in_one_batch(setup, user, monkeypatch):
+    """Queries per trace read do not grow with the occurrences it returns."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    scope, _ = setup
+    rows, spans = bound_rows(setup, monkeypatch, 4)
+    reader = Reader(viewer_for(scope, user), spans)
+    counts = []
+    for subset in (rows[:1], rows):
+        spans.calls.clear()
+        spans.batches.clear()
+        targets = tuple(target_for(scope, row) for row in subset)
+        with CaptureQueriesContext(connection) as queries:
+            statuses = reader.list_authorized(object(), targets, per_parent_limit=64)
+        assert len(statuses) == len(subset)
+        counts.append(len(queries))
+        # One spans read for the scope, keyed by its traces and start window.
+        assert len(spans.calls) == 1
+        (traces, window) = spans.batches[0]
+        assert traces == {str(row.trace_id) for row in subset}
+        started = [
+            AttachmentOccurrence.objects.get(pk=row.pk).source_started_at
+            for row in subset
+        ]
+        assert window == (min(started), max(started))
+    assert counts[0] == counts[1], counts
+    assert [status.reference["message_index"] for status in statuses] == [
+        0,
+        1,
+        2,
+        3,
+    ]
+
+
+def test_reader_denies_a_row_in_memory_like_get_occurrence(setup, user, monkeypatch):
+    """Deny wins per row: a revoked capture session drops only its rows."""
+    scope, _ = setup
+    rows, spans = bound_rows(setup, monkeypatch, 2)
+    revoked = AttachmentOccurrence.objects.select_related("capture_session").get(
+        pk=rows[0].pk
+    )
+    type(revoked.capture_session).objects.filter(pk=revoked.capture_session_id).update(
+        revoked_at=timezone.now()
+    )
+    reader = Reader(viewer_for(scope, user), spans)
+    statuses = reader.list_authorized(
+        object(), tuple(target_for(scope, row) for row in rows), per_parent_limit=64
+    )
+    assert [status.reference["occurrence_id"] for status in statuses] == [
+        str(rows[1].client_id)
+    ]
+
+
+def test_reader_skips_a_malformed_trace_id(setup, user, monkeypatch):
+    scope, _ = setup
+    (row,), spans = bound_rows(setup, monkeypatch, 1)
+    good = target_for(scope, row)
+    bad = ReadTarget(good.scope, SimpleNamespace(trace_id="not-a-uuid", span_id="1"))
+    reader = Reader(viewer_for(scope, user), spans)
+    (status,) = reader.list_authorized(object(), (bad, good), per_parent_limit=64)
+    assert status.target == good
+    assert reader.list_authorized(object(), (bad,), per_parent_limit=64) == []
+
+
+def test_standalone_recording_facts_follow_the_full_read_gate(setup, user, monkeypatch):
+    from tracer.services.attachments.view_enrichment import enrich_voice_detail
+
+    scope, _ = setup
+    scope.record_audio, scope.policy_version = True, scope.policy_version + 1
+    scope.save(update_fields=["record_audio", "policy_version"])
+    row = occurrence(setup, monkeypatch, purpose="conversation_recording")
+    spans = Spans()
+    spans.put(scope.project_id, span_for(row))
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+    reader = Reader(viewer_for(scope, user), spans)
+    target = target_for(scope, row)
+    expected = probe(wav_bytes())
+    facts = reader.standalone_recording(object(), target, str(row.client_id))
+    assert facts == {
+        "mime_type": "audio/wav",
+        "sample_rate": expected["sample_rate"],
+        "channels": expected["channels"],
+        "frame_count": expected["frame_count"],
+    }
+    # The real Voice projection plays it through a synthesized manifest.
+    request = SimpleNamespace(
+        organization=SimpleNamespace(id=scope.organization_id),
+        workspace=SimpleNamespace(id=scope.workspace_id),
+    )
+    result = {
+        "project_id": str(scope.project_id),
+        "observation_span": [{"id": row.span_id, "trace_id": str(row.trace_id)}],
+    }
+    enrich_voice_detail(request=request, result=result, reader=reader)
+    projection = result["recording_attachment"]
+    assert projection["state"] == "ready"
+    assert projection["manifest"]["segments"][0]["occurrence_id"] == str(row.client_id)
+    # Another parent, or a revoked capture session, reads as nothing.
+    other = ReadTarget(target.scope, Parent(str(uuid.uuid4()), row.span_id))
+    assert reader.standalone_recording(object(), other, str(row.client_id)) is None
+    type(row.capture_session).objects.filter(pk=row.capture_session_id).update(
+        revoked_at=timezone.now()
+    )
+    assert reader.standalone_recording(object(), target, str(row.client_id)) is None
+    result.pop("recording_attachment")
+    enrich_voice_detail(request=request, result=result, reader=reader)
+    assert "recording_attachment" not in result  # the batch read denies too
+
+
+def test_binder_reads_spans_by_trace_within_a_start_window(setup, monkeypatch):
+    scope, _ = setup
+    rows = [
+        occurrence_at(setup, monkeypatch, span_id)
+        for span_id in ("1111111111111111", "2222222222222222")
+    ]
+    spans = Spans()
+    for row in rows:
+        spans.put(scope.project_id, span_for(row))
+    counts = control_plane.reconcile_tick(span_reader=spans)
+    assert counts["bound"] == 2
+    (traces, (low, high)), *_ = spans.batches
+    assert traces == {str(row.trace_id) for row in rows}
+    created = [row.created_at for row in rows]
+    assert low == min(created) - control_plane.BIND_LOOKBACK
+    assert high == max(created) + control_plane.BIND_CLOCK_SLACK
+
+
+def test_binder_window_leaves_a_span_outside_it_pending(setup, monkeypatch):
+    """A parent that started before the lookback reads as absent, never bound."""
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    old = timezone.now() - control_plane.BIND_LOOKBACK - timedelta(hours=3)
+    spans.put(scope.project_id, span_for(row, start_time=old))
+    counts = control_plane.reconcile_tick(span_reader=spans)
+    assert (counts["pending"], counts["bound"]) == (1, 0)
+    row.refresh_from_db()
+    assert row.bound_at is None and row.deleted_at is None
+
+
+def test_claim_is_bounded_per_scope_and_uses_its_index(setup, monkeypatch):
+    """Postgres serves each scope's claim window from the partial index."""
+    from django.db import connection
+
+    for _ in range(3):
+        occurrence(setup, monkeypatch)
+    params = {
+        "used_scopes": [],
+        "used_counts": [],
+        "dead_states": ["deleted", "expired"],
+        "claimed": [],
+        "limit": 256,
+        "cap": control_plane.PER_SCOPE_TICK_CAP,
+    }
+    with connection.cursor() as cursor:
+        # Tiny test tables: make the planner show its indexed path.
+        for setting in ("enable_seqscan", "enable_bitmapscan", "enable_sort"):
+            cursor.execute(f"SET LOCAL {setting} = off")
+        cursor.execute("EXPLAIN " + control_plane._CLAIM_SQL, params)
+        plan = "\n".join(line for (line,) in cursor.fetchall())
+    assert "attachment_unbound_claim_idx" in plan, plan

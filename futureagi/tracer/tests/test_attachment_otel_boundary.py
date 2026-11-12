@@ -324,11 +324,13 @@ def _real_voice_detail(reader):
 def test_real_voice_detail_projects_coarse_authorized_recording():
     reader = Mock()
     reader.list_authorized.return_value = [_status(ROOT, RECORDING)]
+    # The per-occurrence re-authorization denies (deny wins over the batch).
+    reader.standalone_recording.return_value = None
     result = _real_voice_detail(reader)
     reader.list_authorized.assert_called_once()
     assert result["project_id"] == C
-    # Coarse I04 shape only: no manifest/origin/URL/grant until B06/B11 authorize
-    # a RecordingManifest, so a ready recording is not projected as playable.
+    # Coarse I04 shape only: no manifest/origin/URL/grant unless the occurrence
+    # is re-authorized and its validated facts describe a playable file.
     assert result["recording_attachment"] == {
         "occurrence_id": B,
         "parent": {"trace_id": A, "span_id": ROOT},
@@ -545,6 +547,111 @@ def _livekit_root(name="job_entrypoint", parent=None, **attributes):
         )["observation_span"]["observation_type"]
 
 
+WAV_FACTS = {
+    "mime_type": "audio/wav",
+    "sample_rate": 16000,
+    "channels": 1,
+    "frame_count": 16000,
+}
+
+
+def test_voice_detail_plays_a_ready_standalone_recording_of_any_audio_type():
+    """No recording_id (LiveKit/Pipecat ``single`` tier): one synthesized mixed
+    manifest over the validated blob facts, after a per-occurrence re-check."""
+    from tracer.services.attachments import wire
+
+    for mime, codec, container, rate, channels in (
+        ("audio/wav", "pcm", "wav", 16000, 1),
+        ("audio/ogg", "opus", "ogg", 48000, 2),
+        ("audio/mpeg", "mp3", "mp3", 44100, 2),
+        ("audio/mp4", "aac", "mp4", 44100, 1),
+        ("audio/webm", "opus", "webm", 48000, 1),
+        ("audio/flac", "flac", "flac", 96000, 2),
+    ):
+        reader = Mock()
+        reference = {**RECORDING, "mime_type": mime}
+        reader.list_authorized.return_value = [_status(ROOT, reference)]
+        reader.standalone_recording.return_value = {
+            "mime_type": mime,
+            "sample_rate": rate,
+            "channels": channels,
+            "frame_count": rate * 12,  # 12 s
+        }
+        projection = _real_voice_detail(reader)["recording_attachment"]
+        assert projection["state"] == "ready", mime
+        manifest = projection["manifest"]
+        assert (manifest["codec"], manifest["container"]) == (codec, container)
+        assert manifest["sample_format"] == "encoded"
+        assert (manifest["sample_rate_hz"], manifest["channels"]) == (rate, channels)
+        assert manifest["duration_ms"] == 12000 and manifest["recording_id"] == B
+        assert manifest["segments"] == [
+            {"occurrence_id": B, "index": 0, "start_ms": 0, "duration_ms": 12000}
+        ]
+        (track,) = manifest["tracks"]
+        assert track["channels"] == list(range(channels))
+        assert (track["direction"], track["role"]) == ("mixed", "mixed")
+        # Up to 30 s it is a complete, valid F01 RecordingManifest.
+        assert wire.is_valid("RecordingManifest", manifest), mime
+        _, target, occurrence_id = reader.standalone_recording.call_args.args
+        assert (target.scope, target.parent, occurrence_id) == (
+            Scope(A, B, C),
+            Parent(A, ROOT),
+            B,
+        )
+        reader.recording_manifest.assert_not_called()
+
+
+def test_long_standalone_recording_tiles_thirty_second_segments():
+    """F01 caps a segment at 30 s, so a long file is tiled by one occurrence."""
+    from tracer.services.attachments import wire
+    from tracer.services.attachments.view_enrichment import standalone_manifest
+
+    manifest = standalone_manifest(B, {**WAV_FACTS, "frame_count": 16000 * 75})
+    assert manifest["duration_ms"] == 75000
+    assert [
+        (segment["index"], segment["start_ms"], segment["duration_ms"])
+        for segment in manifest["segments"]
+    ] == [(0, 0, 30000), (1, 30000, 30000), (2, 60000, 15000)]
+    assert {segment["occurrence_id"] for segment in manifest["segments"]} == {B}
+    # Schema-valid; only the stored-manifest distinct-occurrence rule differs.
+    assert wire._validator("RecordingManifest").is_valid(manifest)
+    reader = Mock()
+    reader.list_authorized.return_value = [_status(ROOT, RECORDING)]
+    reader.standalone_recording.return_value = {**WAV_FACTS, "frame_count": 16000 * 75}
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection["state"] == "ready" and projection["manifest"] == manifest
+
+
+def test_standalone_recording_stays_coarse_unless_ready_authorized_and_valid():
+    for status, facts in (
+        (_status(ROOT, RECORDING), None),  # re-authorization denied
+        (_status(ROOT, RECORDING, complete=False), WAV_FACTS),  # partial
+        (_status(ROOT, RECORDING, "validating", complete=False), WAV_FACTS),
+        (_status(ROOT, RECORDING, bound=False), WAV_FACTS),  # not bound yet
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "mime_type": "audio/L16"}),
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "sample_rate": 4000}),
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "channels": 0}),
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "frame_count": 0}),
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "frame_count": 16000 * 7201}),
+        (_status(ROOT, RECORDING), {**WAV_FACTS, "sample_rate": "16000"}),
+    ):
+        reader = Mock()
+        reader.list_authorized.return_value = [status]
+        reader.standalone_recording.return_value = facts
+        projection = _real_voice_detail(reader)["recording_attachment"]
+        assert projection["state"] != "ready", (status, facts)
+        assert "manifest" not in projection
+    # Two standalone recordings in one call are never guessed between.
+    reader = Mock()
+    reader.list_authorized.return_value = [
+        _status(ROOT, RECORDING),
+        _status(CHILD, {**RECORDING, "occurrence_id": C}),
+    ]
+    reader.standalone_recording.return_value = WAV_FACTS
+    assert _real_voice_detail(reader)["recording_attachment"] == {"state": "rejected"}
+    reader.standalone_recording.assert_not_called()
+
+
 def test_livekit_job_root_is_a_voice_call_only_with_attachments():
     """The SDK marks no conversation root for a LiveKit worker (I04)."""
     from django.test import override_settings
@@ -553,9 +660,15 @@ def test_livekit_job_root_is_a_voice_call_only_with_attachments():
     with override_settings(FI_ATTACHMENTS_ENABLED=True):
         assert _livekit_root(**job) == "conversation"
         assert _livekit_root(parent=ROOT, **job) == "unknown"  # not a true root
-        assert _livekit_root(name="agent_session", **job) == "unknown"
+        # README Quick Start: tracing starts inside the entrypoint, so the
+        # untyped, parentless agent_session IS the call root.
+        assert _livekit_root(name="agent_session", **job) == "conversation"
+        assert _livekit_root(name="agent_session", parent=ROOT, **job) == "unknown"
+        assert _livekit_root(name="agent_session") == "unknown"  # no lk.job_id
+        assert _livekit_root(name="llm_request", **job) == "unknown"
         assert _livekit_root() == "unknown"  # no lk.job_id
         typed = {**job, "fi.span.kind": "AGENT", "gen_ai.span.kind": "AGENT"}
         assert _livekit_root(**typed) == "agent"  # only an untyped root maps
     with override_settings(FI_ATTACHMENTS_ENABLED=False):
         assert _livekit_root(**job) == "unknown"  # disabled: unchanged
+        assert _livekit_root(name="agent_session", **job) == "unknown"
