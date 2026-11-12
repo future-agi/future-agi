@@ -1384,22 +1384,28 @@ class RefreshWriter:
         if len(ids) > MAX_PASS_UNITS:
             raise ValueError("replacement owner set exceeds pass cap")
         if any(d.level == "span" for d in definitions):
+            from tracer.services.derived_metrics.span_evidence import (
+                freeze_span_fields,
+            )
+
             self._span_dirty_keys(attempt, change, head, source_ids)
+            for definition in definitions:
+                if definition.level == "span":
+                    freeze_span_fields(
+                        self,
+                        attempt,
+                        head,
+                        definition,
+                        scope,
+                        as_of=as_of,
+                        cutoff=cutoff,
+                    )
+            if any(d.level == "conversation" for d in definitions):
+                owners = self._unowned_span_sessions(attempt, head, ids)
+                if len(ids | owners) <= MAX_PASS_UNITS:
+                    ids |= owners
         for definition in definitions:
             if definition.level == "span":
-                from tracer.services.derived_metrics.span_evidence import (
-                    freeze_span_fields,
-                )
-
-                freeze_span_fields(
-                    self,
-                    attempt,
-                    head,
-                    definition,
-                    scope,
-                    as_of=as_of,
-                    cutoff=cutoff,
-                )
                 continue
             for offset in range(0, len(ids), MAX_BATCH_ROWS):
                 candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
@@ -1859,6 +1865,64 @@ class RefreshWriter:
                 )
                 result[key] = dependency
         return tuple(result.values())
+
+    def _unowned_span_sessions(self, attempt, head, ids):
+        """Owners of this pass's span fields that no conversation row anchors.
+
+        Span fields are rebuilt for WHOLE dirty quarters, so a pass also emits
+        spans of conversations it never touched: e.g. a quarter-mate just past
+        an initial-sweep page boundary. Neither the head nor the draft then has
+        a conversation row for that owner, so retention cannot prove the owner
+        link retained and forces a privacy checkpoint (then the next page can
+        no longer prove its span evidence, and the definitions never
+        activate). Such owners are computed in this same pass instead: their
+        conversation values read every span of the session from source.
+        Owners with ANY committed conversation row (live, deleted or expired)
+        keep their existing retention semantics.
+        """
+        sessions = set()
+        # The draft's frozen field batches (PG ledger, not yet physical), one
+        # bounded batch per statement.
+        for number, plan in enumerate(self.plans(attempt, kind="field_values")):
+            batch, params = payload_select(
+                FIELD_VALUES,
+                [FrozenRows.from_plan(plan)],
+                prefix=f"span_owner_{number}",
+            )
+            sessions.update(
+                row[0]
+                for row in self.store.execute(
+                    f"SELECT DISTINCT session_id FROM ({batch}) "
+                    "WHERE level = 'span' AND notEmpty(session_id)",
+                    params,
+                )
+            )
+        sessions = sorted(sessions - set(ids))
+        if not sessions:
+            return set()
+        anchored = set()
+        for membership in iter_key_membership_batches(
+            FIELD_VALUES,
+            fixed={"level": ("conversation",)},
+            columns="unit_id",
+            values=sessions,
+            max_items=MAX_BATCH_ROWS,
+        ):
+            fields, fp = committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                key_in=membership,
+                param_prefix="span_owner_head",
+            )
+            anchored.update(
+                row[0]
+                for row in self.store.execute(
+                    f"SELECT DISTINCT unit_id FROM ({fields})", fp
+                )
+            )
+        return set(sessions) - anchored
 
     def _span_dirty_keys(self, attempt, change, head, source_ids):
         """Nominate old/new starts without treating mutable starts as identity."""

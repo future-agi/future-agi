@@ -70,7 +70,18 @@ class SessionCapture:
 
     def __enter__(self):
         self.store._restore_transients()
-        self._build()
+        try:
+            self._build()
+        except Exception:
+            # A rejected (e.g. over-budget) build may already own an empty or
+            # partial scratch table. Never leave private rows on the session.
+            socket = self.store.client.connection.socket
+            try:
+                if socket is not None:
+                    self.store.execute(f"DROP TEMPORARY TABLE IF EXISTS {self.name}")
+            except Exception:
+                self.store.client.disconnect()
+            raise
         relations = getattr(self.store, "_transient_relations", None)
         if relations is None:
             relations = self.store._transient_relations = []

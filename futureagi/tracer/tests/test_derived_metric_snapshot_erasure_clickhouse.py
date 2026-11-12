@@ -6,6 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.derived_metric import (
@@ -125,6 +126,34 @@ def overall(store, run):
     )
 
 
+def terminate_gate(gate):
+    """Kill ONLY a gate backend and wait until it has exited.
+
+    pg_terminate_backend only signals: the gate's transaction-level advisory
+    lock is released when that backend exits, which can lag the call. A
+    takeover attempted before then would legitimately find the gate held.
+    """
+    from time import monotonic, sleep
+
+    from django.db import connection
+
+    with gate.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid()")
+        pid = cursor.fetchone()[0]
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_terminate_backend(%s)", [pid])
+        assert cursor.fetchone()[0]
+        deadline = monotonic() + 10
+        while True:
+            cursor.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = %s", [pid]
+            )
+            if not cursor.fetchone()[0]:
+                return
+            assert monotonic() < deadline, "terminated gate backend did not exit"
+            sleep(0.02)
+
+
 @pytest.mark.parametrize("pause", ["retention_probe", "before_purge", "native_delete"])
 def test_expired_capture_cannot_take_over_a_paused_destructive_setup(
     capture_case, live_writer, monkeypatch, pause
@@ -200,7 +229,7 @@ def test_disconnected_capture_gate_cannot_delete_successor_namespace(
     capture_case, live_writer, monkeypatch, pause
 ):
     """Terminate ONLY A's gate backend; B completes before A's DELETE resumes."""
-    from django.db import connection, connections
+    from django.db import connections
 
     _, run, _ = capture_case
     copy_database = connections["default"].copy
@@ -219,12 +248,7 @@ def test_disconnected_capture_gate_cannot_delete_successor_namespace(
             return
         old = DerivedMetricRun.objects.get(pk=run.id)
         old_namespaces.append((old.attempt_id, old.snapshot_id))
-        with gates[0].cursor() as cursor:
-            cursor.execute("SELECT pg_backend_pid()")
-            gate_pid = cursor.fetchone()[0]
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_terminate_backend(%s)", [gate_pid])
-            assert cursor.fetchone()[0]
+        terminate_gate(gates[0])
         # The ORM and native connections remain usable; only the exclusion gate
         # was lost. Its absence is NOT evidence that A stopped destructive work.
         DerivedMetricRun.objects.filter(pk=run.id).update(
@@ -257,7 +281,7 @@ def test_disconnected_capture_gate_cannot_delete_successor_namespace(
     else:
         monkeypatch.setattr(live_writer.store, "execute", paused_delete)
     execute(run, live_writer.store)
-    assert len(completed) == 1
+    assert len(completed) == 1, (run.status, run.error, len(gates))
     assert (run.attempt_id, run.snapshot_id, run.result_id) == completed[0]
     assert run.status == "complete"
     assert overall(live_writer.store, run) == [(3.0, 4)]
@@ -292,7 +316,7 @@ def test_disconnected_redaction_gate_cannot_delete_successor_results(
     commit rows: its run-wide DELETEs are dispatched under its own attempt,
     which the takeover replaced, so they are rejected before native I/O.
     """
-    from django.db import connection, connections
+    from django.db import connections
 
     metric, run, _ = capture_case
     store = live_writer.store
@@ -329,12 +353,7 @@ def test_disconnected_redaction_gate_cannot_delete_successor_results(
             # Only A pauses; the takeover B below runs this same hook unpaused.
             takeovers.append(run_.attempt_id)
             paused_attempt = run_.attempt_id
-            with gates[0].cursor() as cursor:
-                cursor.execute("SELECT pg_backend_pid()")
-                gate_pid = cursor.fetchone()[0]
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_terminate_backend(%s)", [gate_pid])
-                assert cursor.fetchone()[0]
+            terminate_gate(gates[0])
             # A's request claim expires while it is paused; B takes over the
             # same redaction, acquires the released gate and completes it.
             MetricErasureRequest.objects.filter(pk=child.id).update(
@@ -376,6 +395,133 @@ def test_disconnected_redaction_gate_cannot_delete_successor_results(
     ) == [(0,)]
     child.refresh_from_db()
     assert child.status == "done"
+
+
+@pytest.mark.parametrize("successor", ["capture_sweep", "second_parent", "reassigned"])
+def test_failed_redaction_child_keeps_its_completed_namespace(
+    capture_case, live_writer, monkeypatch, successor
+):
+    """A redaction child fails AFTER reopening a completed capture.
+
+    The child's flip (running, new attempt, 15-minute lease) commits before its
+    drain. Once it fails, its gate is released and the lease expires. Neither
+    the capture sweep nor another erasure parent may treat that reopened run as
+    an abandoned capture: no fresh namespace, no attempt/failed-capture purge of
+    its frozen inputs. The child's retry must rebuild the SAME namespace, and a
+    namespace that changed anyway fails closed instead of committing empty.
+    """
+    from tracer.tasks.derived_metric import cleanup_derived_metric_snapshots
+
+    metric, run, _ = capture_case
+    store = live_writer.store
+    execute(run, store)
+    assert run.status == "complete", run.error
+    snapshot, completed_at = run.snapshot_id, run.completed_at
+
+    def frozen_inputs():
+        return store.execute(
+            "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+            {"s": str(snapshot)},
+        )[0][0]
+
+    def purge_intents():
+        # Whole-run failure purges and attempt-namespace cleanups of this run.
+        return (
+            MetricErasureRequest.objects.filter(run_key=run.id)
+            .filter(
+                Q(deletion_key=f"failed-capture:{run.id}")
+                | Q(store_payload__protocol="metric_snapshot_attempt_cleanup")
+            )
+            .count()
+        )
+
+    assert frozen_inputs() == 4 and purge_intents() == 0
+
+    def unproven(*args, **kwargs):
+        raise MetricStateConflict("snapshot write drainage is not yet proven")
+
+    parent = erasure.erase_metric_data(
+        organization_id=metric.organization_id,
+        project_id=metric.project_id,
+        scope_kind="users",
+        subject_ids=["erase-me"],
+    )
+    with monkeypatch.context() as patched:
+        patched.setattr(erasure, "drain_submissions", unproven)
+        assert not erasure.process_erasure(parent.id, store=store, writer=live_writer)
+    child = MetricErasureRequest.objects.get(
+        deletion_key=f"redact:{parent.id}:{run.id}"
+    )
+    assert child.status == "failed"
+    run.refresh_from_db()
+    # Reopened (running, completed_at kept): snapshots.redaction_owned.
+    assert run.status == "running" and run.completed_at == completed_at
+    assert run.snapshot_id == snapshot and frozen_inputs() == 4
+    # Its gate is gone (the child returned) and its 15-minute lease expired.
+    DerivedMetricRun.objects.filter(pk=run.id).update(
+        lease_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    if successor == "capture_sweep":
+        enqueued = []
+        with (
+            patch.object(erasure, "sweep", return_value=0),
+            patch("tracer.tasks.derived_metric.metrics_enabled", return_value=True),
+            patch.object(snapshots, "enqueue_capture", side_effect=enqueued.append),
+        ):
+            cleanup_derived_metric_snapshots._original_func()
+        assert run.id not in enqueued
+        # Not even a stale direct enqueue may claim the reopened namespace.
+        execute(run, store)
+        assert run.snapshot_id == snapshot and run.status == "running"
+        assert purge_intents() == 0 and frozen_inputs() == 4
+    elif successor == "second_parent":
+        other = erasure.erase_metric_data(
+            organization_id=metric.organization_id,
+            project_id=metric.project_id,
+            scope_kind="users",
+            subject_ids=["nobody"],
+        )
+        with monkeypatch.context() as patched:
+            # The first child keeps failing while the second parent runs.
+            patched.setattr(erasure, "drain_submissions", unproven)
+            assert not erasure.process_erasure(
+                other.id, store=store, writer=live_writer
+            )
+        run.refresh_from_db()
+        assert run.status == "running", (run.status, run.error)
+        assert run.completed_at == completed_at
+        assert run.snapshot_id == snapshot and purge_intents() == 0
+        assert frozen_inputs() == 4
+        # Once drainage is provable the second parent drives the first child,
+        # then completes on a later pass over the completed namespace.
+        for _ in range(3):
+            if erasure.process_erasure(other.id, store=store, writer=live_writer):
+                break
+        other.refresh_from_db()
+        assert other.status == "done"
+    else:
+        # A namespace reassigned anyway (e.g. by a pre-fix takeover) is never
+        # redacted from S while committing a rebuild of the other namespace.
+        DerivedMetricRun.objects.filter(pk=run.id).update(snapshot_id=uuid4())
+        assert not erasure.process_erasure(child.id, store=store)
+        run.refresh_from_db()
+        assert run.status == "running" and run.result_id is None
+        assert not store.execute(
+            "SELECT count() FROM derived_metric_commits WHERE run_id = %(r)s "
+            "AND result_id = %(a)s",
+            {"r": str(run.id), "a": str(run.attempt_id)},
+        )[0][0]
+        assert frozen_inputs() == 4
+        return
+    assert erasure.process_erasure(parent.id, store=store, writer=live_writer)
+    run.refresh_from_db()
+    assert run.status == "complete" and run.snapshot_id == snapshot
+    assert run.removed_unit_count == 1 and run.change_reason == "data_erasure"
+    assert overall(store, run) == [(4.0, 3)]
+    assert frozen_inputs() == 3 and purge_intents() == 0
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE user_id = 'erase-me'"
+    ) == [(0,)]
 
 
 def test_90_day_capture_stays_pinned_across_uncommitted_and_later_refresh(

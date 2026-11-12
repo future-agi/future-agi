@@ -31,12 +31,14 @@ from tracer.services.derived_metrics.snapshot_sketches import (
     rebuild_buckets,
 )
 from tracer.services.derived_metrics.snapshots import (
+    REDACTION_PROTOCOL,
     SUBMISSION_PROTOCOL,
     commit_results,
     delete_rows,
     drain_submissions,
     fenced_delete_rows,
     purge_run,
+    redaction_owned,
     snapshot_execution_gate,
     snapshot_store,
 )
@@ -194,11 +196,34 @@ def _redact_owned(store, request, token):
         )
         return
     with serialized_project(request.project_key):
+        run.refresh_from_db()
+        # Fail closed unless this is still the namespace the child counted:
+        # the frozen inputs we delete from and the results we rebuild must be
+        # the same snapshot. Never delete from one namespace and commit an
+        # empty rebuild of another. A saved snapshot must also still be the
+        # COMPLETED capture (or this redaction's own reopen of it, see
+        # snapshots.redaction_owned), never a live capture attempt. Legacy raw
+        # runs keep their stable namespace across recompute and are redacted
+        # in any state, as before.
+        if (
+            run.deleted_at
+            or run.snapshot_id != request.snapshot_key
+            or (
+                run.kind == "snapshot"
+                and run.status != "complete"
+                and not redaction_owned(run)
+            )
+        ):
+            raise MetricStateConflict("snapshot redaction namespace changed")
         DerivedMetricRun.objects.filter(pk=run.id).update(
             status="running",
             result_id=None,
             attempt_id=uuid4(),
             lease_expires_at=timezone.now() + timedelta(minutes=15),
+            # The durable reopen marker (snapshots.redaction_owned) must hold
+            # even for a historical completed row that lacks completed_at.
+            # commit_results stamps it again when the redaction completes.
+            completed_at=run.completed_at or timezone.now(),
         )
         run.refresh_from_db()
     # Fence the old run attempt BEFORE observing drainage. Otherwise an old
@@ -275,10 +300,19 @@ def _redact_owned(store, request, token):
 
 
 def _redact_subjects(store, request):
+    reopened = []
     for run in _runs(request).iterator(chunk_size=100):
         key = f"redact:{request.id}:{run.id}"
         child = MetricErasureRequest.objects.filter(deletion_key=key).first()
         if child is not None and not run.deleted_at:
+            continue
+        if not run.deleted_at and redaction_owned(run):
+            # ANOTHER request's redaction child reopened this completed capture
+            # (and may have failed or lost its gate since). Its frozen inputs
+            # are not an incomplete capture: never fail-and-purge them. Drive
+            # that child below, then count our own subjects on a later pass,
+            # once the namespace is complete again.
+            reopened.append(run.id)
             continue
         if run.deleted_at or run.status != "complete":
             # Revoked queued captures fail explicitly, rather than capture an
@@ -334,7 +368,20 @@ def _redact_subjects(store, request):
     # At most ten snapshots per worker pass. Large erasures resume from children.
     for child in children.exclude(status="done").order_by("requested_at")[:10]:
         process_erasure(child.id, store=store)
-    if children.exclude(status="done").exists():
+    if reopened:
+        # Other requests' children that hold our runs open (a run with one of
+        # OUR children never lands here): at most ten per pass in total, like
+        # our own, never ten per reopened run.
+        foreign = (
+            MetricErasureRequest.objects.filter(
+                run_key__in=reopened, store_payload__protocol=REDACTION_PROTOCOL
+            )
+            .exclude(status="done")
+            .order_by("requested_at")[:10]
+        )
+        for other in foreign:
+            process_erasure(other.id, store=store)
+    if reopened or children.exclude(status="done").exists():
         raise MetricStateConflict("snapshot redaction is pending")
     # Parent-independent obligations survive soft/hard deletion and EVERY capture
     # failure, not just expiration. A parent receipt must wait for their physical

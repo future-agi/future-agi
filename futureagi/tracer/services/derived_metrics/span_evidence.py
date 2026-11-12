@@ -104,10 +104,10 @@ def require_retirement_evidence(
                 params["proof_dirty"] = dirty
         proposal_join, proposal_proof = "", ""
         if draft is not None:
-            # A pass-scoped capture of the same proposal, when the caller has
-            # one; never re-inline its frozen bytes for every definition.
+            # The caller's pass-scoped proposal (sql, bindings) when it has one
+            # (overlay captured, head inline); never re-inline frozen bytes.
             relation, bound = (
-                (proposed, {})
+                proposed
                 if proposed is not None
                 else _proposal_rows(
                     writer, draft, head, FIELD_VALUES, "retirement_proof_proposed"

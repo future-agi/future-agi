@@ -1772,6 +1772,87 @@ def test_finite_mixed_refresh_preserves_nonexpired_snapshot_pin(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_finite_mixed_refresh_computes_an_unowned_quarter_mate(
+    live_writer, workspace, observe_project
+):
+    """A dirty quarter's span fields include an UNTOUCHED conversation's span.
+
+    Span fields are rebuilt for whole dirty quarters, so this pass emits the
+    quarter-mate's span although only the first conversation changed. The mate
+    has no conversation row in the head or the draft: it was never processed
+    (as when it lies just past an initial-sweep page boundary). Its owner link
+    must not force a privacy checkpoint (which then left the next sweep page
+    unable to prove its span evidence, so definitions never activated): the
+    pass computes the mate's conversation in the same publication.
+    """
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    writer.retention_days = lambda: 90
+    conversation = definition_for(writer, workspace, observe_project)
+    conversation.metric.name = "Quarter-mate fixture"
+    conversation.metric.save(update_fields=["name"])
+    span = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    kwargs = {"start": now - timedelta(days=2), "end": now, "as_of": now}
+
+    def seed(session, trace, name, at, value):
+        seed_span_revision(writer, scope, trace, name, session, at, value, revision=1)
+        return Dependency(str(trace), name, str(session), str(session), "", "", at)
+
+    # A head already exists (an earlier conversation, another quarter).
+    earlier = uuid4()
+    dependency = seed(earlier, uuid4(), "earlier", now - timedelta(days=1), 2)
+    writer.refresh(
+        change_for(earlier, dependencies=(dependency,)),
+        [conversation, span],
+        scope,
+        **kwargs,
+    )
+    quarter = (now - timedelta(hours=12)).replace(minute=0, second=0, microsecond=0)
+    first, mate = uuid4(), uuid4()
+    dependency = seed(first, uuid4(), "first", quarter + timedelta(minutes=2), 4)
+    seed(mate, uuid4(), "mate", quarter + timedelta(minutes=9), 8)
+    manifest = writer.refresh(
+        change_for(first, cursor=2, dependencies=(dependency,)),
+        [conversation, span],
+        scope,
+        **kwargs,
+    )
+    draft = manifest.published_by
+    assert draft.purpose == "incremental"
+    assert not draft.source_ceilings.get("logical_expiry")
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=scope.project, abort_reason="retention_replan"
+    ).exists()
+    sql, params = committed_rows_select(
+        FIELD_VALUES, manifest, org_id=writer.org_id, project_id=scope.project
+    )
+    rows = writer.store.execute(
+        f"SELECT level, session_id, value_number FROM ({sql}) WHERE is_deleted = 0 "
+        "ORDER BY level, session_id",
+        params,
+    )
+    assert sorted(rows) == sorted(
+        [
+            ("conversation", str(earlier), 2.0),
+            ("conversation", str(first), 4.0),
+            ("conversation", str(mate), 8.0),
+            ("span", str(earlier), 2.0),
+            ("span", str(first), 4.0),
+            ("span", str(mate), 8.0),
+        ]
+    )
+
+
+@pytest.mark.django_db(transaction=True)
 def test_idle_span_expiry_replaces_final_bucket_statistics(
     live_writer, workspace, observe_project
 ):

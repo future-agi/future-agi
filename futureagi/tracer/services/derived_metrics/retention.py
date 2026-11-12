@@ -206,17 +206,21 @@ def _delete(store, table, predicate, params):
 class ProposalCaptures:
     """Pass-scoped session captures of one PREPARED proposal (SessionCapture).
 
-    Frozen batches enter scratch one batch per INSERT; the collapsed proposal
-    and its retained-owner set are each executed once. Every later statement,
-    including each 500-row freeze page, names these relations instead of
-    repeating inline RowBinary bytes or the owner subqueries, so per-statement
-    SQL and preparation are bounded independently of the proposal's size.
+    Only BOUNDED inputs are materialized: a draft's frozen batches (one batch
+    per INSERT) and the retained-owner set. The committed head side of every
+    proposal stays an inline committed_rows_select over immutable allowlisted
+    attempts: it is the project's whole retained history, so copying it would
+    put a hard ceiling on every finite-retention refresh. Later statements,
+    including each 500-row freeze page, name the captured relations instead of
+    repeating inline RowBinary bytes or the owner subquery, so per-statement
+    SQL is bounded independently of the proposal's size.
     """
 
     def __init__(self, writer, draft, head):
         self.writer, self.draft, self.head = writer, draft, head
         self._stack = ExitStack()
         self._captures = {}
+        self._inline_owners = {}
 
     def __enter__(self):
         return self
@@ -271,32 +275,45 @@ class ProposalCaptures:
         )
 
     def fields(self):
-        """The complete proposed FIELD_VALUES relation, executed exactly once."""
-        sql, params = self.proposal(FIELD_VALUES)
-        capture = self._capture(
-            ("fields",), FIELD_VALUES.schema, lambda: [(sql, params)], "proposal"
-        )
-        return capture.select, {}
+        """The proposed FIELD_VALUES relation: committed head inline, overlay captured.
 
-    def owners(self, cutoff):
-        """Conversations whose earliest proposed anchor is retained (or all)."""
-        fields, _ = self.fields()
-        having = (
-            ""
-            if cutoff is None
-            else "HAVING min(unit_start) >= %(capture_owner_cutoff)s"
+        Never a session copy of the head: retained history (every definition,
+        version and tombstone) is unbounded, while the overlay is one pass.
+        """
+        return self.proposal(FIELD_VALUES)
+
+    def owners(self, cutoff, parameter="retire_cutoff"):
+        """Conversations whose earliest proposed anchor is retained (or all).
+
+        Exactly _owner_relation with the caller's cutoff BINDING (the same
+        parameter every other retention predicate of the pass compares with),
+        captured once when it fits the capture budget. A larger owner set is
+        that relation inline: callers bind the cutoff and the head bindings
+        with their fields bindings. Slower, never a refresh that cannot publish.
+        """
+        from tracer.services.derived_metrics.frozen_relations import (
+            FrozenRelationOverflow,
         )
-        sql = (
-            f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
-            f"GROUP BY unit_id {having}"
-        )
-        params = {"capture_owner_cutoff": cutoff} if cutoff is not None else {}
-        capture = self._capture(
-            ("owners", str(cutoff)),
-            (("unit_id", "String"),),
-            lambda: [(sql, params)],
-            "owners",
-        )
+
+        key = ("owners", str(cutoff), parameter)
+        if key in self._inline_owners:
+            return self._inline_owners[key]
+        fields, params = self.fields()
+        if cutoff is None:
+            sql = (
+                f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+                "GROUP BY unit_id"
+            )
+        else:
+            sql = _owner_relation(fields, parameter)
+            params = {**params, parameter: cutoff}
+        try:
+            capture = self._capture(
+                key, (("unit_id", "String"),), lambda: [(sql, params)], "owners"
+            )
+        except FrozenRelationOverflow:
+            self._inline_owners[key] = sql
+            return sql
         return capture.select
 
 
@@ -466,7 +483,7 @@ def _current_expiry_required(
     owners = None
     for table in _current_tables(writer, head, draft):
         if captures is not None and owners is None:
-            owners = captures.owners(params[cutoff_parameter])
+            owners = captures.owners(params[cutoff_parameter], cutoff_parameter)
         if draft is not None and captures is not None:
             sql, bound = captures.proposal(table)
         elif draft is not None:
@@ -581,7 +598,8 @@ def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     bucket is rebuilt without the old field. No reader can observe an interim
     expired field or both its live and retired contribution. The draft is PG-only
     and its private bytes are purged with the predecessor revisions after publish.
-    The proposal and its retained-owner set are captured once per pass.
+    The draft overlay and the retained-owner set are captured once per pass;
+    the committed head side of the proposal stays inline (never a copy).
     """
     if captures is None:
         with ProposalCaptures(writer, draft, head) as owned:
@@ -596,8 +614,14 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     from tracer.services.derived_metrics.unit_reads import field_recipe
 
     fields, params = captures.fields()
+    params = dict(params)
     require_retirement_evidence(
-        writer, head, definitions, draft=draft, cutoff=cutoff, proposed=fields
+        writer,
+        head,
+        definitions,
+        draft=draft,
+        cutoff=cutoff,
+        proposed=(fields, dict(params)),
     )
     params["retire_cutoff"] = cutoff
     expired = (
@@ -630,7 +654,9 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
         or writer.store.execute(f"SELECT count() FROM ({expired})", params)[0][0]
         or (
             span_definitions
-            and _span_owner_cleanup_required(writer, head, fields, params, cutoff)
+            and _span_owner_cleanup_required(
+                writer, head, fields, params, cutoff, captures.owners(cutoff)
+            )
         )
     )
     draft_ledger = {}
@@ -1102,8 +1128,14 @@ def _span_dependencies(sql, retained_conversation, cutoff_parameter):
     )
 
 
-def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
+def _span_owner_cleanup_required(
+    writer, head, fields, field_params, cutoff, owners=None
+):
     """A retained span does not prove retention of its private owner links."""
+    inline_owners = (
+        f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+        "GROUP BY unit_id HAVING min(unit_start) >= %(span_owner_cutoff)s"
+    )
     dependencies, params = committed_rows_select(
         SOURCE_DEPENDENCIES,
         head,
@@ -1127,8 +1159,9 @@ def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
         or writer.store.execute(
             f"SELECT count() FROM ({fields}) WHERE level = 'span' "
             "AND (notEmpty(session_id) OR notEmpty(user_id)) "
-            f"AND session_id NOT IN (SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
-            "GROUP BY unit_id HAVING min(unit_start) >= %(span_owner_cutoff)s)",
+            # A pass's captured owner set IS this relation (exact cutoff):
+            # one collapse of the proposal per statement, not two.
+            f"AND session_id NOT IN ({owners or inline_owners})",
             {**field_params, "span_owner_cutoff": cutoff},
         )[0][0]
     )

@@ -360,15 +360,42 @@ def test_erasure_mutex_is_transaction_owned_reentrant_and_exception_safe(
         assert cursor.fetchone()[0] == 0
 
 
+def redactable_run(metric, user, state):
+    """A run in a state a redaction child can actually find.
+
+    Children are created only for COMPLETED runs, so the old sender belongs to
+    the completed attempt, or to an earlier redaction attempt of the same
+    child that failed after its reopen (running, completed_at kept, lease
+    expired, no result).
+    """
+    from django.utils import timezone
+
+    from tracer.models.derived_metric import DerivedMetricRun
+
+    run = running_capture(metric, user)
+    if state == "completed":
+        update = {"status": "complete", "completed_at": timezone.now()}
+    else:
+        update = {
+            "completed_at": timezone.now() - timedelta(hours=1),
+            "result_id": None,
+            "lease_expires_at": timezone.now() - timedelta(seconds=1),
+        }
+    DerivedMetricRun.objects.filter(pk=run.id).update(**update)
+    run.refresh_from_db()
+    return run
+
+
+@pytest.mark.parametrize("state", ["completed", "reopened_by_failed_redaction"])
 def test_redaction_replaces_old_sender_before_unlocked_drain(
-    snapshot_metric, user, monkeypatch
+    snapshot_metric, user, monkeypatch, state
 ):
     from uuid import uuid4
 
     from tracer.models.derived_metric import DerivedMetricRun, MetricStateConflict
     from tracer.services.derived_metrics.deletion_protocol import _intent
 
-    old_run = running_capture(snapshot_metric, user)
+    old_run = redactable_run(snapshot_metric, user, state)
     job = _intent(
         organization_id=snapshot_metric.organization_id,
         project_id=snapshot_metric.project_id,
@@ -400,3 +427,186 @@ def test_redaction_replaces_old_sender_before_unlocked_drain(
     with pytest.raises(DrainPaused):
         erasure._redact(Mock(), job, uuid4())
     assert len(observed) == 1
+    reopened = DerivedMetricRun.objects.get(pk=old_run.id)
+    # The reopen keeps the durable ownership marker the capture paths respect.
+    assert reopened.status == "running" and reopened.completed_at is not None
+    assert snapshots.redaction_owned(reopened)
+
+
+def test_redaction_never_reopens_a_live_capture_attempt(
+    snapshot_metric, user, monkeypatch
+):
+    """A capture attempt's namespace is not a completed snapshot: fail closed."""
+    from uuid import uuid4
+
+    from tracer.models.derived_metric import DerivedMetricRun, MetricStateConflict
+    from tracer.services.derived_metrics.deletion_protocol import _intent
+
+    attempt = running_capture(snapshot_metric, user)
+    assert attempt.completed_at is None
+    assert not snapshots.redaction_owned(attempt)
+    job = _intent(
+        organization_id=snapshot_metric.organization_id,
+        project_id=snapshot_metric.project_id,
+        scope="run",
+        run_key=attempt.id,
+        snapshot_key=attempt.snapshot_id,
+        store_payload={"protocol": "metric_snapshot_redaction"},
+    )
+    drained = []
+    monkeypatch.setattr(erasure, "drain_submissions", lambda *a, **k: drained.append(a))
+    store = Mock()
+    with pytest.raises(MetricStateConflict, match="namespace changed"):
+        erasure._redact(store, job, uuid4())
+    assert drained == []
+    store.execute.assert_not_called()
+    store.client.execute.assert_not_called()
+    current = DerivedMetricRun.objects.get(pk=attempt.id)
+    assert (current.status, current.attempt_id, current.snapshot_id) == (
+        "running",
+        attempt.attempt_id,
+        attempt.snapshot_id,
+    )
+    assert current.completed_at is None
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_reopened_legacy_run_needs_a_redaction_child_to_be_protected(
+    snapshot_metric, user, monkeypatch, child
+):
+    """Recompute also leaves a legacy raw run running with completed_at set.
+
+    Without an unfinished redaction child that run is NOT redaction-owned: an
+    erasure parent takes the existing failed-run path instead of waiting on it
+    forever. With one (a redaction that failed after its reopen) the run is
+    protected and the parent waits for that child.
+    """
+    from uuid import uuid4
+
+    from django.utils import timezone
+
+    from tracer.models.derived_metric import DerivedMetricRun, MetricStateConflict
+    from tracer.services.derived_metrics.deletion_protocol import _intent
+
+    snapshot = running_capture(snapshot_metric, user)
+    # A legacy raw run that completed yesterday and is now being recomputed.
+    legacy = DerivedMetricRun.objects.create(
+        definition=snapshot.definition,
+        kind="run",
+        status="running",
+        attempt_id=uuid4(),
+        snapshot_id=uuid4(),
+        window_start=snapshot.window_start,
+        window_end=snapshot.window_end,
+        as_of=snapshot.as_of,
+        fingerprint=uuid4().hex + uuid4().hex,
+        completed_at=timezone.now() - timedelta(days=1),
+        lease_expires_at=timezone.now() - timedelta(seconds=1),
+    )
+    DerivedMetricRun.objects.filter(pk=snapshot.id).delete()
+    if child:
+        other = _intent(
+            organization_id=snapshot_metric.organization_id,
+            project_id=snapshot_metric.project_id,
+            scope="run",
+            run_key=legacy.id,
+            snapshot_key=legacy.snapshot_id,
+            deletion_key=f"redact:{uuid4()}:{legacy.id}",
+            store_payload={"protocol": "metric_snapshot_redaction"},
+        )
+        MetricErasureRequest.objects.filter(pk=other.id).update(status="failed")
+    assert snapshots.redaction_owned(legacy) is child
+    parent = erasure.erase_metric_data(
+        organization_id=snapshot_metric.organization_id,
+        project_id=snapshot_metric.project_id,
+        scope_kind="users",
+        subject_ids=["erase-me"],
+    )
+    driven = []
+    monkeypatch.setattr(
+        erasure, "process_erasure", lambda request_id, **k: driven.append(request_id)
+    )
+    with pytest.raises(MetricStateConflict, match="pending"):
+        erasure._redact_subjects(Mock(), parent)
+    legacy.refresh_from_db()
+    failed = MetricErasureRequest.objects.filter(
+        deletion_key=f"failed-capture:{legacy.id}"
+    )
+    redactions = set(
+        MetricErasureRequest.objects.filter(
+            store_payload__protocol="metric_snapshot_redaction"
+        ).values_list("id", flat=True)
+    )
+    if child:
+        # Protected: never failed or purged; the parent drives the child.
+        assert legacy.status == "running" and not failed.exists()
+        assert driven == [other.id]
+    else:
+        # Not a redaction's reopen: the existing failed-run path, no waiting.
+        assert legacy.status == "failed" and failed.exists()
+        assert failed.get().id in driven
+        assert not redactions & set(driven)
+
+
+def test_parent_drives_at_most_ten_foreign_redaction_children_per_pass(
+    snapshot_metric, user, monkeypatch
+):
+    """Reopened runs never fail or purge, and one pass stays bounded."""
+    from uuid import uuid4
+
+    from django.utils import timezone
+
+    from tracer.models.derived_metric import DerivedMetricRun, MetricStateConflict
+    from tracer.services.derived_metrics.deletion_protocol import _intent
+
+    template = running_capture(snapshot_metric, user)
+    runs, children = [], set()
+    for _ in range(12):
+        run = DerivedMetricRun.objects.create(
+            definition=template.definition,
+            kind="snapshot",
+            supported_grain="conversation",
+            status="running",
+            attempt_id=uuid4(),
+            snapshot_id=uuid4(),
+            window_start=template.window_start,
+            window_end=template.window_end,
+            as_of=template.as_of,
+            fingerprint=uuid4().hex + uuid4().hex,
+            completed_at=timezone.now() - timedelta(hours=1),
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+        )
+        child = _intent(
+            organization_id=snapshot_metric.organization_id,
+            project_id=snapshot_metric.project_id,
+            scope="run",
+            run_key=run.id,
+            snapshot_key=run.snapshot_id,
+            deletion_key=f"redact:{uuid4()}:{run.id}",
+            store_payload={"protocol": "metric_snapshot_redaction"},
+        )
+        MetricErasureRequest.objects.filter(pk=child.id).update(status="failed")
+        runs.append(run.id)
+        children.add(child.id)
+    DerivedMetricRun.objects.filter(pk=template.id).delete()
+    parent = erasure.erase_metric_data(
+        organization_id=snapshot_metric.organization_id,
+        project_id=snapshot_metric.project_id,
+        scope_kind="users",
+        subject_ids=["erase-me"],
+    )
+    driven = []
+    monkeypatch.setattr(
+        erasure, "process_erasure", lambda request_id, **k: driven.append(request_id)
+    )
+    with pytest.raises(MetricStateConflict, match="redaction is pending"):
+        erasure._redact_subjects(Mock(), parent)
+    assert len(driven) == 10 and set(driven) <= children
+    assert (
+        not DerivedMetricRun.objects.filter(pk__in=runs)
+        .exclude(status="running")
+        .exists()
+    )
+    assert not MetricErasureRequest.objects.filter(
+        deletion_key__startswith="failed-capture:"
+    ).exists()

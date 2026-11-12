@@ -15,6 +15,12 @@ budget is asserted AFTER a reservation unwinds, so it cannot itself manufacture
 the transport TimeoutError this regression is intended to catch. Every native
 statement's generated SQL is measured and bounded independently of the
 proposal's size; the activated KPIs must equal an oracle computed from the seed.
+
+Where the sweep's page boundaries fall among the seeded quarters depends on the
+wall clock, so a page can emit whole-quarter spans of a conversation just past
+its boundary (seed_end is printed). The deterministic regression for that case
+is test_finite_mixed_refresh_computes_an_unowned_quarter_mate in the retention
+suite.
 """
 
 import json
@@ -308,6 +314,7 @@ def test_live_mixed_span_and_conversation_backfill_publishes_within_budget(
                     "traces": 2800,
                     "spans": 5600,
                     "days": 7,
+                    "seed_end": end,
                 },
                 "retention_days": RETENTION_DAYS,
                 "write_settings": WRITE_SETTINGS,

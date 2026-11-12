@@ -19,6 +19,7 @@ from django.db import (
     connections,
     transaction,
 )
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -763,6 +764,57 @@ def snapshot_execution_gate(run_id):
             database.close()
 
 
+REDACTION_PROTOCOL = "metric_snapshot_redaction"
+
+
+def redaction_children(run_id):
+    """Redaction children of one run that have not finished (failed included)."""
+    return MetricErasureRequest.objects.filter(
+        run_key=run_id, store_payload__protocol=REDACTION_PROTOCOL
+    ).exclude(status="done")
+
+
+def redaction_owned(run):
+    """A COMPLETED run whose namespace a redaction child has reopened.
+
+    Redaction flips a completed run back to running (a fresh attempt fences
+    its earlier senders) and keeps completed_at set: it stamps one at the flip
+    if a historical row lacks it, and commit_results stamps it again on
+    completion. Such a run's frozen inputs and results are a live namespace,
+    never an abandoned capture: no claim may detach it and no erasure parent
+    may fail or purge it, even after the redaction child failed or lost its
+    gate connection.
+
+    For a saved snapshot the two fields are proof on their own: only a
+    redaction reopens a completed snapshot (a capture claim never touches one,
+    and a capture attempt has no completed_at). A legacy raw run is ALSO
+    reopened by recompute (queued, then running, with its old completed_at
+    still set), so for it only an unfinished redaction child of that run
+    proves ownership. Recompute never creates one, and a failed child stays
+    unfinished until its retry completes.
+    """
+    if run.status != "running" or run.completed_at is None:
+        return False
+    if run.kind == "snapshot":
+        return True
+    return redaction_children(run.id).exists()
+
+
+def recoverable_captures(limit=10):
+    """Queued captures and expired capture attempts, never redaction-owned runs."""
+    return (
+        DerivedMetricRun.objects.filter(
+            Q(status="queued")
+            | Q(status="running", lease_expires_at__lte=timezone.now()),
+            kind="snapshot",
+            deleted_at__isnull=True,
+            completed_at__isnull=True,
+        )
+        .order_by("created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+
+
 def _capture_cleanup(run):
     return _intent(
         organization_id=run.definition.metric.organization_id,
@@ -789,14 +841,27 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
         .filter(pk=run_id, kind="snapshot")
         .first()
     )
-    if run is None or run.deleted_at or run.status in {"complete", "failed"}:
+    if (
+        run is None
+        or run.deleted_at
+        or run.status in {"complete", "failed"}
+        or run.completed_at is not None
+    ):
         return
     scope = scope_for(run)
     with serialized_project(scope.project):
         run.refresh_from_db()
         if run.status == "running" and run.lease_expires_at > timezone.now():
             return
-        if run.status not in {"queued", "running"} or run.deleted_at:
+        if (
+            run.status not in {"queued", "running"}
+            or run.deleted_at
+            # A redaction reopened this COMPLETED namespace. Even with its
+            # gate gone and its lease expired, it is not an abandoned capture:
+            # detaching it would purge the frozen inputs and let the redaction
+            # retry commit an empty snapshot from a fresh namespace.
+            or run.completed_at is not None
+        ):
             return
         if run.attempt_id:
             # Persist the old namespace BEFORE detaching it, including attempts
