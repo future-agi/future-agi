@@ -46,6 +46,12 @@ const PROMPT = 'Judge whether {{output}} answers the request.';
 const UI_READY = 60_000;
 const ui = expect.configure({ timeout: UI_READY });
 
+// These page-owned routes are this spec's decision-catalog fake. Drain its
+// fetch/JSON/fulfill work on success and failure, before the page fixture closes.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'wait' });
+});
+
 interface Created { result: { id: string } }
 interface Capabilities { features: Record<string, { allowed: boolean; reason_code: string | null }> }
 interface ProviderRow { provider: string; display_name: string; has_key: boolean; masked_key: string | null }
@@ -112,15 +118,34 @@ async function openJudgeEditor(page: Page): Promise<string> {
 }
 
 async function openModelPicker(page: Page): Promise<Locator> {
-  // Turing is denied on this stack too, so the create page clears its seeded
-  // turing_large and the pill starts empty (EvalCreatePage fagiModelsDenied).
-  await page.getByText('Select model', { exact: true }).first().click();
-  const search = page.getByPlaceholder('Search models...');
-  await ui(search).toBeVisible();
-  await search.fill('Jev');
-  const picker = page.locator('.MuiPopover-paper').filter({ has: search });
-  await ui(picker.getByRole('combobox', { name: 'Connection for Jev 1.14', exact: true })).toBeVisible();
-  return picker;
+  return test.step('open the picker and settle the ordinary-model Jev search', async () => {
+    // Turing is denied on this stack too, so the create page clears its seeded
+    // turing_large and the pill starts empty (EvalCreatePage fagiModelsDenied).
+    await page.getByRole('button', { name: 'Evaluation model: Select model', exact: true }).click();
+    const search = page.getByPlaceholder('Search models...');
+    await ui(search).toBeVisible();
+    // Decision rows filter immediately; this separate request starts after the
+    // real 400ms debounce. Match errors too so a 500 fails as a 500, not a timeout.
+    const searched = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return response.request().method() === 'GET' && url.pathname === DECISION_CATALOG &&
+        url.searchParams.get('model_type') === 'llm' && url.searchParams.get('search') === 'Jev' &&
+        url.searchParams.get('page') === '1';
+    }, { timeout: UI_READY });
+    await search.fill('Jev');
+    const response = await searched;
+    expect(response.status()).toBe(200);
+    expect(await response.finished()).toBeNull();
+    const picker = page.locator('.MuiPopover-paper').filter({ has: search });
+    await ui(picker.getByRole('progressbar')).toHaveCount(0);
+    const connection = picker.getByRole('combobox', { name: 'Connection for Jev 1.14', exact: true });
+    await ui(connection).toBeVisible();
+    await ui(connection).toBeEnabled();
+    const latest = jevRows(picker).filter({ hasText: /^Jev latest/ });
+    await ui(latest).toBeVisible();
+    await ui(latest).toBeEnabled();
+    return picker;
+  }, { timeout: UI_READY });
 }
 
 const jevRows = (picker: Locator) => picker.getByRole('menuitem').filter({ hasText: /^Jev / });
