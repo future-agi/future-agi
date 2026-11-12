@@ -655,7 +655,9 @@ def _record_problems(
         subject = (
             "The id"
             if where == "id"
-            else f"{actor_id}'s {where}:" if where else f"{actor_id}:"
+            else f"{actor_id}'s {where}:"
+            if where
+            else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
     for path, field in (rules.get("equal_when_set") or {}).items():

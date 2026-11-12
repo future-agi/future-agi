@@ -1661,9 +1661,9 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
             {"actor": {**reads, "knowledge": [*reads["knowledge"], bad]}},
             format="json",
         )
-        assert (
-            refused.status_code == 400 and said in refused.json()["message"]
-        ), refused.content
+        assert refused.status_code == 400 and said in refused.json()["message"], (
+            refused.content
+        )
 
 
 def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor_reads(
