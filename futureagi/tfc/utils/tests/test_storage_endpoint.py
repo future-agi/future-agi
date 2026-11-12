@@ -1,5 +1,7 @@
 """Storage endpoint validation must happen before constructing a transport."""
 
+import importlib
+
 import pytest
 from minio import Minio
 
@@ -56,4 +58,24 @@ def test_endpoint_constructs_real_minio_url(raw, host, tls):
 def test_endpoint_rejects_malformed_authorities_without_echoing_config(raw):
     with pytest.raises(ValueError) as exc:
         _parse_endpoint(raw)
+    assert str(exc.value) == "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+
+
+@pytest.mark.parametrize(
+    "public_url",
+    [
+        "http://user:password@storage.example.test",
+        "https://münchen.example/path",
+        "http://",
+        "ftp://münchen.example",
+    ],
+)
+def test_object_url_still_validates_public_endpoint(monkeypatch, public_url):
+    # Generated URLs keep MINIO_URL's configured host form, but only after the
+    # same validation the storage client applies to every endpoint.
+    storage = importlib.import_module("tfc.utils.storage_client")
+    monkeypatch.setattr(storage, "STORAGE_BACKEND", "minio")
+    monkeypatch.setenv("MINIO_URL", public_url)
+    with pytest.raises(ValueError) as exc:
+        storage.get_object_url("uploads", "notes.txt")
     assert str(exc.value) == "Storage endpoint must be a host[:port] or an HTTP(S) URL"
