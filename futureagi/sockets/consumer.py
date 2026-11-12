@@ -1,7 +1,10 @@
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from sockets.org_scope import resolve_socket_organization
+from sockets.org_scope import (
+    resolve_socket_organization,
+    resolve_socket_organization_ids,
+)
 from sockets.saml_guard import SamlSocketGuard
 
 logger = structlog.get_logger(__name__)
@@ -12,6 +15,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.current_subscription = None
         self.user = None
+        # Organizations whose uuid updates this socket may receive; set on
+        # connect. None (never connected) refuses every tagged update.
+        self.organization_ids = None
         self._guard = SamlSocketGuard(self)
 
     async def connect(self):
@@ -33,6 +39,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 await self.close(code=4002)
                 return
 
+            self.organization_ids = await resolve_socket_organization_ids(
+                self.scope, self.user
+            )
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.accept()
 
@@ -191,6 +200,13 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
         if not await self._guard.ensure_live(inbound=False):
             return
+        if not self._may_receive(event):
+            logger.warning(
+                "websocket_foreign_org_update_dropped",
+                user_id=str(self.user.id) if self.user else None,
+                event_organization_id=event.get("organization_id"),
+            )
+            return
         if not uuid or self._uuid_group_name(uuid) == self.current_subscription:
             try:
                 await self.send_json(data)
@@ -198,6 +214,20 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 logger.exception("websocket_send_failed")
         else:
             pass
+
+    def _may_receive(self, event):
+        """Whether an update tagged with an organization is for this socket.
+
+        A bare ``uuid_<id>`` group is shared by every organization's sockets,
+        and the relay sends to it for whichever organization authenticated.
+        Untagged updates come only from in-process senders that named no
+        organization, and are delivered as before.
+        """
+        event_org = event.get("organization_id")
+        if event_org is None:
+            return True
+        org_ids = getattr(self, "organization_ids", None)
+        return org_ids is not None and str(event_org) in org_ids
 
     def _uuid_group_name(self, uuid):
         auth_scope = self.scope.get("auth_scope")

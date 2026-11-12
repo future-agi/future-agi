@@ -209,3 +209,58 @@ def test_relay_accepts_what_call_websocket_sends(
     assert delivered == [
         ("org" if not send_to_uuid else uuid, organization.id, message)
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+@pytest.mark.parametrize("send_to_uuid", [False, True], ids=["to_org", "to_uuid"])
+def test_relay_delivers_for_the_authenticated_org_not_the_payloads(
+    api_client, organization, send_to_uuid
+):
+    """A caller authenticated as one organization cannot address another.
+
+    The payload's ``organization_id`` is ignored: the org channel and the uuid
+    update's organization tag both come from the credential.
+    """
+    from accounts.models.organization import Organization
+    from accounts.models.user import OrgApiKey, User
+    from tfc.constants.roles import OrganizationRoles
+
+    caller_org = Organization.objects.create(name="Synthetic caller org")
+    User.objects.create_user(
+        email="relay-caller@futureagi.com",
+        password="synthetic-password-1",
+        name="Synthetic caller",
+        organization=caller_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    caller_key = OrgApiKey.no_workspace_objects.create(
+        organization=caller_org, type="system"
+    )
+    delivered = []
+
+    with (
+        patch(
+            "tfc.views.socket.send_message_to_channel",
+            side_effect=lambda org_id, msg: delivered.append(("org", org_id)),
+        ),
+        patch(
+            "tfc.views.socket.send_message_to_uuid",
+            side_effect=lambda to, msg, org_id: delivered.append((to, org_id)),
+        ),
+    ):
+        response = api_client.post(
+            "/call-websocket/",
+            data={
+                "organization_id": str(organization.id),
+                "message": {"status": "spoofed"},
+                "send_to_uuid": send_to_uuid,
+                "uuid": "a-target-id" if send_to_uuid else None,
+            },
+            format="json",
+            HTTP_X_API_KEY=caller_key.api_key,
+            HTTP_X_SECRET_KEY=caller_key.secret_key,
+        )
+
+    assert response.status_code == 200, response.content
+    assert delivered == [("a-target-id" if send_to_uuid else "org", caller_org.id)]
