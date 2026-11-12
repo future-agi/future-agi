@@ -26,10 +26,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -344,6 +347,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
 		}
 	}
+	if os.Getenv("FI_MAX_PENDING_ROWS") != "" || c.Server.ObsoleteMaxPendingRows != nil {
+		return fmt.Errorf("FI_MAX_PENDING_ROWS / server.max_pending_rows is obsolete; use FI_INGEST_BUDGET_MIB (byte admission), not a row cap")
+	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
 	}
@@ -447,22 +453,83 @@ func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
 	return body
 }
 
-// runAdmin serves /healthz for container health checks. The ingest budget's
-// use and the OTLP requests refused, by transport, reason and code, are in
-// the body only; they never change the status code.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, ingest ingestReporter, log *slog.Logger) {
+// buildInfo identifies the running binary so a benchmark report can name the
+// revision it measured. The VCS fields are present only when the binary was built
+// from a git checkout with VCS stamping; a container build without .git sets
+// FI_BUILD_REVISION instead. Nothing here is secret.
+func buildInfo(getenv func(string) string) map[string]any {
+	info := map[string]any{"go_version": runtime.Version()}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Path != "" {
+			info["module"] = bi.Main.Path
+		}
+		for _, setting := range bi.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				info["vcs_revision"] = setting.Value
+			case "vcs.time":
+				info["vcs_time"] = setting.Value
+			case "vcs.modified":
+				info["vcs_modified"] = setting.Value
+			}
+		}
+	}
+	if v := getenv("FI_BUILD_REVISION"); v != "" {
+		info["configured_revision"] = v
+	}
+	return info
+}
+
+// runtimeInfo is the CPU and memory the collector process may use, so a
+// benchmark report records the hardware the measured collector ran with.
+// go_memory_limit_bytes is present only when a Go memory limit (GOMEMLIMIT) is
+// set.
+func runtimeInfo() map[string]any {
+	info := map[string]any{"num_cpu": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "os": runtime.GOOS, "arch": runtime.GOARCH}
+	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
+		info["go_memory_limit_bytes"] = limit
+	}
+	return info
+}
+
+// admissionReporter is the part of the server /healthz reads: the admission
+// limits in force and the current backlog.
+type admissionReporter interface {
+	IngestStats() server.IngestStats
+	Limits() server.Limits
+	Admission() server.Admission
+}
+
+// adminHandler serves /healthz: writer statistics and insert policy, the
+// simulation routing counters, the build the binary identifies as, its CPU and
+// memory limits, the admission limits in force and the current backlog
+// (buffered rows), which a benchmark samples over time.
+func adminHandler(w *chwriter.Writer, router routingReporter, admission admissionReporter) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
+		code, status := 200, "ok"
 		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(withIngest(healthBody("unhealthy", s, router), ingest))
-			return
+			code, status = 503, "unhealthy"
 		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(withIngest(healthBody("ok", s, router), ingest))
+		body := withIngest(healthBody(status, s, router), admission)
+		body["build"] = buildInfo(os.Getenv)
+		body["runtime"] = runtimeInfo()
+		body["writer"] = w.Policy()
+		if admission != nil {
+			body["limits"] = admission.Limits()
+			body["admission"] = admission.Admission()
+		}
+		rw.WriteHeader(code)
+		_ = json.NewEncoder(rw).Encode(body)
 	})
+	return mux
+}
+
+// runAdmin serves /healthz for container health checks.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, admission admissionReporter, log *slog.Logger) {
+	mux := adminHandler(w, router, admission)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)

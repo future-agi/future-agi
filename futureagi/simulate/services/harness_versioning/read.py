@@ -551,9 +551,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         )
         for one, outputs, recorded in HarnessEnvironmentVersion.no_workspace_objects.filter(
             job=job
-        ).values_list(
-            "id", "documents__stage_outputs", "documents__release_checks"
-        )
+        ).values_list("id", "documents__stage_outputs", "documents__release_checks")
     }
 
     from simulate.services.harness_versioning.candidate_sets import candidate_states

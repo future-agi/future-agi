@@ -39,6 +39,35 @@ def credits_allow(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def billing_config(monkeypatch):
+    """An explicit billing config for billing's real credit conversion.
+    Cloud's billing.yaml ships in the private ee/cloud tree, which fork CI
+    does not check out. There, BillingConfig raises on Cloud, so these tests
+    passed or failed depending on whether an earlier test had cached the
+    empty default. ``config_missing`` still overrides this."""
+    from decimal import Decimal
+
+    from ee.usage.schemas.billing_config import BillingConfigSchema
+    from ee.usage.services.config import BillingConfig
+
+    config = BillingConfig(
+        BillingConfigSchema(
+            plans={},
+            dimensions={},
+            pricing_tiers={},
+            entitlements={},
+            api_call_types={},
+            ee_bands={},
+            ai_credit_models={},
+            ai_cost_markup=Decimal("1.2"),
+            eval_per_run_fee=Decimal("0.0005"),
+        )
+    )
+    monkeypatch.setattr(BillingConfig, "get", staticmethod(lambda: config))
+    return config
+
+
 @pytest.fixture
 def config_missing(monkeypatch):
     """billing.yaml doesn't load: on Cloud BillingConfig raises when it is

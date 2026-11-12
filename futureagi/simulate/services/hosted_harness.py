@@ -420,7 +420,7 @@ def create_selected_harness_run(
 
             # Before the pins are made: making them resets a failed bundle.
             require_pair_runnable(environment, resolved)
-        run_keys = _held_back_checked(planned, resolved, scenario_keys)
+        run_keys = _held_back_checked(environment, planned, resolved, scenario_keys)
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(
@@ -659,23 +659,29 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
-            from simulate.services.harness_readiness import store_run_snapshot
+            if planned is not None:
+                # The report the selection was decided from, not one read after this
+                # run changed its inputs.
+                child.capability_snapshot = planned.plan.report
+                pin_fields = ["capability_snapshot"]
+            else:
+                from simulate.services.harness_readiness import store_run_snapshot
 
-            # Once committed: reading the evidence may download an archive, which
-            # never happens under the environment's lock.
-            transaction.on_commit(
-                partial(
-                    store_run_snapshot,
-                    child.id,
-                    environment,
-                    agent_version=pins.agent_version,
-                    environment_version=pins.environment_version,
-                    suite_version=pins.suite_version,
-                    runtime=pins.runtime,
-                    bundle=pins.assembled_bundle,
+                # Once committed: reading the evidence may download an archive, which
+                # never happens under the environment's lock.
+                transaction.on_commit(
+                    partial(
+                        store_run_snapshot,
+                        child.id,
+                        environment,
+                        agent_version=pins.agent_version,
+                        environment_version=pins.environment_version,
+                        suite_version=pins.suite_version,
+                        runtime=pins.runtime,
+                        bundle=pins.assembled_bundle,
+                    )
                 )
-            )
-            pin_fields = [
+            pin_fields += [
                 "agent_version",
                 "environment_version",
                 "suite_version",
@@ -879,8 +885,12 @@ def _readiness_plan(
     trials: int,
 ) -> _ReadinessPlan | None:
     """Which requested cases this run's pairing holds back; ``None`` when runs are not
-    pinned to versions, when the selection is refused (the run refuses it too), or
-    when the evidence cannot be read, so a storage outage never stops a run."""
+    pinned to versions or the selection is refused (the run refuses it too).
+
+    Raises:
+        HostedHarnessError: 503 ``readiness_unavailable`` (retryable) when readiness
+            cannot be read: a run never goes out unchecked.
+    """
     from simulate.services.harness_readiness import Pairing, select_for_run
 
     resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
@@ -899,15 +909,22 @@ def _readiness_plan(
         if exc.status_code != 400:
             raise
         return None
-    except Exception:  # noqa: BLE001 - unreadable evidence sends the run as asked
+    except Exception as exc:
         logger.exception(
             "harness_run_readiness_unavailable", environment_id=str(environment.id)
         )
-        return None
+        raise HostedHarnessError(
+            "readiness_unavailable",
+            "Couldn't read this pairing's readiness, so no run was created."
+            " Try again in a moment.",
+            status_code=503,
+            retryable=True,
+        ) from exc
     return _ReadinessPlan(pins=_pin_tuple(resolved), plan=plan)
 
 
 def _held_back_checked(
+    environment: HostedHarnessJob,
     planned: _ReadinessPlan | None,
     resolved: ResolvedPins | None,
     scenario_keys: list[str],
@@ -915,12 +932,15 @@ def _held_back_checked(
     """The requested keys the run sends: all but the ones readiness holds back.
 
     Raises:
-        HostedHarnessError: 409 ``environment_not_ready`` when the pins moved since
-            readiness was read; 409 ``all_cases_blocked`` when every case is held back.
+        HostedHarnessError: 409 ``environment_not_ready`` when the pins or the evidence
+            moved since readiness was read; 409 ``all_cases_blocked`` when every case
+            is held back.
     """
     if planned is None:
         return list(scenario_keys)
-    if planned.pins != _pin_tuple(resolved):
+    if planned.pins != _pin_tuple(resolved) or (
+        planned.plan.revision != _evidence_revision(environment, resolved)
+    ):
         raise HostedHarnessError(
             "environment_not_ready",
             "environment changed while submitting this Run; submit it again",
@@ -945,6 +965,20 @@ def _held_back_checked(
             details={"selection": planned.plan.view},
         )
     return [key for key in scenario_keys if key not in held]
+
+
+def _evidence_revision(environment: HostedHarnessJob, resolved: ResolvedPins) -> str:
+    from simulate.services.harness_readiness import Pairing, evidence_revision
+
+    return evidence_revision(
+        Pairing(
+            environment=environment,
+            agent_version=resolved.agent_version,
+            environment_version=resolved.environment_version,
+            suite_version=resolved.suite_version,
+            runtime=resolved.runtime,
+        )
+    )
 
 
 def resolve_run_pins(

@@ -37,6 +37,13 @@ def _provisionable(dependency: Mapping[str, Any]) -> bool:
     return bool(dependency.get("engine")) and seam
 
 
+def _compose_sibling(dependency: Mapping[str, Any]) -> bool:
+    """A service the agent reaches by a single-label host name: inside its own compose app that name can only be
+    another service of the same file, which the build runs with the agent."""
+    host = str((dependency.get("reached") or {}).get("host") or "").strip().lower()
+    return bool(host) and "." not in host and host != "localhost"
+
+
 def structural_findings(
     contract: Mapping[str, Any] | None,
 ) -> StructuralFinding | None:
@@ -63,14 +70,15 @@ def structural_findings(
             "No reachable implementation for: " + ", ".join(unroutable),
             targets("tool", unroutable, "failed"),
         )
-    # The agent's own tools service: the build stands it up from the agent's source, so it is never production.
+    # A service of the agent's own source that a tool calls, whether the harness calls it or the agent's code does:
+    # the build stands it up from that source, so it is never production.
     served = {
         str(entry.get("service"))
         for entry in contract.get("tool_entrypoints") or []
-        if isinstance(entry, Mapping)
-        and entry.get("mode") == "service"
-        and entry.get("service")
+        if isinstance(entry, Mapping) and entry.get("service")
     }
+    runtime = contract.get("runtime")
+    compose = isinstance(runtime, Mapping) and runtime.get("execution") == "compose"
     live = sorted(
         {
             str(tool)
@@ -78,6 +86,7 @@ def structural_findings(
             if isinstance(dependency, Mapping)
             and not _provisionable(dependency)
             and str(dependency.get("name") or "") not in served
+            and not (compose and _compose_sibling(dependency))
             for tool in dependency.get("used_by") or []
         }
     )
@@ -142,7 +151,11 @@ def _required(tool: Mapping[str, Any]) -> frozenset[str]:
     """The argument names an agent document's ``parameters`` marks required."""
     parameters = tool.get("parameters")
     value = parameters.get("required") if isinstance(parameters, Mapping) else None
-    return frozenset(str(name) for name in value) if isinstance(value, list) else frozenset()
+    return (
+        frozenset(str(name) for name in value)
+        if isinstance(value, list)
+        else frozenset()
+    )
 
 
 def _changed(ours: Mapping[str, Any], theirs: Mapping[str, Any]) -> bool:
@@ -173,7 +186,8 @@ def agent_findings(
     ``agent_tools`` ``None`` means the version's tools were never read. A tool the
     agent has and the world lacks blocks every case (targets of kind ``agent_tool``);
     a world tool the agent lacks, or one it calls with other argument names, blocks
-    the cases that use it. An empty list was read and shows no gap.
+    the cases that use it. An empty list was read: the agent has none of the world's
+    tools.
     """
     if agent_tools is None:
         return {
@@ -183,8 +197,6 @@ def agent_findings(
                 "This agent version's tools have not been read yet",
             )
         }
-    if not agent_tools:
-        return {}
     agent = _named(agent_tools)
     world = _named((contract or {}).get("tools"))
     found: dict[str, Reading] = {}

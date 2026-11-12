@@ -758,10 +758,13 @@ const LogsTab = ({ gatewayId }) => {
                       CHIP_ROLE[
                         log.status_code === 246
                           ? "warning"
-                          : // The gateway answers a block with 403; 446 is the legacy code.
-                            log.status_code === 403 || log.status_code === 446
+                          : // Every 4xx/5xx is an error. That includes 403, which
+                            // the gateway answers a block with, and the legacy 446.
+                            log.status_code >= 400 && log.status_code < 600
                             ? "error"
-                            : "default"
+                            : log.status_code >= 200 && log.status_code < 300
+                              ? "success"
+                              : "default"
                       ]
                     }
                   />

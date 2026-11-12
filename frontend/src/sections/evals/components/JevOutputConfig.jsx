@@ -21,6 +21,7 @@ export default function JevOutputConfig({
   hasExtraMessages,
   disabled,
   locked,
+  modelLabel = "Jev",
 }) {
   const levels = mapping.score?.levels || [];
   // A rubric still being written (under two levels, or one left blank) is not
@@ -30,7 +31,9 @@ export default function JevOutputConfig({
     outputType === "percentage" &&
     (levels.length < 2 || levels.some((level) => !String(level).trim()));
   const shownErrors = rubricUnfinished
-    ? errors.filter((error) => error !== JEV_RUBRIC_ERROR)
+    ? errors.filter(
+        (error) => error !== JEV_RUBRIC_ERROR.replace("Jev", modelLabel),
+      )
     : errors;
   const setLevels = (next) => onChange({ ...mapping, score: { levels: next } });
   const moveLevel = (index, direction) => {
@@ -44,7 +47,8 @@ export default function JevOutputConfig({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
       <Alert severity="info">
-        Jev returns typed decisions with probabilities; no written reasoning.
+        {modelLabel} returns typed decisions with probabilities; no written
+        reasoning.
       </Alert>
       {locked && (
         <Alert severity="warning">
@@ -192,4 +196,5 @@ JevOutputConfig.propTypes = {
   hasExtraMessages: PropTypes.bool,
   disabled: PropTypes.bool,
   locked: PropTypes.bool,
+  modelLabel: PropTypes.string,
 };

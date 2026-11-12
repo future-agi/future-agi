@@ -153,16 +153,19 @@ func TestDecisionDialectBaseURLs(t *testing.T) {
 		// Only a base_url is ever read; the key is irrelevant here.
 		"typesafe":           {APIFormat: "systemone", BaseURL: "https://typesafe.internal", APIKey: "FAGI-HELD-KEY"},
 		"a-typesafe-mirror":  {APIFormat: "typesafe", BaseURL: "https://api.typesafe.ai"},
-		"perplexity":         {APIFormat: "openai", BaseURL: "https://api.perplexity.ai"}, // Sonar chat, not the Decider
-		"perplexity-decider": {APIFormat: "systemone"},                                    // no base_url: dialect default
+		"perplexity":         {APIFormat: "openai", BaseURL: "https://api.perplexity.ai"},    // Sonar chat, not the Decider
+		"perplexity-decider": {APIFormat: "systemone"},                                       // no base_url: dialect default
+		"openrouter":         {APIFormat: "openai", BaseURL: "https://openrouter.ai/api/v1"}, // chat config must not override decisions
+		"openrouter-judge":   {APIFormat: "systemone", BaseURL: "https://router.internal"},
 		"openai":             {APIFormat: "openai", BaseURL: "https://openai-proxy.internal"},
 		"groq":               {APIFormat: "openai", BaseURL: "https://api.groq.com/openai"},
 		"custom-systemone":   {APIFormat: "systemone", BaseURL: "https://foundry.example.com"},
 	})
 	want := map[string]string{
 		// ID order: a-typesafe-mirror comes before typesafe.
-		"typesafe": "https://api.typesafe.ai",
-		"openai":   "https://openai-proxy.internal",
+		"typesafe":   "https://api.typesafe.ai",
+		"openai":     "https://openai-proxy.internal",
+		"openrouter": "https://router.internal",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("bases = %v, want %v", got, want)
@@ -176,6 +179,8 @@ func TestNewKeyedDecisionProvider(t *testing.T) {
 	}{
 		{"typesafe", "", models.DecisionFormatSystemOne},
 		{"perplexity", "", models.DecisionFormatSystemOne},
+		{"openrouter", "", models.DecisionFormatSystemOne},
+		{"openrouter", "https://router.internal", models.DecisionFormatSystemOne},
 		{"typesafe", "https://typesafe.internal", models.DecisionFormatSystemOne},
 		{"openai", "", models.DecisionFormatOpenAI},
 	} {

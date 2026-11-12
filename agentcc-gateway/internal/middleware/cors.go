@@ -23,6 +23,8 @@ var defaultCORSHeaders = []string{
 	"X-Agentcc-Config",
 	"X-Guardrail-Policy",
 	"Cache-Control",
+	"Idempotency-Key",
+	"X-AgentCC-Video-Dialect",
 }
 
 // defaultExposedHeaders are the response headers browsers are allowed to read.

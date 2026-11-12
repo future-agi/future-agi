@@ -273,6 +273,8 @@ const InstructionEditor = ({
   // Defaults to `disabled` for backward compat.
   modelSelectorDisabled,
   openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
   label = "Instructions",
   templateFormat = "mustache",
   onTemplateFormatChange,
@@ -988,6 +990,8 @@ const InstructionEditor = ({
               onActiveContextOptionsChange={onActiveContextOptionsChange}
               hideDatasetContextToggle={hideDatasetContextToggle}
               openModelMenuSignal={openModelMenuSignal}
+              outputType={outputType}
+              choiceCount={choiceCount}
             />
           </Box>
           {!aiOpen && (
