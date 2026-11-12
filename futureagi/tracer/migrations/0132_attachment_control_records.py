@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0031_orgapikey_coding_agent'),
-        ('tracer', '0131_merge_sql_workbench_and_observationspan_internal_type'),
+        ('tracer', '0132_merge_alert_webhook_and_sql_workbench'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

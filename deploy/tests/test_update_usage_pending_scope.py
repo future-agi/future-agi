@@ -1,4 +1,4 @@
-"""Complete 32/37-pending-migration A9 intersection regression, without Django.
+"""Complete 35/40-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -67,7 +67,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 32), (REVISIONS[0], LATEST + FLOOR_ONLY, 37))
+BASELINES = ((REVISIONS[1], LATEST, 35), (REVISIONS[0], LATEST + FLOOR_ONLY, 40))
 
 
 def added_migration_identities(revision):
