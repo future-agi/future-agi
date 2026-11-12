@@ -29,7 +29,11 @@ from tracer.models.attachment import (
 from tracer.services.attachments.accounting import audit
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import get_occurrence
-from tracer.services.attachments.uploads import TRANSFER_SECONDS, _lock_budgets, settle
+from tracer.services.attachments.uploads import (
+    TRANSFER_SECONDS,
+    lock_all_budgets,
+    settle,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -192,7 +196,7 @@ def _tombstone(row, scope, *, actor_id=None, reason):
 @transaction.atomic
 def delete_occurrence(viewer, authority, *, occurrence_id, parent):
     row, scope, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
-    _lock_budgets(scope)
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
     row, _, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
     return _tombstone(row, scope, actor_id=viewer.user_id, reason="requested")
@@ -221,7 +225,7 @@ def tombstone_parent(*, scope_id, parent, source_generation):
     if type(source_generation) is not int or source_generation < 0:
         raise AttachmentError("invalid_generation")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = AttachmentOccurrence.objects.filter(
         scope=scope, trace_id=parent.trace_id, span_id=parent.span_id
@@ -246,7 +250,7 @@ def tombstone_traces(*, project_id, trace_ids):
     total = 0
     for start in range(0, len(ids), BATCH):
         with transaction.atomic():
-            _lock_budgets(scope)
+            lock_all_budgets(scope)
             locked = AttachmentScope.objects.select_for_update().get(pk=scope.pk)
             rows = AttachmentOccurrence.objects.filter(
                 scope=locked, trace_id__in=ids[start : start + BATCH]
@@ -264,7 +268,7 @@ def tombstone_occurrences(*, scope_id, occurrence_ids, missing_before):
     the sweep's own read always wins.
     """
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = AttachmentOccurrence.objects.filter(
         scope=scope,
@@ -299,21 +303,32 @@ def fence_workspace(*, workspace_id):
     return len(scope_ids)
 
 
+def _fenced(scope):
+    return AttachmentOccurrence.objects.filter(
+        scope=scope,
+        deleted_at__isnull=True,
+        deletion_generation__lt=scope.deletion_generation,
+    )
+
+
+def _expired(scope):
+    now = timezone.now()
+    return AttachmentOccurrence.objects.filter(
+        scope=scope, deleted_at__isnull=True
+    ).filter(Q(expires_at__lte=now) | Q(source_expires_at__lte=now))
+
+
 @transaction.atomic
 def tombstone_fenced(*, scope_id, limit=BATCH):
     """Physical cleanup after ``fence_scope``: occurrences from older generations."""
     if type(limit) is not int or not 1 <= limit <= BATCH:
         raise AttachmentError("invalid_request")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    if not _fenced(scope).exists():
+        return 0  # Nothing to clean: skip the budget locks (sweep runs per scope).
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
-    rows = list(
-        AttachmentOccurrence.objects.filter(
-            scope=scope,
-            deleted_at__isnull=True,
-            deletion_generation__lt=scope.deletion_generation,
-        ).order_by("id")[:limit]
-    )
+    rows = list(_fenced(scope).order_by("id")[:limit])
     return sum(_tombstone(row, scope, reason="scope_deleted") for row in rows)
 
 
@@ -332,15 +347,11 @@ def expire_occurrences(*, scope_id, limit=100):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise AttachmentError("invalid_request")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    if not _expired(scope).exists():
+        return 0  # Nothing due: skip the budget locks (sweep runs per scope).
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
-    rows = list(
-        AttachmentOccurrence.objects.filter(scope=scope, deleted_at__isnull=True)
-        .filter(
-            Q(expires_at__lte=timezone.now()) | Q(source_expires_at__lte=timezone.now())
-        )
-        .order_by("id")[:limit]
-    )
+    rows = list(_expired(scope).order_by("id")[:limit])
     return sum(_tombstone(row, scope, reason="retention") for row in rows)
 
 

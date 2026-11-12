@@ -16,6 +16,15 @@ plain UPDATE at 75 % of the run (there is no service writer of
 - ``raw``: the same Attachment + Occurrence + Upload inserts and the
   upload/occurrence updates through the ORM with no budget or scope lock. Only
   here can the FK ``KEY SHARE`` locks on the one capturesession row overlap.
+- ``tenants``: the ``service`` path spread over ``ATTACHMENT_LOAD_TENANTS``
+  organizations (one user, workspace, project, scope and capture session
+  each; writers round-robin over them). Org, project and scope rows are then
+  per tenant, so only the deployment-wide budget row(s) are shared: this is
+  the cell that shows whether the global budget serialises admissions.
+
+Cells run in a random order (``ATTACHMENT_LOAD_SEED``, recorded in ``meta``)
+after one discarded warm-up cell, so no measured cell runs cold.
+``ATTACHMENT_LOAD_SHAPES`` selects shapes (default ``raw,service,tenants``).
 
 Each shape runs with the 0133 fences on and off (disabled by trigger name, so
 the FK triggers stay on), and ``raw`` also with the capture_session FKs
@@ -46,6 +55,7 @@ from model_hub.models.ai_model import AIModel
 from tfc.middleware.workspace_context import set_workspace_context
 from tracer.models.attachment import (
     Attachment,
+    AttachmentBudget,
     AttachmentOccurrence,
     AttachmentOutbox,
     AttachmentScope,
@@ -69,6 +79,12 @@ SECONDS = float(os.environ.get("ATTACHMENT_LOAD_SECONDS", "20"))
 RENEW_SECONDS = float(os.environ.get("ATTACHMENT_LOAD_RENEW_SECONDS", "1"))
 BACKLOG = int(os.environ.get("ATTACHMENT_LOAD_BACKLOG", "100000"))
 OUT = Path(os.environ.get("ATTACHMENT_LOAD_OUT", "/tmp/attachment-load"))
+SHAPES = os.environ.get("ATTACHMENT_LOAD_SHAPES", "raw,service,tenants").split(",")
+TENANTS = int(os.environ.get("ATTACHMENT_LOAD_TENANTS", "16"))
+WARMUP_SECONDS = float(os.environ.get("ATTACHMENT_LOAD_WARMUP_SECONDS", "10"))
+SEED = int(
+    os.environ.get("ATTACHMENT_LOAD_SEED") or random.SystemRandom().randrange(2**31)
+)
 SAMPLE_SECONDS = 0.025
 TRACE = "00112233445566778899aabbccddeeff"
 WAV = wav_bytes()
@@ -228,6 +244,53 @@ class Sampler(threading.Thread):
         }
 
 
+def tenant_user(index):
+    """A fresh organization with an owner, built like the ``user`` fixture."""
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    org = Organization.objects.create(name=f"Load Tenant {index}")
+    set_workspace_context(organization=org)
+    user = User.objects.create_user(
+        email=f"load-{index}-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="load-test-only",
+        name=f"Load Tenant {index}",
+        organization=org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    membership, _ = OrganizationMembership.no_workspace_objects.get_or_create(
+        user=user,
+        organization=org,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
+    workspace = Workspace.objects.create(
+        name=f"Load Workspace {index}",
+        organization=org,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+    WorkspaceMembership.no_workspace_objects.get_or_create(
+        user=user,
+        workspace=workspace,
+        defaults={
+            "role": "Workspace Owner",
+            "level": Level.OWNER,
+            "is_active": True,
+            "organization_membership": membership,
+        },
+    )
+    return user
+
+
 class World:
     """One organization/workspace/user and its attachment scopes."""
 
@@ -337,12 +400,15 @@ def raw_rows(scope, session, *, now):
     return occurrence, upload
 
 
-def run_load(world, *, shape, writers, fences, fk):
-    scope = world.scopes[0]
-    scope.refresh_from_db()
-    world.context()
-    body = world.session_body(scope)
-    session, _ = broker.bootstrap(world.writer, body)
+def run_load(worlds, *, shape, writers, fences, fk, seconds=SECONDS):
+    tenants = []
+    for world in worlds:
+        scope = world.scopes[0]
+        scope.refresh_from_db()
+        world.context()
+        body = world.session_body(scope)
+        session, _ = broker.bootstrap(world.writer, body)
+        tenants.append((world, scope, body, session))
     store = ImmutableStore()
     stop, sampler_stop = threading.Event(), threading.Event()
     lat = defaultdict(list)
@@ -355,7 +421,7 @@ def run_load(world, *, shape, writers, fences, fk):
         if "commit" in revoked:
             after_revoke[kind] += 1
 
-    def service_writer():
+    def service_writer(world, scope, session):
         world.context()
         try:
             start_gate.wait()
@@ -390,7 +456,7 @@ def run_load(world, *, shape, writers, fences, fk):
         finally:
             connections["default"].close()
 
-    def raw_writer():
+    def raw_writer(world, scope, session):
         world.context()
         try:
             start_gate.wait()
@@ -419,34 +485,46 @@ def run_load(world, *, shape, writers, fences, fk):
             connections["default"].close()
 
     def renewer():
-        world.context()
         try:
             while not stop.wait(RENEW_SECONDS):
-                t0 = time.perf_counter()
-                try:
-                    broker.bootstrap(world.writer, body)
-                    lat["renew"].append(time.perf_counter() - t0)
-                except AttachmentError as exc:
-                    errors[f"renew:{exc.code}"] += 1
+                for world, _, body, _ in tenants:
+                    world.context()
+                    t0 = time.perf_counter()
+                    try:
+                        broker.bootstrap(world.writer, body)
+                        lat["renew"].append(time.perf_counter() - t0)
+                    except AttachmentError as exc:
+                        errors[f"renew:{exc.code}"] += 1
         finally:
             connections["default"].close()
 
     def revoker():
         try:
-            if stop.wait(SECONDS * 0.75):
+            if stop.wait(seconds * 0.75):
                 return
             t0 = time.perf_counter()
             revoked["start"] = time.time()
-            CaptureSession.objects.filter(pk=session.pk).update(
-                revoked_at=timezone.now()
-            )
+            CaptureSession.objects.filter(
+                pk__in=[session.pk for *_, session in tenants]
+            ).update(revoked_at=timezone.now())
             revoked["commit"] = time.time()
             lat["revoke"].append(time.perf_counter() - t0)
         finally:
             connections["default"].close()
 
-    target = service_writer if shape == "service" else raw_writer
-    threads = [threading.Thread(target=target, daemon=True) for _ in range(writers)]
+    target = raw_writer if shape == "raw" else service_writer
+    threads = [
+        threading.Thread(
+            target=target,
+            args=(
+                tenants[index % len(tenants)][0],
+                tenants[index % len(tenants)][1],
+                tenants[index % len(tenants)][3],
+            ),
+            daemon=True,
+        )
+        for index in range(writers)
+    ]
     helpers = [
         threading.Thread(target=renewer, daemon=True),
         threading.Thread(target=revoker, daemon=True),
@@ -461,7 +539,7 @@ def run_load(world, *, shape, writers, fences, fk):
     start_gate.wait()
     for thread in helpers:
         thread.start()
-    time.sleep(SECONDS)
+    time.sleep(seconds)
     stop.set()
     for thread in threads + helpers:
         thread.join(timeout=120)
@@ -477,8 +555,13 @@ def run_load(world, *, shape, writers, fences, fk):
     days_to_2_31 = (
         round(2**31 / (per_insert * rate) / 86400, 2) if per_insert and rate else None
     )
+    budget_rows = Counter(
+        key.split(":")[0]
+        for key in AttachmentBudget.objects.values_list("key", flat=True)
+    )
     result = {
         "shape": shape,
+        "tenants": len(tenants),
         "writers": writers,
         "fences": fences,
         "capture_session_fk": fk,
@@ -504,8 +587,9 @@ def run_load(world, *, shape, writers, fences, fk):
             "occurrences": AttachmentOccurrence.objects.count(),
             "uploads": AttachmentUpload.objects.count(),
         },
+        "budget_rows_by_kind": dict(budget_rows),
     }
-    if shape == "service":
+    if shape != "raw":
         # Exact commit order (track_commit_timestamp=on): occurrences are
         # insert-only in this shape, and a failed renewal never rewrites the
         # revoked session row, so its xmin is the revocation's transaction.
@@ -550,57 +634,88 @@ def test_capture_session_contention_matrix(user, settings, monkeypatch):
     settings.FI_ATTACHMENTS_ENABLED = True
     monkeypatch.setattr(uploads, "BUDGETS", UNBOUNDED)
     world = World(user)
+    tenants = (
+        [World(tenant_user(index)) for index in range(TENANTS)]
+        if "tenants" in SHAPES
+        else []
+    )
     fks = session_fks()
     assert len(fks) == 3, fks  # occurrence, upload, recording
     runs = []
+    variants = {
+        "raw": [(True, True), (False, True), (True, False), (False, False)],
+        "service": [(True, True), (False, True)],
+        "tenants": [(True, True)],
+    }
+    cells = [
+        (shape, fences, fk, writers)
+        for shape in SHAPES
+        for fences, fk in variants[shape]
+        for writers in WRITERS
+    ]
+    random.Random(SEED).shuffle(cells)
     meta = {
         "postgres": settings_snapshot(),
         "capture_session_fks": fks,
         "writers": WRITERS,
+        "shapes": SHAPES,
+        "tenants": TENANTS,
         "seconds_per_run": SECONDS,
         "renew_every_s": RENEW_SECONDS,
+        "seed": SEED,
+        "cell_order": cells,
     }
     write("meta", meta)
-    plan = [
-        ("raw", True, True),
-        ("raw", False, True),
-        ("raw", True, False),
-        ("raw", False, False),
-        ("service", True, True),
-        ("service", False, True),
-    ]
-    for shape, fences, fk in plan:
+
+    def cell(shape, fences, fk, writers, seconds=SECONDS):
         if fk:
             if not session_fks():
                 restore_fks(fks)
         elif session_fks():
             drop_fks(fks)
-        for writers in WRITERS:
-            reset_rows()
-            set_fences(fences)
-            try:
-                result = run_load(
-                    world, shape=shape, writers=writers, fences=fences, fk=fk
-                )
-            finally:
-                set_fences(True)
-            runs.append(result)
-            write("matrix", {"meta": meta, "runs": runs})
-            print(
-                json.dumps(
-                    {
-                        k: result[k]
-                        for k in (
-                            "shape",
-                            "writers",
-                            "fences",
-                            "capture_session_fk",
-                            "insert_tx_per_s",
-                        )
-                    }
-                ),
-                flush=True,
+        reset_rows()
+        set_fences(fences)
+        try:
+            return run_load(
+                tenants if shape == "tenants" else [world],
+                shape=shape,
+                writers=writers,
+                fences=fences,
+                fk=fk,
+                seconds=seconds,
             )
+        finally:
+            set_fences(True)
+
+    # Warm-up: one discarded cell of the first measured shape, so the first
+    # measured cell does not pay for cold caches and budget-row creation.
+    first = cells[0]
+    warmup = cell(first[0], True, True, min(WRITERS), seconds=WARMUP_SECONDS)
+    meta["warmup"] = {
+        key: warmup[key] for key in ("shape", "writers", "seconds", "insert_tx_per_s")
+    }
+    write("meta", meta)
+    for order, (shape, fences, fk, writers) in enumerate(cells):
+        result = cell(shape, fences, fk, writers)
+        result["order"] = order
+        runs.append(result)
+        write("matrix", {"meta": meta, "runs": runs})
+        print(
+            json.dumps(
+                {
+                    k: result[k]
+                    for k in (
+                        "order",
+                        "shape",
+                        "writers",
+                        "fences",
+                        "capture_session_fk",
+                        "insert_tx_per_s",
+                    )
+                }
+            ),
+            flush=True,
+        )
     if not session_fks():
         restore_fks(fks)
     assert len(session_fks()) == 3

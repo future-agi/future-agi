@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import threading
 import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.utils import timezone
 
 from accounts.models import OrgApiKey
@@ -25,11 +26,12 @@ from tracer.models.attachment import (
     AttachmentState,
     AttachmentUpload,
     AttachmentWriteGrant,
+    CaptureSession,
     UploadReservation,
 )
 from tracer.models.project import Project
 from tracer.services.attachments import bootstrap as broker
-from tracer.services.attachments import uploads, validation
+from tracer.services.attachments import retention, uploads, validation
 from tracer.services.attachments.contract import (
     AttachmentError,
     CapturePolicy,
@@ -592,7 +594,8 @@ def test_replay_and_delete_do_not_resurrect(setup):
 @pytest.mark.parametrize(
     "index,field,maximum",
     [
-        (0, "active_transfers", 128),
+        (0, "active_transfers", 128 // uploads.GLOBAL_SHARDS),
+        (0, "initialization_attempts", 960 // uploads.GLOBAL_SHARDS),
         (1, "reserved_bytes", 2 * 1024**3),
         (2, "active_transfers", 16),
         (2, "validation_jobs", 1024),
@@ -601,10 +604,13 @@ def test_replay_and_delete_do_not_resurrect(setup):
 )
 def test_finite_aggregate_admission(setup, index, field, maximum):
     scope, _ = setup
-    key = uploads._budget_keys(scope)[index]
-    AttachmentBudget.objects.create(
-        key=key, window_started_at=timezone.now(), **{field: maximum}
-    )
+    # The deployment budget (index 0) is sharded and the upload's shard comes
+    # from an id allocated inside initialize, so every shard is filled.
+    shards = range(uploads.GLOBAL_SHARDS) if index == 0 else [0]
+    for key in {uploads._budget_keys(scope, shard)[index] for shard in shards}:
+        AttachmentBudget.objects.create(
+            key=key, window_started_at=timezone.now(), **{field: maximum}
+        )
     with pytest.raises(AttachmentError, match="throttled"):
         initialized(setup)
     assert not AttachmentUpload.objects.exists()
@@ -737,3 +743,198 @@ def test_concurrent_completion_and_settlement(setup):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(finish, range(2))) == ["validating", "validating"]
     assert AttachmentOutbox.objects.filter(event="validate").count() == 1
+
+
+# --- #3945 hardening (decision 7 load-test findings) -------------------------
+
+
+@pytest.mark.parametrize("replay", [False, True], ids=["fresh", "replay"])
+def test_revocation_after_session_lookup_admits_nothing(setup, monkeypatch, replay):
+    """A revocation committed after ``find_session`` read the session, but
+    before the locked admission, refuses it: no occurrence, upload or
+    reservation is created and no capability is re-issued. The load test
+    measured about one late occurrence per in-flight writer before the fix."""
+    scope, writer = setup
+    current, _ = session(setup)
+    body = upload_body(scope, current)
+    key = f"up-{uuid.UUID(body['occurrence_id']).hex}"
+    if replay:
+        uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
+
+    def counts():
+        return (
+            AttachmentOccurrence.objects.count(),
+            AttachmentUpload.objects.count(),
+            UploadReservation.objects.count(),
+            AttachmentOutbox.objects.filter(event="admitted").count(),
+        )
+
+    before = counts()
+    real = uploads.find_session
+
+    def lookup_then_revoke(*args):
+        found = real(*args)
+        CaptureSession.objects.filter(pk=found.pk).update(revoked_at=timezone.now())
+        return found
+
+    monkeypatch.setattr(uploads, "find_session", lookup_then_revoke)
+    with pytest.raises(AttachmentError, match="capability_expired"):
+        uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
+    assert counts() == before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_renewal_does_not_queue_behind_fk_key_share(setup):
+    """Renewal locks the scope and session rows FOR NO KEY UPDATE, so an open
+    transaction holding the FK KEY SHARE that every attachment insert takes on
+    those rows does not block it. With FOR UPDATE, renewals and inserts queued
+    behind each other (most raw-shape lock waits in the load test)."""
+    scope, _ = setup
+    sid, nonce = str(uuid.uuid4()), str(uuid.uuid4())
+    current, _ = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold():
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM tracer_attachmentscope WHERE id = %s FOR KEY SHARE",
+                    [scope.id],
+                )
+                cursor.execute(
+                    "SELECT 1 FROM tracer_capturesession WHERE id = %s FOR KEY SHARE",
+                    [current.id],
+                )
+                holding.set()
+                release.wait(15)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(hold)
+        assert holding.wait(15)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '2s'")
+            renewed, _ = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+        finally:
+            release.set()
+            with connection.cursor() as cursor:
+                cursor.execute("RESET lock_timeout")
+        holder.result(timeout=15)
+    assert renewed.id == current.id
+
+
+def test_reservation_sweep_uses_the_unsettled_partial_index(setup):
+    """``expire_reservations`` reads unsettled rows in expiry order from the
+    partial index; the old (settled_at, expires_at) index seq-scanned 100k."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = %s",
+            ["attachment_reservation_due_idx"],
+        )
+        (definition,) = cursor.fetchone()
+        cursor.execute("SET LOCAL enable_seqscan = off")
+        plan = (
+            UploadReservation.objects.filter(
+                settled_at__isnull=True, expires_at__lte=timezone.now()
+            )
+            .order_by("expires_at")[:100]
+            .explain()
+        )
+    assert "(expires_at) WHERE (settled_at IS NULL)" in definition
+    assert "attachment_reservation_due_idx" in plan
+
+
+def _upload_ids(monkeypatch, *shards):
+    """Make initialize allocate upload ids that land on the given shards."""
+    ids = iter(
+        uuid.UUID(int=index * uploads.GLOBAL_SHARDS + shard)
+        for index, shard in enumerate(shards, start=1)
+    )
+    monkeypatch.setattr(uploads, "uuid4", lambda: next(ids))
+
+
+def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
+    """An upload is charged to one ``global:<shard>`` row named by its id, and
+    settling it releases that same row. No single 'global' row exists."""
+    _upload_ids(monkeypatch, 5)
+    upload, token, _, _ = initialized(setup)
+    assert uploads.global_shard(upload.id) == 5
+    charged = {
+        row.key: (row.active_transfers, row.validation_jobs, row.reserved_bytes)
+        for row in AttachmentBudget.objects.filter(key__startswith="global")
+    }
+    assert charged == {"global:5": (1, 1, upload.expected_bytes)}
+    uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
+    row = AttachmentBudget.objects.get(key="global:5")
+    assert (row.active_transfers, row.validation_jobs, row.reserved_bytes) == (0, 0, 0)
+    assert AttachmentBudget.objects.filter(key__startswith="global").count() == 1
+
+
+def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
+    """Each shard holds 1/GLOBAL_SHARDS of the deployment caps."""
+    scope, _ = setup
+    cap = uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    AttachmentBudget.objects.create(
+        key="global:3", window_started_at=timezone.now(), active_transfers=cap
+    )
+    _upload_ids(monkeypatch, 3, 4)
+    with pytest.raises(AttachmentError, match="throttled"):
+        initialized(setup)
+    upload, _, _, _ = initialized(setup)
+    assert uploads.global_shard(upload.id) == 4
+    assert AttachmentBudget.objects.get(key="global:3").active_transfers == cap
+
+
+def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
+    """Per-scope budgets stay authoritative: a project admits exactly its own
+    cap of transfers spread over every shard (each shard's cap is half the
+    project's), and the next one is refused by the project row, not a shard."""
+    scope, _ = setup
+    project_cap = uploads.BUDGETS[2][0]
+    assert project_cap > uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    shards = [index % uploads.GLOBAL_SHARDS for index in range(project_cap + 1)]
+    _upload_ids(monkeypatch, *shards)
+    current, _ = session(setup)
+    for _ in range(project_cap):
+        initialized(setup, current=current)
+    with pytest.raises(AttachmentError, match="throttled"):
+        initialized(setup, current=current)
+    project = AttachmentBudget.objects.get(key=f"project:{scope.project_id}")
+    assert project.active_transfers == project_cap
+    by_shard = dict(
+        AttachmentBudget.objects.filter(key__startswith="global:").values_list(
+            "key", "active_transfers"
+        )
+    )
+    assert sum(by_shard.values()) == project_cap
+    assert max(by_shard.values()) < uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+
+
+def test_deletion_releases_the_shard_its_upload_was_charged_to(setup, monkeypatch):
+    """Deletion batches lock every shard first (they may settle any of them),
+    and the tombstone releases the upload's own shard."""
+    _upload_ids(monkeypatch, 11)
+    upload, _, _, _ = initialized(setup)
+    scope, _ = setup
+    occurrence = upload.occurrence
+    parent = SimpleNamespace(trace_id=occurrence.trace_id, span_id=occurrence.span_id)
+    retention.tombstone_parent(scope_id=scope.id, parent=parent, source_generation=0)
+    rows = dict(
+        AttachmentBudget.objects.filter(key__startswith="global:").values_list(
+            "key", "active_transfers"
+        )
+    )
+    assert rows == {f"global:{shard}": 0 for shard in range(uploads.GLOBAL_SHARDS)}
+    assert UploadReservation.objects.get(upload=upload).settled_at is not None
+
+
+def test_sweep_takes_no_budget_locks_when_a_scope_has_nothing_due(setup):
+    """``sweep`` visits every scope each minute; with sharded budgets an idle
+    scope must not lock all the shard rows just to find nothing."""
+    scope, _ = setup
+    assert retention.expire_occurrences(scope_id=scope.id) == 0
+    assert retention.tombstone_fenced(scope_id=scope.id) == 0
+    assert not AttachmentBudget.objects.exists()

@@ -297,15 +297,22 @@ class UploadReservation(ScopedAttachmentRecord):
 
     class Meta:
         indexes = [
+            # expire_reservations: unsettled rows in expiry order. A plain
+            # (settled_at, expires_at) index could not give that order for
+            # IS NULL, so it seq-scanned a 100k-row backlog (decision 7).
             models.Index(
-                fields=["settled_at", "expires_at"],
-                name="attachment_reservation_expiry",
+                fields=["expires_at"],
+                condition=models.Q(settled_at__isnull=True),
+                name="attachment_reservation_due_idx",
             )
         ]
 
 
 class AttachmentBudget(models.Model):
-    """Stable lock rows. Lock global, organization, project in that order."""
+    """Stable lock rows: ``global:<shard>``, ``org:<id>``, ``project:<id>``.
+
+    Lock one global shard, then the organization, then the project row.
+    """
 
     key = models.CharField(max_length=80, primary_key=True)
     reserved_bytes = models.PositiveBigIntegerField(default=0)
