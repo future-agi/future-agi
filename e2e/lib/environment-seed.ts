@@ -40,6 +40,20 @@ import django
 
 django.setup()
 
+from minio.error import S3Error
+
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+# Parallel workers seed at once, and the platform creates the upload bucket on its first
+# write by checking, then creating. Create it here first: a racing create's
+# BucketAlreadyOwnedByYou means another worker made it, which is success.
+try:
+    ensure_bucket(get_storage_client(), UPLOAD_BUCKET_NAME)
+except S3Error as exc:
+    if exc.code != "BucketAlreadyOwnedByYou":
+        raise
+
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from simulate.models import HostedHarnessJob, HostedHarnessStageOutput
