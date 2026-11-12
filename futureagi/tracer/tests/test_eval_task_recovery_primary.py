@@ -50,9 +50,11 @@ def test_dispatch_guard_reads_primary_and_respects_committed_stop(
             and '"start_time"' in sql
         ):
             transaction.on_commit(
-                lambda: EvalTask.no_workspace_objects.using("default")
-                .filter(pk=task.pk)
-                .update(status=stop)
+                lambda: (
+                    EvalTask.no_workspace_objects.using("default")
+                    .filter(pk=task.pk)
+                    .update(status=stop)
+                )
             )
         return result
 

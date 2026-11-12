@@ -257,9 +257,12 @@ async def test_conversion_recovery_excludes_pre_activation_arrivals(
                         ).exists()
                     )
                     await wait_until(
-                        lambda task=task: not EvalLogger.all_objects.filter(
-                            eval_task_id=str(task.id), status__in=["pending", "running"]
-                        ).exists()
+                        lambda task=task: (
+                            not EvalLogger.all_objects.filter(
+                                eval_task_id=str(task.id),
+                                status__in=["pending", "running"],
+                            ).exists()
+                        )
                     )
                     observations[name] = await sync_to_async(read_case)(
                         task, old_id, spans
@@ -382,9 +385,9 @@ async def test_pre_deploy_rows_recover_from_their_last_acceptance(
                         task, activation, age_days, shape
                     )
                     old_snapshot = await sync_to_async(
-                        lambda old_id=old_id: EvalLogger.all_objects.filter(pk=old_id)
-                        .values()
-                        .get()
+                        lambda old_id=old_id: (
+                            EvalLogger.all_objects.filter(pk=old_id).values().get()
+                        )
                     )()
                     clock["now"] = activation + timedelta(hours=1)
                     await sync_to_async(cache.delete)("eval-task-sweep:position:v1")
@@ -402,9 +405,12 @@ async def test_pre_deploy_rows_recover_from_their_last_acceptance(
                         ).exists()
                     )
                     await wait_until(
-                        lambda task=task: not EvalLogger.all_objects.filter(
-                            eval_task_id=str(task.id), status__in=["pending", "running"]
-                        ).exists()
+                        lambda task=task: (
+                            not EvalLogger.all_objects.filter(
+                                eval_task_id=str(task.id),
+                                status__in=["pending", "running"],
+                            ).exists()
+                        )
                     )
                     observations[shape] = await sync_to_async(read_case)(
                         task, old_id, spans
