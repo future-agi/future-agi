@@ -419,12 +419,12 @@ export default function AskRail({
             aria-label="Show past questions"
             onClick={onToggle}
           >
-            <Iconify icon="mdi:chevron-double-right" width={18} />
+            <Iconify icon="solar:double-alt-arrow-right-linear" width={18} />
           </IconButton>
         </Tooltip>
         <Tooltip title="New question" placement="right" arrow>
           <IconButton size="small" aria-label="New question" onClick={onNew}>
-            <Iconify icon="mdi:plus" width={18} />
+            <Iconify icon="solar:add-linear" width={18} />
           </IconButton>
         </Tooltip>
       </Stack>
@@ -460,7 +460,7 @@ export default function AskRail({
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
             onClick={onNew}
           >
             New question
@@ -472,7 +472,7 @@ export default function AskRail({
               onClick={onToggle}
               sx={{ color: "text.secondary" }}
             >
-              <Iconify icon="mdi:chevron-double-left" width={18} />
+              <Iconify icon="solar:double-alt-arrow-left-linear" width={18} />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -487,7 +487,7 @@ export default function AskRail({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifer-linear"
                   width={18}
                   sx={{ color: "text.disabled" }}
                 />

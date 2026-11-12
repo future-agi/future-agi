@@ -341,7 +341,7 @@ export default function CellGrid({
                 x={svgWidth}
                 y={yOf(r) + cellH / 2 + 3.5}
                 textAnchor="end"
-                fontSize={11}
+                fontSize={theme.typography.s2.fontSize}
                 fill={theme.palette.text.secondary}
                 fontFamily={font}
                 style={{ fontVariantNumeric: "tabular-nums" }}

@@ -12,9 +12,9 @@ const VISIBLE = 6;
 const QUIET_VISIBLE = 4;
 
 const ARROW = {
-  up: "mdi:arrow-up",
-  down: "mdi:arrow-down",
-  flat: "mdi:minus",
+  up: "solar:arrow-up-linear",
+  down: "solar:arrow-down-linear",
+  flat: "solar:minus-linear",
 };
 
 function ChangeCard({ card }) {
@@ -41,11 +41,11 @@ function ChangeCard({ card }) {
         gap: 0.75,
         width: "100%",
         minWidth: 0,
-        px: 1.25,
-        py: 0.875,
+        px: 1.5,
+        py: 1,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         font: "inherit",
         textAlign: "left",
@@ -65,7 +65,7 @@ function ChangeCard({ card }) {
           sx={{
             px: 0.5,
             borderRadius: "4px",
-            fontSize: 11,
+            typography: "s2",
             fontWeight: 500,
             lineHeight: "16px",
             color: "text.secondary",
@@ -88,7 +88,7 @@ function ChangeCard({ card }) {
         component="span"
         noWrap
         sx={{
-          fontSize: 13,
+          typography: "m3",
           fontWeight: strong ? 500 : 400,
           minWidth: 0,
           flex: 1,
@@ -100,7 +100,7 @@ function ChangeCard({ card }) {
         variant="body2"
         component="span"
         sx={{
-          fontSize: 13,
+          typography: "m3",
           flexShrink: 0,
           fontVariantNumeric: "tabular-nums",
           color: "text.secondary",
@@ -170,9 +170,9 @@ export default function ChangeCards({ changes }) {
       >
         <Typography
           id="insights-changes"
-          variant="subtitle1"
+          variant="m3"
           component="h2"
-          sx={{ fontSize: 15 }}
+          fontWeight={500}
         >
           What changed since the last run
         </Typography>

@@ -71,11 +71,11 @@ function Chips({ items, onPick, disabled, line }) {
             textOverflow: "ellipsis",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 4,
+            borderRadius: "6px",
             bgcolor: "background.paper",
             color: "text.primary",
             font: "inherit",
-            fontSize: 12,
+            typography: "s1",
             cursor: disabled ? "default" : "pointer",
             opacity: disabled ? 0.6 : 1,
             "&:hover": disabled ? undefined : { borderColor: "text.disabled" },
@@ -108,7 +108,7 @@ function Thinking({ startedAt, reading, hint }) {
     <Stack spacing={0.75} sx={{ maxWidth: 520 }}>
       <Stack direction="row" spacing={1} alignItems="center">
         <CircularProgress size={12} thickness={5} />
-        <Typography variant="body2" sx={{ fontSize: 13 }}>
+        <Typography variant="body2" sx={{ typography: "m3" }}>
           Reading {reading}…
         </Typography>
         <Typography
@@ -145,11 +145,11 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
     <Box component="li" data-turn sx={{ py: 1.5 }}>
       <Stack direction="row" spacing={1} alignItems="flex-start">
         <Iconify
-          icon="mdi:account-circle-outline"
+          icon="solar:user-circle-linear"
           width={18}
           sx={{ color: "text.secondary", mt: "1px", flexShrink: 0 }}
         />
-        <Typography variant="body2" fontWeight={600} sx={{ fontSize: 13 }}>
+        <Typography variant="body2" fontWeight={600} sx={{ typography: "m3" }}>
           {turn.question}
         </Typography>
       </Stack>
@@ -161,7 +161,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
             <Typography
               variant="body2"
               color="status.danger.fg"
-              sx={{ fontSize: 13 }}
+              sx={{ typography: "m3" }}
             >
               <ErrorText message={turn.error} billing={turn.billing} />
             </Typography>
@@ -186,7 +186,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
                   <Typography
                     variant="body2"
                     component="p"
-                    sx={{ m: 0, fontSize: 13, lineHeight: "21px" }}
+                    sx={{ m: 0, typography: "s1_2" }}
                   >
                     {paragraph.text}
                     {paragraph.unit_ids.length > 0 && (
@@ -237,7 +237,7 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ typography: "m3" }}
               >
                 No answer came back. Try rephrasing the question.
               </Typography>
@@ -451,7 +451,7 @@ export default function AskPanel({ run, lens }) {
               borderColor: "divider",
             }}
           >
-            <Typography variant="subtitle2" sx={{ flex: 1, fontSize: 13 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1, typography: "m3" }}>
               Ask about this report
             </Typography>
             <Button
@@ -473,7 +473,7 @@ export default function AskPanel({ run, lens }) {
                 aria-label="Hide answers"
                 onClick={() => setOpen(false)}
               >
-                <Iconify icon="mdi:chevron-down" width={18} />
+                <Iconify icon="solar:alt-arrow-down-linear" width={18} />
               </IconButton>
             </Tooltip>
           </Stack>
@@ -542,7 +542,7 @@ export default function AskPanel({ run, lens }) {
           sx={{ pl: 1.5, pr: 0.75, py: 0.75 }}
         >
           <Iconify
-            icon="mdi:creation-outline"
+            icon="solar:magic-stick-3-linear"
             width={18}
             sx={{ color: "primary.main", mb: "7px", flexShrink: 0 }}
           />
@@ -590,7 +590,7 @@ export default function AskPanel({ run, lens }) {
             disabled={!text.trim() || blocked}
             sx={{ flexShrink: 0 }}
           >
-            <Iconify icon="mdi:arrow-up-circle" width={24} />
+            <Iconify icon="solar:round-arrow-up-bold" width={24} />
           </IconButton>
         </Stack>
       </Box>

@@ -1311,24 +1311,24 @@ describe("the Ask page", () => {
     renderAt(
       `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(fakes.control).not.toHaveBeenCalled();
     const ask = screen
       .getByText(
-        "Cancel this run? The 8 answers so far are kept; it can't be resumed.",
+        "Stop this run? The 8 answers so far are kept; it can't be resumed.",
       )
       .closest("[role='alert']");
     // Back keeps it running.
     fireEvent.click(within(ask).getByRole("button", { name: "Back" }));
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
     expect(fakes.control).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+      fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("cancel", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("pauses at once, without asking", async () => {
@@ -1345,7 +1345,7 @@ describe("the Ask page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     });
     expect(fakes.control).toHaveBeenCalledExactlyOnceWith("pause", {});
-    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(screen.queryByText(/Stop this run\?/)).toBeNull();
   });
 
   it("says a pause is draining, and when a run waits for its workers", () => {

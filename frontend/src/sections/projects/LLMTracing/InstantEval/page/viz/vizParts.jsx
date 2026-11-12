@@ -169,9 +169,9 @@ export function VizCard({ title, caption, action, children, label }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         px: 2,
-        pt: 1.75,
+        pt: 2,
         pb: 1.5,
         bgcolor: "background.paper",
       }}

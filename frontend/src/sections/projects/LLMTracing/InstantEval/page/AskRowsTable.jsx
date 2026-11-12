@@ -139,7 +139,7 @@ function AnswerCell({ record, question, isUser }) {
         >
           <Box component="span" sx={{ display: "inline-flex" }}>
             <Iconify
-              icon="mdi:help-circle-outline"
+              icon="solar:question-circle-linear"
               width={14}
               sx={{ color: "status.warning.solid" }}
               aria-label="Jev was unsure"
@@ -200,7 +200,7 @@ export default function AskRowsTable({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.paper",
       }}
     >
@@ -234,7 +234,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport()}
             disabled={!count}
             title={isUser ? "A line per user" : undefined}
@@ -246,7 +246,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport({ sessions: true })}
             disabled={!count}
             title="A line per session read, for these users"

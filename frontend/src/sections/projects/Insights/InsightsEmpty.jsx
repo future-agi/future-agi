@@ -6,15 +6,18 @@ import { TEMPLATES } from "./insightsLenses";
 
 const STEPS = [
   [
-    "mdi:file-document-outline",
+    "solar:document-text-linear",
     "Reads a sample of your traces, sessions or users",
   ],
-  ["mdi:shape-outline", "Groups them into categories and subcategories"],
+  ["solar:widget-linear", "Groups them into categories and subcategories"],
   [
-    "mdi:chart-box-outline",
+    "solar:chart-square-linear",
     "Measures each one: how many, which users, how they end",
   ],
-  ["mdi:format-quote-open", "Cites the conversations behind every finding"],
+  [
+    "solar:chat-square-like-linear",
+    "Cites the conversations behind every finding",
+  ],
 ];
 
 /** The right pane before the first report: what a report does, and the lenses. */
@@ -126,7 +129,7 @@ export default function InsightsEmpty({ onNew }) {
               <Typography variant="caption" fontWeight={600} color="inherit">
                 Start
               </Typography>
-              <Iconify icon="mdi:arrow-right" width={14} />
+              <Iconify icon="solar:arrow-right-linear" width={14} />
             </Stack>
           </Box>
         ))}

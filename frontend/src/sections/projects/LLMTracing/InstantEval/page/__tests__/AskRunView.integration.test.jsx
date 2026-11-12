@@ -251,10 +251,10 @@ describe("cancelling a live run", () => {
     const view = render(wrap(live(0)));
     // Polled at its usual pace, nothing extra is read before Cancel asks.
     expect(readNow).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(
       screen.getByText(
-        "Cancel this run? Nothing has been answered yet, and it can't be resumed.",
+        "Stop this run? Nothing has been answered yet, and it can't be resumed.",
       ),
     ).toBeInTheDocument();
     // Read at once, then every 2 s while it asks.
@@ -267,7 +267,7 @@ describe("cancelling a live run", () => {
     view.rerender(wrap(live(16)));
     expect(
       screen.getByText(
-        "Cancel this run? The 16 answers so far are kept; it can't be resumed.",
+        "Stop this run? The 16 answers so far are kept; it can't be resumed.",
       ),
     ).toBeInTheDocument();
     // Back keeps it running and stops the extra reads.

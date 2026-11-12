@@ -80,7 +80,7 @@ function CategoryEditor({ categories, definitions, onChange }) {
               onClick={() => remove(index)}
               aria-label={`Remove ${category}`}
             >
-              <Iconify icon="mdi:close" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -161,7 +161,7 @@ export default function QuestionEditor({
               onClick={onRemove}
               aria-label={`Remove question ${index + 1}`}
             >
-              <Iconify icon="mdi:close" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Tooltip>
         )}

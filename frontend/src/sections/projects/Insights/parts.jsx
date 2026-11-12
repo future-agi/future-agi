@@ -124,7 +124,7 @@ export function SectionCard({
         >
           <Box sx={{ minWidth: 0 }}>
             {title && (
-              <Typography variant="subtitle1" component="h2">
+              <Typography variant="m3" component="h2" fontWeight={500}>
                 {title}
               </Typography>
             )}
@@ -185,11 +185,11 @@ export function CategoryLink({ category, color, onClick, maxWidth = 260 }) {
           px: 0.75,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.paper",
           color: "text.primary",
           font: "inherit",
-          fontSize: 12,
+          typography: "s1",
           cursor: "pointer",
           "&:hover": { borderColor: "text.disabled" },
           "&:focus-visible": {
@@ -271,9 +271,9 @@ ToneChip.propTypes = {
 };
 
 const DIRECTION_ICON = {
-  worse: "mdi:arrow-top-right",
-  better: "mdi:arrow-bottom-right",
-  neutral: "mdi:swap-horizontal",
+  worse: "solar:arrow-right-up-linear",
+  better: "solar:arrow-right-down-linear",
+  neutral: "solar:transfer-horizontal-linear",
 };
 
 const noteTone = (note) => {
@@ -286,7 +286,9 @@ const noteTone = (note) => {
 const directionIcon = (note) => {
   const direction = notableDirection(note);
   if (direction === "neutral") return DIRECTION_ICON.neutral;
-  return note.value > note.rest ? "mdi:arrow-up" : "mdi:arrow-down";
+  return note.value > note.rest
+    ? "solar:arrow-up-linear"
+    : "solar:arrow-down-linear";
 };
 
 /** A notable difference as a compact chip ("Unresolved 0% vs 59%"). */
@@ -370,7 +372,7 @@ export function AttributePills({ attributes }) {
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
-            fontSize: 11,
+            typography: "s2",
             lineHeight: "18px",
             overflow: "hidden",
           }}

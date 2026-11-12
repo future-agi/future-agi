@@ -447,7 +447,7 @@ function Panel({
           variant="caption"
           noWrap
           title={label}
-          sx={{ fontWeight: 600, fontSize: 12, minWidth: 0, flex: 1 }}
+          sx={{ fontWeight: 600, typography: "s1", minWidth: 0, flex: 1 }}
         >
           {label}
         </Typography>

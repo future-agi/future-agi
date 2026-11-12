@@ -101,8 +101,7 @@ function Finding({ finding, index }) {
             sx={{
               m: 0,
               fontWeight: 600,
-              fontSize: 14,
-              lineHeight: "22px",
+              typography: "m3",
               color: "text.primary",
             }}
           />
@@ -117,8 +116,7 @@ function Finding({ finding, index }) {
               m: 0,
               mt: 0.5,
               pl: 2,
-              fontSize: 13,
-              lineHeight: "20px",
+              typography: "s1_2",
               color: "text.secondary",
             }}
           />
@@ -131,7 +129,7 @@ function Finding({ finding, index }) {
             sx={{ mt: 0.75, pl: 2 }}
           >
             <Iconify
-              icon="mdi:arrow-right"
+              icon="solar:arrow-right-linear"
               width={14}
               sx={{ color: "text.secondary", mt: "3px", flexShrink: 0 }}
             />
@@ -141,8 +139,7 @@ function Finding({ finding, index }) {
               component="p"
               sx={{
                 m: 0,
-                fontSize: 13,
-                lineHeight: "20px",
+                typography: "s1_2",
                 color: "text.primary",
               }}
             />
@@ -224,10 +221,10 @@ export default function Findings({ summary }) {
         <Iconify
           icon={
             !note.checked
-              ? "mdi:alert-outline"
+              ? "solar:danger-triangle-linear"
               : note.verifier
-                ? "mdi:shield-check-outline"
-                : "mdi:check-circle-outline"
+                ? "solar:shield-check-linear"
+                : "solar:check-circle-linear"
           }
           width={14}
           sx={{ color: note.checked ? "status.success.fg" : "inherit" }}

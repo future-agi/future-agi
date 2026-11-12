@@ -62,7 +62,7 @@ function StageRail({ current }) {
             <Stack direction="row" spacing={0.5} alignItems="center">
               {done && (
                 <Iconify
-                  icon="mdi:check"
+                  icon="solar:check-read-linear"
                   width={14}
                   sx={{ color: "text.primary" }}
                 />
@@ -124,8 +124,8 @@ function StopRun({ run }) {
       <Button
         size="small"
         variant="outlined"
-        color="inherit"
-        startIcon={<Iconify icon="mdi:stop" width={16} />}
+        color="error"
+        startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
         onClick={() => setOpen(true)}
         disabled={!canRun}
       >
@@ -202,7 +202,7 @@ export default function RunProgress({ run }) {
   const recent = [...(progress.recent || [])].reverse();
 
   return (
-    <Section variant="panel" sx={{ p: 3 }}>
+    <Section variant="panel">
       <Stack spacing={2.5}>
         <Stack
           direction="row"
@@ -210,7 +210,7 @@ export default function RunProgress({ run }) {
           alignItems="baseline"
         >
           <Box>
-            <Typography variant="subtitle1" component="h2">
+            <Typography variant="m3" component="h2" fontWeight={500}>
               {run.status === "pending" ? "Queued" : `${meta.label}…`}
             </Typography>
             <Typography variant="body2" color="text.secondary">

@@ -275,7 +275,7 @@ function AxisLayer({ marks, dayTicks, colW, x0, baseY, theme }) {
           y={dayLabelY}
           textAnchor={label.anchor}
           fill={theme.palette.text.secondary}
-          fontSize={11}
+          fontSize={theme.typography.s2.fontSize}
           fontFamily={theme.typography.fontFamily}
         >
           {label.text}
@@ -1753,7 +1753,7 @@ export default function AskTimeline({
         <Typography
           variant="caption"
           color="text.disabled"
-          sx={{ ml: "auto", fontSize: 12 }}
+          sx={{ ml: "auto", typography: "s1" }}
         >
           {explicit
             ? `Showing ${quoted(focusAnswer)}. Click it again to show all.`

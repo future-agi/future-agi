@@ -136,10 +136,10 @@ function InlineName({ config }) {
       direction="row"
       alignItems="center"
       spacing={0.25}
-      sx={{ minWidth: 0, "&:hover .rename": { opacity: 1 } }}
+      sx={{ minWidth: 0 }}
     >
       <Typography
-        variant="m2"
+        variant="m1"
         component="h1"
         fontWeight={600}
         noWrap
@@ -154,7 +154,6 @@ function InlineName({ config }) {
         {config.name}
       </Typography>
       <IconButton
-        className="rename"
         size="small"
         aria-label="Rename report"
         disabled={!canRun}
@@ -162,13 +161,9 @@ function InlineName({ config }) {
           setValue(config.name);
           setEditing(true);
         }}
-        sx={{
-          opacity: 0.4,
-          color: "text.secondary",
-          "&:focus-visible": { opacity: 1 },
-        }}
+        sx={{ color: "text.subtitle" }}
       >
-        <Iconify icon="mdi:pencil-outline" width={14} />
+        <Iconify icon="solar:pen-linear" width={15} />
       </IconButton>
     </Stack>
   );
@@ -210,11 +205,13 @@ function ReportHeader({
         >
           {/* What the report reads, as one meta line. */}
           <Typography
-            variant="body2"
-            color="text.subtitle"
             component="span"
             data-testid="report-meta"
-            sx={{ fontVariantNumeric: "tabular-nums" }}
+            sx={{
+              typography: "s1",
+              color: "text.subtitle",
+              fontVariantNumeric: "tabular-nums",
+            }}
           >
             {unitTitle(config.unit)} ·{" "}
             {lens.key === "custom" ? "Custom question" : lens.title}
@@ -255,7 +252,7 @@ function ReportHeader({
                 border: 0,
                 bgcolor: "transparent",
                 font: "inherit",
-                fontSize: 12,
+                typography: "s1",
                 color: "text.secondary",
                 cursor: "pointer",
                 textDecoration: "underline",
@@ -295,7 +292,7 @@ function ReportHeader({
           size="small"
           variant="contained"
           color="primary"
-          startIcon={<Iconify icon="mdi:play-outline" width={16} />}
+          startIcon={<Iconify icon="solar:play-linear" width={16} />}
           onClick={onRunNow}
           disabled={busy || !canRun}
         >
@@ -305,7 +302,7 @@ function ReportHeader({
           size="small"
           variant="outlined"
           color="inherit"
-          startIcon={<Iconify icon="mdi:cog-outline" width={16} />}
+          startIcon={<Iconify icon="solar:settings-linear" width={16} />}
           onClick={onEdit}
           disabled={!canRun}
         >
@@ -317,7 +314,7 @@ function ReportHeader({
           onClick={(event) => setAnchor(event.currentTarget)}
           sx={{ border: "1px solid", borderColor: "divider" }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={18} />
+          <Iconify icon="solar:menu-dots-bold" width={18} />
         </IconButton>
         <Menu
           anchorEl={anchor}
@@ -335,7 +332,7 @@ function ReportHeader({
             sx={{ maxWidth: 340, whiteSpace: "normal" }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:shape-plus-outline" width={18} />
+              <Iconify icon="solar:widget-add-linear" width={18} />
             </ListItemIcon>
             <ListItemText
               primary="Rediscover categories"
@@ -351,7 +348,7 @@ function ReportHeader({
             }}
           >
             <ListItemIcon sx={{ color: "inherit" }}>
-              <Iconify icon="mdi:trash-can-outline" width={18} />
+              <Iconify icon="solar:trash-bin-trash-linear" width={18} />
             </ListItemIcon>
             <ListItemText>Delete report</ListItemText>
           </MenuItem>
@@ -402,7 +399,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ mt: 0.5, fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, typography: "m3", fontVariantNumeric: "tabular-nums" }}
         >
           {meta.join(" · ")}
         </Typography>
@@ -412,10 +409,10 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
           ) : (
             <Box
               sx={{
-                p: 2.5,
+                p: 2,
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: 1,
+                borderRadius: "8px",
               }}
             >
               <Typography variant="subtitle2">
@@ -424,7 +421,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ typography: "m3" }}
               >
                 None of the {formatCount(run.sample_size)} sampled matched the
                 question. Try a wider window, a different lens, or remove an

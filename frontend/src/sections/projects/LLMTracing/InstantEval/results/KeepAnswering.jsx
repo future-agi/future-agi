@@ -126,7 +126,7 @@ export default function KeepAnswering({
       <Button
         variant="outlined"
         size="small"
-        startIcon={<Iconify icon="mdi:sync" width={16} />}
+        startIcon={<Iconify icon="solar:refresh-circle-linear" width={16} />}
         disabled={disabled}
         onClick={() => setState({ step: "confirm" })}
       >

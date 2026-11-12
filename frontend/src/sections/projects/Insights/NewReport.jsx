@@ -136,7 +136,7 @@ function autoName(draft, scopeText) {
 
 function Step({ number, title, subtitle, children, action }) {
   return (
-    <Section variant="panel" sx={{ p: 2.5 }}>
+    <Section variant="panel">
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box
           aria-hidden
@@ -149,7 +149,7 @@ function Step({ number, title, subtitle, children, action }) {
             borderColor: "divider",
             display: "grid",
             placeItems: "center",
-            fontSize: 12,
+            typography: "s1",
             fontWeight: 600,
             flexShrink: 0,
             mt: "1px",
@@ -166,7 +166,7 @@ function Step({ number, title, subtitle, children, action }) {
             sx={{ mb: children ? 2 : 0 }}
           >
             <Box>
-              <Typography variant="subtitle1" component="h2">
+              <Typography variant="m3" component="h2" fontWeight={500}>
                 {title}
               </Typography>
               {subtitle && (
@@ -595,7 +595,7 @@ export default function NewReport({
             onClick={onCancel}
             size="small"
           >
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
         }
         sx={{ mb: 0 }}
@@ -604,7 +604,7 @@ export default function NewReport({
       {seed?.source && (
         <Alert
           severity="info"
-          icon={<Iconify icon="mdi:link-variant" width={20} />}
+          icon={<Iconify icon="solar:link-linear" width={20} />}
         >
           From {seed.source}
           {seed.label ? ` · ${seed.label}` : ""}
@@ -682,7 +682,7 @@ export default function NewReport({
                 gap: 1.25,
               }}
             >
-              <Iconify icon="mdi:format-list-checks" width={18} />
+              <Iconify icon="solar:checklist-minimalistic-linear" width={18} />
               <Typography variant="body2">
                 <strong>
                   {formatCount(fixedPopulation.length)}{" "}
@@ -822,7 +822,7 @@ export default function NewReport({
         </Stack>
       </Step>
 
-      <Section variant="panel" sx={{ p: 2 }}>
+      <Section variant="panel">
         <NewReportTune
           open={tuneOpen}
           onToggle={() => setTuneOpen((value) => !value)}
@@ -858,7 +858,7 @@ export default function NewReport({
                       size="small"
                       variant="outlined"
                       startIcon={
-                        <Iconify icon="mdi:creation-outline" width={16} />
+                        <Iconify icon="solar:magic-stick-3-linear" width={16} />
                       }
                       onClick={draftWithAI}
                       disabled={
@@ -908,7 +908,7 @@ export default function NewReport({
         />
       </Section>
 
-      <Section variant="panel" sx={{ p: 2 }}>
+      <Section variant="panel">
         <Stack
           direction="row"
           alignItems="center"
@@ -936,7 +936,7 @@ export default function NewReport({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:eye-outline" width={16} />}
+              startIcon={<Iconify icon="solar:eye-linear" width={16} />}
               onClick={() =>
                 preview(
                   previewState.status === "done" && !previewStale
@@ -1075,7 +1075,7 @@ export default function NewReport({
               costing ||
               (fixed ? handedCost.isError : count.isError)
             }
-            startIcon={<Iconify icon="mdi:play" width={16} />}
+            startIcon={<Iconify icon="solar:play-linear" width={16} />}
           >
             Run report
           </Button>

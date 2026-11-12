@@ -16,14 +16,15 @@ function HighlightCard({ highlight }) {
   return (
     <Box
       sx={{
-        p: 1.75,
+        p: 1.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         display: "flex",
         flexDirection: "column",
         gap: 1,
         minWidth: 0,
+        bgcolor: "background.paper",
       }}
     >
       <Stack direction="row" spacing={1} alignItems="flex-start">
@@ -48,7 +49,7 @@ function HighlightCard({ highlight }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: 13, lineHeight: "19px" }}
+          sx={{ typography: "s1_2" }}
         >
           {highlight.reason}
         </Typography>
@@ -122,7 +123,9 @@ export default function Highlights({ highlights }) {
         aria-expanded={open}
         endIcon={
           <Iconify
-            icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
             width={16}
           />
         }

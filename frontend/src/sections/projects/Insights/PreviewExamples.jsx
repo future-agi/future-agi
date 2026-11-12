@@ -61,8 +61,8 @@ export default function PreviewExamples({ units, lens, attributes = [] }) {
                 <Iconify
                   icon={
                     included
-                      ? "mdi:check-circle-outline"
-                      : "mdi:minus-circle-outline"
+                      ? "solar:check-circle-linear"
+                      : "solar:minus-circle-linear"
                   }
                   width={16}
                 />

@@ -36,9 +36,10 @@ export default class AskChartBoundary extends React.Component {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 1,
+          borderRadius: "8px",
           px: 2,
           py: 1.5,
+          bgcolor: "background.paper",
           display: "flex",
           alignItems: "center",
           gap: 1.5,

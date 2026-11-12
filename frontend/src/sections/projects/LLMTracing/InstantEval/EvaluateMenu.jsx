@@ -38,7 +38,7 @@ export default function EvaluateMenu({
   const actions = [
     onAsk && {
       key: "ask",
-      icon: "mdi:creation-outline",
+      icon: "solar:magic-stick-3-linear",
       title: "Ask a question",
       detail: `Jev answers it for a sample or every ${meta.noun} in view; the first answers come in seconds.`,
       feature: CAPABILITY.INSTANT_EVAL,
@@ -46,7 +46,7 @@ export default function EvaluateMenu({
     },
     onFindPatterns && {
       key: "patterns",
-      icon: "mdi:chart-box-outline",
+      icon: "solar:chart-square-linear",
       title: "Find patterns",
       detail: `Start an Insights report on these ${meta.plural}.`,
       feature: CAPABILITY.INSIGHTS,
@@ -54,7 +54,7 @@ export default function EvaluateMenu({
     },
     onAddEvaluators && {
       key: "evaluators",
-      icon: "mdi:playlist-check",
+      icon: "solar:list-check-linear",
       title: "Add evaluators",
       detail: "Run saved evaluators on this view, once or continuously.",
       onClick: onAddEvaluators,
@@ -72,8 +72,8 @@ export default function EvaluateMenu({
         aria-haspopup="menu"
         aria-expanded={open ? "true" : undefined}
         aria-controls={open ? menuId : undefined}
-        startIcon={<Iconify icon="mdi:creation-outline" width={16} />}
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        startIcon={<Iconify icon="solar:magic-stick-3-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onClick={(event) => setAnchor(event.currentTarget)}
         sx={{
           ...pillSx,

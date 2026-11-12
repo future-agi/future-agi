@@ -101,11 +101,11 @@ const answeredNothing = (run) =>
   run.failed > 0 &&
   !savedAnswerCount(run.summary?.counts);
 
-// "Cancel this run? The 8 answers so far are kept; it can't be resumed."
+// "Stop this run? The 8 answers so far are kept; it can't be resumed."
 const cancelWords = (answers) =>
   answers
-    ? `Cancel this run? The ${answers.toLocaleString()} ${answers === 1 ? "answer" : "answers"} so far ${answers === 1 ? "is" : "are"} kept; it can't be resumed.`
-    : "Cancel this run? Nothing has been answered yet, and it can't be resumed.";
+    ? `Stop this run? The ${answers.toLocaleString()} ${answers === 1 ? "answer" : "answers"} so far ${answers === 1 ? "is" : "are"} kept; it can't be resumed.`
+    : "Stop this run? Nothing has been answered yet, and it can't be resumed.";
 
 // "2 of 49 sessions done with both questions": with several questions a row
 // is done once each has its answer, so the progress says so beside the
@@ -293,7 +293,7 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
           size="small"
           variant="outlined"
           disabled={busy}
-          startIcon={<Iconify icon="mdi:pause" width={16} />}
+          startIcon={<Iconify icon="solar:pause-linear" width={16} />}
           onClick={() => onControl("pause")}
         >
           Pause
@@ -305,15 +305,22 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
             size="small"
             variant="outlined"
             disabled={busy}
-            startIcon={<Iconify icon="mdi:play" width={16} />}
+            startIcon={<Iconify icon="solar:play-linear" width={16} />}
             onClick={() => onControl("resume")}
           >
             Resume
           </Button>
         )}
       {(live || PAUSED_STATES.has(run.status)) && (
-        <Button size="small" color="inherit" disabled={busy} onClick={onCancel}>
-          Cancel
+        <Button
+          size="small"
+          variant="outlined"
+          color="error"
+          disabled={busy}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
+          onClick={onCancel}
+        >
+          Stop
         </Button>
       )}
       {run.failed > 0 &&
@@ -326,7 +333,7 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
             variant="outlined"
             color="error"
             disabled={busy}
-            startIcon={<Iconify icon="mdi:refresh" width={16} />}
+            startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
             onClick={() => onControl("retry_failed")}
           >
             Retry {run.failed.toLocaleString()}{" "}
@@ -387,7 +394,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
       }}
     >
       <Iconify
-        icon="mdi:chart-bell-curve"
+        icon="solar:graph-new-linear"
         width={20}
         sx={{ color: "text.secondary", flexShrink: 0, mt: 0.25 }}
       />
@@ -435,7 +442,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
                 variant="outlined"
                 color="error"
                 disabled={busy || live}
-                startIcon={<Iconify icon="mdi:refresh" width={16} />}
+                startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
                 onClick={() => onControl("retry_failed")}
               >
                 Retry {run.failed.toLocaleString()}{" "}
@@ -520,7 +527,7 @@ function MoreMenu({ questions, onCopyLink }) {
         onClick={(event) => setAnchor(event.currentTarget)}
         sx={{ border: "1px solid", borderColor: "divider" }}
       >
-        <Iconify icon="mdi:dots-horizontal" width={18} />
+        <Iconify icon="solar:menu-dots-bold" width={18} />
       </IconButton>
       <Menu
         anchorEl={anchor}
@@ -538,7 +545,7 @@ function MoreMenu({ questions, onCopyLink }) {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:pencil-outline" width={18} />
+              <Iconify icon="solar:pen-linear" width={18} />
             </ListItemIcon>
             <ListItemText>
               Edit evaluator{editable.length > 1 ? ` ${index + 1}` : ""}
@@ -552,7 +559,7 @@ function MoreMenu({ questions, onCopyLink }) {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:link-variant" width={18} />
+            <Iconify icon="solar:link-linear" width={18} />
           </ListItemIcon>
           <ListItemText>Copy link to this run</ListItemText>
         </MenuItem>
@@ -622,7 +629,7 @@ function SelectionBar({
           size="small"
           variant="contained"
           color="primary"
-          startIcon={<Iconify icon="mdi:chart-box-outline" width={16} />}
+          startIcon={<Iconify icon="solar:chart-square-linear" width={16} />}
           endIcon={
             patternsLocked ? (
               <EnterpriseMark compact sx={{ color: "inherit" }} />
@@ -638,7 +645,7 @@ function SelectionBar({
           size="small"
           variant="outlined"
           onClick={gridLink}
-          startIcon={<Iconify icon="mdi:filter-outline" width={16} />}
+          startIcon={<Iconify icon="solar:filter-linear" width={16} />}
         >
           Show in Traces
         </Button>
@@ -1094,7 +1101,7 @@ export default function AskRunView({
             variant="body2"
             sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
           >
-            <Iconify icon="mdi:arrow-left" width={16} />
+            <Iconify icon="solar:arrow-left-linear" width={16} />
             {sourceViewTitle(unit)}
           </Link>
           <Stack
@@ -1166,7 +1173,7 @@ export default function AskRunView({
                     run.status === "done" || filterLabel ? "inherit" : "primary"
                   }
                   disabled={!canRun || rerunning || Boolean(runAgainConfirm)}
-                  startIcon={<Iconify icon="mdi:refresh" width={16} />}
+                  startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
                   onClick={() => onRunAgain()}
                 >
                   {rerunning
@@ -1325,7 +1332,7 @@ export default function AskRunView({
                   variant="outlined"
                   color="inherit"
                   disabled={acting || !canRun}
-                  startIcon={<Iconify icon="mdi:refresh" width={16} />}
+                  startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
                   onClick={() => control("retry_failed")}
                 >
                   Retry {run.failed.toLocaleString()}{" "}
@@ -1369,7 +1376,7 @@ export default function AskRunView({
                     await control("cancel");
                   }}
                 >
-                  Cancel run
+                  Stop run
                 </Button>
               </Stack>
             }

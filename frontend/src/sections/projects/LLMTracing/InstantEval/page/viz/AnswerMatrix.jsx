@@ -286,7 +286,7 @@ export default function AnswerMatrix({
                       color: theme.palette.text.primary,
                     }}
                   >
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ ...theme.typography.s1, fontWeight: 600 }}>
                       {row.answered ? formatShare(share) : "–"}
                       {stands && <span aria-hidden> ↑</span>}
                     </span>

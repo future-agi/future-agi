@@ -95,8 +95,8 @@ function withSpeakers(text, brokeAt) {
           title={broke ? "The turn where it broke" : undefined}
           sx={
             broke
-              ? { color: "status.danger.fg", fontSize: 12, fontWeight: 600 }
-              : { color: "text.disabled", fontSize: 12 }
+              ? { color: "status.danger.fg", typography: "s1", fontWeight: 600 }
+              : { color: "text.disabled", typography: "s1" }
           }
         >
           {match[2]}
@@ -155,9 +155,9 @@ function HighlightedContent({ content, evidence, brokeAt }) {
         p: 1.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.neutral",
-        fontSize: 13,
+        typography: "s1_2",
         lineHeight: 1.7,
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
@@ -218,7 +218,7 @@ function CitedImage({ runId, unitId, item }) {
             maxWidth: "100%",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1,
+            borderRadius: "8px",
             overflow: "hidden",
             bgcolor: "background.neutral",
             cursor: "zoom-in",
@@ -244,7 +244,7 @@ function CitedImage({ runId, unitId, item }) {
             border: "1px dashed",
             borderColor: "divider",
             borderRadius: 1,
-            fontSize: 12,
+            typography: "s1",
             color: "text.secondary",
           }}
         >
@@ -300,7 +300,7 @@ function CitedImage({ runId, unitId, item }) {
           {caption && (
             <Typography
               variant="body2"
-              sx={{ mt: 1, maxWidth: 640, fontSize: 13 }}
+              sx={{ mt: 1, maxWidth: 640, typography: "s1_2" }}
             >
               {caption}
             </Typography>
@@ -393,7 +393,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             Example {noun}
           </Typography>
           <IconButton aria-label="Close example" onClick={onClose} size="small">
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2 }}>
@@ -441,7 +441,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                       <React.Fragment key={category.id}>
                         {index > 0 && (
                           <Iconify
-                            icon="mdi:chevron-right"
+                            icon="solar:alt-arrow-right-linear"
                             width={14}
                             sx={{ color: "text.disabled" }}
                           />
@@ -473,10 +473,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
               </Box>
 
               {data.summary && (
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: 13, lineHeight: "21px" }}
-                >
+                <Typography variant="body2" sx={{ typography: "s1_2" }}>
                   {data.summary}
                 </Typography>
               )}
@@ -490,7 +487,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                   }}
                 >
                   <Label>Answer to the report&apos;s question</Label>
-                  <Typography variant="body2" sx={{ fontSize: 13 }}>
+                  <Typography variant="body2" sx={{ typography: "m3" }}>
                     {data.lens_answer}
                   </Typography>
                 </Box>
@@ -577,9 +574,9 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                       p: 1.5,
                       border: "1px solid",
                       borderColor: "divider",
-                      borderRadius: 1,
+                      borderRadius: "8px",
                       bgcolor: "background.neutral",
-                      fontSize: 13,
+                      typography: "s1_2",
                       lineHeight: 1.7,
                       whiteSpace: "pre-wrap",
                       overflowWrap: "anywhere",
@@ -632,7 +629,9 @@ export default function ExamplePanel({ open, unitId, onClose }) {
             <Button
               variant="contained"
               color="primary"
-              endIcon={<Iconify icon="mdi:arrow-top-right" width={16} />}
+              endIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
               onClick={() => navigate(link.href)}
             >
               {link.label}

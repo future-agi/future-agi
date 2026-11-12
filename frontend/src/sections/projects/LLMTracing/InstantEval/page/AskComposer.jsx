@@ -378,7 +378,7 @@ function ScopeCard({
     <Section variant="panel" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Iconify
-          icon="mdi:table-eye"
+          icon="solar:eye-scan-linear"
           width={20}
           sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
         />
@@ -1057,7 +1057,7 @@ export default function AskComposer({
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
             disabled={questions.length >= MAX_QUESTIONS}
             onClick={() => setQuestions((prev) => [...prev, emptyDraft()])}
           >
@@ -1141,7 +1141,7 @@ export default function AskComposer({
       {confirming && cost && (
         <Alert
           severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
+          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
           action={
             <Stack direction="row" spacing={1}>
               <Button size="small" onClick={() => setConfirming(false)}>
@@ -1169,7 +1169,7 @@ export default function AskComposer({
       {serverConfirm && (
         <Alert
           severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
+          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
           action={
             <Stack direction="row" spacing={1}>
               <Button size="small" onClick={onServerConfirmCancel}>
@@ -1225,7 +1225,7 @@ export default function AskComposer({
             starting ? (
               <CircularProgress size={16} color="inherit" />
             ) : (
-              <Iconify icon="mdi:creation-outline" width={18} />
+              <Iconify icon="solar:magic-stick-3-linear" width={18} />
             )
           }
         >
@@ -1274,7 +1274,7 @@ export default function AskComposer({
                 key={item.configId}
                 size="small"
                 variant="outlined"
-                icon={<Iconify icon="mdi:history" width={14} />}
+                icon={<Iconify icon="solar:history-linear" width={14} />}
                 label={item.question}
                 title={item.question}
                 onClick={() => {

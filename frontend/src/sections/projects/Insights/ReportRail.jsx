@@ -128,7 +128,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
         }}
         sx={{ mt: -0.5, mr: -0.75, color: "text.secondary" }}
       >
-        <Iconify icon="mdi:dots-horizontal" width={18} />
+        <Iconify icon="solar:menu-dots-bold" width={18} />
       </IconButton>
       <Menu
         anchorEl={anchor}
@@ -146,7 +146,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:play-outline" width={18} />
+            <Iconify icon="solar:play-linear" width={18} />
           </ListItemIcon>
           <ListItemText>{active ? "Running…" : "Run now"}</ListItemText>
         </MenuItem>
@@ -158,7 +158,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:pencil-outline" width={18} />
+            <Iconify icon="solar:pen-linear" width={18} />
           </ListItemIcon>
           <ListItemText>Rename</ListItemText>
         </MenuItem>
@@ -170,7 +170,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
           }}
         >
           <ListItemIcon sx={{ color: "inherit" }}>
-            <Iconify icon="mdi:trash-can-outline" width={18} />
+            <Iconify icon="solar:trash-bin-trash-linear" width={18} />
           </ListItemIcon>
           <ListItemText>Delete</ListItemText>
         </MenuItem>
@@ -278,7 +278,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
       }}
       sx={{
         position: "relative",
-        p: 1.75,
+        p: 1.5,
         pr: 1.25,
         borderRadius: "8px",
         border: "1px solid",
@@ -530,7 +530,7 @@ export default function ReportRail({
       >
         <Tooltip title="Show reports" placement="right" arrow>
           <IconButton size="small" aria-label="Show reports" onClick={onToggle}>
-            <Iconify icon="mdi:chevron-double-right" width={18} />
+            <Iconify icon="solar:double-alt-arrow-right-linear" width={18} />
           </IconButton>
         </Tooltip>
         <Tooltip title="New report" placement="right" arrow>
@@ -539,7 +539,7 @@ export default function ReportRail({
             aria-label="New report"
             onClick={() => onNew()}
           >
-            <Iconify icon="mdi:plus" width={18} />
+            <Iconify icon="solar:add-linear" width={18} />
           </IconButton>
         </Tooltip>
       </Stack>
@@ -574,7 +574,7 @@ export default function ReportRail({
             size="small"
             variant="outlined"
             color="inherit"
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
             onClick={() => onNew()}
           >
             New report
@@ -586,7 +586,7 @@ export default function ReportRail({
               onClick={onToggle}
               sx={{ color: "text.secondary" }}
             >
-              <Iconify icon="mdi:chevron-double-left" width={18} />
+              <Iconify icon="solar:double-alt-arrow-left-linear" width={18} />
             </IconButton>
           </Tooltip>
         </Stack>
