@@ -15,6 +15,7 @@ import J6RecoveryPanel from './J6RecoveryPanel';
 // Hierarchy: immutable identity first, delivery observations separate from use.
 // Palette/depth/surfaces: existing neutral theme and flat divider surfaces.
 // Typography/spacing: shared m3/s1/s3 variants and 12px control rhythm.
+const DETAIL_TABS = ['context', 'links', 'tests', 'versions', 'consumers', 'recovery', 'use'];
 function Detail() {
   const access = useSkillV11Scope();
   const { contextId } = useParams();
@@ -51,6 +52,8 @@ function Detail() {
     <ContextDetailView scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
       onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
+      // An incident link opens the context on the section it names (for example ?tab=recovery).
+      initialTab={DETAIL_TABS.includes(params.get('tab')) ? params.get('tab') : undefined}
       sections={{
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,

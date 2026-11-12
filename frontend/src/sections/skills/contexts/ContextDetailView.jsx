@@ -14,8 +14,8 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Hierarchy: selected/latest/production strip, AGENTS root, read-only provenance.
 // Palette/depth/surfaces: neutral source paper and divider, no delivery inference.
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
-function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state }) {
-  const [tab, setTab] = useState("context");
+function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onPreserveDraft, sections = {}, state, initialTab = "context" }) {
+  const [tab, setTab] = useState(initialTab);
   const [fileMode, setFileMode] = useState('source');
   const scoped = [query, versionQuery, fileQuery].every((item) => item.scopeKey === scopeKey);
   if (!scoped || query.isLoading || state === "loading") return <ContentSkeleton />;

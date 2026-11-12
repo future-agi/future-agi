@@ -20,12 +20,12 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     userGoal: 'Choose an eligible earlier release for a retained incident, roll back with protection, restore the checked-in lock, resume or reconstruct each application thread and see recovered, unknown and lost consumers stay distinct',
     steps: [
       'prepare a retained refund incident, three release identities, a retired child and a quarantined alternative through public APIs and the packaged application',
-      'open the declared context from the retained incident and review the complete closure of an eligible lower-numbered release',
-      'request a lower-number rollback, let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback from its exact review link',
+      'open the retained incident link on the recovery view, where the newest eligible release older than the failing one is preselected, and review its complete closure',
+      'request a lower-number rollback from the preselected reviewer (whoever last moved production), let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback from its exact review link',
       'issue a replacement credential and restore the lock of the last reviewed commit with one verified command without losing local work',
       'run the application through a registry outage after a persisted refund and resume the same session and checkpoint',
-      'inspect expired-credential and lost-mapping threads, close what can be closed and start reviewed clean threads without replaying the refund',
-      'recheck the original case once and inspect the declared cohort',
+      'plan every registered thread with one command, review that plan once and apply exactly it: resume the paused thread, close the expired one and start reviewed clean threads without replaying the refund',
+      'reconcile the apply output with the business ledger, recheck the original case once from the same reviewed plan and inspect the declared cohort',
     ],
     backendChecks: [
       'Postgres has exactly one lower-number label event, none for the stale ABA packet, and the approved stale request is superseded',

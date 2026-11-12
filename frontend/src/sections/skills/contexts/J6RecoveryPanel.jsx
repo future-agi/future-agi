@@ -33,6 +33,7 @@ import {
 import { IdentityValue } from "../review/ReleaseReviewBody";
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
+import { suggestRelease, suggestReviewer } from "./recoverySuggestion";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
 // choice, then recovers local locks and applications without a false
@@ -410,7 +411,7 @@ function RollbackRequest({
               value={listed ? reviewerId : ""}
               disabled={submit.isPending || Boolean(submit.data)}
               onChange={(event) => onReviewer(event.target.value)}
-              helperText="The reviewer you chose for the last request in this view stays selected."
+              helperText="Suggested: whoever last moved production. The server checks the reviewer's authority on submit."
             >
               {(reviewers.data ?? []).map((item) => (
                 <MenuItem key={item.id} value={item.id}>
@@ -600,7 +601,9 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
           model call; never replay a completed action. A thread whose mapping
           or authority is lost needs an explicitly reviewed clean thread, and
           the abandoned thread must be closed so it is not counted as
-          recovered.
+          recovered. Plan every registered thread once, review that plan, and
+          apply exactly the reviewed plan: an applied plan is refused if its
+          digest differs or any thread moved after the review.
         </Typography>
       </Stack>
     </Section>
@@ -631,13 +634,28 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     }, RECOVERY_FACTS_REFRESH_MS);
     return () => clearInterval(timer);
   }, []);
-  const [chosen, setChosen] = useState(null);
+  const [picked, setChosen] = useState(null);
   // The reviewer stays selected across a restarted review (the release moved), so a
-  // fresh packet is one acknowledgement and one submit; a sole reviewer is preselected.
+  // fresh packet is one acknowledgement and one submit. Until one is picked, the person
+  // who last moved production (or the only reviewer) is suggested.
   const reviewers = useRecoveryReviewers();
   const [reviewerId, setReviewerId] = useState("");
-  const soleReviewer = reviewers.data?.length === 1 ? reviewers.data[0].id : "";
   const data = query.data;
+  const suggestedReviewer = suggestReviewer({
+    reviewers: reviewers.data,
+    lastReleaserId: data?.lastReleaserId,
+  });
+  // The newest eligible release before the failing one is preselected, never auto-submitted.
+  const suggestion = useMemo(
+    () => (data ? suggestRelease({ candidates: data.candidates, cohort: data.cohort }) : null),
+    [data],
+  );
+  // The suggestion becomes the actual selection once, so it stays selected after production
+  // moves to it (it is then the release whose locks and applications are recovered next).
+  useEffect(() => {
+    if (suggestion && picked === null) setChosen(suggestion.candidateId);
+  }, [suggestion, picked]);
+  const chosen = picked ?? suggestion?.candidateId ?? null;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
   const closure = useRecoveryClosure(
     contextId,
@@ -665,6 +683,14 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
       <Cohort cohort={data.cohort} numbers={numbers} />
+      {suggestion && (
+        <Alert severity="info">
+          Suggested: v{suggestion.number}, the newest eligible release older than
+          the failing v{suggestion.failing}. It is preselected so its complete
+          closure is shown for review; choose another release if the incident
+          needs one.
+        </Alert>
+      )}
       <Candidates
         candidates={data.candidates}
         chosen={chosen}
@@ -689,7 +715,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           canPromote={data.canPromote}
           closureReady={Boolean(closure.data)}
           releaseRevision={data.releaseRevision}
-          reviewerId={reviewerId || soleReviewer}
+          reviewerId={reviewerId || suggestedReviewer}
           onReviewer={setReviewerId}
         />
       )}

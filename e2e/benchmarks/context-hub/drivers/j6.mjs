@@ -66,6 +66,7 @@ const FAULTS = {
   rollback: 'lower-number-rollback', aba: 'release-aba', child: 'retired-child', quarantine: 'quarantined-alternative',
   expired: 'expired-credential', lost: 'lost-mapping', outage: 'registry-outage-after-tool', unobserved: 'unobserved-consumer',
 };
+const sequenceOf = (ledger, target) => ledger.events().findLast((event) => event.type === 'start' && event.target === target).sequence;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const run = promisify(execFile);
 
@@ -238,9 +239,9 @@ export async function createDriver({ jobId, runId, registration }) {
       const contextUrl = `/dashboard/skills/contexts/${input.contextId}`;
 
       if (stage.id === 'detect-incident') {
+        // The incident link names the declared context, the failing release and the recovery view: one navigation, one screen.
         await operator.transition('recovery-cohort', () => ledger.measure({ dimension: 'A', primitive: 'click', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'open-declared-context' },
-          () => authorPage.goto(`${contextUrl}?version=3`)));
-        await operator.transition('recovery-view', () => operator.click(authorPage.getByRole('tab', { name: 'Recovery', exact: true }), 'open-recovery-view'));
+          () => authorPage.goto(`${contextUrl}?version=3&tab=recovery`)));
         const cohort = await consumers(signal);
         requireValue(cohort.A.latest_failure?.diagnostic_codes.includes('refund_window_regression'), 'The retained incident receipt is not visible');
         requireValue(cohort.U.states.length === 1 && cohort.U.states[0] === 'unknown', 'The never-observed consumer must start unknown');
@@ -268,7 +269,9 @@ export async function createDriver({ jobId, runId, registration }) {
         const retired = await call(author, 'GET', `${input.leaves[0].skillId}/`, undefined, signal);
         requireValue(retired.status === 404, 'The refund child source must be retired');
         await expect(authorPage.getByText('Source retired:', { exact: false }).first()).toBeVisible();
-        await operator.click(authorPage.getByRole('button', { name: 'Choose v1', exact: true }), 'choose-eligible-release');
+        // The view preselects the newest eligible release older than the failing one and says why; choosing another is still one click.
+        await expect(authorPage.getByText('Suggested: v1', { exact: false }).first()).toBeVisible();
+        await expect(authorPage.getByRole('button', { name: 'Choose v1', exact: true })).toBeEnabled();
         const closure = await readCompleteClosure(read, input.contextId, 1, signal);
         const production = await readCompleteClosure(read, input.contextId, 3, signal);
         const before = new Map(production.files.map((file) => [file.path, sha256(Buffer.from(file.content, 'utf8'))]));
@@ -310,10 +313,8 @@ export async function createDriver({ jobId, runId, registration }) {
           // Acknowledging the review prepares the packet; the reviewer chosen once stays selected for a restarted review.
           const reviewerBox = authorPage.getByRole('combobox', { name: 'Reviewer' });
           await expect(authorPage.getByText('Packet fingerprint', { exact: false })).toBeVisible();
-          if (cycle === 1) {
-            await operator.click(reviewerBox, `open-reviewer-list-${cycle}`);
-            await operator.click(authorPage.getByRole('option', { name: reviewerName, exact: true }), `choose-reviewer-${cycle}`);
-          } else await expect(reviewerBox).toContainText(reviewerName);
+          // The person who last moved production is the suggested reviewer; no list to open for a restarted or a first review alike.
+          await expect(reviewerBox).toContainText(reviewerName);
           await operator.click(authorPage.getByRole('button', { name: 'Submit rollback for review', exact: true }), `submit-rollback-${cycle}`);
           await expect(authorPage.getByText('Rollback request submitted.', { exact: false })).toBeVisible();
         };
@@ -477,95 +478,95 @@ export async function createDriver({ jobId, runId, registration }) {
         const t = input.threads;
         await guest.faults({ available: true, arm_after_business: false });
         const reports = input.credentials.report;
-        const inspect = async (key, target, binding, consume, thread) => {
-          const envFile = await guestEnv(consume, reports[binding].secret, binding);
-          await guestCommand(stage, ledger, 'incident-operator', target, envFile, ['python', '-m', 'ctxhub_support.lifecycle', 'inspect', '--state', `/state/${key}.sqlite`, '--thread', thread, '--output', `/state/out/${key}-inspect-${randomUUID().slice(0, 6)}.json`], [0]);
-          return envFile;
-        };
-        // The latest inspect output for a thread, read from the guest (not from the command's stdout).
-        const latest = async (key) => {
-          const names = (await run('docker', ['exec', guest.names.guest, 'sh', '-c', `ls -t /state/out/${key}-inspect-*.json | head -1`], { encoding: 'utf8' })).stdout.trim();
-          return guestJson(names);
-        };
-        const t1Env = await inspect('t1', 'inspect-paused-thread', 'A', state.appCredential, t.t1);
-        const t1Inspect = await latest('t1');
-        // The refund call is still pending in the transcript, but its business receipt is already durable.
-        requireValue(t1Inspect.resumable === true && t1Inspect.reason === 'original_identity_available' && t1Inspect.pending_tool_calls.length === 1
-          && t1Inspect.pending_tool_calls.every((id) => t1Inspect.durable_receipts.some((row) => row.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
-        // Preconditions of the decision: what each blocked thread looks like before any reconstruction.
-        const envE = await guestEnv(input.credentials.E.secret, reports.E.secret, 'E');
-        const envL = await guestEnv(input.credentials.L.secret, reports.L.secret, 'L');
-        const eSessions = await sessionRows(input.bindings.E.id);
-        const eSession = eSessions[0];
+        // The application's own thread registry: where each durable thread lives and the NAMES of the environment variables
+        // that hold its credentials (the application's configuration, not operator work; it never contains a secret).
+        const row = (key, role, binding, extra) => ({ key, thread: t[key], state: `/state/${key}.sqlite`, binding_id: input.bindings[binding].id, role, report_env: `${binding}_REPORT`, ...extra });
+        await guest.put('/state/requests/recovery-registry.json', JSON.stringify({ schema: 1, threads: [
+          row('t1', 'recover', 'A', { consume_env: 'APP_CONSUME' }),
+          row('t2', 'recover', 'E', { consume_env: 'E_CONSUME', replacement_env: 'APP_CONSUME' }),
+          row('t3', 'recover', 'L', { consume_env: 'L_CONSUME', replacement_env: 'APP_CONSUME' }),
+          row('t0', 'recheck', 'A', { replacement_env: 'APP_CONSUME' }),
+        ] }) + '\n');
+        const recoverEnv = await guest.envFile(`recover-${randomUUID().slice(0, 8)}`, { ...guestEnvironment({ consume: state.appCredential, report: reports.A.secret, bindingId: input.bindings.A.id }),
+          APP_CONSUME: state.appCredential, A_REPORT: reports.A.secret, E_REPORT: reports.E.secret, L_REPORT: reports.L.secret, E_CONSUME: input.credentials.E.secret, L_CONSUME: input.credentials.L.secret });
+        state.recoverEnv = recoverEnv;
+        // The expired credential is denied by the public access check before anything is planned (a wait, not operator work).
+        const eSession = (await sessionRows(input.bindings.E.id))[0];
         await expect.poll(async () => (await call({ ...author }, 'POST', `contexts/bindings/${input.bindings.E.id}/sessions/${eSession.id}/access-check/`, {}, signal, { Authorization: `Context ${input.credentials.E.secret}` })).status, { timeout: 330_000, intervals: [2000] }).toBeGreaterThanOrEqual(401);
         const eDenied = await call(author, 'POST', `contexts/bindings/${input.bindings.E.id}/sessions/${eSession.id}/access-check/`, {}, signal, { Authorization: `Context ${input.credentials.E.secret}` });
         requireValue([401, 403].includes(eDenied.status), 'The expired credential must be denied by the public access check');
-        await guestCommand(stage, ledger, 'incident-operator', 'inspect-expired-thread', envE, ['python', '-m', 'ctxhub_support.lifecycle', 'inspect', '--state', '/state/t2.sqlite', '--thread', t.t2, '--output', '/state/out/t2-inspect.json']);
-        const eInspect = await guestJson('/state/out/t2-inspect.json');
-        requireValue(eInspect.resumable === false && eInspect.reason === 'authority_unavailable' && eInspect.durable_receipts.length >= 1, 'The expired-credential thread must not be resumable');
-        const expiredHash = await record('expired-credential', { inspect: { reason: eInspect.reason, receipts: eInspect.durable_receipts.length, checkpoint: eInspect.checkpoint }, access_check_status: eDenied.status });
-        faultSeen(ledger, 'expired', expiredHash, { reason: eInspect.reason, status: eDenied.status });
-        await guestCommand(stage, ledger, 'incident-operator', 'inspect-lost-thread', envL, ['python', '-m', 'ctxhub_support.lifecycle', 'inspect', '--state', '/state/t3.sqlite', '--thread', t.t3, '--output', '/state/out/t3-inspect.json']);
-        const lInspect = await guestJson('/state/out/t3-inspect.json');
-        requireValue(lInspect.known === false && lInspect.resumable === false && lInspect.reason === 'thread_state_missing', 'The lost-mapping thread must not be resumable');
+        // ONE command inspects every registered thread (no session opened, no model call, no tool repeated) and writes what each needs.
+        // The operator types the reconstruction request once, the order of the thread whose mapping is lost, and the original case to recheck.
+        await guestCommand(stage, ledger, 'incident-operator', 'plan-thread-recovery', recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'plan', '--registry', '/state/requests/recovery-registry.json',
+          '--request', VERIFY_REQUEST, '--order', `t3=${input.orders.o3}`, '--recheck', `t0=${input.orders.o0}`, '--recheck-request', REFUND_REQUEST, '--output', '/state/out/recovery-plan.json']);
+        const plan = await guestJson('/state/out/recovery-plan.json');
+        const entry = Object.fromEntries(plan.entries.map((item) => [item.key, item]));
+        const t1Plan = entry.t1;
+        // The refund call is still pending in the transcript, but its business receipt is already durable.
+        requireValue(t1Plan.action === 'resume' && t1Plan.reason === 'original_identity_available' && t1Plan.pending_tool_calls.length === 1
+          && t1Plan.pending_tool_calls.every((id) => t1Plan.durable_receipts.some((item) => item.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
+        requireValue(entry.t2.action === 'close_and_reconstruct' && entry.t2.reason === 'authority_unavailable' && entry.t2.durable_receipts.length >= 1
+          && entry.t2.order_id === input.orders.o2, 'The expired-credential thread must not be resumable');
+        const expiredHash = await record('expired-credential', { inspect: { reason: entry.t2.reason, receipts: entry.t2.durable_receipts.length, checkpoint: entry.t2.checkpoint }, access_check_status: eDenied.status });
+        faultSeen(ledger, 'expired', expiredHash, { reason: entry.t2.reason, status: eDenied.status });
+        requireValue(entry.t3.action === 'reconstruct' && entry.t3.known === false && entry.t3.reason === 'thread_state_missing' && entry.t3.order_id === input.orders.o3, 'The lost-mapping thread must not be resumable');
+        requireValue(entry.t0.action === 'close_and_recheck' && entry.t0.phase === 'recheck' && entry.t0.order_id === input.orders.o0, 'The superseded incident thread must be rechecked as a clean thread');
         const businessBefore = await guest.business();
-        requireValue([input.orders.o2, input.orders.o3].every((order) => businessBefore.operations.filter((row) => row.order_id === order && row.status === 'applied').length === 1), 'The executed refunds must be visible before reconstruction');
-        const lostHash = await record('lost-mapping', { inspect: { known: lInspect.known, reason: lInspect.reason }, business_receipts_for_order: 1 });
-        faultSeen(ledger, 'lost', lostHash, { reason: lInspect.reason });
-        // The decision: resume T1 under its identity; reconstruct E and L as explicit clean threads.
-        const decision = decisionFor({ resume: [t.t1], reconstruct: [t.t2, t.t3], requests: [VERIFY_REQUEST], copied_messages: 0 },
-          { t1: [t1Inspect.checkpoint, t1Inspect.session_id], t2: eInspect.reason, t3: lInspect.reason, replay_refunds: false });
-        await operator.recoveryDecision('resume-one-reconstruct-two', async () => {}, decision);
-        await guestCommand(stage, ledger, 'incident-operator', 'resume-original-thread', t1Env, entrypoint('/state/requests/t1.json', '/state/t1.sqlite', '/state/out/t1-2.json'), [0]);
-        const resumed = await guestJson('/state/out/t1-2.json');
-        requireValue(resumed.status === 'completed' && resumed.session_id === state.threads.t1.session_id && resumed.version_id === v1.id, 'The resumed thread must keep its session and release identity');
-        state.threads.t1.completed_checkpoint = resumed.checkpoint;
-        // Close what can be closed so it is not counted as recovered.
-        await guestCommand(stage, ledger, 'incident-operator', 'close-expired-thread', envE, ['python', '-m', 'ctxhub_support.lifecycle', 'close', '--state', '/state/t2.sqlite', '--thread', t.t2, '--reason', 'credential_expired', '--output', '/state/out/t2-closed.json']);
-        // Reviewed clean threads. Reconstruction work is its own measured cost.
-        const clean = {};
-        for (const [key, binding, order, thread] of [['e', 'E', input.orders.o2, t.t2], ['l', 'L', input.orders.o3, t.t3]]) {
-          const started = performance.now();
-          const fields = { case_id: `reconstructed-${key}`, order_id: order, request: VERIFY_REQUEST };
-          // The reviewed reconstruction is typed once, as the three flags of one command.
-          await guestCommand(stage, ledger, 'incident-operator', `prepare-clean-thread-${key}`, await guestEnv(state.appCredential, reports[binding].secret, binding), ['python', '-m', 'ctxhub_support.recovery', '--case-id', fields.case_id, '--order-id', fields.order_id, '--request', fields.request, '--output', `/state/requests/clean-${key}.json`]);
-          const cleanEnv = await guestEnv(state.appCredential, reports[binding].secret, binding);
-          await guestCommand(stage, ledger, 'incident-operator', `run-clean-thread-${key}`, cleanEnv, entrypoint(`/state/requests/clean-${key}.json`, `/state/clean-${key}.sqlite`, `/state/out/clean-${key}.json`), [0]);
-          clean[key] = { output: await guestJson(`/state/out/clean-${key}.json`), request: JSON.parse(await guest.read(`/state/requests/clean-${key}.json`)), elapsed_ms: Math.round(performance.now() - started), abandoned_thread: thread };
-          requireValue(clean[key].output.status === 'completed' && clean[key].output.version_id === v1.id && clean[key].request.thread !== thread, 'The clean thread must run the recovery release as a new thread');
-        }
+        requireValue([input.orders.o2, input.orders.o3].every((order) => businessBefore.operations.filter((item) => item.order_id === order && item.status === 'applied').length === 1), 'The executed refunds must be visible before reconstruction');
+        const lostHash = await record('lost-mapping', { inspect: { known: entry.t3.known, reason: entry.t3.reason }, business_receipts_for_order: 1 });
+        faultSeen(ledger, 'lost', lostHash, { reason: entry.t3.reason });
+        // The decision covers the whole plan: resume T1 under its identity; reconstruct E and L as explicit clean threads; close and recheck the incident thread later.
+        // Every registered thread is exposed; the three that are not a plain resume are the exceptions the operator must see.
+        const decision = decisionFor({ plan: plan.plan_sha256, resume: [t.t1], reconstruct: [t.t2, t.t3], recheck: [t.t0], requests: [VERIFY_REQUEST, REFUND_REQUEST], copied_messages: 0 },
+          { t1: [t1Plan.checkpoint, t1Plan.session_id], t2: entry.t2.reason, t3: entry.t3.reason, t0: entry.t0.reason, replay_refunds: false });
+        await ledger.measure({ dimension: 'A', primitive: 'recovery_decision', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'resume-one-reconstruct-two',
+          items: plan.entries.map((item) => item.key), exceptionItems: plan.entries.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, async () => {});
+        // Apply exactly the reviewed plan: the command refuses any other digest or a thread that moved since the plan.
+        await guestCommand(stage, ledger, 'incident-operator', 'apply-thread-recovery', recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'apply', '--registry', '/state/requests/recovery-registry.json',
+          '--plan', '/state/out/recovery-plan.json', '--reviewed-plan-sha256', plan.plan_sha256, '--phase', 'threads', '--output', '/state/out/recovery-threads.json'], [0]);
+        const applied = await guestJson('/state/out/recovery-threads.json');
+        const done = Object.fromEntries(applied.threads.map((item) => [item.key, item]));
+        requireValue(applied.plan_sha256 === plan.plan_sha256 && done.t1.status === 'completed' && done.t1.session_id === state.threads.t1.session_id && done.t1.version_id === v1.id, 'The resumed thread must keep its session and release identity');
+        state.threads.t1.completed_checkpoint = done.t1.checkpoint;
+        requireValue(done.t2.closed?.closed === true && done.t2.closed.reason === 'authority_unavailable', 'The expired thread must be closed so it is not counted as recovered');
+        const clean = { e: { entry: done.t2, abandoned: t.t2 }, l: { entry: done.t3, abandoned: t.t3 } };
+        for (const value of Object.values(clean)) requireValue(value.entry.status === 'completed' && value.entry.version_id === v1.id && value.entry.clean_thread !== value.abandoned, 'The clean thread must run the recovery release as a new thread');
         const businessAfter = await guest.business();
-        requireValue(businessAfter.request_count === 3 && businessAfter.operations.length === 3, 'Clean threads must not replay a business action');
-        state.reconstruction = Object.entries(clean).map(([key, value]) => ({ thread: key, elapsed_ms: value.elapsed_ms, copied_messages: 0, additional_business_requests: businessAfter.request_count - businessBefore.request_count }));
-        state.threads.clean = Object.fromEntries(Object.entries(clean).map(([key, value]) => [key, { session_id: value.output.session_id, version_id: value.output.version_id, thread: value.request.thread }]));
-        const hash = await record('resume-and-clean-threads', { t1: state.threads.t1, clean: state.threads.clean, reconstruction: state.reconstruction });
+        requireValue(businessAfter.request_count === 3 && businessAfter.operations.length === 3 && applied.reconciliation.request_count === 3, 'Clean threads must not replay a business action');
+        state.recoverApplied = applied;
+        state.reconstruction = Object.keys(clean).map((key) => ({ thread: key, elapsed_ms: state.timings['apply-thread-recovery'], copied_messages: 0, additional_business_requests: businessAfter.request_count - businessBefore.request_count }));
+        state.threads.clean = Object.fromEntries(Object.entries(clean).map(([key, value]) => [key, { session_id: value.entry.session_id, version_id: value.entry.version_id, thread: value.entry.clean_thread }]));
+        const hash = await record('resume-and-clean-threads', { t1: state.threads.t1, clean: state.threads.clean, reconstruction: state.reconstruction, plan_sha256: plan.plan_sha256 });
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'guest', artifactHash: hash, actionSequences: [], decision });
         return;
       }
 
       if (stage.id === 'reconcile-business-action') {
-        const ledgerRead = await ledger.measure({ dimension: 'A', primitive: 'command', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'read-business-ledger' }, () => guest.business());
+        // The apply output already pairs every order's durable receipts with the business backend's own ledger; the operator reconciles that
+        // table (one reconciliation) and the driver re-derives it from the sidecar's independent ledger.
+        const ledgerRead = await guest.business();
         const rows = await operator.reconcile('durable-receipts-against-business-ledger', async () => {
           const orders = [input.orders.o1, input.orders.o2, input.orders.o3];
-          return orders.map((order) => ({ order, operations: ledgerRead.operations.filter((row) => row.order_id === order).length }));
+          const shown = new Map(state.recoverApplied.reconciliation.orders.map((item) => [item.order_id, item.operations]));
+          return orders.map((order) => ({ order, operations: ledgerRead.operations.filter((item) => item.order_id === order).length, shown: shown.get(order) ?? null }));
         });
-        requireValue(rows.every((row) => row.operations === 1) && ledgerRead.request_count === 3 && !ledgerRead.operations.some((row) => row.order_id === input.orders.o0), 'The business ledger must show one operation per executed order and none for the declined case');
+        requireValue(rows.every((item) => item.operations === 1 && item.shown === 1) && ledgerRead.request_count === 3 && !ledgerRead.operations.some((item) => item.order_id === input.orders.o0), 'The business ledger must show one operation per executed order and none for the declined case');
         const hash = await record('business-reconciliation', { orders: rows, request_count: ledgerRead.request_count });
-        ledger.stage({ step: stage.id, phase: stage.phase, source: 'guest', artifactHash: hash, actionSequences: [] });
+        // The reconciliation table is the apply command's output: the same completed command supports this stage without being counted twice.
+        ledger.stage({ step: stage.id, phase: stage.phase, source: 'guest', artifactHash: hash, actionSequences: [sequenceOf(ledger, 'apply-thread-recovery')] });
         return;
       }
 
       if (stage.id === 'verify-original-case') {
-        const reports = input.credentials.report;
-        // The abandoned incident thread is closed, never counted as recovered.
-        const oldEnv = await guestEnv(state.appCredential, reports.A.secret, 'A');
-        await guestCommand(stage, ledger, 'incident-operator', 'close-incident-thread', oldEnv, ['python', '-m', 'ctxhub_support.lifecycle', 'close', '--state', '/state/t0.sqlite', '--thread', input.threads.t0, '--reason', 'incident_superseded', '--output', '/state/out/t0-closed.json']);
-        const fields = { case_id: 'original-case-recheck', order_id: input.orders.o0, request: REFUND_REQUEST };
-        await guestCommand(stage, ledger, 'incident-operator', 'prepare-original-case-thread', oldEnv, ['python', '-m', 'ctxhub_support.recovery', '--case-id', fields.case_id, '--order-id', fields.order_id, '--request', fields.request, '--output', '/state/requests/clean-o0.json']);
-        await guestCommand(stage, ledger, 'incident-operator', 'run-original-case-thread', oldEnv, entrypoint('/state/requests/clean-o0.json', '/state/clean-o0.sqlite', '/state/out/clean-o0.json'), [0]);
-        const out = await guestJson('/state/out/clean-o0.json');
+        // The reviewed plan also covers the original case: close the superseded incident thread and rerun it once as a clean thread under the recovery release.
+        const plan = await guestJson('/state/out/recovery-plan.json');
+        await guestCommand(stage, ledger, 'incident-operator', 'apply-original-case-recheck', state.recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'apply', '--registry', '/state/requests/recovery-registry.json',
+          '--plan', '/state/out/recovery-plan.json', '--reviewed-plan-sha256', plan.plan_sha256, '--phase', 'recheck', '--output', '/state/out/recovery-recheck.json'], [0]);
+        const rechecked = await guestJson('/state/out/recovery-recheck.json');
+        const out = rechecked.threads.find((item) => item.key === 't0');
         const business = await guest.business();
         const o0 = business.operations.filter((row) => row.order_id === input.orders.o0);
+        requireValue(rechecked.plan_sha256 === plan.plan_sha256 && out?.closed?.reason === 'incident_superseded', 'The abandoned incident thread must be closed, never counted as recovered');
         requireValue(out.status === 'completed' && out.version_id === v1.id && o0.length === 1 && o0[0].status === 'applied' && o0[0].amount === 25, 'The original case must be refunded exactly once under the recovery release');
         state.original = await originalCase(signal);
         requireValue(state.original.retired_child_bytes_delivered === true, 'The retired child policy bytes were not delivered at the model boundary');
@@ -643,7 +644,7 @@ export async function createDriver({ jobId, runId, registration }) {
       }
       if (check.id === 'original-checkpoint-identity') {
         const first = await guestJson('/state/out/t1-1.json');
-        const final = await guestJson('/state/out/t1-2.json');
+        const final = state.recoverApplied.threads.find((item) => item.key === 't1').output;
         // Receipt persisted, then no model request until the resume: the checkpoint did not advance across the outage.
         const receiptIndex = first.events.findIndex((event) => event.kind === 'tool_result');
         const modelAfterReceiptBefore = first.events.slice(receiptIndex + 1).some((event) => event.kind === 'model_request');
@@ -694,7 +695,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await writeFile(resolve(output, 'costs.json'), JSON.stringify({ evidence_class: GUEST_EVIDENCE_CLASS,
           live_authorization_latency_ms: { calls: authz.length, mean: authz.length ? Math.round(authz.reduce((sum, row) => sum + row.elapsed_ns, 0) / authz.length / 1e6) : null,
             max: authz.length ? Math.round(Math.max(...authz.map((row) => row.elapsed_ns)) / 1e6) : null, host_lock_restore_ms: { restore: state.timings['restore-locked'] } },
-          cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, operator_fields_per_thread: 3 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
+          cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, operator_fields_typed: { reconstruction_request: 1, lost_mapping_order: 1, original_case_order: 1, original_case_request: 1 }, previously_typed_fields: 9 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
       } catch { /* evidence writing never masks teardown */ }
       await Promise.all(browsers.map(async ({ ctx, browser }) => { await ctx.close().catch(() => {}); await browser.close().catch(() => {}); }));
       if (pgReady) await db.end().catch(() => {});

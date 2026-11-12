@@ -108,3 +108,40 @@ it("submits to the only reviewer and offers the exact request link afterwards", 
     `${window.location.origin}/dashboard/skills/contexts/ctx/review?request=req-1`,
   );
 });
+
+const failedCohort = [
+  {
+    binding: { id: "b1", name: "App", kind: "runtime", selector: { label: "production" } },
+    loaded: null,
+    latestFailure: { versionId: "v3-id", diagnosticCodes: ["refund_window_regression"], traceRef: null },
+    states: ["unknown"],
+  },
+];
+const suggestedCandidates = [
+  { ...rollbackCandidate, id: "v3-id", number: 3, isProduction: true, eligible: false, reasons: ["current_production"] },
+  { ...rollbackCandidate, id: "v2-id", number: 2, eligible: false, selectable: false, reasons: ["quarantined"] },
+  rollbackCandidate,
+];
+
+it("preselects the newest eligible release before the failing one and shows its closure for review without a choice click", () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText(/Suggested: v1, the newest eligible release older than the failing v3/)).toBeVisible();
+  // The review and its acknowledgement are still required before anything is prepared.
+  expect(screen.getByText("Request rollback to v1")).toBeVisible();
+  expect(previewMutate).not.toHaveBeenCalled();
+  expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
+  // The quarantined alternative is still refused, and another release can still be chosen.
+  expect(screen.getByRole("button", { name: "Choose v2" })).toBeDisabled();
+});
+
+it("preselects whoever last moved production as the reviewer", () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, lastReleaserId: "u3", candidates: suggestedCandidates };
+  reviewers = [{ id: "u2", name: "Alice" }, { id: "u3", name: "Releaser" }];
+  previewState = { data: { fingerprint: "fp", packet: { p: 1 } } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ }));
+  expect(screen.getByRole("combobox", { name: "Reviewer" })).toHaveTextContent("Releaser");
+  fireEvent.click(screen.getByRole("button", { name: "Submit rollback for review" }));
+  expect(submitMutate).toHaveBeenCalledWith(expect.objectContaining({ reviewerId: "u3" }));
+});

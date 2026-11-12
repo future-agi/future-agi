@@ -89,6 +89,8 @@ export async function loadRecovery(contextId, config) {
     canPromote: state.permissions.can_promote === true,
     canIssueCredentials: state.permissions.can_issue_credentials === true,
     productionVersionId: production?.version_id ?? null,
+    // Who last moved production: the natural first reviewer for a rollback request.
+    lastReleaserId: production?.updated_by?.id ?? null,
     candidates: deriveCandidates({ versions, productionVersionId: production?.version_id ?? null, rows }),
     asOf: consumerPage.as_of,
     cohort: consumerPage.results.map((row) => ({
@@ -104,9 +106,12 @@ export function useContextRecovery(contextId) {
 }
 
 export function useRecoveryReviewers() {
-  return useSkillV11Query({ parts: ['j6-recovery-reviewers'], load: async (config) => {
+  const access = useSkillV11Scope();
+  const self = access.scope.userId;
+  return useSkillV11Query({ parts: ['j6-recovery-reviewers', self], load: async (config) => {
     const value = (await axios.get(paths.members(), { ...config, params: { page: 1, limit: 100 } })).data?.result ?? {};
-    return (value.results ?? []).filter((row) => row.type !== 'invite' && row.status !== 'Pending' && row.id)
+    // A request cannot be addressed to its own author: the server refuses it, so it is never offered.
+    return (value.results ?? []).filter((row) => row.type !== 'invite' && row.status !== 'Pending' && row.id && row.id !== self)
       .map((row) => ({ id: row.id, name: row.name || row.email, email: row.email }));
   } });
 }
