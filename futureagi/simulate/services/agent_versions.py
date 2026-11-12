@@ -34,6 +34,7 @@ from simulate.services.harness_agent_versions import (
     promote_to_production,
     record_hand_move,
     retry_preflight,
+    stamp_requested_at,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -710,6 +711,8 @@ def set_environment_policy(
         payload["metadata"] = {**(payload.get("metadata") or {}), POLICY_KEY: policy}
         locked.payload = payload
         locked.save(update_fields=["payload", "updated_at"])
+        if policy == POLICY_FOLLOW and target is not None:
+            stamp_requested_at(target.id, locked.id)
         if target is not None and locked.agent_version_id != target.id:
             if not agent_version_pickable(locked, target.id):
                 raise HostedHarnessError(

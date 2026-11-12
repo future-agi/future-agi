@@ -2362,27 +2362,42 @@ def _activate_production(
     return _activate(version, following)
 
 
-def _request_for(version_id: Any, environment_ids: list[str]) -> None:
-    """Add environments to the ones waiting for this version, keeping earlier ones."""
+def _note_request(
+    version_id: Any, environment_ids: list[str], *, waiting: bool
+) -> None:
     asked_at = timezone.now().isoformat()
     with transaction.atomic():
         runtime = _side_row(version_id, lock=True)
         if runtime is None:
             return
         stored = runtime.agent_payload or {}
-        runtime.agent_payload = {
+        payload = {
             **stored,
-            "requested_by_environments": list(
-                dict.fromkeys(
-                    [*(stored.get("requested_by_environments") or []), *environment_ids]
-                )
-            ),
             "requested_at": {
                 **(stored.get("requested_at") or {}),
                 **dict.fromkeys(environment_ids, asked_at),
             },
         }
+        if waiting:
+            payload["requested_by_environments"] = list(
+                dict.fromkeys(
+                    [*(stored.get("requested_by_environments") or []), *environment_ids]
+                )
+            )
+        runtime.agent_payload = payload
         runtime.save(update_fields=["agent_payload", "updated_at"])
+
+
+def _request_for(version_id: Any, environment_ids: list[str]) -> None:
+    """Add environments to the ones waiting for this version, keeping earlier ones."""
+    _note_request(version_id, environment_ids, waiting=True)
+
+
+def stamp_requested_at(version_id: Any, environment_id: Any) -> None:
+    """Record that the environment asked for this version now, with nothing to wait
+    for: a follow set by hand stands as the environment's own request, so a later
+    return to an earlier production is not read as superseded by it."""
+    _note_request(version_id, [str(environment_id)], waiting=False)
 
 
 def promote_to_production(version: AgentVersion) -> list[Any]:

@@ -589,3 +589,47 @@ def test_production_adds_followers_to_the_environments_already_waiting(agent):
     payload = _runtime(second).agent_payload
     assert payload["requested_by_environments"] == [waiting, str(following.id)]
     assert set(payload["requested_at"]) == {waiting, str(following.id)}
+
+
+def test_a_follow_set_by_hand_can_return_to_an_earlier_production(agent, user):
+    from simulate.services.agent_versions import set_environment_policy
+
+    nudge = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    first = _passed(agent)
+    pinned = _pinned(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+    second = _compatible_draft(agent, first)
+    with patch(nudge):
+        set_production(second)
+    pinned.refresh_from_db()
+    assert pinned.agent_version_id == first.id
+
+    with patch(nudge):
+        following = set_environment_policy(pinned, policy=POLICY_FOLLOW, user=user)
+    assert following.agent_version_id == second.id
+
+    with patch(nudge):
+        moved = set_production(first)
+
+    following.refresh_from_db()
+    assert following.agent_version_id == first.id
+    assert [str(one) for one in moved] == [str(following.id)]
+    report = _runtime(first).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(following.id): "activated"
+    }
+
+
+def test_switching_to_follow_while_on_production_records_the_request(agent, user):
+    from simulate.services.agent_versions import set_environment_policy
+
+    first = _passed(agent)
+    pinned = _pinned(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+
+    following = set_environment_policy(pinned, policy=POLICY_FOLLOW, user=user)
+
+    assert following.agent_version_id == first.id
+    assert str(following.id) in _runtime(first).agent_payload["requested_at"]
