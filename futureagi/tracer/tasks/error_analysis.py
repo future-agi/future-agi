@@ -504,8 +504,10 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         all_events = []
         collected_tool_calls = []
         text_deltas = []
+        agent_error = None
 
         async def logging_callback(event):
+            nonlocal agent_error
             etype = event.get("type", "")
             all_events.append({"type": etype})
 
@@ -534,6 +536,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             elif etype == "text_delta":
                 text_deltas.append(event["data"].get("delta", ""))
             elif etype == "error":
+                agent_error = event["data"].get("message") or "Falcon agent failed"
                 logger.error(
                     f"Falcon agent error for trace {trace_id}: {event['data']}"
                 )
@@ -557,6 +560,11 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         finally:
             loop.close()
 
+        # AgentLoop reports terminal streaming failures through the callback
+        # rather than raising. Do not turn those failures into clean analyses.
+        if agent_error is not None:
+            raise RuntimeError(agent_error)
+
         elapsed = _time.time() - start_time
 
         # Log what happened in the agent loop
@@ -573,7 +581,9 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
 
         analysis = (
-            TraceErrorAnalysis.objects.filter(trace_id=trace_id)
+            TraceErrorAnalysis.objects.filter(
+                trace_id=trace_id, project=project, project__organization=org
+            )
             .order_by("-analysis_date")
             .first()
         )
