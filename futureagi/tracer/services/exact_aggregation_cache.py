@@ -58,7 +58,6 @@ _DEFAULT_REFRESH_RECONCILE_SECONDS = 5
 _DEFAULT_REFRESH_STATUS_TIMEOUT_SECONDS = 0.5
 _DEFAULT_REFRESH_FAILURE_SECONDS = 5 * 60
 _CACHE_FENCE_FALLBACK_LOCK = RLock()
-_ALLOWED_EXACT_AGGREGATION_TASK_QUEUES = frozenset({"tasks_xl", "exact_aggregation"})
 _DEFAULT_MAX_INFLIGHT_PER_SCOPE = 2
 # Open-window revalidation (``read_or_schedule_exact_snapshot``) applies only to
 # the Observe charts that read the hour-stable toolbar window: the three
@@ -849,19 +848,9 @@ def _refresh_status_timeout_seconds() -> float:
 
 
 def _configured_exact_aggregation_task_queue() -> str | None:
-    """Return an explicitly supported queue, or fail closed on configuration drift."""
+    from tfc.temporal.queues import configured_exact_aggregation_task_queue
 
-    task_queue = str(
-        getattr(settings, "EXACT_AGGREGATION_TASK_QUEUE", "tasks_xl")
-    ).strip()
-    if task_queue in _ALLOWED_EXACT_AGGREGATION_TASK_QUEUES:
-        return task_queue
-    logger.error(
-        "exact_aggregation_task_queue_invalid",
-        configured_queue=task_queue,
-        allowed_queues=sorted(_ALLOWED_EXACT_AGGREGATION_TASK_QUEUES),
-    )
-    return None
+    return configured_exact_aggregation_task_queue()
 
 
 def _decorate(snapshot: ExactAggregationSnapshot) -> Any:
