@@ -979,6 +979,12 @@ class EvidenceTests(unittest.TestCase):
             plan("futureagi/tests/test_guide.py"),
             ["backend-ci.yml", "e2e-ci.yml", "sdk-compatibility.yml", "standalone-ci.yml", "update-ci.yml"],
         )
+        # An e2e flow spec also starts the harness self-tests; a doc does not.
+        self.assertEqual(
+            plan("e2e/flows/datasets/create.spec.ts"),
+            ["backend-ci.yml", "e2e-ci.yml", "e2e-harness-selftest.yml", "sdk-compatibility.yml"],
+        )
+        self.assertNotIn("e2e-harness-selftest.yml", plan("docs/e2e/guide.md"))
 
     @staticmethod
     def repository_workflows():

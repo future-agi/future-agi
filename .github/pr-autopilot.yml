@@ -71,6 +71,11 @@
   "post_merge_workflows": [
     {"workflow": "backend-ci.yml", "inputs": {}, "paths": ["**"]},
     {"workflow": "e2e-ci.yml", "inputs": {"stack": "distributed"}, "paths": ["**"]},
+    {"workflow": "e2e-harness-selftest.yml", "inputs": {}, "paths": [
+      "e2e/**", "bin/e2e", ".github/workflows/e2e-ci.yml",
+      ".github/workflows/e2e-harness-selftest.yml", ".github/PULL_REQUEST_TEMPLATE.md",
+      "api_contracts/host-update/**"
+    ]},
     {"workflow": "frontend-develop.yml", "inputs": {}, "paths": ["frontend/**"]},
     {"workflow": "frontend-dev-cdn.yaml", "inputs": {"branch": "dev", "repair_spa_routes": "false"}, "paths": ["frontend/**"], "respect_dev_cdn_switch": true},
     {"workflow": "sdk-compatibility.yml", "inputs": {}, "paths": ["**"]},
@@ -103,5 +108,5 @@
       "futureagi/tracer/services/clickhouse/v2/observed_catalog/**", ".gitattributes"
     ]}
   ],
-  "_post_merge_reason": "GITHUB_TOKEN merges suppress push workflows. Every dev push workflow that supports workflow_dispatch and whose push filter can match a LOW path is dispatched on dev after a merge, with that filter's paths: Backend CI, advisory distributed E2E, SDK Compatibility, Standalone install CI, Update CI, and the frontend checks and dev CDN for frontend changes. A dispatch of Standalone install CI or Update CI also runs upgrade jobs that a push skips. AgentCC Gateway CI, API Contracts, Collector and compose CI, Helm chart CI, Images CI and Update PostgreSQL probe are not dispatched: their push filters match no LOW path, so a person's merge of the same files would not start them either (a test checks both lists against the workflow files). That test runs on every PR into dev that changes a workflow file or an autopilot file, so a PR that changes a dev push filter or adds a dev push workflow may need an entry here. Respect DEV_CDN_AUTO_DEPLOY=false before dispatching CDN, because that workflow's manual entry bypasses its push switch. The controller never deletes the head branch; this repository's delete_branch_on_merge setting does, after the merge."
+  "_post_merge_reason": "GITHUB_TOKEN merges suppress push workflows. Every dev push workflow that supports workflow_dispatch and whose push filter can match a LOW path is dispatched on dev after a merge, with that filter's paths: Backend CI, advisory distributed E2E, E2E Harness Self-tests for e2e flow specs, SDK Compatibility, Standalone install CI, Update CI, and the frontend checks and dev CDN for frontend changes. A dispatch of Standalone install CI or Update CI also runs upgrade jobs that a push skips. AgentCC Gateway CI, API Contracts, Collector and compose CI, Helm chart CI, Images CI and Update PostgreSQL probe are not dispatched: their push filters match no LOW path, so a person's merge of the same files would not start them either (a test checks both lists against the workflow files). That test runs on every PR into dev that changes a workflow file or an autopilot file, so a PR that changes a dev push filter or adds a dev push workflow may need an entry here. Respect DEV_CDN_AUTO_DEPLOY=false before dispatching CDN, because that workflow's manual entry bypasses its push switch. The controller never deletes the head branch; this repository's delete_branch_on_merge setting does, after the merge."
 }
