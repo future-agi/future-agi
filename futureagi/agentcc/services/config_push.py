@@ -13,6 +13,7 @@ from agentcc.contracts.gateway_admin import (
     AlertChannelConfig as GatewayAlertChannelConfig,
 )
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import GuardrailConfig as GatewayGuardrailConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
 from agentcc.models import AgentccOrgConfig
@@ -116,7 +117,7 @@ def _normalize_eval_ids(cfg):
         raw = [cfg.get("eval_id")]
     if raw is None:
         return
-    if not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, list | tuple):
         raw = [raw]
     eval_ids = [str(i) for i in raw if i not in (None, "")]
     if eval_ids:
@@ -191,6 +192,67 @@ def _inject_guardrail_credentials(checks, org_id):
                     del cfg[key]
 
 
+def _guardrail_config(check):
+    """Only objects can be inspected by the credential extraction boundary."""
+    config = check.get("config", {})
+    if not isinstance(config, dict):
+        raise OrgConfigRejected(
+            "The gateway cannot accept this config. "
+            "Guardrail check config must be a JSON object."
+        )
+    return config
+
+
+def validate_guardrail_representations(guardrails):
+    """Validate retained input, including collections not selected for projection."""
+    allowed = _contract_input_names(GatewayGuardrailConfig) | {
+        "rules",
+        "enabled",
+        "_meta",
+    }
+    if (
+        not isinstance(guardrails, dict)
+        or set(guardrails) - allowed
+        or ("_meta" in guardrails and not isinstance(guardrails["_meta"], str))
+    ):
+        raise OrgConfigRejected(
+            "The gateway cannot accept this config. Unsupported guardrail fields."
+        )
+    for field in ("checks", "rules"):
+        if field not in guardrails:
+            continue
+        collection = guardrails[field]
+        if collection is None:
+            # A null collection has no retained checks; a null check config is
+            # different and is always rejected by _guardrail_config below.
+            continue
+        if field == "checks" and isinstance(collection, dict):
+            items = collection.items()
+        elif isinstance(collection, list):
+            items = (
+                (check.get("name") if isinstance(check, dict) else None, check)
+                for check in collection
+            )
+        else:
+            raise OrgConfigRejected(
+                "The gateway cannot accept this config. Invalid guardrail collection."
+            )
+        for name, check in items:
+            if (
+                field == "checks"
+                and isinstance(collection, dict)
+                and not isinstance(check, dict)
+            ):
+                # This nonempty map is always selected, and the projection keeps
+                # malformed values visible for the gateway contract to reject.
+                continue
+            if not isinstance(check, dict) or not isinstance(name, str) or not name:
+                raise OrgConfigRejected(
+                    "The gateway cannot accept this config. Guardrail checks must be named objects."
+                )
+            _guardrail_config(check)
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -207,6 +269,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
+    validate_guardrail_representations(guardrails_data)
     guardrails_data = copy.deepcopy(guardrails_data)
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
@@ -220,7 +283,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         for rule in raw_checks:
             rule_name = rule.get("name", "")
             registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-            cfg = dict(rule.get("config") or {})
+            cfg = _guardrail_config(rule)
             if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
                 cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
             _normalize_eval_ids(cfg)
@@ -243,26 +306,53 @@ def _transform_guardrails(guardrails_data, org_id=None):
             result["timeout_ms"] = guardrails_data["timeout_ms"]
         return result
 
-    # Checks as dict (from frontend saves via OrgConfig)
-    if isinstance(raw_checks, dict) and raw_checks:
+    # Empty checks can coexist with active legacy rules (toggle-guardrail).
+    if isinstance(raw_checks, dict) and (raw_checks or not rules):
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
         _inject_guardrail_credentials(raw_checks, org_id)
 
-        mapped = {}
-        for name, cfg in raw_checks.items():
+        checks = {}
+        for name, check_data in raw_checks.items():
             registry_name = _RULE_TO_REGISTRY.get(name, name)
-            # Strip internal metadata keys before forwarding to gateway
-            clean_cfg = (
-                {k: v for k, v in cfg.items() if not k.startswith("_")}
-                if isinstance(cfg, dict)
-                else cfg
+            if not isinstance(check_data, dict):
+                # Keep malformed checks visible to contract validation.
+                checks[registry_name] = check_data
+                continue
+            cfg = _guardrail_config(check_data)
+            provider = (
+                check_data.get("provider")
+                or _RULE_PROVIDER_DEFAULTS.get(name)
+                or _RULE_PROVIDER_DEFAULTS.get(registry_name)
             )
-            inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
-            _normalize_eval_ids(inner)
-            mapped[registry_name] = clean_cfg
-        if org_id:
-            _inject_fi_credentials(mapped, org_id)
-        return {**guardrails_data, "checks": mapped}
+            if provider and "provider" not in cfg:
+                cfg["provider"] = provider
+            _normalize_eval_ids(cfg)
+            # Dict checks already use the gateway contract: missing options must
+            # retain Go zero values rather than acquiring legacy-list defaults.
+            projected = {"config": cfg}
+            for field in ("enabled", "action"):
+                if field in check_data:
+                    projected[field] = check_data[field]
+            for field in ("confidence_threshold", "confidenceThreshold", "threshold"):
+                if field in check_data:
+                    projected["confidence_threshold"] = check_data[field]
+                    break
+            checks[registry_name] = projected
+        if org_id and isinstance(checks.get("futureagi-eval"), dict):
+            _inject_fi_credentials(checks, org_id)
+        result = {
+            "checks": checks,
+            "fail_open": guardrails_data.get(
+                "fail_open", guardrails_data.get("failOpen", False)
+            ),
+            "pipeline_mode": guardrails_data.get(
+                "pipeline_mode", guardrails_data.get("pipelineMode", "parallel")
+            ),
+        }
+        timeout_ms = guardrails_data.get("timeout_ms", guardrails_data.get("timeoutMs"))
+        if timeout_ms is not None:
+            result["timeout_ms"] = timeout_ms
+        return result
 
     # Convert rules array → checks map
     if not isinstance(rules, list) or not rules:
@@ -275,7 +365,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     for rule in rules:
         rule_name = rule.get("name", "")
         registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-        cfg = dict(rule.get("config") or {})
+        cfg = _guardrail_config(rule)
         if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
             cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
         _normalize_eval_ids(cfg)
@@ -332,7 +422,7 @@ def _inject_fi_credentials(checks, org_id):
     if not fi_check.get("enabled", False):
         return
 
-    cfg = fi_check.get("config") or {}
+    cfg = _guardrail_config(fi_check)
 
     cfg.setdefault("call_type", "protect")
     cfg.setdefault("base_url", django_settings.BASE_URL)

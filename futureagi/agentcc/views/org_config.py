@@ -17,7 +17,11 @@ from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
-from agentcc.services.config_push import validate_org_config
+from agentcc.services.config_push import (
+    _inject_guardrail_credentials,
+    validate_guardrail_representations,
+    validate_org_config,
+)
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -74,58 +78,70 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 check_ee_feature(EEFeature.DATA_MASKING, org_id=str(org.id))
 
-            # Route guardrail credentials through AgentccGuardrailPolicy for encryption
-            guardrails = data.get("guardrails", {})
-            raw_checks = guardrails.get("checks")
-            raw_rules = guardrails.get("rules")
-
-            # Determine the checks list — frontend may send as dict or rules array
-            checks_list = None
-            source_format = None
-            if raw_checks and isinstance(raw_checks, dict):
-                source_format = "checks_dict"
-                checks_list = [
-                    {"name": name, **copy.deepcopy(cd)}
-                    for name, cd in raw_checks.items()
-                ]
-            elif raw_rules and isinstance(raw_rules, list):
-                source_format = "rules_list"
-                checks_list = copy.deepcopy(raw_rules)
+            # Validate every retained representation before selecting or extracting
+            # any of them. A checks map must not hide a legacy rules sibling.
+            guardrails = copy.deepcopy(data.get("guardrails", {}))
+            validate_guardrail_representations(guardrails)
+            selected = "checks" if guardrails.get("checks") else "rules"
 
             with transaction.atomic():
-                if checks_list:
-                    # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                # Resolve both collections before updating either policy, since
+                # both may refer to the same previous version's encrypted values.
+                for field in ("checks", "rules"):
+                    if guardrails.get(field):
+                        _inject_guardrail_credentials(guardrails[field], str(org.id))
+                for field in ("checks", "rules"):
+                    collection = guardrails.get(field)
+                    if not collection:
+                        continue
+                    checks_list = (
+                        [{**check, "name": name} for name, check in collection.items()]
+                        if isinstance(collection, dict)
+                        else collection
+                    )
+                    # Retained siblings need independent encrypted storage: the
+                    # same check name may have different credentials in each.
+                    # Only the selected representation participates in policy sync.
+                    is_selected = field == selected
+                    policy_name = (
+                        "__ui_guardrails__"
+                        if is_selected
+                        else f"__ui_guardrails_{field}__"
+                    )
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name=policy_name,
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": is_selected,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
-                        policy, data={"checks": checks_list}, partial=True
+                        policy,
+                        data={"checks": checks_list, "is_active": is_selected},
+                        partial=True,
                     )
                     policy_serializer.is_valid(raise_exception=True)
                     policy_serializer.save()
-                    policy_id = str(policy.id)
-
-                    if source_format == "checks_dict":
-                        sanitized = {}
-                        for check in policy.checks:
-                            check_copy = dict(check)
-                            name = check_copy.pop("name", None)
-                            if name:
-                                sanitized[name] = {**check_copy, "_policy": policy_id}
-                        data["guardrails"] = {**guardrails, "checks": sanitized}
+                    sanitized = [
+                        {**check, "_policy": str(policy.id)} for check in policy.checks
+                    ]
+                    if isinstance(collection, dict):
+                        guardrails[field] = {
+                            check["name"]: {
+                                key: value
+                                for key, value in check.items()
+                                if key != "name"
+                            }
+                            for check in sanitized
+                        }
                     else:
-                        # rules list — inject _policy metadata into each rule
-                        sanitized_rules = []
-                        for check in policy.checks:
-                            sanitized_rules.append({**check, "_policy": policy_id})
-                        data["guardrails"] = {**guardrails, "rules": sanitized_rules}
+                        guardrails[field] = sanitized
+                data["guardrails"] = guardrails
 
                 # Lock active config to prevent concurrent version creation
                 AgentccOrgConfig.no_workspace_objects.select_for_update().filter(

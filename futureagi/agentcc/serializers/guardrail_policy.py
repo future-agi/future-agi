@@ -3,8 +3,8 @@ import copy
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -89,9 +89,13 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must be a JSON object"
                 )
-            if "name" not in check:
+            if not isinstance(check.get("name"), str) or not check["name"]:
                 raise serializers.ValidationError(
-                    f"Check at index {i} must have a 'name' field"
+                    f"Check at index {i} must have a non-empty 'name' field"
+                )
+            if not isinstance(check.get("config", {}), dict):
+                raise serializers.ValidationError(
+                    f"Check at index {i} config must be a JSON object"
                 )
         return value
 
