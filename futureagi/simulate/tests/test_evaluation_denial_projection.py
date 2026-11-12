@@ -8,19 +8,19 @@ pytestmark = pytest.mark.django_db
 @pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
 @pytest.mark.parametrize("projection", ["get_eval_outputs", "get_eval_metrics"])
 def test_persisted_denial_is_visible_error(organization, workspace, code, projection):
-    from model_hub.models.evals_metric import EvalTemplate
-    from simulate.models import (
-        SimulateEvalConfig,
-        RunTest,
-        TestExecution,
-        CallExecution,
-        Scenarios,
-    )
-    from simulate.services.evaluation_denials import record_evaluation_denial
-    from simulate.serializers.test_execution import CallExecutionDetailSerializer
-    from tfc.utils.evaluation_denials import EvaluationRateLimited
     from ee.usage.exceptions import UsageLimitExceeded
     from ee.usage.schemas.events import CheckResult
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import (
+        CallExecution,
+        RunTest,
+        Scenarios,
+        SimulateEvalConfig,
+        TestExecution,
+    )
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+    from simulate.services.evaluation_denials import record_evaluation_denial
+    from tfc.utils.evaluation_denials import EvaluationRateLimited
 
     template = EvalTemplate.no_workspace_objects.create(
         name="Synthetic denominator",

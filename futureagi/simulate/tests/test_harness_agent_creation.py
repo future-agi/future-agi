@@ -377,6 +377,25 @@ class TestSharedProviderAgent:
         chat = AgentDefinition.no_workspace_objects.get(id=definitions[2])
         assert (chat.provider, chat.agent_type) == ("retell", "text")
 
+    def test_an_agent_outside_the_ambient_workspace_saves_its_assistant(
+        self, client, user, workspace, gates
+    ):
+        """The request's thread-local scope is the user's default workspace; the
+        environment, its agent and the version's provider row belong to another."""
+        other_workspace = Workspace.objects.create(
+            name="Other", organization=user.organization, created_by=user
+        )
+
+        job = _job(_post(client, other_workspace, _vapi(assistant="asst-other")))
+
+        version = AgentVersion.no_workspace_objects.get(id=job.agent_version_id)
+        assert job.workspace_id == other_workspace.id
+        assert version.workspace_id == other_workspace.id
+        row = ProviderCredentials.no_workspace_objects.get(agent_version=version)
+        assert row.assistant_id == "asst-other"
+        assert row.get_api_key() == "val-vapi-1"
+        assert version.configuration_snapshot["assistant_id"] == "asst-other"
+
 
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_creates_on_one_assistant_make_one_agent(user, workspace):

@@ -9,6 +9,7 @@ Tests cover:
 
 import pytest
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.agent_definition import (
@@ -18,6 +19,7 @@ from simulate.services.agent_definition import (
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from tfc.middleware.workspace_context import set_workspace_context
 
 
 @pytest.fixture
@@ -379,6 +381,65 @@ def test_sync_snapshot_failure_rolls_back_credentials(agent_version, assistant):
     assert credentials.api_key == original_key
     assert credentials.assistant_id == "assistant-A"
     assert agent_version.configuration_snapshot == original_snapshot
+
+
+@pytest.mark.parametrize("ambient", ["default", "unrelated"])
+def test_sync_locks_the_given_version_whatever_the_ambient_workspace(
+    organization, workspace, user, ambient
+):
+    """The caller already resolved this version; the lock re-reads it by key only.
+
+    Harness creation writes an agent in the job's workspace while the
+    thread-local scope can name another one (here the user's default, as the
+    ``user`` fixture binds, or an unrelated workspace).
+    """
+    target = Workspace.objects.create(
+        name="Target", organization=organization, created_by=user
+    )
+    definition = AgentDefinition.no_workspace_objects.create(
+        agent_name="Other workspace agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12345678902",
+        inbound=True,
+        description="Agent outside the ambient workspace",
+        provider="vapi",
+        organization=organization,
+        workspace=target,
+        languages=["en"],
+    )
+    version = definition.create_version(
+        description="Initial version",
+        commit_message="First version",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    assert version.workspace_id == target.id
+    if ambient == "unrelated":
+        set_workspace_context(
+            workspace=Workspace.objects.create(
+                name="Unrelated", organization=organization, created_by=user
+            ),
+            organization=organization,
+            user=user,
+        )
+    # Precondition: the ambient scope hides the version from the scoped manager.
+    assert not AgentVersion.objects.filter(pk=version.pk).exists()
+
+    sync_provider_credentials(
+        version,
+        ProviderCredentialsInput(
+            provider="vapi",
+            api_key="synthetic-key-B",
+            assistant_id="assistant-B",
+            provider_was_provided=True,
+        ),
+    )
+
+    credentials = ProviderCredentials.no_workspace_objects.get(agent_version=version)
+    stored = AgentVersion.no_workspace_objects.get(pk=version.pk)
+    assert credentials.get_api_key() == "synthetic-key-B"
+    assert credentials.assistant_id == "assistant-B"
+    assert stored.configuration_snapshot["assistant_id"] == "assistant-B"
+    assert version.configuration_snapshot["assistant_id"] == "assistant-B"
 
 
 # ============================================================================

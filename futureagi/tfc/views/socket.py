@@ -53,7 +53,7 @@ class CallWebsocketView(APIView):
                 group, {"type": "send_data", "data": message}
             )
             return self._gm.success_response("Message sent to websocket")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - relay boundary; logs a sanitized traceback
             logger.error(
                 "websocket_relay_delivery_failed",
                 error_type=type(exc).__name__,

@@ -19,7 +19,6 @@ from temporalio.common import RetryPolicy
 
 # Import types safely (no Django)
 with workflow.unsafe.imports_passed_through():
-    from tfc.temporal.common.evaluation_denials import evaluation_denial_message
     from tfc.temporal.agent_prompt_optimiser.types import (
         EvaluateTrialWorkflowInput,
         EvaluateTrialWorkflowOutput,
@@ -27,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         RunAgentPromptOptimiserWorkflowOutput,
         ScenarioResult,
     )
+    from tfc.temporal.common.evaluation_denials import evaluation_denial_message
 
 
 ACTIVITY_RETRY = RetryPolicy(
