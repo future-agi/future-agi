@@ -5153,8 +5153,13 @@ def _provider_import_authoring_material(
     return ({secret_name: value} if value else {}), connector
 
 
-# Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
-_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+# Builder-chat state the server keeps on the job; ALK rejects its basis ``token``, and
+# the turns it metered are the platform's record, not the guest's input.
+_SERVER_ONLY_METADATA = (
+    "conversation_checkpoints",
+    "draft_saves",
+    "builder_turn_usage",
+)
 
 
 def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
