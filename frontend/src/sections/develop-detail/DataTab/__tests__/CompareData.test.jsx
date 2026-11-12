@@ -130,6 +130,31 @@ const renderCompare = (overrides = {}) => {
   render(<CompareData {...props} />);
   return props;
 };
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+const withCompareId = (compareId, page = 0) => {
+  const body = response(page);
+  body.data.result.metadata.compare_id = compareId;
+  return body;
+};
+const startPage = (startRow = 0) => {
+  const handlers = { success: vi.fn(), fail: vi.fn() };
+  let pending;
+  act(() => {
+    pending = grid.props.serverSideDatasource.getRows({
+      request: { startRow, endRow: startRow + 10 },
+      ...handlers,
+    });
+  });
+  return { ...handlers, pending };
+};
 const getPage = async (startRow = 0) => {
   const success = vi.fn();
   await act(async () => {
@@ -244,5 +269,170 @@ describe("CompareData API response", () => {
       rowData: [],
       rowCount: 0,
     });
+  });
+});
+
+describe("CompareData compare_id ownership", () => {
+  const OLD_ID = "00000000-0000-4000-8000-00000000000a";
+  const NEW_ID = "00000000-0000-4000-8000-00000000000b";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("keeps the current selection's compare_id when an earlier request resolves last", async () => {
+    const first = deferred();
+    const second = deferred();
+    post
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const props = {
+      gridApiRef: { current: null },
+      compareId: { current: null },
+      baseColumn: "input",
+      selectedDatasetsValues: ["dataset-a", "dataset-b"],
+      columns: [],
+      selectedColumns: ["input-a", "output-a"],
+      setColumns: vi.fn(),
+      setCommonColumn: vi.fn(),
+      setDatasetInfo: vi.fn(),
+      setCompareColumnDefs: vi.fn(),
+    };
+    const { rerender } = render(<CompareData {...props} />);
+    const stale = startPage();
+
+    // The user picks another dataset while the first comparison is running.
+    await act(async () => {
+      rerender(
+        <CompareData
+          {...props}
+          selectedDatasetsValues={["dataset-a", "dataset-c"]}
+        />,
+      );
+    });
+    const current = startPage();
+    expect(post.mock.calls.map(([, body]) => body.dataset_ids)).toEqual([
+      ["dataset-b"],
+      ["dataset-c"],
+    ]);
+
+    await act(async () => {
+      second.resolve(withCompareId(NEW_ID));
+      await current.pending;
+    });
+    await act(async () => {
+      first.resolve(withCompareId(OLD_ID));
+      await stale.pending;
+    });
+
+    expect(props.compareId.current).toBe(NEW_ID);
+    expect(current.success).toHaveBeenCalledTimes(1);
+    expect(stale.success).not.toHaveBeenCalled();
+    expect(stale.fail).toHaveBeenCalledTimes(1);
+    expect(props.setCompareColumnDefs).toHaveBeenCalledTimes(1);
+    // The orphaned comparison from the earlier selection is removed.
+    expect(deleteCompare).toHaveBeenCalledExactlyOnceWith(OLD_ID);
+
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(NEW_ID, 1)),
+    );
+    await getPage(10);
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({
+        dataset_ids: ["dataset-c"],
+        current_page_index: 1,
+        compare_id: NEW_ID,
+      }),
+    );
+  });
+
+  it("does not show the empty overlay when an earlier request fails late", async () => {
+    const first = deferred();
+    post
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => Promise.resolve(withCompareId(NEW_ID)));
+    const api = {
+      refreshServerSide: vi.fn(),
+      refreshCells: vi.fn(),
+      showNoRowsOverlay: vi.fn(),
+    };
+    const props = {
+      gridApiRef: { current: { api } },
+      compareId: { current: null },
+      baseColumn: "input",
+      selectedDatasetsValues: ["dataset-a", "dataset-b"],
+      columns: [],
+      selectedColumns: ["input-a", "output-a"],
+      setColumns: vi.fn(),
+      setCommonColumn: vi.fn(),
+      setDatasetInfo: vi.fn(),
+      setCompareColumnDefs: vi.fn(),
+    };
+    const { rerender } = render(<CompareData {...props} />);
+    const stale = startPage();
+    await act(async () => {
+      rerender(
+        <CompareData
+          {...props}
+          selectedDatasetsValues={["dataset-a", "dataset-c"]}
+        />,
+      );
+    });
+    const current = startPage();
+    await act(async () => {
+      await current.pending;
+    });
+    await act(async () => {
+      first.reject(new Error("comparison failed"));
+      await stale.pending;
+    });
+
+    expect(props.compareId.current).toBe(NEW_ID);
+    expect(stale.success).not.toHaveBeenCalled();
+    expect(stale.fail).toHaveBeenCalledTimes(1);
+    expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+  });
+
+  it("starts a new comparison and removes the old one when the base column changes", async () => {
+    post.mockImplementation((_url, body) =>
+      Promise.resolve(
+        withCompareId(
+          body.base_column_name === "input" ? OLD_ID : NEW_ID,
+          body.current_page_index,
+        ),
+      ),
+    );
+    const props = {
+      gridApiRef: { current: null },
+      compareId: { current: null },
+      baseColumn: "input",
+      selectedDatasetsValues: ["dataset-a", "dataset-b"],
+      columns: [],
+      selectedColumns: ["input-a", "output-a"],
+      setColumns: vi.fn(),
+      setCommonColumn: vi.fn(),
+      setDatasetInfo: vi.fn(),
+      setCompareColumnDefs: vi.fn(),
+    };
+    const { rerender } = render(<CompareData {...props} />);
+    await getPage();
+    expect(props.compareId.current).toBe(OLD_ID);
+
+    await act(async () => {
+      rerender(<CompareData {...props} baseColumn="output" />);
+    });
+    await getPage();
+
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({
+        base_column_name: "output",
+        current_page_index: 0,
+        compare_id: null,
+      }),
+    );
+    expect(deleteCompare).toHaveBeenCalledExactlyOnceWith(OLD_ID);
+    expect(props.compareId.current).toBe(NEW_ID);
   });
 });
