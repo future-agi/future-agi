@@ -78224,6 +78224,21 @@ export const ListAttachmentOccurrencesQueryParams = zod.object({
     .optional(),
 });
 
+export const listAttachmentOccurrencesResponseItemsItemReferenceMessageIndexMin = 0;
+export const listAttachmentOccurrencesResponseItemsItemReferenceMessageIndexMax = 65535;
+
+export const listAttachmentOccurrencesResponseItemsItemReferencePartIndexMin = 0;
+export const listAttachmentOccurrencesResponseItemsItemReferencePartIndexMax = 65535;
+
+export const listAttachmentOccurrencesResponseItemsItemReferenceChannelMin = 0;
+export const listAttachmentOccurrencesResponseItemsItemReferenceChannelMax = 31;
+
+export const listAttachmentOccurrencesResponseItemsItemReferenceConversationIdMax = 128;
+
+export const listAttachmentOccurrencesResponseItemsItemReferenceTurnIdMax = 128;
+
+export const listAttachmentOccurrencesResponseItemsItemReferenceToolCallIdMax = 128;
+
 export const listAttachmentOccurrencesResponseItemsItemParentTraceIdMax = 36;
 
 export const listAttachmentOccurrencesResponseItemsItemParentSpanIdMax = 16;
@@ -78267,6 +78282,45 @@ export const ListAttachmentOccurrencesResponse = zod.object({
             "diagnostic",
             "document",
           ])
+          .optional(),
+        message_index: zod
+          .number()
+          .min(
+            listAttachmentOccurrencesResponseItemsItemReferenceMessageIndexMin,
+          )
+          .max(
+            listAttachmentOccurrencesResponseItemsItemReferenceMessageIndexMax,
+          )
+          .optional(),
+        part_index: zod
+          .number()
+          .min(listAttachmentOccurrencesResponseItemsItemReferencePartIndexMin)
+          .max(listAttachmentOccurrencesResponseItemsItemReferencePartIndexMax)
+          .optional(),
+        role: zod
+          .enum(["user", "assistant", "tool", "system", "unknown"])
+          .optional(),
+        channel: zod
+          .number()
+          .min(listAttachmentOccurrencesResponseItemsItemReferenceChannelMin)
+          .max(listAttachmentOccurrencesResponseItemsItemReferenceChannelMax)
+          .optional(),
+        conversation_id: zod
+          .string()
+          .min(1)
+          .max(
+            listAttachmentOccurrencesResponseItemsItemReferenceConversationIdMax,
+          )
+          .optional(),
+        turn_id: zod
+          .string()
+          .min(1)
+          .max(listAttachmentOccurrencesResponseItemsItemReferenceTurnIdMax)
+          .optional(),
+        tool_call_id: zod
+          .string()
+          .min(1)
+          .max(listAttachmentOccurrencesResponseItemsItemReferenceToolCallIdMax)
           .optional(),
       }),
       scope: zod.object({

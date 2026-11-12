@@ -35536,6 +35536,17 @@ export const AttachmentReferenceApiPurpose = {
   document: "document",
 } as const;
 
+export type AttachmentReferenceApiRole =
+  (typeof AttachmentReferenceApiRole)[keyof typeof AttachmentReferenceApiRole];
+
+export const AttachmentReferenceApiRole = {
+  user: "user",
+  assistant: "assistant",
+  tool: "tool",
+  system: "system",
+  unknown: "unknown",
+} as const;
+
 export interface AttachmentReferenceApi {
   attachment_id: string;
   occurrence_id: string;
@@ -35543,6 +35554,37 @@ export interface AttachmentReferenceApi {
   modality: AttachmentReferenceApiModality;
   mime_type: AttachmentReferenceApiMimeType;
   purpose?: AttachmentReferenceApiPurpose;
+  /**
+   * @minimum 0
+   * @maximum 65535
+   */
+  message_index?: number;
+  /**
+   * @minimum 0
+   * @maximum 65535
+   */
+  part_index?: number;
+  role?: AttachmentReferenceApiRole;
+  /**
+   * @minimum 0
+   * @maximum 31
+   */
+  channel?: number;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  conversation_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  turn_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  tool_call_id?: string;
 }
 
 export interface AttachmentParentApi {

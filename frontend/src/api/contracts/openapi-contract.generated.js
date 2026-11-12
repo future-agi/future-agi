@@ -96854,6 +96854,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "document",
           ],
         },
+        message_index: {
+          title: "Message index",
+          type: "integer",
+          maximum: 65535,
+          minimum: 0,
+        },
+        part_index: {
+          title: "Part index",
+          type: "integer",
+          maximum: 65535,
+          minimum: 0,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "tool", "system", "unknown"],
+        },
+        channel: {
+          title: "Channel",
+          type: "integer",
+          maximum: 31,
+          minimum: 0,
+        },
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        turn_id: {
+          title: "Turn id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        tool_call_id: {
+          title: "Tool call id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
       },
     },
     AttachmentGap: {
