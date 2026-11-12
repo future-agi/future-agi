@@ -252,6 +252,29 @@ def _reuse_parent_reading(
     return True
 
 
+def _has_stored_document(version_id: Any) -> bool:
+    return AgentVersionSetup.no_workspace_objects.filter(
+        agent_version_id=version_id, status=AgentVersionSetup.Status.STORED
+    ).exists()
+
+
+def reuse_parent_reading(version_id: Any) -> str | None:
+    """Give a version without a document its parent's reading when both stand on
+    the same code; the parent's version id when that happened, else None and the
+    version is to be read."""
+    runtime = _side_row(version_id)
+    if runtime is None or not runtime.parent_id or _has_stored_document(version_id):
+        return None
+    parent = _side_row(runtime.parent_id)
+    if (
+        parent is None
+        or not _same_code(runtime, parent)
+        or not _reuse_parent_reading(runtime, parent)
+    ):
+        return None
+    return str(parent.agent_version_id)
+
+
 def read(version_id: Any) -> StepOutcome:
     """Read the version's agent, unless it already has a document or its parent's
     reading stands for the same code. A failure the next attempt may outlive is
@@ -259,23 +282,14 @@ def read(version_id: Any) -> StepOutcome:
     runtime = _side_row(version_id)
     if runtime is None or runtime.preflight_status != Status.PENDING:
         return StepOutcome("skipped", code="not_pending")
-    if AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=version_id, status=AgentVersionSetup.Status.STORED
-    ).exists():
+    if _has_stored_document(version_id):
         _note(version_id, reading={"status": "stored"})
         return StepOutcome("skipped", code="already_read")
     _note(version_id, step=STEP_READING)
-    parent = _side_row(runtime.parent_id) if runtime.parent_id else None
-    if parent is not None and _same_code(runtime, parent):
-        if _reuse_parent_reading(runtime, parent):
-            _note(
-                version_id,
-                reading={
-                    "status": "reused",
-                    "from_version_id": str(parent.agent_version_id),
-                },
-            )
-            return StepOutcome("skipped", code="reused")
+    reused_from = reuse_parent_reading(version_id)
+    if reused_from is not None:
+        _note(version_id, reading={"status": "reused", "from_version_id": reused_from})
+        return StepOutcome("skipped", code="reused")
     outcome: ReadOutcome = read_version(version_id)
     if outcome.status == "stored":
         _note(version_id, reading={"status": "stored", "spend": outcome.spend})

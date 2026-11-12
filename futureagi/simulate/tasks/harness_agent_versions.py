@@ -49,11 +49,15 @@ def schedule_agent_preflight(version_id: Any):
 )
 def read_harness_agent_version_document(version_id: str) -> str:
     """Read an environment-made agent version only to store its document; the
-    version's check and its environments never wait for it."""
+    version's check and its environments never wait for it. A version on its
+    parent's code takes the parent's document instead of a reading."""
     from simulate.services.agent_reading_sandbox import read_version
+    from simulate.services.agent_version_steps import reuse_parent_reading
 
     close_old_connections()
     try:
+        if reuse_parent_reading(version_id) is not None:
+            return "reused"
         return read_version(version_id, document_only=True).status
     finally:
         close_old_connections()

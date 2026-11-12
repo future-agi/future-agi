@@ -558,3 +558,35 @@ class TestDocumentOnlyReading:
         agent.refresh_from_db()
         assert agent.agent_type == AgentDefinition.AgentTypeChoices.TEXT
         assert _runtime(version).preflight_status == Status.PASSED
+
+    def test_a_credentials_change_on_the_same_code_takes_its_parents_document(
+        self, agent, monkeypatch
+    ):
+        from simulate.tasks.harness_agent_versions import (
+            read_harness_agent_version_document,
+        )
+
+        parent = _connect(agent)
+        store_agent(
+            agent_version_id=parent.id, agent=source_agent(), sdk_version="0.2.3"
+        )
+        child = _connect(
+            agent,
+            parent=parent,
+            trigger=HarnessAgentVersionRuntime.Trigger.CREDENTIALS,
+            secret_values={"API_KEY": "fresh"},
+        )
+        assert child.id != parent.id
+        monkeypatch.setattr(agent_reading_sandbox, "run_reading", _never)
+        monkeypatch.setattr(
+            "simulate.tasks.harness_agent_versions.close_old_connections", lambda: None
+        )
+        billed = _billed(monkeypatch)
+
+        outcome = read_harness_agent_version_document._original_func(str(child.id))
+
+        assert outcome == "reused"
+        assert billed == []
+        assert AgentVersionSetup.no_workspace_objects.filter(
+            agent_version_id=child.id, status=AgentVersionSetup.Status.STORED
+        ).exists()
