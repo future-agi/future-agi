@@ -13,9 +13,12 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from app_cell import run_cell
