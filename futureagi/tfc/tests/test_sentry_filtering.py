@@ -363,23 +363,75 @@ def test_scrub_event_keeps_a_log_line_with_no_arguments():
     assert event["logentry"]["formatted"] == "progress 100%"
 
 
-def test_scrub_event_drops_a_log_line_that_does_not_format():
+def test_scrub_event_falls_back_to_the_template_when_a_line_does_not_format():
     event = {
-        "logentry": {"message": "no placeholder", "params": ["x"], "formatted": "x"}
+        "logentry": {
+            "message": "took %d ms",
+            "params": ["Input(api_key='k')"],
+            "formatted": "took Input(api_key='k') ms",
+        }
     }
     _scrub_event(event)
-    assert event["logentry"]["formatted"] == _REDACTED
+    assert event["logentry"]["formatted"] == "took %d ms"
 
 
-def test_scrub_event_drops_a_formatted_line_that_names_a_key():
-    event = {"logentry": {"message": "m", "formatted": "token=abc"}}
+def test_scrub_event_keeps_a_line_whose_arguments_are_harmless():
+    event = {
+        "logentry": {
+            "message": "took %d ms",
+            "params": ["12"],
+            "formatted": "took 12 ms",
+        }
+    }
     _scrub_event(event)
+    assert event["logentry"]["formatted"] == "took 12 ms"
+
+
+def test_a_rebuilt_log_line_keeps_the_size_cap():
+    event = {
+        "logentry": {
+            "message": "%s %s",
+            "params": ["Input(api_key='k')", "x" * 20_000],
+            "formatted": "irrelevant",
+        }
+    }
+    _scrub_event(event)
+    assert len(event["logentry"]["formatted"]) == 16_384
+
+
+def test_scrub_event_drops_a_logged_text_that_names_a_key():
+    line = "bad input Input(customer_api_key='k')"
+    event = {"logentry": {"message": line, "params": [], "formatted": line}}
+    _scrub_event(event)
+    assert event["logentry"] == {
+        "message": _REDACTED,
+        "params": [],
+        "formatted": _REDACTED,
+    }
+
+
+def test_scrub_event_keeps_a_template_that_names_a_key():
+    event = {
+        "logentry": {
+            "message": "calling with api_key=%s",
+            "params": ["sk-1"],
+            "formatted": "calling with api_key=sk-1",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["message"] == "calling with api_key=%s"
     assert event["logentry"]["formatted"] == _REDACTED
 
 
 @pytest.mark.parametrize(
     "text",
-    ["API Key: abc", "access-key=abc", "Private-Key abc", "-----BEGIN PRIVATE KEY-----"],
+    [
+        "API Key: abc",
+        "access-key=abc",
+        "access key abc",
+        "Private-Key abc",
+        "-----BEGIN PRIVATE KEY-----",
+    ],
 )
 def test_spaced_and_hyphenated_key_names_are_recognised(text):
     assert _scrub_strings(text) == _REDACTED
@@ -426,6 +478,22 @@ class _LoggingInputNext:
 
     async def execute_activity(self, input):
         logging.getLogger("x").error("bad input %s", input.args[0])
+
+
+class _FStringLoggingNext:
+    """Logs the activity's input already formatted, with no arguments."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error(f"bad input {input.args[0]}")
+
+
+class _JsonLoggingNext:
+    """Logs the input inside a JSON line, as the Temporal workers' structlog does."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error(
+            json.dumps({"event": "failed", "call_input": repr(input.args[0])})
+        )
 
 
 class _LoggingNext:
@@ -508,6 +576,13 @@ async def test_a_logged_input_leaks_no_secret_in_the_formatted_line():
     sent = await _run_activity(_LoggingInputNext(), secret_values)
     _assert_no_secret(sent, secret_values)
     assert sent[0]["logentry"]["message"] == "bad input %s"
+
+
+@pytest.mark.parametrize("next_interceptor", [_FStringLoggingNext, _JsonLoggingNext])
+async def test_a_preformatted_log_line_leaks_no_secret(next_interceptor):
+    secret_values = _new_secret_values()
+    sent = await _run_activity(next_interceptor(), secret_values)
+    _assert_no_secret(sent, secret_values)
 
 
 async def test_secrets_are_scrubbed_when_the_activity_breadcrumb_is_not_first():

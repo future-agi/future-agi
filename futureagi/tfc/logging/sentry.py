@@ -200,13 +200,17 @@ def _scrub_strings(value: Any, depth: int = 0) -> Any:
     return value
 
 
+_MAX_FORMATTED = 16_384  # init_sentry's max_value_length, which ran before this
+
+
 def _formatted(message: Any, params: Any) -> str:
-    """A log line formatted from its scrubbed arguments, or redacted whole when it
-    can't be."""
+    """A log line formatted from its scrubbed arguments; the template itself when
+    they don't format."""
     try:
-        return str(message) % (tuple(params) if isinstance(params, list) else params)
-    except Exception:  # noqa: BLE001 - any shape that doesn't format is dropped
-        return _REDACTED
+        line = str(message) % (tuple(params) if isinstance(params, list) else params)
+    except Exception:  # noqa: BLE001 - any shape that doesn't format
+        line = str(message)
+    return line[:_MAX_FORMATTED]
 
 
 def _scrub_event(event: dict) -> None:
@@ -239,16 +243,27 @@ def _scrub_event(event: dict) -> None:
     # message formatted from them, which is rebuilt from the scrubbed arguments.
     logentry = event.get("logentry")
     if isinstance(logentry, dict):
-        if logentry.get("params") is not None:
-            logentry["params"] = _scrub_strings(logentry["params"])
-            # With no arguments the message was never %-formatted, so it stands.
-            if logentry["params"] and logentry.get("formatted") is not None:
+        params = logentry.get("params")
+        if params is not None:
+            logentry["params"] = _scrub_strings(params)
+            # Rebuilt only when an argument was scrubbed: the line as logged is
+            # kept otherwise.
+            if logentry["params"] != params and logentry.get("formatted") is not None:
                 logentry["formatted"] = _formatted(
                     logentry.get("message"), logentry["params"]
                 )
         formatted = logentry.get("formatted")
         if isinstance(formatted, str) and _mentions_sensitive_key(formatted):
             logentry["formatted"] = _REDACTED
+        # With no arguments the message is the logged text itself (an f-string,
+        # or a structlog line with its fields as JSON), not a template.
+        message = logentry.get("message")
+        if (
+            not logentry.get("params")
+            and isinstance(message, str)
+            and _mentions_sensitive_key(message)
+        ):
+            logentry["message"] = _REDACTED
 
     # Breadcrumbs carry whatever the caller logged, such as a Temporal
     # activity's input. The shape is a list or a dict with a "values" list.
