@@ -4,8 +4,8 @@
   "registered_driver_command": "node e2e/benchmarks/context-hub/cli.mjs run J1 RUN_ID REGISTRATION.json registered OUTPUT_DIR",
   "job_integrations": [
     {"job":"J1","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-010","flow":"j1-retained-subset.spec.ts","complete_job_qualified":false},
-    {"job":"J2","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-020","flow":"j2-historical-draft.spec.ts","complete_job_qualified":false},
-    {"job":"J3","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-030","flow":"j3-accepted-dependency.spec.ts","complete_job_qualified":false},
+    {"job":"J2","driver_status":"incomplete","driver_module":"./drivers/j2.mjs","flow_id":"SKILLS-E2E-020","flow":"j2-historical-draft.spec.ts","complete_job_qualified":false},
+    {"job":"J3","driver_status":"incomplete","driver_module":"./drivers/j3.mjs","flow_id":"SKILLS-E2E-030","flow":"j3-accepted-dependency.spec.ts","complete_job_qualified":false},
     {"job":"J4","driver_status":"incomplete","driver_module":"./drivers/j4.mjs","flow_id":"SKILLS-E2E-040","flow":"j4-reviewer-receipt.spec.ts","complete_job_qualified":false},
     {"job":"J5","driver_status":"incomplete","driver_module":"./drivers/j5.mjs","flow_id":"SKILLS-E2E-050","flow":"j5-inventory-gate.spec.ts","complete_job_qualified":false},
     {"job":"J6","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-060","flow":"j6-recovery-coverage.spec.ts","complete_job_qualified":false}

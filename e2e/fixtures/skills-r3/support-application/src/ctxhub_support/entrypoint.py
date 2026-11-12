@@ -24,7 +24,7 @@ from .registry import Registry
 from .store import Store, canonical
 
 
-def run(request, *, store, registry, provider, business):
+def run(request, *, store, registry, provider, business, model="fixture-model"):
     if request.get("schema") != 1 or set(request) - {
         "schema",
         "thread",
@@ -33,7 +33,11 @@ def run(request, *, store, registry, provider, business):
     }:
         raise ValueError("invalid_application_request")
     return Application(
-        store=store, registry=registry, provider=provider, business=business
+        store=store,
+        registry=registry,
+        provider=provider,
+        business=business,
+        model=model,
     ).run(
         thread=request["thread"],
         case=request["case"],
@@ -99,6 +103,12 @@ def main():
                 trust_env=False,
                 follow_redirects=False,
                 timeout=15,
+                # A scenario-scoped synthetic transport credential, never a broad key.
+                headers=(
+                    {"Authorization": "Bearer " + os.environ["CTXHUB_PROVIDER_KEY"]}
+                    if os.environ.get("CTXHUB_PROVIDER_KEY")
+                    else {}
+                ),
             )
         )
         business = stack.enter_context(
@@ -121,6 +131,7 @@ def main():
             ),
             provider=provider,
             business=business,
+            model=os.environ.get("CTXHUB_MODEL", "fixture-model"),
         )
         result["events"] = store.events(request["thread"])
         args.output.parent.mkdir(parents=True, exist_ok=True)

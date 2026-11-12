@@ -15,6 +15,13 @@ import {
 
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import Section from "src/components/section";
+import ApplicationBehaviorFields from "./ApplicationBehaviorFields";
+import {
+  BEHAVIOR_FIXTURE,
+  behaviorPartial as isBehaviorPartial,
+  readBehavior,
+  withBehavior,
+} from "./applicationBehavior";
 
 const CHECKS = {
   contains: [
@@ -252,6 +259,7 @@ export default function TestCaseEditor({
   isSaving = false,
   canSave = true,
   error,
+  applicationBehavior = null,
 }) {
   const [value, setValue] = useState(() =>
     initialCase
@@ -277,8 +285,17 @@ export default function TestCaseEditor({
         },
   );
   const [invalidChecks, setInvalidChecks] = useState([]);
+  const [behavior, setBehavior] = useState(() =>
+    readBehavior(initialCase?.fixtures || []),
+  );
+  const behaviorPartial = Boolean(applicationBehavior) && isBehaviorPartial(behavior);
   const edit = (patch) =>
     setValue((previous) => ({ ...previous, ...patch, reviewed: false }));
+  const chooseBehavior = (patch) => {
+    const next = { ...behavior, ...patch };
+    setBehavior(next);
+    edit({ fixtures: withBehavior(value.fixtures, next, uid) });
+  };
   const validChecks = value.checks.every((check) => {
     if (!CHECKS[check.kind]) return false;
     if (["contains", "not_contains"].includes(check.kind))
@@ -303,6 +320,7 @@ export default function TestCaseEditor({
     !promptTooLarge &&
     !fixturesTooLarge &&
     validChecks &&
+    !behaviorPartial &&
     !invalidChecks.length &&
     value.fixtures.every((fixture) => fixture.name.trim()) &&
     (value.expectedTrigger !== null || value.checks.length > 0);
@@ -376,12 +394,21 @@ export default function TestCaseEditor({
             <MenuItem value="false">No</MenuItem>
             <MenuItem value="either">Either</MenuItem>
           </TextField>
+          {applicationBehavior && (
+            <ApplicationBehaviorFields
+              skills={applicationBehavior.skills}
+              behavior={behavior}
+              onChange={chooseBehavior}
+            />
+          )}
           <Section
             title="Text fixtures"
             description="Supplied evidence only. No files, scripts or external actions are executed."
           >
             <Stack spacing={1.5}>
-              {value.fixtures.map((fixture, index) => (
+              {value.fixtures.map((fixture, index) =>
+                applicationBehavior &&
+                fixture.name === BEHAVIOR_FIXTURE ? null : (
                 <Stack key={fixture.id} spacing={1}>
                   <TextField
                     size="small"
@@ -426,7 +453,8 @@ export default function TestCaseEditor({
                     Remove fixture {index + 1}
                   </Button>
                 </Stack>
-              ))}
+                ),
+              )}
               {fixturesTooLarge && (
                 <Alert severity="error">
                   Keep combined fixture text within 48 KiB.
@@ -545,4 +573,9 @@ TestCaseEditor.propTypes = {
   isSaving: PropTypes.bool,
   canSave: PropTypes.bool,
   error: PropTypes.string,
+  applicationBehavior: PropTypes.shape({
+    skills: PropTypes.arrayOf(
+      PropTypes.shape({ id: PropTypes.string.isRequired, label: PropTypes.string.isRequired }),
+    ).isRequired,
+  }),
 };

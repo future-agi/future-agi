@@ -14,6 +14,10 @@ class CreateContextTest(leaf.CreateTestRunRequest):
 
 # Distinct names also give each public context response a distinct generated
 # envelope; the leaf contracts use dynamically named envelopes of their own.
+class ContextTestSuite(leaf.SuiteOut):
+    pass
+
+
 class ContextTestAck(leaf.TestRunAck):
     pass
 

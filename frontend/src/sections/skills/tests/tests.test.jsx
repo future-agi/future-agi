@@ -541,6 +541,43 @@ describe("reviewed examples", () => {
     expect(onSave.mock.calls[0][0]).not.toHaveProperty("reviewedBy");
     expect(onSave.mock.calls[0][0]).not.toHaveProperty("origin");
   });
+  it("chooses the required skill and business action instead of typing the reserved fixture", () => {
+    const onSave = vi.fn();
+    mount(
+      <TestCaseEditor
+        open
+        initialCase={{ ...testCase, fixtures: [] }}
+        applicationBehavior={{
+          skills: [
+            { id: "4e7d55e9-7da5-4a2b-94bc-b19f63257709", label: "skills/refund" },
+            { id: "8acacf60-c238-4a5e-af7d-806d7617c0ee", label: "skills/chargeback" },
+          ],
+        }}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.queryByLabelText("Fixture 1 name")).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText("Required skill"));
+    fireEvent.click(screen.getByRole("option", { name: "skills/refund" }));
+    // A skill without an action is not a complete expectation.
+    expect(screen.getByRole("button", { name: "Save example" })).toBeDisabled();
+    expect(screen.getByText("Choose both the skill and the action, or neither.")).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText("Required business action"));
+    fireEvent.click(screen.getByRole("option", { name: "Issue a refund" }));
+    fireEvent.click(
+      screen.getByLabelText("I reviewed the request, supplied facts and expected behavior"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save example" }));
+    const fixtures = onSave.mock.calls[0][0].fixtures;
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].name).toBe("fi.application.expectations");
+    expect(JSON.parse(fixtures[0].text)).toEqual({
+      schema: 1,
+      skill_id: "4e7d55e9-7da5-4a2b-94bc-b19f63257709",
+      action: "issue_refund",
+    });
+  });
   it("cannot save malformed JSON using a previously valid assertion", () => {
     mount(
       <TestCaseEditor
@@ -942,6 +979,52 @@ describe("reviewed run setup", () => {
     expect(
       screen.getByText(/Case or expected-answer overlap makes this diagnostic/),
     ).toBeInTheDocument();
+  });
+  it("classifies every flagged file with one reviewed reason while keeping per-file records", async () => {
+    const base = preview.inventory[0].files[0];
+    api.preview.mockResolvedValue({
+      ...preview,
+      inventory: [
+        {
+          ...preview.inventory[0],
+          files: [
+            { ...base, path: "benchmark/a.md", sha256: "a".repeat(64), flags: ["evaluation_artifact"] },
+            { ...base, path: "benchmark/b.md", sha256: "b".repeat(64), flags: ["evaluation_artifact"] },
+            { ...base, path: "benchmark/c.md", sha256: "c".repeat(64), flags: ["evaluation_artifact"] },
+          ],
+        },
+      ],
+    });
+    mount(setup());
+    await configure();
+    await reviewPlan();
+    const apply = screen.getByRole("button", {
+      name: "Apply to all 3 flagged files",
+    });
+    expect(apply).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run quick check" }),
+    ).toBeDisabled();
+    await choose("Classify all 3 flagged files", "Reference material");
+    fireEvent.change(screen.getByLabelText("Reason for all 3 flagged files"), {
+      target: { value: "  Genuine policy references  " },
+    });
+    fireEvent.click(apply);
+    // Each file keeps its own editable record.
+    expect(
+      screen.getByLabelText("Classification reason for benchmark/b.md (bbbbbbbb)"),
+    ).toHaveValue("Genuine policy references");
+    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    await waitFor(() => expect(api.create).toHaveBeenCalled());
+    expect(
+      api.create.mock.calls[0][0].inventoryReview.classifications.map(
+        ({ path, classification, reason }) => [path, classification, reason],
+      ),
+    ).toEqual([
+      ["benchmark/a.md", "reference_material", "Genuine policy references"],
+      ["benchmark/b.md", "reference_material", "Genuine policy references"],
+      ["benchmark/c.md", "reference_material", "Genuine policy references"],
+    ]);
   });
   it("preserves model and spend inputs but discards a changed preview", async () => {
     api.create.mockRejectedValue({

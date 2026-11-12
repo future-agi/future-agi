@@ -28,12 +28,18 @@ function Capture({
   onAccept,
   suiteRevision,
   canCapture,
+  applicationBehavior,
+  renderSaved,
+  onChangeContext,
 }) {
-  const [selected, setSelected] = useState([]);
   const operation = useReviewedOperation();
   const segments = source.segments.filter((item) =>
     ["request", "tool_result"].includes(item.kind),
   );
+  // Every supported request and tool-result segment starts selected so the reviewer
+  // deselects exceptions instead of ticking each one; nothing is shared before the
+  // separate redaction review and explicit workspace-sharing acknowledgement.
+  const [selected, setSelected] = useState(() => segments.map((item) => item.id));
   const allowed =
     source.authorized === true && source.readOnly !== true && canCapture;
   if (operation.result && allowed)
@@ -47,6 +53,8 @@ function Capture({
         suiteRevision={suiteRevision}
         canSave={canCapture}
         onSave={onAccept}
+        applicationBehavior={applicationBehavior}
+        renderSaved={renderSaved}
       />
     );
   return (
@@ -69,8 +77,9 @@ function Capture({
           ) : (
             <>
               <Alert severity="info">
-                Select only relevant request and tool-result text. The next step
-                is private redaction and expectation review. This does not run a
+                Every supported request and tool-result segment is selected;
+                deselect anything irrelevant. The next step is private
+                redaction and expectation review. This does not run a
                 model or copy hidden reasoning.
               </Alert>
               <IdentityValue
@@ -119,6 +128,11 @@ function Capture({
         </Stack>
       </DialogContent>
       <DialogActions>
+        {onChangeContext && (
+          <Button disabled={operation.busy} onClick={onChangeContext}>
+            Change context
+          </Button>
+        )}
         <Button disabled={operation.busy} onClick={onClose}>
           Cancel
         </Button>
@@ -154,6 +168,9 @@ Capture.propTypes = {
   onAccept: PropTypes.func,
   suiteRevision: PropTypes.number.isRequired,
   canCapture: PropTypes.bool,
+  applicationBehavior: PropTypes.object,
+  renderSaved: PropTypes.func,
+  onChangeContext: PropTypes.func,
 };
 export default function ContextCaptureDialog({
   open,

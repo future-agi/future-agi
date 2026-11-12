@@ -56,7 +56,9 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
     note: draft.data?.note, productionVersion: data.releaseState.labels.find((label) => label.name === 'production')?.version };
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
     onRetry={refresh} onRefresh={refresh} onAcknowledgeHead={(input, options) => acknowledge.mutateAsync({ ...input, ...options })}
-    onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}`); return receipt; }} />;
+    onPublish={async (input, options) => { const receipt = await publish.mutateAsync({ ...input, ...options }); // A repair published from older content is verified next: open its application tests directly.
+      const repair = input.baseVersion != null && input.expectedHeadVersion != null && input.baseVersion !== input.expectedHeadVersion;
+      navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}${repair ? '&tab=tests' : ''}`); return receipt; }} />;
 }
 DraftReviewController.propTypes = { scopeKey: PropTypes.string.isRequired, contextId: PropTypes.string.isRequired, viewState: PropTypes.string, View: PropTypes.elementType.isRequired };
 export function ContextReviewController(props) {

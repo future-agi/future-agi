@@ -4,7 +4,7 @@ import { skillsArchive } from './skills-upload';
 import { sha256 } from './skills-consumption';
 
 export type FixtureRule = {
-  match: { request: string; turn: number; tool_text?: string };
+  match: { request: string; turn: number; tool_text?: string; system_text?: string; system_not?: string };
   response?: { message: { role: 'assistant'; content: string | null; tool_calls?: unknown[] };
     finish_reason: string; omit_usage?: boolean };
   status?: 200 | 401 | 429 | 500; delay_ms?: number;
@@ -17,11 +17,15 @@ export type FixtureReceipt = { kind: 'model' | 'github'; request?: string; turn?
 
 /** Approved test-image-only service. No arbitrary URL or real credential accepted. */
 export class SkillsFixtures {
-  readonly namespace = `e2e-skills-${randomUUID()}`;
+  readonly namespace: string;
   private readonly origin: string;
   fixtureHash = '';
+  /** Leave the scenario registered for a later registered-driver run. */
+  keep = false;
 
-  constructor() {
+  /** `namespace` pins a runtime-owned synthetic credential (the native runtime's provider key). */
+  constructor(namespace?: string) {
+    this.namespace = namespace ?? `e2e-skills-${randomUUID()}`;
     const port = process.env.E2E_SKILLS_FIXTURE_PORT ?? '28082';
     if (!/^\d{1,5}$/.test(port) || Number(port) > 65535 || Number(port) === 0) throw new Error('Invalid fixture port');
     this.origin = `http://localhost:${port}`;

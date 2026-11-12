@@ -7,6 +7,7 @@ import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadRevie
 // Hierarchy: included version versus upstream, explicit desired set, reviewed apply.
 // Palette/depth/surfaces: existing neutral/divider and uncertainty roles, flat groups.
 // Typography/spacing: m3/s1/s3 and compact 12px spacing; no dependency graph.
+const MAX_LINKS = 20;
 const selectorLabel = (selector) => selector?.version ? `Pin v${selector.version}` : `Follow ${selector?.label}`;
 // Proposals only seed an empty draft's unaccepted set; nothing is applied until
 // the owner previews the exact resolution and explicitly accepts it.
@@ -26,6 +27,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
   const [confirmed, setConfirmed] = useState(false);
   const operation = useAuthoringOperation(scopeKey);
   const lock = session.resolvedLock?.links || [];
+  const remaining = availableSkills.filter((skill) => skill.kind === "skill" && skill.latestVersion && !links.some((link) => link.skillId === skill.id));
   const invalidate = () => { setPreview(null); setConfirmed(false); };
   const validSelector = policy === "version" ? /^[1-9]\d*$/.test(selector) && Number.isSafeInteger(Number(selector)) : /^[a-z0-9][a-z0-9-]{0,39}$/.test(selector);
   const current = preview && Array.isArray(preview.changes) && Boolean(preview.fingerprint) && Boolean(preview.candidateDigest) && Number.isInteger(preview.checks?.summary?.errors) && !session.dirty && !session.mutationError && !session.pendingMutations && preview.revision === session.revision;
@@ -69,9 +71,9 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
       const skill = availableSkills.find((entry) => entry.id === link.skillId);
       const newer = upstream[link.skillId];
       return <Box key={link.skillId} sx={{ borderBottom: 1, borderColor: "divider", py: 1, minWidth: 0 }}>
-        <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>{included?.mount || skill?.name || link.skillId}</Typography>
-        <Typography variant="s1">{selectorLabel(link.selector)} · {included ? `Included v${included.version}` : "Not yet accepted"}</Typography>
-        <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>{included?.digest || "Preview required to resolve this link"}</Typography>
+        <Typography variant="m3" display="block" sx={{ overflowWrap: "anywhere" }}>{included?.mount || skill?.name || link.skillId}</Typography>
+        <Typography variant="s1" display="block">{selectorLabel(link.selector)} · {included ? `Included v${included.version}` : "Not yet accepted"}</Typography>
+        <Typography variant="s3" display="block" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>{included?.digest || "Preview required to resolve this link"}</Typography>
         {newer && newer.version !== included?.version && <Typography variant="s3">v{newer.version} available; this draft still includes {included ? `v${included.version}` : "no version"}.</Typography>}
         {!readOnly && <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           {link.selector.label && <FormControlLabel control={<Checkbox checked={refresh.includes(link.skillId)} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setRefresh(event.target.checked ? [...refresh, link.skillId] : refresh.filter((id) => id !== link.skillId)); invalidate(); }} />} label={`Review update for ${skill?.name || link.skillId}`} />}
@@ -84,12 +86,15 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         <TextField select fullWidth size="small" label="Published leaf skill" value={selected} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => setSelected(event.target.value)}>
           <MenuItem value="">Choose a skill</MenuItem>
-          {availableSkills.filter((skill) => skill.kind === "skill" && skill.latestVersion && !links.some((link) => link.skillId === skill.id)).map((skill) => <MenuItem key={skill.id} value={skill.id}>{skill.name}</MenuItem>)}
+          {remaining.map((skill) => <MenuItem key={skill.id} value={skill.id}>{skill.name}</MenuItem>)}
         </TextField>
         <TextField select size="small" label="Update policy" value={policy} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => { setPolicy(event.target.value); setSelector(event.target.value === "version" ? "1" : "production"); }} sx={{ minWidth: 140 }}><MenuItem value="label">Follow label</MenuItem><MenuItem value="version">Pin version</MenuItem></TextField>
         <TextField size="small" label={policy === "version" ? "Version" : "Label"} value={selector} disabled={operation.pending || Boolean(session.mutationError)} onChange={(event) => setSelector(event.target.value)} error={!validSelector} />
       </Stack>
-      <Button variant="outlined" disabled={!selected || !validSelector || operation.pending || Boolean(session.mutationError) || links.length >= 20} onClick={() => { setLinks([...links, { skillId: selected, selector: policy === "version" ? { version: Number(selector) } : { label: selector } }]); setSelected(""); invalidate(); }}>Add to proposed links</Button>
+      <Button variant="outlined" disabled={!selected || !validSelector || operation.pending || Boolean(session.mutationError) || links.length >= MAX_LINKS} onClick={() => { setLinks([...links, { skillId: selected, selector: policy === "version" ? { version: Number(selector) } : { label: selector } }]); setSelected(""); setPolicy("label"); setSelector("production"); invalidate(); }}>Add to proposed links</Button>
+      {/* Batch add: one decision over every remaining published skill, using the selector policy shown above. */}
+      {remaining.length > 1 && <Button variant="outlined" disabled={!validSelector || operation.pending || Boolean(session.mutationError) || links.length + remaining.length > MAX_LINKS} onClick={() => { setLinks([...links, ...remaining.map((skill) => ({ skillId: skill.id, selector: policy === "version" ? { version: Number(selector) } : { label: selector } }))]); setSelected(""); invalidate(); }}>{`Add all ${remaining.length} remaining published skills`}</Button>}
+      {remaining.length > 1 && links.length + remaining.length > MAX_LINKS && <Typography variant="s3">A context holds at most {MAX_LINKS} linked skills; add fewer at a time.</Typography>}
       <Button variant="outlined" disabled={!onPreview || operation.pending || Boolean(session.mutationError)} onClick={prepare}>Preview dependency changes</Button>
       {preview && <>
         <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Compiled candidate {preview.candidateDigest}</Typography>

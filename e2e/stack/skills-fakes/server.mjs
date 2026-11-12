@@ -34,6 +34,8 @@ function validateScenario(body) {
   for (const rule of body.rules) {
     if (!rule.match || typeof rule.match.request !== 'string' || rule.match.request.length > 16384 ||
         !Number.isInteger(rule.match.turn) || rule.match.turn < 0 || rule.match.turn > 6 ||
+        (rule.match.system_text !== undefined && (typeof rule.match.system_text !== 'string' || rule.match.system_text.length > 4096)) ||
+        (rule.match.system_not !== undefined && (typeof rule.match.system_not !== 'string' || rule.match.system_not.length > 4096)) ||
         (rule.delay_ms !== undefined && (!Number.isInteger(rule.delay_ms) || rule.delay_ms < 0 || rule.delay_ms > 5000)) ||
         (rule.status !== undefined && ![200, 401, 429, 500].includes(rule.status)) ||
         (rule.match.tool_text !== undefined && typeof rule.match.tool_text !== 'string') ||
@@ -57,14 +59,21 @@ function expandResponse(response, messages) {
   const system = messages.find(message => message.role === 'system')?.content;
   const marker = 'Available skills:\n';
   let target;
+  let inventory = [];
   if (typeof system === 'string' && system.includes(marker)) {
-    const inventory = JSON.parse(system.slice(system.indexOf(marker) + marker.length));
+    inventory = JSON.parse(system.slice(system.indexOf(marker) + marker.length));
     if (inventory.length === 1) target = inventory[0].id;
   }
   const expand = value => {
     if (value === '$skill_id') {
       if (!target) throw new Error('template requires exactly one available skill');
       return target;
+    }
+    // Whole-context tests offer many skills whose opaque ids differ per context; the rule names the one to load.
+    if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.$skill_named === 'string') {
+      const named = inventory.filter(item => item.name === value.$skill_named);
+      if (named.length !== 1) throw new Error('template requires exactly one skill with that name');
+      return named[0].id;
     }
     if (Array.isArray(value)) return value.map(expand);
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)]));
@@ -164,8 +173,13 @@ export function createFixtureHandler() {
         const request = requestInput(body.messages);
         const turn = body.messages.filter(message => message.role === 'assistant').length;
         const toolText = body.messages.filter(message => message.role === 'tool').map(message => message.content).join('\n');
+        // J2: the model fixture may depend on the delivered root/catalog bytes (system message),
+        // so matched application arms differ only through the context they actually received.
+        const systemText = body.messages.find(message => message.role === 'system')?.content ?? '';
         const rules = scenario.rules.filter(rule => rule.match.request === request && rule.match.turn === turn &&
-          (rule.match.tool_text === undefined || toolText.includes(rule.match.tool_text)));
+          (rule.match.tool_text === undefined || toolText.includes(rule.match.tool_text)) &&
+          (rule.match.system_text === undefined || systemText.includes(rule.match.system_text)) &&
+          (rule.match.system_not === undefined || !systemText.includes(rule.match.system_not)));
         const receipt = { kind: 'model', request, turn, request_sha256: hash(raw),
           messages: body.messages, tools: body.tools ?? [], response_sha256: null, status: 409 };
         scenario.ledger.push(receipt);

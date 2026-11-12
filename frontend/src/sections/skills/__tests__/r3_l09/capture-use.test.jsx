@@ -94,8 +94,15 @@ describe("reviewed source capture", () => {
     );
     expect(screen.queryByText("hidden-chain")).not.toBeInTheDocument();
     expect(screen.queryByText("incorrect answer")).not.toBeInTheDocument();
-    fireEvent.click(
+    // Every supported segment starts selected; the reviewer deselects exceptions.
+    expect(
       screen.getByRole("checkbox", { name: "Request · request-1" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Tool result · tool-1" }),
     );
     click("Preview selected text");
     await waitFor(() => expect(preview).toHaveBeenCalledTimes(1));
@@ -108,6 +115,23 @@ describe("reviewed source capture", () => {
         name: "Expected answer must contain",
       }),
     ).toHaveValue("");
+  });
+  it("offers leaving the delivered context for another one without losing the span", () => {
+    const change = vi.fn();
+    render(
+      <ContextCaptureDialog
+        open
+        onClose={() => {}}
+        scopeKey="scope"
+        state="ready"
+        source={source}
+        canCapture
+        onPreview={vi.fn()}
+        onChangeContext={change}
+      />,
+    );
+    click("Change context");
+    expect(change).toHaveBeenCalledOnce();
   });
   it("does not offer capture for a shared read-only trace", () => {
     render(

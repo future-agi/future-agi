@@ -25,18 +25,39 @@ import {
 import CapabilityChanges from "../review/CapabilityChanges";
 
 function DraftPublication({
+  carried,
+  onCarry,
   draftReview,
   canPublish,
   onAcknowledgeHead,
   onPublish,
   onRefresh,
 }) {
-  const [note, setNote] = useState(draftReview.note ?? "");
   const [warningFingerprint, setWarningFingerprint] = useState(null);
-  const warnings = warningFingerprint === draftReview.reviewFingerprint;
   const [ackFingerprint, setAckFingerprint] = useState(null);
   const operation = useReviewedOperation();
-  const reviewed = ackFingerprint === draftReview.reviewFingerprint;
+  // Acknowledging the head issues a new review fingerprint for the very same candidate bytes.
+  // The reviewer's two acknowledgements carry across that one step, and only when the candidate,
+  // its origin, the reviewed head and its static warnings are all unchanged; any other change
+  // to the review (a new fingerprint for any other reason) starts the review over.
+  const carriedHere =
+    Boolean(carried) &&
+    draftReview.headAcknowledged === true &&
+    carried.candidateDigest === draftReview.candidateDigest &&
+    carried.baseVersion === draftReview.baseVersion &&
+    carried.expectedHeadVersion === draftReview.expectedHeadVersion &&
+    carried.headDigest === draftReview.headDigest &&
+    carried.warnings === (draftReview.checks?.summary.warnings ?? null);
+  // The note typed for this candidate is not lost when the review reloads after the head step.
+  const [note, setNote] = useState(
+    (carriedHere ? carried.note : undefined) ?? draftReview.note ?? "",
+  );
+  const warnings =
+    warningFingerprint === draftReview.reviewFingerprint ||
+    (carriedHere && carried.warned);
+  const reviewed =
+    ackFingerprint === draftReview.reviewFingerprint ||
+    (carriedHere && carried.reviewed);
   const locked =
     operation.busy || operation.uncertain || Boolean(operation.result);
   const fullDiff =
@@ -243,7 +264,23 @@ function DraftPublication({
                     draftReview.expectedHeadVersion &&
                     !draftReview.headChanges)
                 }
-                onClick={() => operation.run(onAcknowledgeHead, fields)}
+                onClick={() =>
+                  operation.run(async (input) => {
+                    const acknowledged = await onAcknowledgeHead(input);
+                    // Recorded before the review reloads and remounts for the same candidate.
+                    onCarry({
+                      reviewed,
+                      note,
+                      warned: warnings,
+                      candidateDigest: draftReview.candidateDigest,
+                      baseVersion: draftReview.baseVersion,
+                      expectedHeadVersion: draftReview.expectedHeadVersion,
+                      headDigest: draftReview.headDigest,
+                      warnings: draftReview.checks?.summary.warnings ?? null,
+                    });
+                    return acknowledged;
+                  }, fields)
+                }
               >
                 Acknowledge reviewed head
               </Button>
@@ -264,6 +301,8 @@ function DraftPublication({
   );
 }
 DraftPublication.propTypes = {
+  carried: PropTypes.object,
+  onCarry: PropTypes.func.isRequired,
   draftReview: PropTypes.object.isRequired,
   canPublish: PropTypes.bool,
   onAcknowledgeHead: PropTypes.func,
@@ -279,6 +318,9 @@ export default function ContextReleaseReview({
   onRetry,
   ...props
 }) {
+  // Held above the publication review so the acknowledgements survive the head acknowledgment,
+  // which reloads the review (and remounts it) for the same candidate bytes.
+  const [carried, setCarried] = useState(null);
   return (
     <Box sx={{ px: { xs: 2, sm: 3 }, py: 2, minWidth: 0 }}>
       <PageHeader
@@ -341,6 +383,8 @@ export default function ContextReleaseReview({
         <DraftPublication
           key={`${scopeKey}:${draftReview.subjectId}:${draftReview.headAcknowledged}`}
           {...props}
+          carried={carried}
+          onCarry={setCarried}
           draftReview={draftReview}
         />
       ) : (

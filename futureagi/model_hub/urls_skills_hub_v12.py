@@ -4,11 +4,18 @@ from django.urls import path
 
 from model_hub.views import skills_context_testing as testing
 from model_hub.views import skills_hub_v12 as views
+from model_hub.views import skills_native_runs as native
 from model_hub.views.skills_context_dependents import SkillContextDependentsView
 
 # J3: whole-context test APIs stay separate from the leaf-only routes.
 urlpatterns = [
     path("<uuid:skill_id>/context-dependents/", SkillContextDependentsView.as_view()),
+    # J2: reviewed context cases must not use the isolated leaf suite route.
+    path(
+        "contexts/<uuid:context_id>/tests/",
+        testing.ContextTestSuiteView.as_view(),
+        name="context-test-suite",
+    ),
     path(
         "contexts/<uuid:context_id>/test-runs/preview/",
         testing.ContextTestPreviewView.as_view(),
@@ -39,6 +46,43 @@ urlpatterns = [
     path(
         "contexts/<uuid:context_id>/test-runs/<uuid:run_id>/files/",
         testing.ContextTestFileView.as_view(),
+    ),
+    # J2: matched native runs of one qualified application, and the authenticated
+    # guest channel of the hosted native runtime (attempt bearer + fence).
+    path(
+        "contexts/<uuid:context_id>/native/targets/", native.NativeTargetsView.as_view()
+    ),
+    path(
+        "contexts/<uuid:context_id>/native/runtime-configuration/",
+        native.NativeRuntimeConfigurationView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/native/targets/<uuid:binding_id>/",
+        native.NativeTargetView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/native/preview/", native.NativePreviewView.as_view()
+    ),
+    path("contexts/<uuid:context_id>/native/runs/", native.NativeRunsView.as_view()),
+    path(
+        "contexts/<uuid:context_id>/native/runs/<uuid:evidence_id>/",
+        native.NativeRunView.as_view(),
+    ),
+    path(
+        "contexts/<uuid:context_id>/native/runs/<uuid:evidence_id>/share/",
+        native.NativeRunShareView.as_view(),
+    ),
+    path(
+        "native/attempts/<uuid:attempt_id>/health/",
+        native.NativeGuestHealthView.as_view(),
+    ),
+    path(
+        "native/attempts/<uuid:attempt_id>/observations/",
+        native.NativeGuestObservationView.as_view(),
+    ),
+    path(
+        "native/attempts/<uuid:attempt_id>/failure/",
+        native.NativeGuestFailureView.as_view(),
     ),
     path(
         "contexts/<uuid:context_id>/consumers/",

@@ -583,6 +583,32 @@ describe("publication and explicit spending", () => {
       screen.getByRole("button", { name: "Publish version" }),
     ).toBeDisabled();
   });
+  it("carries the reviewer's acknowledgements and note across the head acknowledgment, and only that step", async () => {
+    const warned = {
+      ...draftReview,
+      headAcknowledged: false,
+      note: "",
+      checks: { items: [], summary: { errors: 0, warnings: 1, infos: 0 }, tokens: {} },
+    };
+    const acknowledgeHead = vi.fn().mockResolvedValue({ revision: 9 });
+    const props = { scopeKey: "scope", state: "ready", canPublish: true, onAcknowledgeHead: acknowledgeHead, onPublish: vi.fn() };
+    const { rerender } = render(<ContextReleaseReview {...props} draftReview={warned} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Version note" }), { target: { value: "Cap refunds" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /saved candidate against its content origin/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /static warnings/ }));
+    click("Acknowledge reviewed head");
+    await waitFor(() => expect(acknowledgeHead).toHaveBeenCalledTimes(1));
+    // The reloaded review is for the same candidate, head and warnings with a new fingerprint.
+    const acknowledged = { ...warned, headAcknowledged: true, revision: 9, reviewFingerprint: CONFIG };
+    rerender(<ContextReleaseReview {...props} draftReview={acknowledged} />);
+    expect(screen.getByRole("checkbox", { name: /saved candidate against its content origin/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /static warnings/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Version note" })).toHaveValue("Cap refunds");
+    expect(screen.getByRole("button", { name: "Publish version" })).toBeEnabled();
+    // A candidate or warning change after the head step starts the review over.
+    rerender(<ContextReleaseReview {...props} draftReview={{ ...acknowledged, candidateDigest: CONFIG }} />);
+    expect(screen.getByRole("button", { name: "Publish version" })).toBeDisabled();
+  });
   it("starts with no spending default and submits exact decimal text only after confirmation", async () => {
     const save = vi.fn().mockResolvedValue({ revision: 3 });
     render(

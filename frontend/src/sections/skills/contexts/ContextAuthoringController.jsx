@@ -12,6 +12,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import ErrorState from 'src/components/error-state';
 import ContextLibraryView from './ContextLibraryView';
 import ContextDraftSwitch from './ContextDraftSwitch';
+import ContextTestsPanel from './ContextTestsPanel';
 import SkillEditorSession from '../editor/SkillEditorSession';
 import { useAuthoringOperation, AuthoringError } from '../editor/HotfixHeadReview';
 
@@ -59,6 +60,9 @@ function Editor({ scopeKey, contextId }) {
     onSuspend={(input, options) => checkpoint.mutateAsync({ ...input, ...options })}
     onStart={(input, options) => start.mutateAsync({ ...input, ...options })}
     onStarted={(result) => { setInitial(result); setSwitchDraft(null); }} />;
+  // "Repair from recorded vN" already names the origin and carries the intent to preserve the
+  // current draft; the explicit checkpoint consent is still given in the preservation review.
+  if (!initial && !switchDraft && differentOrigin && params.get('preserve') === '1' && Number.isSafeInteger(origin) && !draft.isFetching && checkpointsReady('agent_context')) { setSwitchDraft({ draft: draft.data, origin }); return null; }
   if (!initial && draft.data && !differentOrigin && !draft.isFetching && !draft.isError) setInitial(draft.data);
   if (!detail.data || (!initial && (draft.isPending || draft.isFetching))) return detail.isError ? <ErrorState title="Context unavailable" onRetry={detail.refetch} /> : <ContentSkeleton label="Loading your context draft" />;
   if (!initial && differentOrigin) return <Stack spacing={1.5}>
@@ -81,6 +85,9 @@ function Editor({ scopeKey, contextId }) {
     readOnlyFileQuery={{ ...readOnlyFile, scopeKey }} onSelectReadOnlyFile={selectReadOnlyFile}
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
+      renderTests: ({ session, onSave }) => <ContextTestsPanel contextId={contextId} canWrite={!detail.isError && detail.data.releaseState.permissions.canPublish === true}
+        openSavedDraftDisabled={Boolean(session.mutationError) || session.pendingMutations}
+        onOpenSavedDraft={async () => { const saved = await onSave(); if (saved) navigate(`${paths.dashboard.skills.contextDetail(contextId)}?tab=tests&draft=1`); }} />,
       availableSkills: skills.isError ? [] : skills.data || [],
       proposedLinks: Array.isArray(proposedLinks) ? proposedLinks : undefined,
       previewDependencies: previewDependencies.mutateAsync,
