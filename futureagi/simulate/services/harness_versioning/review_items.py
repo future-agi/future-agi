@@ -237,6 +237,35 @@ def index_mismatch(value: Any) -> list[str]:
     )
 
 
+def index_in_step(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """The tree with each suite index entry's fields that its scenario document also has taken from the document, so
+    an edit to a scenario's own file (its faults, its limits) never leaves the entry runs read saying otherwise. The
+    index is rewritten only when an entry changed."""
+    index = read_json(files.get("scenarios.json", b"null"))
+    if not isinstance(index, list):
+        return dict(files)
+    changed = False
+    for entry in index:
+        key = index_key(entry)
+        document = next(
+            (
+                read_json(files[path])
+                for root in hashing.SCENARIO_ROOTS
+                if (path := f"{root}/{key}/scenario.json") in files
+            ),
+            None,
+        )
+        if not key or not isinstance(document, dict):
+            continue
+        for name in set(entry) & set(document):
+            if entry[name] != document[name]:
+                entry[name] = document[name]
+                changed = True
+    if not changed:
+        return dict(files)
+    return {**files, "scenarios.json": json.dumps(index, indent=2).encode("utf-8")}
+
+
 def item_index(
     files: Mapping[str, bytes], whole: set[str] | frozenset[str] = frozenset()
 ) -> dict[str, Item]:
