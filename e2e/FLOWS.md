@@ -279,7 +279,7 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
-### AUTH-E2E-005 — after a same-tab logout the next account sees none of the previous account's state
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
 
 **Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
 

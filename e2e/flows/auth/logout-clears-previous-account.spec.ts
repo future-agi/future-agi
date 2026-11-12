@@ -30,10 +30,10 @@ interface WireRow {
   organization: string | null; workspace: string | null; url: string; body: string;
 }
 
-test('AUTH-E2E-005: after a same-tab logout the next account sees none of the previous account\'s state', {
+test('AUTH-E2E-016: after a same-tab logout the next account sees none of the previous account\'s state', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'AUTH-E2E-005', area: 'auth',
+    id: 'AUTH-E2E-016', area: 'auth',
     userGoal: 'After account A logs out in a tab, account B signing in on the same tab sees none of A\'s state',
     steps: [
       'sign in as account A through the login form',
