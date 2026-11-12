@@ -484,18 +484,6 @@ async def send_message_to_channel_async(organization_id, message):
         # raise e
 
 
-def _uuid_event(data, organization_id):
-    """A uuid-group event, tagged with the organization it was sent for.
-
-    The bare ``uuid_<id>`` group is shared by every organization's sockets, so
-    the consumer drops a tagged event on a socket outside that organization.
-    """
-    event = {"type": "send_data", "data": data}
-    if organization_id is not None:
-        event["organization_id"] = str(organization_id)
-    return event
-
-
 async def send_message_to_uuid_async(uuid, message, organization_id=None):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
@@ -503,7 +491,7 @@ async def send_message_to_uuid_async(uuid, message, organization_id=None):
     channel_name = f"uuid_{uuid}"
     channel_layer = get_channel_layer()
     try:
-        event = _uuid_event(message, organization_id)
+        event = {"type": "send_data", "data": message}
         await channel_layer.group_send(channel_name, event)
         if organization_id is not None:
             await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
@@ -520,9 +508,10 @@ async def broadcast_to_uuid_async(uuid, data, organization_id=None):
         return
     channel_layer = get_channel_layer()
     try:
-        event = _uuid_event(
-            {"type": "message_type", "data": data, "uuid": uuid}, organization_id
-        )
+        event = {
+            "type": "send_data",
+            "data": {"type": "message_type", "data": data, "uuid": uuid},
+        }
         await channel_layer.group_send(f"uuid_{uuid}", event)
         if organization_id is not None:
             await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
@@ -642,7 +631,7 @@ def send_message_to_uuid(uuid, message, organization_id=None):
             # Get a fresh channel layer in this loop's context
             channel_layer = get_channel_layer()
             try:
-                event = _uuid_event(message, organization_id)
+                event = {"type": "send_data", "data": message}
                 await channel_layer.group_send(channel_name, event)
                 if organization_id is not None:
                     await channel_layer.group_send(
@@ -685,10 +674,10 @@ def broadcast_to_uuid(uuid, data, organization_id=None):
             # Get a fresh channel layer in this loop's context
             channel_layer = get_channel_layer()
             try:
-                event = _uuid_event(
-                    {"type": "message_type", "data": data, "uuid": uuid},
-                    organization_id,
-                )
+                event = {
+                    "type": "send_data",
+                    "data": {"type": "message_type", "data": data, "uuid": uuid},
+                }
                 await channel_layer.group_send(f"uuid_{uuid}", event)
                 if organization_id is not None:
                     await channel_layer.group_send(

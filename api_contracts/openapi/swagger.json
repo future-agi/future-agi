@@ -106078,7 +106078,8 @@
             "properties": {
                 "message": {
                     "title": "Message",
-                    "type": "object"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "send_to_uuid": {
                     "title": "Send to uuid",
@@ -106087,8 +106088,7 @@
                 },
                 "uuid": {
                     "title": "Uuid",
-                    "type": "string",
-                    "x-nullable": true
+                    "type": "string"
                 }
             }
         },
