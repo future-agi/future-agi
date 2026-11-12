@@ -8,6 +8,7 @@ Do not use the ambient workspace manager for capability-owned requests.
 import uuid
 
 from django.db import models
+from django.db.models.functions import Coalesce
 
 
 class AttachmentState(models.TextChoices):
@@ -209,10 +210,13 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
                 condition=models.Q(deleted_at__isnull=True, bound_at__isnull=False),
                 name="attachment_occ_checked_idx",
             ),
-            # The binding worker's claim set: unbound rows only.
+            # The binding worker's claim: per scope, least recently checked
+            # first. Each scope's window is one bounded scan of this index.
             models.Index(
-                fields=["created_at", "id"],
-                condition=models.Q(bound_at__isnull=True),
+                models.F("scope"),
+                Coalesce("bind_checked_at", "created_at"),
+                models.F("id"),
+                condition=models.Q(bound_at__isnull=True, deleted_at__isnull=True),
                 name="attachment_unbound_claim_idx",
             ),
         ]

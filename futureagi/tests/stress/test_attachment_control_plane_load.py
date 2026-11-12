@@ -55,7 +55,7 @@ from tracer.models.attachment import (
 )
 from tracer.models.project import Project
 from tracer.services.attachments import bootstrap as broker
-from tracer.services.attachments import uploads
+from tracer.services.attachments import control_plane, uploads
 from tracer.services.attachments.contract import AttachmentError
 from tracer.tests.test_attachment_core import ImmutableStore, wav_bytes
 
@@ -699,8 +699,9 @@ def seed_backlog(world, scope, rows, *, hot):
         )
 
 
-def binding_claim_sql(cap=512, limit=256):
-    # #3941 8990cb4fe control_plane.py:147-180 (claim_pending), ORM -> SQL by hand.
+def binding_claim_sql_before(cap=512, limit=256):
+    # #3941 8990cb4fe claim_pending (whole-table window), ORM -> SQL by hand;
+    # kept only as the before/after baseline for the bounded claim.
     return f"""
     SELECT id, scope_id FROM (
       SELECT o.id, o.scope_id, COALESCE(o.bind_checked_at, o.created_at) AS touched,
@@ -712,6 +713,18 @@ def binding_claim_sql(cap=512, limit=256):
       WHERE o.bound_at IS NULL AND o.deleted_at IS NULL AND s.enabled
         AND NOT (a.state IN ('deleted', 'expired'))
     ) q WHERE turn <= {cap} ORDER BY turn, touched, id LIMIT {limit}"""
+
+
+def binding_claim_params(*, claimed=(), used=None, limit=256):
+    used = used or {}
+    return {
+        "used_scopes": [str(scope_id) for scope_id in used],
+        "used_counts": list(used.values()),
+        "dead_states": ["deleted", "expired"],
+        "claimed": [str(row_id) for row_id in claimed],
+        "limit": limit,
+        "cap": control_plane.PER_SCOPE_TICK_CAP,
+    }
 
 
 def explain(query, params=None):
@@ -729,16 +742,7 @@ def test_backlog_query_plans(user, settings):
     for scope in cold:
         seed_backlog(world, scope, BACKLOG // 50, hot=False)
     seeded_s = time.perf_counter() - t0
-    # #3941 0133_attachment_binding_claims (becomes 0134): column + partial index.
-    sql(
-        "ALTER TABLE tracer_attachmentoccurrence ADD COLUMN bind_checked_at timestamptz NULL",
-        fetch=False,
-    )
-    sql(
-        "CREATE INDEX attachment_unbound_claim_idx ON tracer_attachmentoccurrence "
-        "(created_at, id) WHERE bound_at IS NULL",
-        fetch=False,
-    )
+    # bind_checked_at + attachment_unbound_claim_idx come from the real 0134.
     for table in (
         "attachmentoccurrence",
         "attachment",
@@ -789,7 +793,24 @@ def test_backlog_query_plans(user, settings):
     plans["parent_lookup"] = AttachmentOccurrence.objects.filter(
         scope=hot, trace_id=uuid.uuid4(), span_id="0000000000000006"
     ).explain(analyze=True, buffers=True)
-    plans["binding_claim_3941"] = "\n".join(explain(binding_claim_sql()))
+    plans["binding_claim_before"] = "\n".join(explain(binding_claim_sql_before()))
+    plans["binding_claim"] = "\n".join(
+        explain(control_plane._CLAIM_SQL, binding_claim_params())
+    )
+    # Mid-tick: 256 rows of the hot scope already claimed this tick.
+    first = [
+        row_id for row_id, _ in sql(control_plane._CLAIM_SQL, binding_claim_params())
+    ]
+    plans["binding_claim_mid_tick"] = "\n".join(
+        explain(
+            control_plane._CLAIM_SQL,
+            binding_claim_params(claimed=first, used={hot.id: len(first)}),
+        )
+    )
+    store = control_plane.OccurrenceBindingStore()
+    t0 = time.perf_counter()
+    claimed = sum(len(store.claim_pending(now, 256)) for _ in range(8))
+    claim_tick_ms = round((time.perf_counter() - t0) * 1000, 1)
     counts = {
         "occurrences": AttachmentOccurrence.objects.count(),
         "unbound": AttachmentOccurrence.objects.filter(bound_at__isnull=True).count(),
@@ -803,6 +824,8 @@ def test_backlog_query_plans(user, settings):
             processed_at__isnull=True
         ).count(),
         "seed_seconds_fences_on": round(seeded_s, 1),
+        "claim_tick_rows": claimed,
+        "claim_tick_ms_8x256": claim_tick_ms,
     }
     write("backlog", {"counts": counts, "plans": plans})
     OUT.mkdir(parents=True, exist_ok=True)
