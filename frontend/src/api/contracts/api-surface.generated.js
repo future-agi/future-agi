@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1141,
+  endpointCount: 1130,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -856,6 +856,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/agent-prompt-optimiser/{id}/trial/{trial_id}/scenarios/": [
         "get",
       ],
+      "/simulate/api/agent-skills/": ["get"],
+      "/simulate/api/agent-skills/{id}/files/": ["get"],
       "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/":
         ["post"],
       "/simulate/api/alk-simulate/call-executions/{call_execution_id}/result/":
@@ -980,19 +982,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/personas/{id}/": ["delete", "get", "patch", "put"],
       "/simulate/api/personas/{id}/duplicate/": ["post"],
       "/simulate/api/run-tests/": ["get"],
-      "/simulate/api/skills/": ["get", "post"],
-      "/simulate/api/skills/attached/": ["get"],
-      "/simulate/api/skills/in-code/": ["get"],
-      "/simulate/api/skills/in-code/{skill_version_id}/copy/": ["post"],
-      "/simulate/api/skills/in-code/{skill_version_id}/files/": ["get"],
-      "/simulate/api/skills/{id}/": ["get"],
-      "/simulate/api/skills/{id}/attach/": ["post"],
-      "/simulate/api/skills/{id}/detach/": ["post"],
-      "/simulate/api/skills/{id}/promote/": ["post"],
-      "/simulate/api/skills/{id}/test/": ["post"],
-      "/simulate/api/skills/{id}/tests/": ["get"],
-      "/simulate/api/skills/{id}/versions/": ["post"],
-      "/simulate/api/skills/{id}/versions/{version_number}/files/": ["get"],
       "/simulate/api/test-executions/": ["get"],
       "/simulate/call-executions/{call_execution_id}/": ["get", "patch"],
       "/simulate/call-executions/{call_execution_id}/branch-analysis/": [
@@ -2230,6 +2219,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-prompt-optimiser/{id}/trial/{trial_id}/scenarios/": [
     "get",
   ],
+  "/simulate/api/agent-skills/": ["get"],
+  "/simulate/api/agent-skills/{id}/files/": ["get"],
   "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/": [
     "post",
   ],
@@ -2350,19 +2341,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/personas/{id}/": ["delete", "get", "patch", "put"],
   "/simulate/api/personas/{id}/duplicate/": ["post"],
   "/simulate/api/run-tests/": ["get"],
-  "/simulate/api/skills/": ["get", "post"],
-  "/simulate/api/skills/attached/": ["get"],
-  "/simulate/api/skills/in-code/": ["get"],
-  "/simulate/api/skills/in-code/{skill_version_id}/copy/": ["post"],
-  "/simulate/api/skills/in-code/{skill_version_id}/files/": ["get"],
-  "/simulate/api/skills/{id}/": ["get"],
-  "/simulate/api/skills/{id}/attach/": ["post"],
-  "/simulate/api/skills/{id}/detach/": ["post"],
-  "/simulate/api/skills/{id}/promote/": ["post"],
-  "/simulate/api/skills/{id}/test/": ["post"],
-  "/simulate/api/skills/{id}/tests/": ["get"],
-  "/simulate/api/skills/{id}/versions/": ["post"],
-  "/simulate/api/skills/{id}/versions/{version_number}/files/": ["get"],
   "/simulate/api/test-executions/": ["get"],
   "/simulate/call-executions/{call_execution_id}/": ["get", "patch"],
   "/simulate/call-executions/{call_execution_id}/branch-analysis/": [

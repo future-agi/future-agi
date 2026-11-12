@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1141,
+  endpointCount: 1130,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28289,6 +28289,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/agent-skills/": {
+      get: {
+        operationId: "simulate_api_agent-skills_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          agent_definition_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentSkills",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-skills/{id}/files/": {
+      get: {
+        operationId: "simulate_api_agent-skills_files",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          agent_definition_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentSkillFiles",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/":
       {
         post: {
@@ -30682,309 +30746,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           503: {
             $ref: "#/definitions/RunTestErrorResponse",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/": {
-      get: {
-        operationId: "simulate_api_skills_list",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {
-          search: {
-            required: false,
-            schema: {
-              type: "string",
-              maxLength: 64,
-              default: "",
-            },
-          },
-          page: {
-            required: false,
-            schema: {
-              type: "integer",
-              minimum: 1,
-              default: 1,
-            },
-          },
-          limit: {
-            required: false,
-            schema: {
-              type: "integer",
-              minimum: 1,
-              maximum: 100,
-              default: 25,
-            },
-          },
-        },
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillListResponse",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-      post: {
-        operationId: "simulate_api_skills_create",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillCreate",
-        },
-        queryParameters: {},
-        responses: {
-          201: {
-            $ref: "#/definitions/LibrarySkillDetail",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/attached/": {
-      get: {
-        operationId: "simulate_api_skills_attached",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {
-          agent_definition_id: {
-            required: true,
-            schema: {
-              type: "string",
-              format: "uuid",
-            },
-          },
-        },
-        responses: {
-          200: {
-            type: "array",
-            items: {
-              $ref: "#/definitions/LibrarySkillAttached",
-            },
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/in-code/": {
-      get: {
-        operationId: "simulate_api_skills_in_code",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {
-          agent_definition_id: {
-            required: true,
-            schema: {
-              type: "string",
-              format: "uuid",
-            },
-          },
-        },
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillInCode",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/in-code/{skill_version_id}/copy/": {
-      post: {
-        operationId: "simulate_api_skills_in-code_copy_to_library",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillCopy",
-        },
-        queryParameters: {},
-        responses: {
-          201: {
-            $ref: "#/definitions/LibrarySkillDetail",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/in-code/{skill_version_id}/files/": {
-      get: {
-        operationId: "simulate_api_skills_in-code_in_code_files",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {
-          agent_definition_id: {
-            required: true,
-            schema: {
-              type: "string",
-              format: "uuid",
-            },
-          },
-        },
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillInCodeFiles",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/": {
-      get: {
-        operationId: "simulate_api_skills_read",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {},
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillDetail",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/attach/": {
-      post: {
-        operationId: "simulate_api_skills_attach",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillAttach",
-        },
-        queryParameters: {},
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillAttachment",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/detach/": {
-      post: {
-        operationId: "simulate_api_skills_detach",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillDetach",
-        },
-        queryParameters: {},
-        responses: {
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/promote/": {
-      post: {
-        operationId: "simulate_api_skills_promote",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillPromote",
-        },
-        queryParameters: {},
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillTag",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/test/": {
-      post: {
-        operationId: "simulate_api_skills_start_test",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillTestCreate",
-        },
-        queryParameters: {},
-        responses: {
-          201: {
-            $ref: "#/definitions/LibrarySkillTest",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/tests/": {
-      get: {
-        operationId: "simulate_api_skills_tests",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {},
-        responses: {
-          200: {
-            type: "array",
-            items: {
-              $ref: "#/definitions/LibrarySkillTest",
-            },
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/versions/": {
-      post: {
-        operationId: "simulate_api_skills_create_version",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/LibrarySkillVersionCreate",
-        },
-        queryParameters: {},
-        responses: {
-          201: {
-            $ref: "#/definitions/LibrarySkillVersion",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
-    "/simulate/api/skills/{id}/versions/{version_number}/files/": {
-      get: {
-        operationId: "simulate_api_skills_versions_version_files",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: true,
-        requestBody: null,
-        queryParameters: {},
-        responses: {
-          200: {
-            $ref: "#/definitions/LibrarySkillVersionFiles",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -51956,6 +51717,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessRunSummary",
           },
           readOnly: true,
+        },
+      },
+    },
+    AgentSkillFiles: {
+      required: ["files"],
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentSkillFile",
+          },
+        },
+      },
+    },
+    AgentSkills: {
+      required: ["agent_version", "status", "items"],
+      type: "object",
+      properties: {
+        agent_version: {
+          $ref: "#/definitions/AgentSkillVersionRef",
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "scanned",
+            "source_missing",
+            "too_large",
+            "no_version",
+            "unsupported_source",
+            "not_scanned",
+          ],
+        },
+        usage: {
+          $ref: "#/definitions/AgentSkillUsage",
+        },
+        context: {
+          $ref: "#/definitions/AgentContext",
+        },
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentSkillItem",
+          },
         },
       },
     },
@@ -73475,600 +73287,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    LibrarySkillAttach: {
-      required: ["agent_definition_id"],
-      type: "object",
-      properties: {
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          enum: ["staging", "production"],
-          "x-nullable": true,
-        },
-        version: {
-          title: "Version",
-          type: "integer",
-          minimum: 1,
-          "x-nullable": true,
-        },
-      },
-    },
-    LibrarySkillAttached: {
-      required: [
-        "skill_id",
-        "name",
-        "kind",
-        "tag",
-        "pinned_version",
-        "resolved_version",
-        "attached_at",
-      ],
-      type: "object",
-      properties: {
-        skill_id: {
-          title: "Skill id",
-          type: "string",
-          format: "uuid",
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["skill", "context"],
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        pinned_version: {
-          title: "Pinned version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        resolved_version: {
-          title: "Resolved version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        attached_at: {
-          title: "Attached at",
-          type: "string",
-          format: "date-time",
-        },
-      },
-    },
-    LibrarySkillAttachment: {
-      required: ["agent_definition_id"],
-      type: "object",
-      properties: {
-        skill_id: {
-          title: "Skill id",
-          type: "string",
-          readOnly: true,
-        },
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          enum: ["staging", "production"],
-        },
-        version: {
-          title: "Version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillCopy: {
-      required: ["agent_definition_id"],
-      type: "object",
-      properties: {
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-      },
-    },
-    LibrarySkillCreate: {
-      required: ["name", "files"],
-      type: "object",
-      properties: {
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["skill", "context"],
-          default: "skill",
-        },
-        description: {
-          title: "Description",
-          type: "string",
-          default: "",
-          maxLength: 1024,
-        },
-        note: {
-          title: "Note",
-          type: "string",
-          default: "",
-          maxLength: 255,
-        },
-        files: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillFile",
-          },
-        },
-      },
-    },
-    LibrarySkillDetach: {
-      required: ["agent_definition_id"],
-      type: "object",
-      properties: {
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-      },
-    },
-    LibrarySkillDetail: {
-      required: ["name", "versions", "tags", "promotions", "attachments"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["skill", "context"],
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        versions: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillVersion",
-          },
-        },
-        tags: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillTag",
-          },
-        },
-        promotions: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillPromotion",
-          },
-        },
-        attachments: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillUsage",
-          },
-        },
-        created_by: {
-          title: "Created by",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillInCode: {
-      required: ["agent_version_number", "status", "items"],
-      type: "object",
-      properties: {
-        agent_version_number: {
-          title: "Agent version number",
-          type: "integer",
-          "x-nullable": true,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          enum: [
-            "scanned",
-            "source_missing",
-            "too_large",
-            "not_scanned",
-            "unsupported_source",
-            "no_version",
-          ],
-        },
-        items: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillInCodeItem",
-          },
-        },
-      },
-    },
-    LibrarySkillInCodeFiles: {
-      required: ["files"],
-      type: "object",
-      properties: {
-        files: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillFile",
-          },
-        },
-      },
-    },
-    LibrarySkillListResponse: {
-      required: [
-        "count",
-        "next",
-        "previous",
-        "results",
-        "total_pages",
-        "current_page",
-      ],
-      type: "object",
-      properties: {
-        count: {
-          title: "Count",
-          type: "integer",
-        },
-        next: {
-          title: "Next",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        previous: {
-          title: "Previous",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        results: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillListItem",
-          },
-        },
-        total_pages: {
-          title: "Total pages",
-          type: "integer",
-        },
-        current_page: {
-          title: "Current page",
-          type: "integer",
-        },
-      },
-    },
-    LibrarySkillPromote: {
-      required: ["version", "tag"],
-      type: "object",
-      properties: {
-        version: {
-          title: "Version",
-          type: "integer",
-          minimum: 1,
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          enum: ["staging", "production"],
-        },
-        reason: {
-          title: "Reason",
-          type: "string",
-          default: "",
-          maxLength: 1000,
-        },
-      },
-    },
-    LibrarySkillTag: {
-      required: ["name", "version"],
-      type: "object",
-      properties: {
-        name: {
-          title: "Name",
-          type: "string",
-          enum: ["staging", "production"],
-        },
-        version: {
-          title: "Version",
-          type: "integer",
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillTest: {
-      required: [
-        "version",
-        "agent_definition_id",
-        "agent_name",
-        "environment_id",
-        "summary",
-      ],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        version: {
-          title: "Version",
-          type: "integer",
-        },
-        baseline_version: {
-          title: "Baseline version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-        agent_name: {
-          title: "Agent name",
-          type: "string",
-          minLength: 1,
-        },
-        environment_id: {
-          title: "Environment id",
-          type: "string",
-          format: "uuid",
-        },
-        run_a_execution_id: {
-          title: "Run a execution id",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        run_b_execution_id: {
-          title: "Run b execution id",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        scenario_keys: {
-          title: "Scenario keys",
-          type: "object",
-        },
-        trials: {
-          title: "Trials",
-          type: "integer",
-          maximum: 32767,
-          minimum: 0,
-        },
-        state: {
-          title: "State",
-          type: "string",
-          enum: ["running", "finished", "failed"],
-        },
-        verdict: {
-          title: "Verdict",
-          type: "string",
-          enum: [
-            "helps",
-            "helps_with_regression",
-            "no_improvement",
-            "not_used",
-            "inconclusive",
-          ],
-        },
-        summary: {
-          title: "Summary",
-          type: "object",
-          "x-nullable": true,
-        },
-        created_by: {
-          title: "Created by",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-        finished_at: {
-          title: "Finished at",
-          type: "string",
-          format: "date-time",
-          "x-nullable": true,
-        },
-      },
-    },
-    LibrarySkillTestCreate: {
-      required: [
-        "version",
-        "agent_definition_id",
-        "environment_id",
-        "scenario_keys",
-      ],
-      type: "object",
-      properties: {
-        version: {
-          title: "Version",
-          type: "integer",
-          minimum: 1,
-        },
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-        environment_id: {
-          title: "Environment id",
-          type: "string",
-          format: "uuid",
-        },
-        scenario_keys: {
-          type: "array",
-          items: {
-            type: "string",
-            maxLength: 255,
-            minLength: 1,
-          },
-          maxItems: 200,
-        },
-        trials: {
-          title: "Trials",
-          type: "integer",
-          default: 1,
-          maximum: 20,
-          minimum: 1,
-        },
-      },
-    },
-    LibrarySkillVersion: {
-      required: ["files_hash", "size"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        version_number: {
-          title: "Version number",
-          type: "integer",
-          maximum: 2147483647,
-          minimum: 0,
-          "x-nullable": true,
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        note: {
-          title: "Note",
-          type: "string",
-          maxLength: 255,
-        },
-        files_hash: {
-          title: "Files hash",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        files_manifest: {
-          title: "Files manifest",
-          type: "object",
-        },
-        size: {
-          title: "Size",
-          type: "integer",
-          maximum: 2147483647,
-          minimum: 0,
-        },
-        created_by: {
-          title: "Created by",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillVersionCreate: {
-      required: ["files"],
-      type: "object",
-      properties: {
-        note: {
-          title: "Note",
-          type: "string",
-          default: "",
-          maxLength: 255,
-        },
-        files: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillFile",
-          },
-        },
-      },
-    },
-    LibrarySkillVersionFiles: {
-      required: ["version", "files"],
-      type: "object",
-      properties: {
-        version: {
-          title: "Version",
-          type: "integer",
-        },
-        files: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillFile",
-          },
-        },
-      },
-    },
     LicenseActionRequest: {
       type: "object",
       properties: {},
@@ -83042,6 +82260,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/RunTrace",
           },
+        },
+        skills: {
+          $ref: "#/definitions/CallSkills",
         },
       },
     },
@@ -94614,6 +93835,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentSkillFile: {
+      required: ["path", "content"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        content: {
+          title: "Content",
+          type: "string",
+        },
+      },
+    },
+    AgentContext: {
+      required: ["runtime", "capped", "files"],
+      type: "object",
+      properties: {
+        runtime: {
+          title: "Runtime",
+          type: "string",
+          enum: ["claude", "codex", "generic"],
+        },
+        capped: {
+          title: "Capped",
+          type: "boolean",
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentContextFile",
+          },
+        },
+      },
+    },
+    AgentSkillItem: {
+      required: [
+        "id",
+        "kind",
+        "name",
+        "path",
+        "description",
+        "version_number",
+        "readable",
+        "problem",
+        "observed_calls",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "context"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        readable: {
+          title: "Readable",
+          type: "boolean",
+        },
+        problem: {
+          title: "Problem",
+          type: "string",
+        },
+        observed_calls: {
+          title: "Observed calls",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentSkillUsage: {
+      required: ["state", "calls"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["instrumented", "not_instrumented", "no_calls", "unavailable"],
+        },
+        calls: {
+          title: "Calls",
+          type: "integer",
+        },
+      },
+    },
+    AgentSkillVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
       type: "object",
@@ -104495,12 +103840,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         target_metrics: {
           $ref: "#/definitions/HarnessTargetMetrics",
         },
-        skill_loads: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/HarnessSkillLoad",
-          },
-          "x-nullable": true,
+        skill_usage: {
+          $ref: "#/definitions/HarnessSkillUsage",
         },
       },
       "x-nullable": true,
@@ -106401,208 +105742,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_rows: {
           title: "Total rows",
           type: "integer",
-        },
-      },
-    },
-    LibrarySkillFile: {
-      required: ["path", "content"],
-      type: "object",
-      properties: {
-        path: {
-          title: "Path",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        content: {
-          title: "Content",
-          type: "string",
-        },
-      },
-    },
-    LibrarySkillPromotion: {
-      required: ["version", "tag"],
-      type: "object",
-      properties: {
-        version: {
-          title: "Version",
-          type: "integer",
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          enum: ["staging", "production"],
-        },
-        tested: {
-          title: "Tested",
-          type: "boolean",
-        },
-        reason: {
-          title: "Reason",
-          type: "string",
-        },
-        created_by: {
-          title: "Created by",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillUsage: {
-      required: ["agent_definition_id", "agent_name"],
-      type: "object",
-      properties: {
-        agent_definition_id: {
-          title: "Agent definition id",
-          type: "string",
-          format: "uuid",
-        },
-        agent_name: {
-          title: "Agent name",
-          type: "string",
-          minLength: 1,
-        },
-        tag: {
-          title: "Tag",
-          type: "string",
-          enum: ["staging", "production"],
-        },
-        version: {
-          title: "Version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
-        },
-      },
-    },
-    LibrarySkillInCodeItem: {
-      required: ["name", "files_hash"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["skill", "context"],
-        },
-        path: {
-          title: "Path",
-          type: "string",
-          maxLength: 512,
-        },
-        files_hash: {
-          title: "Files hash",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        readable: {
-          title: "Readable",
-          type: "boolean",
-        },
-        problem: {
-          title: "Problem",
-          type: "string",
-          maxLength: 64,
-        },
-      },
-    },
-    LibrarySkillListItem: {
-      required: [
-        "name",
-        "latest_version",
-        "tags",
-        "used_by",
-        "last_test_version",
-        "last_test_state",
-        "last_test_verdict",
-      ],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-          readOnly: true,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["skill", "context"],
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        latest_version: {
-          title: "Latest version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        tags: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/LibrarySkillTag",
-          },
-        },
-        used_by: {
-          title: "Used by",
-          type: "integer",
-        },
-        last_test_version: {
-          title: "Last test version",
-          type: "integer",
-          "x-nullable": true,
-        },
-        last_test_state: {
-          title: "Last test state",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        last_test_verdict: {
-          title: "Last test verdict",
-          type: "string",
-          "x-nullable": true,
-        },
-        updated_at: {
-          title: "Updated at",
-          type: "string",
-          format: "date-time",
-          readOnly: true,
         },
       },
     },
@@ -112128,13 +111267,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         fix_run: {
           $ref: "#/definitions/RunFixRun",
         },
-        skills: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/RunSkillLoad",
-          },
-          default: [],
-        },
       },
     },
     RunFacets: {
@@ -112582,6 +111714,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    CallSkills: {
+      required: ["state", "items"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "instrumented",
+            "not_instrumented",
+            "no_calls",
+            "unavailable",
+            "not_scanned",
+          ],
+        },
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallSkillItem",
+          },
+        },
+      },
+      "x-nullable": true,
     },
     RunTrace: {
       required: [
@@ -118040,6 +117196,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentContextFile: {
+      required: [
+        "id",
+        "name",
+        "path",
+        "version_number",
+        "readable",
+        "problem",
+        "position",
+        "rule",
+        "on_demand",
+        "folder",
+        "imported_from",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        readable: {
+          title: "Readable",
+          type: "boolean",
+        },
+        problem: {
+          title: "Problem",
+          type: "string",
+        },
+        position: {
+          title: "Position",
+          type: "integer",
+        },
+        rule: {
+          title: "Rule",
+          type: "string",
+          minLength: 1,
+        },
+        on_demand: {
+          title: "On demand",
+          type: "boolean",
+        },
+        folder: {
+          title: "Folder",
+          type: "string",
+        },
+        imported_from: {
+          title: "Imported from",
+          type: "string",
+        },
+      },
+    },
     AlertOption: {
       required: ["value", "label"],
       type: "object",
@@ -123003,41 +122225,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessSkillLoad: {
-      required: ["name", "observed", "loaded"],
+    HarnessSkillUsage: {
+      required: ["instrumented", "observed"],
       type: "object",
       properties: {
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        origin: {
-          title: "Origin",
-          type: "string",
-          enum: ["library", "repo"],
-          default: "library",
-        },
-        version_number: {
-          title: "Version number",
-          type: "integer",
-          minimum: 1,
-          "x-nullable": true,
-        },
-        observed: {
-          title: "Observed",
+        instrumented: {
+          title: "Instrumented",
           type: "boolean",
         },
-        loaded: {
-          title: "Loaded",
-          type: "string",
-          enum: ["yes", "no", "unknown"],
-        },
-        at: {
-          title: "At",
-          type: "number",
+        observed: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
           "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
         },
       },
       "x-nullable": true,
@@ -127053,60 +126262,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    RunSkillLoad: {
-      required: [
-        "name",
-        "kind",
-        "origin",
-        "version_number",
-        "from_tag",
-        "observed",
-        "loaded_in",
-        "total",
-      ],
-      type: "object",
-      properties: {
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          minLength: 1,
-        },
-        origin: {
-          title: "Origin",
-          type: "string",
-          enum: ["library", "repo"],
-        },
-        version_number: {
-          title: "Version number",
-          type: "integer",
-          "x-nullable": true,
-        },
-        from_tag: {
-          title: "From tag",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        observed: {
-          title: "Observed",
-          type: "boolean",
-          "x-nullable": true,
-        },
-        loaded_in: {
-          title: "Loaded in",
-          type: "integer",
-        },
-        total: {
-          title: "Total",
-          type: "integer",
-        },
-      },
-    },
     RunSummary: {
       required: [
         "total",
@@ -127300,6 +126455,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         description: {
           title: "Description",
           type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    CallSkillItem: {
+      required: ["name", "path", "kind", "version_number", "observed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["skill", "context"],
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        observed: {
+          title: "Observed",
+          type: "boolean",
           "x-nullable": true,
         },
       },

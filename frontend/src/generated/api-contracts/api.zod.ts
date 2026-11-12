@@ -37702,6 +37702,90 @@ export const SimulateApiAgentPromptOptimiserTrialTrialScenariosResponse =
     }),
   });
 
+export const SimulateApiAgentSkillsListQueryParams = zod.object({
+  agent_definition_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid().optional(),
+});
+
+export const SimulateApiAgentSkillsListResponse = zod.object({
+  agent_version: zod.object({
+    id: zod.string().uuid(),
+    version_number: zod.number(),
+  }),
+  source_kind: zod.string().min(1).optional(),
+  status: zod.enum([
+    "scanned",
+    "source_missing",
+    "too_large",
+    "no_version",
+    "unsupported_source",
+    "not_scanned",
+  ]),
+  usage: zod
+    .object({
+      state: zod.enum([
+        "instrumented",
+        "not_instrumented",
+        "no_calls",
+        "unavailable",
+      ]),
+      calls: zod.number(),
+    })
+    .optional(),
+  context: zod
+    .object({
+      runtime: zod.enum(["claude", "codex", "generic"]),
+      capped: zod.boolean(),
+      files: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+          path: zod.string().min(1),
+          version_number: zod.number(),
+          readable: zod.boolean(),
+          problem: zod.string(),
+          position: zod.number(),
+          rule: zod.string().min(1),
+          on_demand: zod.boolean(),
+          folder: zod.string(),
+          imported_from: zod.string(),
+        }),
+      ),
+    })
+    .optional(),
+  items: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      kind: zod.enum(["skill", "context"]),
+      name: zod.string().min(1),
+      path: zod.string().min(1),
+      description: zod.string(),
+      version_number: zod.number(),
+      readable: zod.boolean(),
+      problem: zod.string(),
+      observed_calls: zod.number(),
+    }),
+  ),
+});
+
+export const SimulateApiAgentSkillsFilesParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentSkillsFilesQueryParams = zod.object({
+  agent_definition_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid().optional(),
+});
+
+export const SimulateApiAgentSkillsFilesResponse = zod.object({
+  files: zod.array(
+    zod.object({
+      path: zod.string().min(1),
+      content: zod.string(),
+    }),
+  ),
+});
+
 /**
  * Accept a multipart audio upload and hand it to the shared voice
 storage helper (``upload_audio_to_s3``). Matches the pattern the
@@ -43610,9 +43694,10 @@ export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderCallI
 
 export const simulateApiHarnessAttemptsResultsBodyCallTargetMetricsProviderEndReasonMax = 255;
 
-export const simulateApiHarnessAttemptsResultsBodyCallSkillLoadsItemNameMax = 64;
+export const simulateApiHarnessAttemptsResultsBodyCallSkillUsageObservedItemMax = 64;
 
-export const simulateApiHarnessAttemptsResultsBodyCallSkillLoadsItemOriginDefault = `library`;
+export const simulateApiHarnessAttemptsResultsBodyCallSkillUsageSourceMax = 32;
+
 export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
@@ -43777,26 +43862,23 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
           .optional(),
       })
       .optional(),
-    skill_loads: zod
-      .array(
-        zod.object({
-          name: zod
+    skill_usage: zod
+      .object({
+        instrumented: zod.boolean(),
+        observed: zod.array(
+          zod
             .string()
             .min(1)
             .max(
-              simulateApiHarnessAttemptsResultsBodyCallSkillLoadsItemNameMax,
+              simulateApiHarnessAttemptsResultsBodyCallSkillUsageObservedItemMax,
             ),
-          origin: zod
-            .enum(["library", "repo"])
-            .default(
-              simulateApiHarnessAttemptsResultsBodyCallSkillLoadsItemOriginDefault,
-            ),
-          version_number: zod.number().min(1).optional(),
-          observed: zod.boolean(),
-          loaded: zod.enum(["yes", "no", "unknown"]),
-          at: zod.number().optional(),
-        }),
-      )
+        ),
+        source: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessAttemptsResultsBodyCallSkillUsageSourceMax)
+          .optional(),
+      })
       .optional(),
   }),
   failure: zod.object({
@@ -46440,433 +46522,6 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
 export const SimulateApiRunTestsListResponse = zod.array(
   SimulateApiRunTestsListResponseItem,
 );
-
-export const simulateApiSkillsListQuerySearchDefault = ``;
-export const simulateApiSkillsListQuerySearchMax = 64;
-
-export const simulateApiSkillsListQueryPageDefault = 1;
-
-export const simulateApiSkillsListQueryLimitDefault = 25;
-export const simulateApiSkillsListQueryLimitMax = 100;
-
-export const SimulateApiSkillsListQueryParams = zod.object({
-  search: zod
-    .string()
-    .max(simulateApiSkillsListQuerySearchMax)
-    .default(simulateApiSkillsListQuerySearchDefault),
-  page: zod.number().min(1).default(simulateApiSkillsListQueryPageDefault),
-  limit: zod
-    .number()
-    .min(1)
-    .max(simulateApiSkillsListQueryLimitMax)
-    .default(simulateApiSkillsListQueryLimitDefault),
-});
-
-export const simulateApiSkillsListResponseResultsItemNameMax = 64;
-
-export const SimulateApiSkillsListResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().min(1),
-  previous: zod.string().min(1),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      name: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsListResponseResultsItemNameMax),
-      kind: zod.enum(["skill", "context"]).optional(),
-      description: zod.string().optional(),
-      latest_version: zod.number(),
-      tags: zod.array(
-        zod.object({
-          name: zod.enum(["staging", "production"]),
-          version: zod.number(),
-          updated_at: zod.string().datetime({ offset: true }).optional(),
-        }),
-      ),
-      used_by: zod.number(),
-      last_test_version: zod.number(),
-      last_test_state: zod.string().min(1),
-      last_test_verdict: zod.string(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-    }),
-  ),
-  total_pages: zod.number(),
-  current_page: zod.number(),
-});
-
-export const simulateApiSkillsCreateBodyNameMax = 64;
-
-export const simulateApiSkillsCreateBodyKindDefault = `skill`;
-export const simulateApiSkillsCreateBodyDescriptionDefault = ``;
-export const simulateApiSkillsCreateBodyDescriptionMax = 1024;
-
-export const simulateApiSkillsCreateBodyNoteDefault = ``;
-export const simulateApiSkillsCreateBodyNoteMax = 255;
-
-export const simulateApiSkillsCreateBodyFilesItemPathMax = 512;
-
-export const SimulateApiSkillsCreateBody = zod.object({
-  name: zod.string().min(1).max(simulateApiSkillsCreateBodyNameMax),
-  kind: zod
-    .enum(["skill", "context"])
-    .default(simulateApiSkillsCreateBodyKindDefault),
-  description: zod
-    .string()
-    .max(simulateApiSkillsCreateBodyDescriptionMax)
-    .default(simulateApiSkillsCreateBodyDescriptionDefault),
-  note: zod
-    .string()
-    .max(simulateApiSkillsCreateBodyNoteMax)
-    .default(simulateApiSkillsCreateBodyNoteDefault),
-  files: zod.array(
-    zod.object({
-      path: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsCreateBodyFilesItemPathMax),
-      content: zod.string(),
-    }),
-  ),
-});
-
-export const SimulateApiSkillsAttachedQueryParams = zod.object({
-  agent_definition_id: zod.string().uuid(),
-});
-
-export const SimulateApiSkillsAttachedResponseItem = zod.object({
-  skill_id: zod.string().uuid(),
-  name: zod.string().min(1),
-  kind: zod.enum(["skill", "context"]),
-  tag: zod.string().min(1),
-  pinned_version: zod.number(),
-  resolved_version: zod.number(),
-  attached_at: zod.string().datetime({ offset: true }),
-});
-export const SimulateApiSkillsAttachedResponse = zod.array(
-  SimulateApiSkillsAttachedResponseItem,
-);
-
-export const SimulateApiSkillsInCodeQueryParams = zod.object({
-  agent_definition_id: zod.string().uuid(),
-});
-
-export const simulateApiSkillsInCodeResponseItemsItemNameMax = 64;
-
-export const simulateApiSkillsInCodeResponseItemsItemPathMax = 512;
-
-export const simulateApiSkillsInCodeResponseItemsItemFilesHashMax = 64;
-
-export const simulateApiSkillsInCodeResponseItemsItemProblemMax = 64;
-
-export const SimulateApiSkillsInCodeResponse = zod.object({
-  agent_version_number: zod.number(),
-  status: zod.enum([
-    "scanned",
-    "source_missing",
-    "too_large",
-    "not_scanned",
-    "unsupported_source",
-    "no_version",
-  ]),
-  items: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      name: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsInCodeResponseItemsItemNameMax),
-      kind: zod.enum(["skill", "context"]).optional(),
-      path: zod
-        .string()
-        .max(simulateApiSkillsInCodeResponseItemsItemPathMax)
-        .optional(),
-      files_hash: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsInCodeResponseItemsItemFilesHashMax),
-      description: zod.string().optional(),
-      readable: zod.boolean().optional(),
-      problem: zod
-        .string()
-        .max(simulateApiSkillsInCodeResponseItemsItemProblemMax)
-        .optional(),
-    }),
-  ),
-});
-
-export const SimulateApiSkillsInCodeCopyToLibraryParams = zod.object({
-  skill_version_id: zod.string(),
-});
-
-export const SimulateApiSkillsInCodeCopyToLibraryBody = zod.object({
-  agent_definition_id: zod.string().uuid(),
-});
-
-export const SimulateApiSkillsInCodeInCodeFilesParams = zod.object({
-  skill_version_id: zod.string(),
-});
-
-export const SimulateApiSkillsInCodeInCodeFilesQueryParams = zod.object({
-  agent_definition_id: zod.string().uuid(),
-});
-
-export const simulateApiSkillsInCodeInCodeFilesResponseFilesItemPathMax = 512;
-
-export const SimulateApiSkillsInCodeInCodeFilesResponse = zod.object({
-  files: zod.array(
-    zod.object({
-      path: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsInCodeInCodeFilesResponseFilesItemPathMax),
-      content: zod.string(),
-    }),
-  ),
-});
-
-export const SimulateApiSkillsReadParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiSkillsReadResponseNameMax = 64;
-
-export const simulateApiSkillsReadResponseVersionsItemVersionNumberMin = 0;
-export const simulateApiSkillsReadResponseVersionsItemVersionNumberMax = 2147483647;
-
-export const simulateApiSkillsReadResponseVersionsItemNoteMax = 255;
-
-export const simulateApiSkillsReadResponseVersionsItemFilesHashMax = 64;
-
-export const simulateApiSkillsReadResponseVersionsItemSizeMin = 0;
-export const simulateApiSkillsReadResponseVersionsItemSizeMax = 2147483647;
-
-export const SimulateApiSkillsReadResponse = zod.object({
-  id: zod.string().uuid().optional(),
-  name: zod.string().min(1).max(simulateApiSkillsReadResponseNameMax),
-  kind: zod.enum(["skill", "context"]).optional(),
-  description: zod.string().optional(),
-  versions: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      version_number: zod
-        .number()
-        .min(simulateApiSkillsReadResponseVersionsItemVersionNumberMin)
-        .max(simulateApiSkillsReadResponseVersionsItemVersionNumberMax)
-        .optional(),
-      description: zod.string().optional(),
-      note: zod
-        .string()
-        .max(simulateApiSkillsReadResponseVersionsItemNoteMax)
-        .optional(),
-      files_hash: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsReadResponseVersionsItemFilesHashMax),
-      files_manifest: zod.object({}).passthrough().optional(),
-      size: zod
-        .number()
-        .min(simulateApiSkillsReadResponseVersionsItemSizeMin)
-        .max(simulateApiSkillsReadResponseVersionsItemSizeMax),
-      created_by: zod.string().min(1).optional(),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-    }),
-  ),
-  tags: zod.array(
-    zod.object({
-      name: zod.enum(["staging", "production"]),
-      version: zod.number(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-    }),
-  ),
-  promotions: zod.array(
-    zod.object({
-      version: zod.number(),
-      tag: zod.enum(["staging", "production"]),
-      tested: zod.boolean().optional(),
-      reason: zod.string().optional(),
-      created_by: zod.string().min(1).optional(),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-    }),
-  ),
-  attachments: zod.array(
-    zod.object({
-      agent_definition_id: zod.string().uuid(),
-      agent_name: zod.string().min(1),
-      tag: zod.enum(["staging", "production"]).optional(),
-      version: zod.number().optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-    }),
-  ),
-  created_by: zod.string().min(1).optional(),
-  created_at: zod.string().datetime({ offset: true }).optional(),
-  updated_at: zod.string().datetime({ offset: true }).optional(),
-});
-
-export const SimulateApiSkillsAttachParams = zod.object({
-  id: zod.string(),
-});
-
-export const SimulateApiSkillsAttachBody = zod.object({
-  agent_definition_id: zod.string().uuid(),
-  tag: zod.enum(["staging", "production"]).optional(),
-  version: zod.number().min(1).optional(),
-});
-
-export const SimulateApiSkillsAttachResponse = zod.object({
-  skill_id: zod.string().optional(),
-  agent_definition_id: zod.string().uuid(),
-  tag: zod.enum(["staging", "production"]).optional(),
-  version: zod.number().optional(),
-  updated_at: zod.string().datetime({ offset: true }).optional(),
-});
-
-export const SimulateApiSkillsDetachParams = zod.object({
-  id: zod.string(),
-});
-
-export const SimulateApiSkillsDetachBody = zod.object({
-  agent_definition_id: zod.string().uuid(),
-});
-
-export const SimulateApiSkillsPromoteParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiSkillsPromoteBodyReasonDefault = ``;
-export const simulateApiSkillsPromoteBodyReasonMax = 1000;
-
-export const SimulateApiSkillsPromoteBody = zod.object({
-  version: zod.number().min(1),
-  tag: zod.enum(["staging", "production"]),
-  reason: zod
-    .string()
-    .max(simulateApiSkillsPromoteBodyReasonMax)
-    .default(simulateApiSkillsPromoteBodyReasonDefault),
-});
-
-export const SimulateApiSkillsPromoteResponse = zod.object({
-  name: zod.enum(["staging", "production"]),
-  version: zod.number(),
-  updated_at: zod.string().datetime({ offset: true }).optional(),
-});
-
-export const SimulateApiSkillsStartTestParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiSkillsStartTestBodyScenarioKeysItemMax = 255;
-
-export const simulateApiSkillsStartTestBodyScenarioKeysMax = 200;
-
-export const simulateApiSkillsStartTestBodyTrialsDefault = 1;
-export const simulateApiSkillsStartTestBodyTrialsMax = 20;
-
-export const SimulateApiSkillsStartTestBody = zod.object({
-  version: zod.number().min(1),
-  agent_definition_id: zod.string().uuid(),
-  environment_id: zod.string().uuid(),
-  scenario_keys: zod
-    .array(
-      zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsStartTestBodyScenarioKeysItemMax),
-    )
-    .max(simulateApiSkillsStartTestBodyScenarioKeysMax),
-  trials: zod
-    .number()
-    .min(1)
-    .max(simulateApiSkillsStartTestBodyTrialsMax)
-    .default(simulateApiSkillsStartTestBodyTrialsDefault),
-});
-
-export const SimulateApiSkillsTestsParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiSkillsTestsResponseTrialsMin = 0;
-export const simulateApiSkillsTestsResponseTrialsMax = 32767;
-
-export const SimulateApiSkillsTestsResponseItem = zod.object({
-  id: zod.string().uuid().optional(),
-  version: zod.number(),
-  baseline_version: zod.number().optional(),
-  agent_definition_id: zod.string().uuid(),
-  agent_name: zod.string().min(1),
-  environment_id: zod.string().uuid(),
-  run_a_execution_id: zod.string().uuid().optional(),
-  run_b_execution_id: zod.string().uuid().optional(),
-  scenario_keys: zod.object({}).passthrough().optional(),
-  trials: zod
-    .number()
-    .min(simulateApiSkillsTestsResponseTrialsMin)
-    .max(simulateApiSkillsTestsResponseTrialsMax)
-    .optional(),
-  state: zod.enum(["running", "finished", "failed"]).optional(),
-  verdict: zod
-    .enum([
-      "helps",
-      "helps_with_regression",
-      "no_improvement",
-      "not_used",
-      "inconclusive",
-    ])
-    .optional(),
-  summary: zod.object({}).passthrough(),
-  created_by: zod.string().min(1).optional(),
-  created_at: zod.string().datetime({ offset: true }).optional(),
-  finished_at: zod.string().datetime({ offset: true }).optional(),
-});
-export const SimulateApiSkillsTestsResponse = zod.array(
-  SimulateApiSkillsTestsResponseItem,
-);
-
-export const SimulateApiSkillsCreateVersionParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiSkillsCreateVersionBodyNoteDefault = ``;
-export const simulateApiSkillsCreateVersionBodyNoteMax = 255;
-
-export const simulateApiSkillsCreateVersionBodyFilesItemPathMax = 512;
-
-export const SimulateApiSkillsCreateVersionBody = zod.object({
-  note: zod
-    .string()
-    .max(simulateApiSkillsCreateVersionBodyNoteMax)
-    .default(simulateApiSkillsCreateVersionBodyNoteDefault),
-  files: zod.array(
-    zod.object({
-      path: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsCreateVersionBodyFilesItemPathMax),
-      content: zod.string(),
-    }),
-  ),
-});
-
-export const SimulateApiSkillsVersionsVersionFilesParams = zod.object({
-  id: zod.string(),
-  version_number: zod.string(),
-});
-
-export const simulateApiSkillsVersionsVersionFilesResponseFilesItemPathMax = 512;
-
-export const SimulateApiSkillsVersionsVersionFilesResponse = zod.object({
-  version: zod.number(),
-  files: zod.array(
-    zod.object({
-      path: zod
-        .string()
-        .min(1)
-        .max(simulateApiSkillsVersionsVersionFilesResponseFilesItemPathMax),
-      content: zod.string(),
-    }),
-  ),
-});
 
 /**
  * Get paginated list of test executions for the user's organization
@@ -54184,7 +53839,6 @@ export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDe
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
 
-export const simulateV3TestExecutionCallsResponseExecutionSkillsDefault = [];
 export const simulateV3TestExecutionCallsResponseSummaryScoringNotApplicableMin = 0;
 
 export const simulateV3TestExecutionCallsResponseSummaryScoringPendingMin = 0;
@@ -54311,20 +53965,6 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         label: zod.string(),
       })
       .optional(),
-    skills: zod
-      .array(
-        zod.object({
-          name: zod.string().min(1),
-          kind: zod.string().min(1),
-          origin: zod.enum(["library", "repo"]),
-          version_number: zod.number(),
-          from_tag: zod.string().min(1),
-          observed: zod.boolean(),
-          loaded_in: zod.number(),
-          total: zod.number(),
-        }),
-      )
-      .default(simulateV3TestExecutionCallsResponseExecutionSkillsDefault),
   }),
   summary: zod.object({
     total: zod.number(),
@@ -54734,6 +54374,26 @@ export const SimulateV3TestExecutionTracesResponse = zod.object({
       call_execution_id: zod.string().uuid(),
     }),
   ),
+  skills: zod
+    .object({
+      state: zod.enum([
+        "instrumented",
+        "not_instrumented",
+        "no_calls",
+        "unavailable",
+        "not_scanned",
+      ]),
+      items: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          path: zod.string().min(1),
+          kind: zod.enum(["skill", "context"]),
+          version_number: zod.number(),
+          observed: zod.boolean(),
+        }),
+      ),
+    })
+    .optional(),
 });
 
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
