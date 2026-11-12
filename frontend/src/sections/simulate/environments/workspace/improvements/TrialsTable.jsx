@@ -115,7 +115,7 @@ export default function TrialsTable({ fix }) {
                   flexShrink: 0,
                 }}
               >
-                {`T${c.attempt}`}
+                {`C${c.attempt}`}
               </Box>
               <Box minWidth={0}>
                 <Typography

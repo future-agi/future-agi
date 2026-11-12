@@ -160,7 +160,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
               <Box
                 sx={{ ...rowSx(0), gridTemplateColumns: "1fr 90px 90px 80px" }}
               >
-                {["Run", "Target", "Held back", "Result"].map((h) => (
+                {["Candidate", "Target", "Held back", "Result"].map((h) => (
                   <Typography
                     key={h}
                     sx={{

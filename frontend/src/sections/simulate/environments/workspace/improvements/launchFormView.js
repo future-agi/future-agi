@@ -20,7 +20,7 @@ export function countsLine(picked, protectedCount, limits) {
   } else if (needsVariations(picked, limits)) {
     failing = `${picked} failing, and up to ${picked * limits.variations_per_case} variations of them`;
   }
-  return `${failing} · ${protectedCount} must keep passing`;
+  return `${failing} · ${protectedCount} protected`;
 }
 
 // With so few, too few cases can be held back to verify the fix, however well it

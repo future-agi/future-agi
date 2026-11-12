@@ -109,6 +109,18 @@ describe("TrialsTable", () => {
     expect(trial).not.toHaveTextContent("Watch live");
   });
 
+  it("badges each candidate C1, C2, never T", () => {
+    render(
+      <MemoryRouter>
+        <TrialsTable fix={byId("fix-search")} />
+      </MemoryRouter>,
+    );
+    expect(
+      within(screen.getByTestId("trial-1")).getByText("C1"),
+    ).toBeInTheDocument();
+    expect(within(screen.getByTestId("trial-1")).queryByText("T1")).toBeNull();
+  });
+
   it("says the agent was measured automatically only when the platform says so", () => {
     const measured = byId("fix-search");
     measured.request.measured_automatically = true;

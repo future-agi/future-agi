@@ -69,6 +69,10 @@ describe("headline", () => {
     expect(headline(stopped)).toBe(
       `You stopped this epoch after ${stopped.candidates.length} ${stopped.candidates.length === 1 ? "candidate" : "candidates"}. Nothing changed.`,
     );
+    // Stopped before the first candidate: no "after 0 candidates".
+    expect(headline({ ...stopped, candidates: [] })).toBe(
+      "You stopped this epoch before any candidate ran. Nothing changed.",
+    );
     const old = { ...byId("fix-no-improvement"), candidates: [] };
     // A no-safe fix whose trials hold no checks says so, not the engine's summary.
     expect(headline(old)).toBe(
@@ -97,6 +101,16 @@ describe("headline", () => {
       }),
     ).toBe(
       "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
+    );
+    // Already retried once: no Retry button, so it does not say "Retry it".
+    expect(
+      headline({
+        ...byId("fix-failed"),
+        retryable: false,
+        failure: { code: "fix_engine_died", message: "x" },
+      }),
+    ).toBe(
+      "This epoch stopped because of a problem on our side, not your agent. Nothing changed. It was retried once already. Run a new epoch from the run's Debug failures.",
     );
     for (const state of [
       "not_reproduced",
