@@ -37,6 +37,8 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
     Returns the number of cells updated.
     """
     try:
+        if not user_eval_metric.dataset_id:
+            return 0
         eval_id = str(user_eval_metric.id)
         value_infos = json.dumps({"reason": reason})
         display = reason[:500]
@@ -54,6 +56,8 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
                     ],
                     source_id__endswith=f"-sourceid-{eval_id}",
                 ),
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -62,6 +66,8 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
             Column.objects.filter(
                 source=SourceChoices.EVALUATION_REASON.value,
                 source_id__endswith=f"-sourceid-{eval_id}",
+                dataset_id=user_eval_metric.dataset_id,
+                dataset__organization_id=user_eval_metric.organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -72,6 +78,8 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
 
         updated = Cell.objects.filter(
             column_id__in=column_ids,
+            dataset_id=user_eval_metric.dataset_id,
+            row__dataset_id=user_eval_metric.dataset_id,
             deleted=False,
             status=CellStatus.RUNNING.value,
         ).update(
