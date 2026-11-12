@@ -191,7 +191,15 @@ def test_graph_membership_uses_complete_physical_winners(engine, path, replaceme
             sql, params = builder.build_exact_span_partition(
                 partition_start=START, partition_end=START + timedelta(hours=2))
             key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-            assert f"AND ({key}) IN (" in sql and f"SELECT {key}" in sql
+            compact = " ".join(sql.split())
+            # Acquire the whole trace so unselected children remain available
+            # for summary proof; collapse every row by the full physical key.
+            assert "AND (project_id, trace_id) IN (" in compact
+            assert "SELECT project_id, trace_id FROM spans" in compact
+            assert f"GROUP BY {key}" in compact
+            assert compact.count(f"PREWHERE {builder.project_filter_sql()}") == 2
+            assert params["project_id"] == PROJECT
+            assert "graph_row_match_0 = 1" in sql
             assert sum(int(row["traffic_count"]) for row in run(sql, params)) == len(expected)
             continue
         common = {

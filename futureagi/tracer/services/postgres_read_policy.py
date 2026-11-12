@@ -1,4 +1,4 @@
-"""Transaction-local application reads without a PostgreSQL statement cap.
+"""Transaction-local application reads with an optional statement budget.
 
 Admission/request checks are cooperative boundaries, not query timers. Keep
 them separate from the setting lifetime, including across nested read scopes.
@@ -20,15 +20,18 @@ def application_postgres_reads(
     connection,
     atomic,
     check_request: Callable[[], object] | None = None,
+    statement_timeout_ms: Callable[[], int] | None = None,
     read_only: bool = False,
     repeatable_read: bool = False,
 ):
-    """Lazily disable statement_timeout, restoring an enclosing transaction.
+    """Lazily install the read policy, restoring an enclosing transaction.
 
     Only the first actual statement opens a transaction/savepoint. Mock-only
     readers stay connection-lazy. On success restore the previous setting before
     release; on failure rollback restores SET LOCAL, including inside an outer
     transaction. No background thread or session-global SET is used.
+    Reads are uncapped by default. A caller supplying statement_timeout_ms must
+    return a positive remaining budget, recalculated before each statement.
     """
 
     def check():
@@ -64,6 +67,7 @@ def application_postgres_reads(
                 # initialize an inner scope before the enclosing one is ready.
                 return execute(sql, params, many, context)
             check()
+            configure_timeout = not opened or statement_timeout_ms is not None
             if not opened:
                 was_atomic = connection.in_atomic_block
                 opening = True
@@ -92,10 +96,16 @@ def application_postgres_reads(
                     raise ApplicationPostgresReadError(
                         "PostgreSQL prior statement setting unavailable"
                     )
+            if configure_timeout:
+                timeout = 0 if statement_timeout_ms is None else statement_timeout_ms()
+                if statement_timeout_ms is not None and (
+                    type(timeout) is not int or timeout <= 0
+                ):
+                    raise ValueError("PostgreSQL statement budget must be positive")
                 control(
-                    cursor,
+                    context["cursor"].cursor,
                     "SELECT set_config('statement_timeout', %s, true)",
-                    ("0",),
+                    (str(timeout),),
                 )
                 check()
             return execute(sql, params, many, context)

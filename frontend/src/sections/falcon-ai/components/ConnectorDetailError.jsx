@@ -14,7 +14,7 @@ export default function ConnectorDetailError({ message, onRetry }) {
   return (
     <Box sx={{ textAlign: "center", py: 3 }}>
       <Iconify
-        icon="mdi:alert-circle-outline"
+        icon="solar:danger-circle-linear"
         width={28}
         sx={{ color: "error.main", mb: 1 }}
       />

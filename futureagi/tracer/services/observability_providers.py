@@ -17,6 +17,7 @@ from simulate.models.agent_definition import AgentDefinition, ProviderCredential
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
+from tracer.utils.attribute_accessor import vapi_customer
 
 logger = structlog.get_logger(__name__)
 
@@ -272,6 +273,9 @@ class ObservabilityService:
             )
         elif provider.provider == ProviderChoices.LIVEKIT:
             # LiveKit has no hosted call history; [] avoids a crash-loop.
+            return []
+        elif provider.provider == ProviderChoices.OTHERS:
+            # A code agent's row has no hosted call history either.
             return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
@@ -987,7 +991,7 @@ class ObservabilityService:
             return raw_log.get(key)
 
         call_id = raw_log_get("id")
-        customer = raw_log_get("customer") or {}
+        customer = vapi_customer(raw_log)
         call_type = (
             "inbound" if raw_log_get("type") == "inboundPhoneCall" else "outbound"
         )

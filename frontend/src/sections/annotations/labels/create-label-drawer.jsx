@@ -25,6 +25,7 @@ import NumericSettings from "./settings/numeric-settings";
 import TextSettings from "./settings/text-settings";
 import StarSettings from "./settings/star-settings";
 import LabelInput from "../queues/annotate/label-input";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LABEL_TYPES = [
   {
@@ -183,15 +184,18 @@ export default function CreateLabelDrawer({
     settings: buildPreviewSettings(selectedType, watchedSettings),
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           width: { xs: "100%", md: "60vw" },
-          minWidth: 850,
+          minWidth: 960,
           height: "100vh",
           borderRadius: "0 !important",
         },
@@ -221,7 +225,7 @@ export default function CreateLabelDrawer({
             {isEdit ? "Edit Label" : "Create Label"}
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
 

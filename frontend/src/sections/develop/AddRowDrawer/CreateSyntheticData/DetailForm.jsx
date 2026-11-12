@@ -156,7 +156,7 @@ const DetailForm = ({
               borderColor: editMode ? "divider" : undefined,
               paddingX: editMode ? 1.5 : 0,
               paddingY: editMode ? 2 : 0,
-              borderRadius: 0.5,
+              borderRadius: "4px",
             }}
           >
             {editMode && (
@@ -217,7 +217,7 @@ const DetailForm = ({
           variant="contained"
           color="primary"
           type="button"
-          sx={{ minWidth: "200px", height: "38px" }}
+          sx={{ minWidth: "200px" }}
           disabled={disabledNext}
           onClick={() => handleNextTab(1)}
         >

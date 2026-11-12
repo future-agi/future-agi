@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import copy
+import gzip
+import hashlib
 import io
 import ipaddress
 import json
@@ -13,41 +17,78 @@ import tarfile
 import tempfile
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+import zlib
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import jwt
 import requests
+import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from minio.error import S3Error
 
 from simulate.models import (
     HostedHarnessAttempt,
+    HostedHarnessConversation,
+    HostedHarnessConversationLease,
+    HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
+    HostedHarnessReceipt,
     HostedHarnessSecret,
 )
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
+    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
+    activate_attempt_capability,
+    finish_deferred_delete,
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
+)
+from simulate.services.hosted_harness_conversation import (
+    _unacked_commands,
+    ensure_conversation,
+    issue_conversation_capability,
+    load_workspace_archive,
+    record_runtime_started,
+    retire_without_saved_workspace,
+    runtime_is_live,
+    runtime_start_pending,
+    settle_interrupted_turn,
 )
 from simulate.services.hosted_harness_diagnostics import (
-    DaytonaDiagnostics,
+    SandboxDiagnostics,
     cache_attempt_redaction_values,
     cached_attempt_redaction_values,
     forget_attempt_redaction_values,
-    poll_daytona_diagnostics,
+    poll_sandbox_diagnostics,
     redaction_values,
+)
+from simulate.services.hosted_sandbox import (
+    SandboxCommandRequest,
+    SandboxConflictError,
+    SandboxLaunchSpec,
+    SandboxNotFoundError,
+    SandboxProviderConfigurationError,
+    SandboxProviderError,
+    SandboxProviderUnavailableError,
+    get_sandbox_provider,
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger("simulate.hosted_harness_gateway")
+structlog_logger = structlog.get_logger(__name__)
 
 HOSTED_ENGINE_CATALOG = {
     "postgres": {
@@ -76,116 +117,400 @@ HOSTED_RUNTIME_CATALOG = {
 }
 _ENTRYPOINT_SESSION = "alk-harness"
 _ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
+_CHAT_SESSION = "alk-chat"
+_CHAT_CAPABILITIES_PATH = "/run/futureagi/conversation.json"
+_CHAT_COMMAND_ID_FILE = "/run/futureagi/chat-command-id"
+_CHAT_POLICY = (
+    b"schema_version: 1\n"
+    b"harness_chat:\n"
+    b"  enabled: true\n"
+    b"  stages:\n"
+    b"    reception: {enabled: true}\n"
+    b"    understand: {enabled: true}\n"
+    b"    build: {enabled: true}\n"
+    b"    scenarios: {enabled: true}\n"
+    b"    run: {enabled: true}\n"
+    b"    builder: {enabled: true}\n"
+    b"  lifecycle:\n"
+    b"    request_user_input: true\n"
+    b"    interrupt_response: true\n"
+)
+_CHAT_RUNTIME_PATH = (
+    "/opt/alk-venv/bin:/usr/lib/postgresql/16/bin:/opt/erlang/bin:"
+    "/opt/rabbitmq/sbin:/opt/node22/bin:/usr/local/sbin:/usr/local/bin:"
+    "/usr/sbin:/usr/bin:/sbin:/bin"
+)
+_CHAT_POLICY_PATH = "/run/futureagi/chat-capabilities.yaml"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
-_DIRECT_IMAGE_WITH_ADJUSTMENTS = "direct-image-adjustments-v1"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
-_SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
 
 
-def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
-    """Return control-process-only simulator config and optional Vertex ADC bytes.
+def _empty_workspace_archive() -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz"):
+        pass
+    return stream.getvalue()
+
+
+def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
+    if provider_name == "daytona":
+        return max(
+            60,
+            int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40)) * 60,
+        )
+    return max(60, int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900)))
+
+
+def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes | None:
+    """The environment's current files, with the chat's own state from its checkpoint.
+
+    A new sandbox always starts from what the environment holds now. Every finished turn saves
+    its changes, so anything in the checkpoint the environment lacks is left over from a turn
+    that never finished; publishing it later would apply changes nobody confirmed. Only the
+    chat's own state (its root dot files: sessions, journal, kept notes) carries over.
+    """
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
+    )
+    if not revision:
+        return checkpoint
+    current = _authoring_archive_for(environment)
+    if current is None:
+        return checkpoint
+    return with_authoring_basis(_with_chat_state(current, checkpoint), revision)
+
+
+def _with_chat_state(current: bytes, checkpoint: bytes | None) -> bytes:
+    """The environment's files with the chat's own state (its root dot files) from its
+    checkpoint; the basis files are stamped afresh."""
+    out = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(current), mode="r:gz") as accepted,
+        tarfile.open(fileobj=out, mode="w:gz") as target,
+    ):
+        for member in accepted.getmembers():
+            parts = _archive_parts(member.name)
+            if parts and not parts[0].startswith("."):
+                target.addfile(
+                    member, accepted.extractfile(member) if member.isfile() else None
+                )
+        if checkpoint is not None:
+            with tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat:
+                for member in chat.getmembers():
+                    parts = _archive_parts(member.name)
+                    if (
+                        parts
+                        and parts[0].startswith(".")
+                        and parts[0] not in _STAMPED_FILES
+                    ):
+                        target.addfile(
+                            member,
+                            chat.extractfile(member) if member.isfile() else None,
+                        )
+    return out.getvalue()
+
+
+def chat_workspace_for(
+    job: HostedHarnessJob,
+    conversation: HostedHarnessConversation,
+    *,
+    chat_state: bytes | None,
+) -> bytes | None:
+    """The files a chat sandbox starts from: the environment's unsaved changes over its
+    defaults where drafts apply, else the environment's current files, with the chat's
+    own state from ``chat_state`` (its latest checkpoint)."""
+    from simulate.services.harness_versioning import archives, drafts
+
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
+    )
+    composed = None
+    if drafts.drafts_apply(environment):
+        from simulate.services.harness_versioning.rebuild import nudge_composition
+
+        composed = drafts.compose_workspace(
+            environment,
+            conversation,
+            only_draft=nudge_composition(environment, conversation),
+        )
+    if composed is not None:
+        body = _with_chat_state(archives.pack_archive(composed.files), chat_state)
+        return with_draft_basis(with_authoring_basis(body, revision), composed.token)
+    if chat_state is not None:
+        return _current_chat_workspace(job, chat_state)
+    body = _authoring_archive_for(environment)
+    if body is not None and revision:
+        body = with_authoring_basis(body, revision)
+    return body
+
+
+def _ask_harness_to_build(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the build request into the environment's conversation; its harness does the build."""
+    from simulate.services.hosted_harness_conversation import send_to_harness
+
+    send_to_harness(
+        job,
+        content=f"Build the test environment for this agent, with {job.scenario_count} scenarios.",
+        client_request_id=f"build-{attempt.id}",
+        endpoint_base_url=endpoint_base_url,
+    )
+
+
+def _alk_source_overlay() -> bytes | None:
+    """The ALK source a development chat sandbox runs instead of its image's, when configured."""
+    root = str(getattr(settings, "ALK_HOSTED_SOURCE_OVERLAY", "") or "").strip()
+    if not root or not Path(root, "fi").is_dir():
+        return None
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        archive.add(
+            Path(root, "fi"),
+            arcname="fi",
+            filter=lambda member: None if "__pycache__" in member.name else member,
+        )
+    return stream.getvalue()
+
+
+def _chat_idle_seconds() -> int:
+    return max(300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800)))
+
+
+def _execution_ttl_seconds(
+    runtime: Mapping[str, Any], provider_name: str | None = None
+) -> int:
+    runtime_seconds = int(runtime["max_duration_seconds"])
+    if provider_name == "e2b":
+        max_ttl_seconds = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0))
+        if max_ttl_seconds > 0 and runtime_seconds <= max_ttl_seconds:
+            return max_ttl_seconds
+        return runtime_seconds + 120
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return max(
+        int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
+        authoring_seconds + runtime_seconds + 120,
+    )
+
+
+_BACKGROUND_SOUNDS = (
+    Path(__file__).resolve().parents[1] / "data" / "background_sounds.json"
+)
+
+
+def _background_noise_catalogue() -> str:
+    """The platform's hosted ambience clips as inline JSON the harness can choose from."""
+    try:
+        sounds = json.loads(_BACKGROUND_SOUNDS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    clips = [
+        {"environment": sound.get("environment", ""), "url": sound["url"]}
+        for sound in sounds
+        if isinstance(sound, dict) and sound.get("url")
+    ]
+    return json.dumps(clips, separators=(",", ":")) if clips else ""
+
+
+def _noise_catalogue_setting() -> str:
+    """The catalogue a hosted run is given: the deployment's, inlined when it is a file, else ours."""
+    configured = str(os.environ.get("ALK_BACKGROUND_NOISE_CATALOG") or "").strip()
+    if configured and not configured.startswith("["):
+        try:
+            configured = Path(configured).read_text(encoding="utf-8").strip()
+        except OSError:
+            configured = ""
+    return configured or _background_noise_catalogue()
+
+
+def _sandbox_collector_url() -> str:
+    """The collector address a sandbox can reach, as configured; empty when none is."""
+    return str(
+        os.environ.get("ALK_HOSTED_FI_BASE_URL")
+        # The harness callback URL is already required to be sandbox-reachable. It is a
+        # safer fallback than FI_BASE_URL, which commonly names an internal Compose/K8s
+        # service (for example ``http://backend:80``) that cannot resolve from E2B.
+        or os.environ.get("HARNESS_PUBLIC_BASE_URL")
+        or os.environ.get("FI_BASE_URL")
+        or ""
+    ).strip()
+
+
+def platform_model_gateway() -> tuple[str, str]:
+    """The sandbox-reachable AgentCC URL and the platform-owned key a sandbox's model calls use."""
+    url = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
+        or os.environ.get("AGENTCC_BASE_URL")
+        or ""
+    ).strip()
+    # Prefer a separately scoped authoring key, while preserving compatibility
+    # with deployments that use the platform-owned internal key for both lanes.
+    key = str(
+        os.environ.get("AGENTCC_HARNESS_API_KEY")
+        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+        or ""
+    ).strip()
+    if not (url and key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    return url.rstrip("/"), key
+
+
+def _platform_simulator_material() -> dict[str, str]:
+    """Return control-process-only simulator config.
 
     These values come from platform deployment configuration, never the customer request.  The
     returned map is uploaded on its own channel and consumed by ALK's hosted entrypoint; it is not
     added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
     injected into an untrusted agent process.
-    """
-    source_path = str(
-        os.environ.get("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS")
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        or ""
-    ).strip()
-    credential_bytes: bytes | None = None
-    project = str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
-    if source_path:
-        try:
-            credential_bytes = Path(source_path).read_bytes()
-            document = json.loads(credential_bytes)
-            if not project and isinstance(document, dict):
-                project = str(document.get("project_id") or "").strip()
-        except (OSError, ValueError, TypeError) as exc:
-            raise HostedHarnessError(
-                "simulator_credentials_invalid",
-                "the platform simulator Vertex credential could not be loaded",
-                status_code=503,
-            ) from exc
 
+    Every model and speech call in a hosted run (harness, simulated caller, judge) goes through
+    AgentCC on its key, so no vendor's credential is placed in a sandbox. AgentCC relays speech
+    for Deepgram and Cartesia only, which is why no other speech provider is accepted.
+    """
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash").strip()
-    location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
-    derived_backend = (
-        "vertex-gemini"
-        if provider.lower() in {"google", "vertex", "vertex-gemini", "vertex_gemini"}
-        else provider
+    # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
+    model = str(
+        os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
+    ).strip()
+    backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
+    agentcc_url, agentcc_key = platform_model_gateway()
+    agentcc_model = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
+    ).strip()
+    unsupported_speech = sorted(
+        {
+            str(os.environ.get(name) or "").strip().lower()
+            for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
+        }
+        - {"", "deepgram", "cartesia"}
     )
-    # Authoring and simulation are separate trust/runtime lanes.  Let deployment config select
-    # the ALK stage-loop independently instead of forcing it to use the simulated caller's
-    # provider and model.  This also keeps the customer request unable to influence either one.
-    backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
-    authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
+    if unsupported_speech:
+        raise HostedHarnessError(
+            "simulator_speech_provider_unsupported",
+            "hosted runs speak through deepgram or cartesia, not "
+            + ", ".join(unsupported_speech),
+            status_code=503,
+        )
+
+    default_authoring_model = (
+        model
+        if backend.lower()
+        in {"gemini", "vertex-gemini", "vertex_gemini", "vertexai-gemini"}
+        else agentcc_model
+    )
+    authoring_model = str(
+        os.environ.get("ALK_HARNESS_MODEL") or default_authoring_model
+    ).strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "ALK_VERTEX_LOCATION": location,
-        "GOOGLE_CLOUD_LOCATION": location,
-        "GOOGLE_GENAI_USE_VERTEXAI": str(
-            os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") or "True"
-        ),
+        # Explicit "0": Claude Code treats an empty value as set.
+        "CLAUDE_CODE_USE_VERTEX": "0",
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
+        "ALK_CLAUDE_GATEWAY_URL": agentcc_url.rstrip("/"),
+        "ALK_CLAUDE_GATEWAY_API_KEY": agentcc_key,
+        "AGENTCC_BASE_URL": agentcc_url.rstrip("/"),
+        "AGENTCC_API_KEY": agentcc_key,
     }
+    # Unset keeps ALK's per-model least deliberation; set it to go lower where a model allows
+    # (e.g. "minimal" on gemini-3.5-flash-lite, which gemini-3.7-flash refuses).
+    thinking = str(os.environ.get("SIMULATOR_LLM_THINKING") or "").strip()
+    if thinking:
+        values["SIMULATOR_LLM_THINKING"] = thinking
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    values.update(
+        {name: value for name, value in platform_phone_telephony().items() if value}
+    )
     for name in (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
-        "CARTESIA_API_KEY",
-        "DEEPGRAM_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENAI_API_KEY",
+        # Models the simulated caller tries in turn when the chosen one fails.
+        "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
         "SIMULATOR_TTS_PROVIDER",
-        # Observe credentials for the guest. The harness's model calls happen inside the sandbox,
-        # so without these a run is only readable as log text in the diagnostics archive.
-        "HARNESS_OBSERVABILITY",
+        # Observe account of the guest: platform evals and, on opt-in, the harness's own traces.
         "FI_API_KEY",
         "FI_SECRET_KEY",
         "FI_HARNESS_PROJECT",
         # The caller's surroundings. Without these a hosted call is always heard in the clear,
         # whatever the scenario asked for, because the simulator reads them from its environment.
         "ALK_BACKGROUND_NOISE",
-        "ALK_BACKGROUND_NOISE_CATALOG",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
+        "HARNESS_CALLER_BARGE_IN_RATE",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        "ALK_HARNESS_WORKERS_AT_ONCE",
+        "ALK_VALIDATION_INSTANCES",
+        # The guest waits this long for the build; unset, it falls back to its own default.
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
             values[name] = value
+    # Keys always travel (the evals need them); self-tracing is opt-in, because a
+    # collector of another deployment refuses them on every run.
+    values["HARNESS_OBSERVABILITY"] = (
+        "on"
+        if str(os.environ.get("HARNESS_OBSERVABILITY") or "").strip().lower()
+        in {"1", "on", "true", "yes"}
+        else "off"
+    )
+    catalogue = _noise_catalogue_setting()
+    if catalogue:
+        values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
-    collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL")
-        or os.environ.get("FI_BASE_URL")
-        or ""
-    ).strip()
+    collector = _sandbox_collector_url()
     if collector:
         values["FI_BASE_URL"] = collector
-    if project:
-        values["GOOGLE_CLOUD_PROJECT"] = project
-    if credential_bytes is not None:
-        values["GOOGLE_APPLICATION_CREDENTIALS"] = _SIMULATOR_VERTEX_CREDENTIALS_PATH
-    return values, credential_bytes
+    return values
+
+
+def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
+    """Release the private POC policy only for its exact phone target."""
+    target = str(os.environ.get("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER") or "").strip()
+    pin = str(os.environ.get("ALK_CAB_GUEST_POC_PIN") or "").strip()
+    agent = (job.payload or {}).get("agent") or {}
+    config = agent.get("config") or {}
+    submitted_target = str(config.get("phone_number") or "").strip()
+    if (
+        str(agent.get("connector") or "").strip().lower() != "phone"
+        or submitted_target != target
+        or not target
+        or not pin
+    ):
+        return False
+    values["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER"] = target
+    values["ALK_CAB_GUEST_POC_PIN"] = pin
+    return True
 
 
 def _scenario_delta(instruction: str) -> int | None:
@@ -235,7 +560,9 @@ def _adjustment_stage(instruction: str, current_stage: str) -> str:
     }.get(current_stage, "scenarios")
 
 
-def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str:
+def _scenarios_cli_command(
+    *, name: str, count: int, guidance: list[str], include_job: bool = False
+) -> str:
     """A non-interactive invocation of the harness's own scenario CLI against the reused
     ``/work/authoring``: reach exactly ``count`` scenarios, preserving existing ones, steered
     by ``guidance``. Uses the harness's public CLI contract (``alk-harness scenarios``) rather
@@ -248,6 +575,8 @@ def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str
         f"--count {int(count)}",
         "--once",
     ]
+    if include_job:
+        parts.insert(-1, "--job /work/job.json")
     for item in guidance:
         text = str(item).strip()
         if text:
@@ -255,7 +584,9 @@ def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str
     return " ".join(parts)
 
 
-def _hosted_scenario_repair_command(*, name: str, expected: int, actual: int) -> str:
+def _hosted_scenario_repair_command(
+    *, name: str, expected: int, actual: int, include_job: bool = False
+) -> str:
     """Non-interactive scenario-only repair: reach the exact ``expected`` count, preserving
     existing coverage, so Bundle V2's exact-cardinality gate is satisfied without a privileged
     in-sandbox updater."""
@@ -270,14 +601,19 @@ def _hosted_scenario_repair_command(*, name: str, expected: int, actual: int) ->
             f"Exactly {expected} scenarios are required, but {actual} are saved. "
             f"Remove exactly {-delta} excess scenario(s), preserving the strongest coverage."
         )
-    return _scenarios_cli_command(name=name, count=expected, guidance=[instruction])
+    return _scenarios_cli_command(
+        name=name,
+        count=expected,
+        guidance=[instruction],
+        include_job=include_job,
+    )
 
 
 _SCENARIO_EXTEND_REPAIR_PASSES = 2
 
 
 def _hosted_scenario_extend_command(
-    *, name: str, target_count: int, guidance: list[str]
+    *, name: str, target_count: int, guidance: list[str], include_job: bool = False
 ) -> str:
     """Chat-driven 'add N scenarios': re-run scenario generation against the reused world to
     reach ``target_count`` total, preserving existing scenarios, steered by the caller's
@@ -291,7 +627,9 @@ def _hosted_scenario_extend_command(
     archive) could never do.
     """
     target = int(target_count)
-    extend = _scenarios_cli_command(name=name, count=target, guidance=guidance)
+    extend = _scenarios_cli_command(
+        name=name, count=target, guidance=guidance, include_job=include_job
+    )
     repair = _scenarios_cli_command(
         name=name,
         count=target,
@@ -300,6 +638,7 @@ def _hosted_scenario_extend_command(
             f"scenario exactly and add only new distinct validated scenarios until exactly "
             f"{target} are saved."
         ],
+        include_job=include_job,
     )
     passes = " ".join(str(i) for i in range(1, _SCENARIO_EXTEND_REPAIR_PASSES + 1))
     return (
@@ -309,10 +648,13 @@ def _hosted_scenario_extend_command(
     )
 
 
-def _extend_command_for(job: HostedHarnessJob, payload: dict) -> str | None:
+def _extend_command_for(
+    job: HostedHarnessJob, payload: dict, *, include_job: bool = False
+) -> str | None:
     """Return the reused-authoring scenario-extension CLI command when the job carries a
     pending chat-driven 'add scenarios' request (a target count), else None for a normal run.
-    Guidance is optional — the count alone drives the add; guidance only steers the new ones."""
+    Guidance is optional — the count alone drives the add; guidance only steers the new ones.
+    """
     extend = (payload.get("metadata") or {}).get("scenario_extend")
     if not extend:
         return None
@@ -328,7 +670,10 @@ def _extend_command_for(job: HostedHarnessJob, payload: dict) -> str | None:
         or "agent"
     )
     return _hosted_scenario_extend_command(
-        name=name, target_count=int(target_count), guidance=guidance
+        name=name,
+        target_count=int(target_count),
+        guidance=guidance,
+        include_job=include_job,
     )
 
 
@@ -513,6 +858,13 @@ _GUEST_INNER_EXCEPTION = re.compile(
 )
 
 
+# The labels of a guest's typed failures; the stored message adds the cause it printed.
+RUNTIME_VALIDATION_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair"
+)
+AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
+
+
 def guest_failure_cause(tail: str) -> str:
     """The last typed failure the guest printed, with the agent's own exception when present.
 
@@ -549,6 +901,97 @@ def guest_failure_cause(tail: str) -> str:
     return cause[:400]
 
 
+# Where git reaches GitHub repositories.
+GITHUB_GIT_URL = "https://github.com"
+
+
+def run_git(
+    command: list[str], environment: Mapping[str, str], token: str
+) -> tuple[int, str]:
+    """Run one git command; on failure its output comes back with the token redacted."""
+    completed = subprocess.run(
+        command,
+        env=dict(environment),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    detail = completed.stderr or completed.stdout or "git failed"
+    if token:
+        detail = detail.replace(token, "[REDACTED]")
+    return completed.returncode, detail
+
+
+def github_checkout(
+    repository: str, revision: str, checkout: Path, token: str
+) -> dict[str, str]:
+    """Fetch one revision of a GitHub repository into ``checkout`` and check it out. The
+    installation token, when there is one, travels as a header and is never written to disk.
+    Returns git's environment for further calls on the checkout."""
+    if shutil.which("git") is None:
+        # The default backend image ships without git (with perl it is
+        # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
+        # WITH_GIT=true puts it back for GitHub sources.
+        raise HostedHarnessError(
+            "git_unavailable",
+            "git is not installed in this backend image; rebuild it with "
+            "--build-arg WITH_GIT=true to use GitHub sources",
+            status_code=501,
+            retryable=False,
+        )
+    environment = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1" if token else "0",
+    }
+    if token:
+        # GitHub's git endpoint takes an installation token as Basic x-access-token; it
+        # refuses Bearer, and git then reports a prompt it may not show.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        environment.update(
+            {
+                "GIT_CONFIG_KEY_0": "http.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+            }
+        )
+    commands = [
+        ["git", "init", str(checkout)],
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "remote",
+            "add",
+            "origin",
+            f"{GITHUB_GIT_URL}/{repository}.git",
+        ],
+        ["git", "-C", str(checkout), "fetch", "--depth", "1", "origin", revision],
+        ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
+    ]
+    for command in commands:
+        returncode, detail = run_git(command, environment, token)
+        if returncode:
+            lowered = detail.lower()
+            if (
+                "repository not found" in lowered
+                or "could not read username" in lowered
+            ):
+                raise HostedHarnessError(
+                    "github_repository_not_found",
+                    f"repository {repository} was not found, or it is "
+                    "private and the GitHub App is not installed on it",
+                    status_code=422,
+                )
+            raise HostedHarnessError(
+                "github_clone_failed",
+                detail.strip()[:500],
+                status_code=502,
+                retryable=True,
+            )
+    return environment
+
+
 class HostedSourceAcquirer:
     _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     _REF = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -583,62 +1026,10 @@ class HostedSourceAcquirer:
             credential as token,
             tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
         ):
-            root = Path(temp)
-            checkout = root / "source"
-            environment = {
-                **os.environ,
-                "GIT_TERMINAL_PROMPT": "0",
-                "GIT_CONFIG_COUNT": "1" if token else "0",
-            }
-            if token:
-                environment.update(
-                    {
-                        "GIT_CONFIG_KEY_0": "http.extraHeader",
-                        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
-                    }
-                )
-            commands = [
-                ["git", "init", str(checkout)],
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "remote",
-                    "add",
-                    "origin",
-                    f"https://github.com/{repository}.git",
-                ],
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "fetch",
-                    "--depth",
-                    "1",
-                    "origin",
-                    str(source.get("commit_sha") or ref),
-                ],
-                ["git", "-C", str(checkout), "checkout", "--detach", "FETCH_HEAD"],
-            ]
-            for command in commands:
-                completed = subprocess.run(
-                    command,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    check=False,
-                )
-                if completed.returncode:
-                    detail = completed.stderr or completed.stdout or "git failed"
-                    if token:
-                        detail = detail.replace(token, "[REDACTED]")
-                    raise HostedHarnessError(
-                        "github_clone_failed",
-                        detail.strip()[:500],
-                        status_code=502,
-                        retryable=True,
-                    )
+            checkout = Path(temp) / "source"
+            github_checkout(
+                repository, str(source.get("commit_sha") or ref), checkout, token
+            )
             completed = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
                 capture_output=True,
@@ -670,38 +1061,90 @@ class HostedSourceAcquirer:
             return archive.getvalue(), commit_sha
 
 
+def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:
+    if reference["manager"] != "platform-vault":
+        raise HostedHarnessError(
+            "secret_manager_unsupported",
+            f"unsupported secret manager for {alias}",
+            status_code=422,
+        )
+    if reference["purpose"] != "target_provider":
+        raise HostedHarnessError(
+            "secret_purpose_invalid",
+            f"secret {alias} is not a target_provider secret",
+            status_code=422,
+        )
+
+
+def resolve_secret_reference(
+    organization: Any, alias: str, reference: Mapping[str, Any]
+) -> str:
+    """One platform-vault reference's value, read from the stored secrets."""
+    _check_secret_reference(alias, reference)
+    query = HostedHarnessSecret.no_workspace_objects.filter(
+        organization=organization,
+        name=reference["key"],
+    )
+    version = reference.get("version")
+    if version is not None:
+        query = query.filter(version=version)
+    secret = query.order_by("-created_at").first()
+    if secret is None:
+        raise HostedHarnessError(
+            "secret_not_found",
+            f"platform secret not found for alias {alias}",
+            status_code=422,
+        )
+    return secret.get_value()
+
+
 class PlatformSecretResolver:
     def resolve(self, job: HostedHarnessJob) -> dict[str, str]:
-        resolved: dict[str, str] = {}
-        for alias, reference in job.payload["agent"]["secret_refs"].items():
-            if reference["manager"] != "platform-vault":
-                raise HostedHarnessError(
-                    "secret_manager_unsupported",
-                    f"unsupported secret manager for {alias}",
-                    status_code=422,
-                )
-            if reference["purpose"] != "target_provider":
-                raise HostedHarnessError(
-                    "secret_purpose_invalid",
-                    f"secret {alias} is not a target_provider secret",
-                    status_code=422,
-                )
-            query = HostedHarnessSecret.no_workspace_objects.filter(
-                organization=job.organization,
-                name=reference["key"],
+        from simulate.services.harness_agent_versions import (
+            environment_credential_values,
+            pinned_credential_values,
+        )
+        from simulate.services.harness_credentials import is_names_only_ref
+
+        # A job pinned to an agent version with its own credential set reads it; a
+        # legacy or unpinned one reads the stored secrets its refs name.
+        # Locals holding values are named for the error tracker's scrubber.
+        pinned_secrets = pinned_credential_values(job)
+        secret_refs = job.payload["agent"]["secret_refs"]
+        environment_secrets = None
+        if pinned_secrets is None and any(
+            is_names_only_ref(reference) for reference in secret_refs.values()
+        ):
+            # Names-only refs no pin answers (an unpinned run, or versioning off):
+            # the environment's default version holds their values.
+            environment_secrets = environment_credential_values(job) or {}
+        resolved_secrets: dict[str, str] = {}
+        for alias, reference in secret_refs.items():
+            if pinned_secrets is not None:
+                _check_secret_reference(alias, reference)
+                if alias in pinned_secrets:
+                    resolved_secrets[alias] = pinned_secrets[alias]
+                    continue
+                if is_names_only_ref(reference):
+                    raise HostedHarnessError(
+                        "credential_unavailable",
+                        f"the pinned agent version holds no value for {alias}",
+                        status_code=422,
+                    )
+            elif environment_secrets is not None and is_names_only_ref(reference):
+                _check_secret_reference(alias, reference)
+                if alias not in environment_secrets:
+                    raise HostedHarnessError(
+                        "credential_unavailable",
+                        f"the environment's agent version holds no value for {alias}",
+                        status_code=422,
+                    )
+                resolved_secrets[alias] = environment_secrets[alias]
+                continue
+            resolved_secrets[alias] = resolve_secret_reference(
+                job.organization, alias, reference
             )
-            version = reference.get("version")
-            if version is not None:
-                query = query.filter(version=version)
-            secret = query.order_by("-created_at").first()
-            if secret is None:
-                raise HostedHarnessError(
-                    "secret_not_found",
-                    f"platform secret not found for alias {alias}",
-                    status_code=422,
-                )
-            resolved[alias] = secret.get_value()
-        return resolved
+        return resolved_secrets
 
 
 def resolve_platform_simulator_secrets() -> dict[str, str]:
@@ -733,6 +1176,20 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
     return resolved
 
 
+def platform_dialer_status() -> dict[str, Any]:
+    """Whether the platform can place an outbound PSTN call, and what is absent if not.
+
+    A phone target is reached by dialling it over the platform's own LiveKit SIP trunk, so
+    every input here is platform configuration the customer cannot supply or observe. Resolved
+    through the same telephony map the launch sends to the guest, so readiness cannot claim a
+    dialer the run will not find, nor deny one it will.
+    """
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    missing = [name for name, value in platform_phone_telephony().items() if not value]
+    return {"available": not missing, "missing": missing}
+
+
 def attach_platform_simulator_secret_refs(
     payload: dict[str, Any], simulator_secrets: dict[str, str]
 ) -> dict[str, Any]:
@@ -749,6 +1206,354 @@ def attach_platform_simulator_secret_refs(
     agent["secret_refs"] = refs
     dispatched["agent"] = agent
     return dispatched
+
+
+# The decision whether a run exports to the agent's hidden simulation project is made once, at
+# launch, and shipped in job.json; the sandbox repeats none of it. It never fails a launch.
+_EXPORT_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"
+_EXPORT_SECRET_PURPOSE = "observability_export"
+# Only the endpoints name where a customer's spans go; their headers are merged by the hook.
+_OTEL_EXPORT_NAMES = frozenset(
+    {"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"}
+)
+# The names the sandbox key ships under; no instrumenter reads them, so they never clash
+# with a name the customer's own code or its libraries look up.
+_INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
+_INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
+_INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
+# Refusals that fire on every launch that was never meant to export: unbound, from an
+# unlisted snapshot, a hosted agent, observability off or no instrumentation. They log at info
+# so the reasons someone running the platform can act on stand out at warning.
+_QUIET_EXPORT_REASONS = frozenset(
+    {
+        "not_bound",
+        "snapshot_unsupported",
+        "not_source",
+        "observability_off",
+        "not_instrumented",
+    }
+)
+_MARK_NAME = re.compile(r"(OTEL_|FI_SIMULATION_|FI_BASE_URL$)[A-Z0-9_]*")
+# Credentials ride as sandbox secrets; a document that named them would put them in job.json.
+_MARK_FORBIDDEN_NAMES = frozenset(
+    {
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "FI_API_KEY",
+        "FI_SECRET_KEY",
+        _INGEST_API_KEY_ALIAS,
+        _INGEST_SECRET_KEY_ALIAS,
+    }
+)
+_MARK_MAX_ENTRIES = 10
+_MARK_MAX_VALUE_LENGTH = 2048
+
+
+class _ExportRefused(Exception):
+    """The export is decided off; ``reason`` is the word the log line carries."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class _ExportPlan:
+    """What the launch writes once the guard has finished; the default writes nothing."""
+
+    project_name: str | None = None
+    collector_url: str | None = None
+    export: str | None = None
+    instrumentation: str | None = None
+    # Not in the repr: a plan caught in a traceback or a frame dump must not print keys.
+    secrets: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    egress_domains: frozenset[str] | None = None
+    redaction_values: tuple[str, ...] = field(default=(), repr=False)
+
+
+def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
+    from django.core.exceptions import ValidationError
+
+    from simulate.models import AgentDefinition
+
+    metadata = payload.get("metadata")
+    agent_id = (
+        metadata.get("agent_definition_id") if isinstance(metadata, Mapping) else None
+    )
+    if not agent_id:
+        run_test = job.run_test
+        agent_id = run_test.agent_definition_id if run_test is not None else None
+    if not agent_id:
+        raise _ExportRefused("not_bound")
+    try:
+        # The id may have come from the request, so it must belong to this job's tenant.
+        agent = AgentDefinition.no_workspace_objects.filter(
+            id=agent_id,
+            organization=job.organization,
+            workspace=job.workspace,
+            deleted=False,
+        ).first()
+    except (ValueError, ValidationError):
+        agent = None
+    if agent is None:
+        raise _ExportRefused("not_bound")
+    return agent
+
+
+def _decide_observability_export(
+    job: HostedHarnessJob,
+    payload: Mapping[str, Any],
+    *,
+    selected_snapshot: str,
+    allowed_domains: Iterable[str],
+    max_egress_domains: int | None,
+) -> _ExportPlan:
+    listed = {
+        name.strip()
+        for name in os.environ.get(_EXPORT_SNAPSHOTS_SETTING, "").split(",")
+        if name.strip()
+    }
+    if selected_snapshot not in listed:
+        raise _ExportRefused("snapshot_unsupported")
+
+    agent = _bound_agent_definition(job, payload)
+
+    provider = agent.observability_provider
+    if provider is None or provider.deleted or not provider.enabled:
+        raise _ExportRefused("observability_off")
+    # The row only gates the export: spans go to the hidden project, never to this one.
+    project = provider.project
+    if project.deleted or project.organization_id != job.organization_id:
+        raise _ExportRefused("observability_off")
+    from simulate.services.agent_setup import agent_summary
+
+    summary = agent_summary(agent.id)
+    if summary.kind != "source":
+        raise _ExportRefused("not_source")
+    from tracer.services.simulation_project import ensure_simulation_project
+
+    # A failure to make the project escapes to the guard, which logs the exception's class.
+    hidden = ensure_simulation_project(agent)
+    if hidden.workspace_id is None:
+        raise _ExportRefused("no_workspace")
+
+    # Trailing slashes are cut so the traces path is never appended to a double slash.
+    collector_url = _sandbox_collector_url().rstrip("/")
+    try:
+        parsed = urlparse(collector_url)
+    except ValueError:
+        parsed = None
+    # The traces path is appended to this address, so it needs a scheme as well as a host.
+    host = (parsed.hostname or "").lower().rstrip(".") if parsed else ""
+    if not host or parsed.scheme not in {"http", "https"}:
+        raise _ExportRefused("no_collector")
+    # The address is written into job.json, so it must not carry a credential.
+    if parsed.username or parsed.password:
+        raise _ExportRefused("no_collector")
+    # A sandbox must not reach a private host just because the operator's base URL names one.
+    try:
+        _validate_egress_host(host)
+    except HostedHarnessError:
+        raise _ExportRefused("no_collector") from None
+
+    refs = (payload.get("agent") or {}).get("secret_refs") or {}
+    declared = {
+        str(alias).upper()
+        for alias, ref in refs.items()
+        if isinstance(ref, Mapping) and ref.get("purpose") == "target_provider"
+    }
+    instrumentation = summary.instrumentation
+    if instrumentation == "opentelemetry":
+        if declared & _OTEL_EXPORT_NAMES:
+            raise _ExportRefused("customer_configuration")
+    elif instrumentation == "traceai":
+        if declared & (_OTEL_EXPORT_NAMES | {"FI_BASE_URL"}):
+            raise _ExportRefused("customer_configuration")
+    else:
+        raise _ExportRefused("not_instrumented")
+    # A customer value under one of our names would be overwritten by the sandbox key.
+    if any(alias.startswith(_INGEST_ALIAS_PREFIX) for alias in declared):
+        raise _ExportRefused("customer_configuration")
+
+    from tracer.services.collector_ingest import get_or_create_export_credentials
+
+    try:
+        credentials = get_or_create_export_credentials(
+            organization_id=str(job.organization_id),
+            workspace_id=str(hidden.workspace_id),
+            agent_definition_id=str(agent.id),
+        )
+    except Exception:  # noqa: BLE001 - the reason word is all the log may carry
+        raise _ExportRefused("no_key") from None
+    if credentials is None or not (credentials.api_key and credentials.secret_key):
+        raise _ExportRefused("no_key")
+    # A disabled or deleted key stops the export; its pair never reaches the sandbox.
+    if not credentials.enabled:
+        raise _ExportRefused("key_disabled")
+
+    # The key and the hidden project, both made on first use, may remain when the cap refuses;
+    # nothing of the launch is written yet.
+    egress_domains = _normalize_egress_domains({*allowed_domains, host})
+    if max_egress_domains is not None and len(egress_domains) > max_egress_domains:
+        raise _ExportRefused("egress_cap")
+
+    return _ExportPlan(
+        project_name=hidden.name,
+        collector_url=collector_url,
+        export="our_keys",
+        instrumentation=instrumentation,
+        secrets=(
+            (_INGEST_API_KEY_ALIAS, credentials.api_key),
+            (_INGEST_SECRET_KEY_ALIAS, credentials.secret_key),
+        ),
+        egress_domains=frozenset(egress_domains),
+        redaction_values=(credentials.api_key, credentials.secret_key),
+    )
+
+
+def _plan_observability_export(
+    job: HostedHarnessJob,
+    payload: Mapping[str, Any],
+    *,
+    selected_snapshot: str,
+    allowed_domains: Iterable[str],
+    max_egress_domains: int | None,
+) -> _ExportPlan:
+    """Decide the export without writing anything; any failure means no export."""
+    try:
+        return _decide_observability_export(
+            job,
+            payload,
+            selected_snapshot=selected_snapshot,
+            allowed_domains=allowed_domains,
+            max_egress_domains=max_egress_domains,
+        )
+    except _ExportRefused as refusal:
+        reason = refusal.reason
+        quiet = reason in _QUIET_EXPORT_REASONS
+    except Exception as exc:  # noqa: BLE001 - an export never fails a launch
+        reason = type(exc).__name__
+        quiet = False
+    log = structlog_logger.info if quiet else structlog_logger.warning
+    log("observability_export_unavailable", job_id=str(job.id), reason=reason)
+    return _ExportPlan()
+
+
+def _mark_is_acceptable(mark: Any) -> bool:
+    if not isinstance(mark, dict) or len(mark) > _MARK_MAX_ENTRIES:
+        return False
+    for name, value in mark.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            return False
+        if name in _MARK_FORBIDDEN_NAMES or not _MARK_NAME.fullmatch(name):
+            return False
+        if len(value) > _MARK_MAX_VALUE_LENGTH:
+            return False
+        if not (value.isascii() and value.isprintable()):
+            return False
+    return True
+
+
+def _simulation_mark(
+    job: Any, plan: _ExportPlan | None = None
+) -> tuple[dict[str, str], bool]:
+    """The environment dictionary for this run, and whether it may be used.
+
+    Unusable means an empty dictionary and ``False``; the launch goes on unmarked.
+    """
+    plan = plan or _ExportPlan()
+    try:
+        from tracer.services.simulation_mark import customer_code_environment
+
+        mark = customer_code_environment(
+            organization_id=str(job.organization_id),
+            job_id=str(job.id),
+            run_id=str(job.run_id),
+            run_test_id=None if job.run_test_id is None else str(job.run_test_id),
+            test_execution_id=(
+                None if job.test_execution_id is None else str(job.test_execution_id)
+            ),
+            project_name=plan.project_name,
+            collector_url=plan.collector_url,
+            export=plan.export,
+            instrumentation=plan.instrumentation,
+        )
+    except Exception:  # noqa: BLE001 - the mark never fails a launch
+        structlog_logger.warning(
+            "simulation_mark_unavailable", job_id=str(job.id), reason="raised"
+        )
+        return {}, False
+    if not _mark_is_acceptable(mark):
+        structlog_logger.warning(
+            "simulation_mark_unavailable", job_id=str(job.id), reason="invalid"
+        )
+        return {}, False
+    return mark, True
+
+
+def _with_simulation_mark(
+    payload: Mapping[str, Any], mark: Mapping[str, str]
+) -> dict[str, Any]:
+    """A copy of the document that carries the mark, replacing any value already there."""
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata["customer_code_environment"] = dict(mark)
+    document["metadata"] = metadata
+    return document
+
+
+def _with_used_scenario_keys(
+    payload: Mapping[str, Any], job: HostedHarnessJob
+) -> dict[str, Any]:
+    """A copy of the document carrying every key the environment has given a scenario, a
+    dropped one's included, so the harness never gives one to a new scenario and the new
+    scenario never inherits another's row and run history."""
+    from simulate.models import HostedHarnessScenario
+
+    document = dict(payload)
+    if not isinstance(job, HostedHarnessJob):
+        return document
+    metadata = dict(document.get("metadata") or {})
+    metadata["used_scenario_keys"] = sorted(
+        set(
+            HostedHarnessScenario.all_objects.filter(job_id=(job.environment or job).id)
+            .exclude(scenario_key="")
+            .values_list("scenario_key", flat=True)
+        )
+    )
+    document["metadata"] = metadata
+    return document
+
+
+def attach_observability_export_secret_refs(
+    payload: dict[str, Any], aliases: Iterable[str]
+) -> dict[str, Any]:
+    """Add value-free refs for the export's aliases to the ephemeral job document only."""
+    dispatched = dict(payload)
+    agent = dict(dispatched.get("agent") or {})
+    refs = dict(agent.get("secret_refs") or {})
+    for alias in aliases:
+        refs[alias] = {
+            "manager": "platform-config",
+            "key": alias,
+            "purpose": _EXPORT_SECRET_PURPOSE,
+        }
+    agent["secret_refs"] = refs
+    dispatched["agent"] = agent
+    return dispatched
+
+
+def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
+    """Every ingest key's two values, switched off, deleted or not; read and never created."""
+    from accounts.models.user import OrgApiKey
+
+    # A key switched off or deleted mid-run may still be in a sandbox that another worker
+    # polls. The base manager, because the others hide deleted rows or filter by the
+    # request's workspace.
+    rows = OrgApiKey._base_manager.filter(
+        organization_id=organization_id, type="ingest"
+    ).values_list("api_key", "secret_key")
+    return tuple(value for row in rows for value in row if value)
 
 
 _MAX_EGRESS_DOMAINS = 20
@@ -800,7 +1605,8 @@ def _mark_stage(job: HostedHarnessJob, stage: str) -> None:
     if job.current_stage == stage or job.current_stage not in _PRE_RUNTIME_STAGES:
         return
     job.current_stage = stage
-    job.save(update_fields=["current_stage", "updated_at"])
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["current_stage", "content_updated_at", "updated_at"])
 
 
 def _hostname_from_url(value: Any) -> str | None:
@@ -864,14 +1670,26 @@ def _effective_connector(
     return connector
 
 
+def _webrtc_egress_cidrs(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> tuple[str, ...]:
+    if _effective_connector(payload, secrets_map) not in {
+        "livekit",
+        "vapi",
+        "retell",
+        "phone",
+    }:
+        return ()
+    return tuple(sorted(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or []))
+
+
 def _connector_egress_domains(
     payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
 ) -> set[str]:
     """Return connector infrastructure hosts implied by resolved run inputs.
 
-    Only static/configured endpoints are admitted here. In particular, Vapi's
-    websocket endpoint is returned by its create-call response and is therefore
-    intentionally not guessed.
+    Provider-owned dynamic call-control hosts use the provider's domain policy;
+    custom endpoints must be explicitly configured.
     """
     agent = payload.get("agent") or {}
     connector = _effective_connector(payload, secrets_map)
@@ -891,7 +1709,7 @@ def _connector_egress_domains(
             livekit_url = _config_value(config, "livekit_url", "LIVEKIT_URL")
         _add_livekit_host(domains, _hostname_from_url(livekit_url))
     elif connector == "vapi":
-        domains.add("api.vapi.ai")
+        domains.add("*.vapi.ai")
         for name in (
             "api_base_url",
             "VAPI_API_BASE_URL",
@@ -969,15 +1787,17 @@ def _validate_egress_domains(domains: list[str]) -> None:
         _validate_egress_host(domain)
 
 
-def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts combine."""
+def _validate_resolved_egress_domains(
+    domains: Iterable[str], *, max_domains: int | None = _MAX_EGRESS_DOMAINS
+) -> None:
+    """Enforce the selected sandbox provider's resolved-domain limit."""
     normalized = _normalize_egress_domains(domains)
-    if len(normalized) > _MAX_EGRESS_DOMAINS:
+    if max_domains is not None and len(normalized) > max_domains:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
             f"{len(normalized)} domains after normalization; "
-            f"Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"the selected sandbox provider supports at most {max_domains}",
             status_code=400,
         )
     for domain in normalized:
@@ -997,6 +1817,9 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
         str(values.get("SIMULATOR_LLM_PROVIDER") or "").strip().lower()
     )
     domains: set[str] = set()
+    gateway_host = _hostname_from_url(values.get("ALK_CLAUDE_GATEWAY_URL"))
+    if gateway_host and values.get("ALK_CLAUDE_GATEWAY_API_KEY"):
+        domains.add(gateway_host)
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
         "GOOGLE_APPLICATION_CREDENTIALS",
@@ -1023,13 +1846,12 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     ):
         domains.add("generativelanguage.googleapis.com")
     if "VAPI_API_KEY" in aliases:
-        # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
-        # public API. Vapi's documented websocket URL is also hosted on api.vapi.ai.
-        domains.add("api.vapi.ai")
+        # Live control uses provider-selected regional hosts, not only api.vapi.ai.
+        domains.add("*.vapi.ai")
     if "RETELL_API_KEY" in aliases:
         # Retell web calls are created through its API, then bridged through Retell's managed
         # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
-        # instead of asking customers to understand Daytona's network policy.
+        # instead of asking customers to understand the managed sandbox network policy.
         domains.update(
             {
                 "api.retellai.com",
@@ -1062,7 +1884,7 @@ def _resolved_egress_domains(
     simulator_env: Mapping[str, Any] | None = None,
     callback_host: str | None = None,
 ) -> set[str]:
-    """Build Daytona's authoritative minimized domain union for one launch."""
+    """Build the authoritative minimized domain union for one managed launch."""
     target_secrets = target_secrets or {}
     simulator_env = simulator_env or {}
     security = payload.get("security") or {}
@@ -1077,20 +1899,24 @@ def _resolved_egress_domains(
     values: list[str] = [domain for domain in base_domains if isinstance(domain, str)]
     values.extend(_provider_egress_domains(target_secrets))
     values.extend(_provider_egress_domains(simulator_env))
-    # Observe, when the guest is given credentials for it. Derived rather than requested, because a
-    # customer cannot be expected to know the collector is a dependency of their own run.
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host:
+        values.append(gateway_host)
+    catalogue = str(simulator_env.get("ALK_BACKGROUND_NOISE_CATALOG") or "").strip()
+    if catalogue.startswith("["):
+        try:
+            clips = json.loads(catalogue)
+        except ValueError:
+            clips = []
+        for clip in clips if isinstance(clips, list) else []:
+            clip_host = (
+                _hostname_from_url(clip.get("url")) if isinstance(clip, dict) else None
+            )
+            if clip_host:
+                values.append(clip_host)
+    # The guest's Observe host, derived because a customer cannot know their run depends on it.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
-    observability_off = str(
-        simulator_values.get("HARNESS_OBSERVABILITY") or ""
-    ).strip().lower() in {"0", "off", "false", "no"}
-    if (
-        not observability_off
-        and simulator_values.get("FI_API_KEY")
-        and simulator_values.get("FI_SECRET_KEY")
-    ):
-        # No default: the collector is reached on its own port and the host differs per
-        # environment, so an unset FI_BASE_URL means the guest has nowhere to report and there is
-        # nothing to allow. Guessing one would open a domain that never receives a span.
+    if simulator_values.get("FI_API_KEY") and simulator_values.get("FI_SECRET_KEY"):
         collector = _hostname_from_url(simulator_values.get("FI_BASE_URL"))
         if collector:
             values.append(collector)
@@ -1114,23 +1940,112 @@ def _resolved_egress_domains(
     return _normalize_egress_domains(values)
 
 
-_KNOWN_SIMULATOR_SECRET_ALIASES = (
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "DEEPGRAM_API_KEY",
-    "CARTESIA_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-)
 _KNOWN_SIMULATOR_CONFIG_NAMES = (
     "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_STT_PROVIDER",
     "SIMULATOR_TTS_PROVIDER",
-    "GOOGLE_CLOUD_LOCATION",
-    "CLOUD_ML_REGION",
 )
+
+
+def _authoring_egress_domains(
+    simulator_env: Mapping[str, str], connector: str, *, provider_profile: bool
+) -> list[str]:
+    """What authoring reaches: the source host, AgentCC and package indexes.
+
+    AgentCC serves every authoring model; real-runtime validation installs packages.
+    Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
+    call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
+    """
+    default_authoring_egress = [
+        "github.com",
+        "codeload.github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+    ]
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host and gateway_host not in default_authoring_egress:
+        default_authoring_egress.insert(0, gateway_host)
+    allowed_domains = list(
+        dict.fromkeys(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_EGRESS_DOMAINS",
+                default_authoring_egress,
+            )
+        )
+    )
+    if provider_profile:
+        provider_domain = {
+            "vapi": "api.vapi.ai",
+            "retell": "api.retellai.com",
+            "retell_chat": "api.retellai.com",
+        }.get(connector)
+        if provider_domain and provider_domain not in allowed_domains:
+            allowed_domains.insert(0, provider_domain)
+    return allowed_domains
+
+
+def _with_certify_egress(
+    allowed_domains: Iterable[str],
+    simulator_env: Mapping[str, str],
+    *,
+    max_domains: int | None,
+) -> set[str]:
+    """A cache miss certifies in the run sandbox, so it also needs authoring's egress."""
+    merged = _normalize_egress_domains(
+        [
+            *allowed_domains,
+            *_authoring_egress_domains(simulator_env, "", provider_profile=False),
+        ]
+    )
+    if max_domains is not None and len(merged) > max_domains:
+        raise HostedHarnessError(
+            "bundle_cache_miss_egress",
+            "this run has to rebuild its environment bundle, which needs "
+            f"{len(merged)} egress domains; the sandbox provider allows {max_domains}",
+            status_code=422,
+        )
+    return merged
+
+
+# Launch failures of the bundle cache, recorded against the environment-validation stage.
+_BUNDLE_CACHE_FAILURES = frozenset({"bundle_cache_miss_egress", "assembly_unavailable"})
+
+
+def _prepare_assembly(job: HostedHarnessJob) -> tuple[Any, HostedHarnessError | None]:
+    """The run's assembly plan, or the typed failure its launch records.
+
+    A run pinned to the environment's default pair falls back to today's path when it
+    cannot be assembled; any other pin has no such path. A storage outage is raised, so
+    the launch is retried.
+    """
+    from simulate.services.harness_versioning import assembly as bundle_cache
+
+    try:
+        return bundle_cache.prepare_launch(job), None
+    except Exception as exc:
+        if bundle_cache.is_transient(exc):
+            raise
+        if bundle_cache.falls_back(job):
+            logger.warning(
+                "could not assemble run=%s; it runs the default pair",
+                job.id,
+                exc_info=True,
+            )
+            return None, None
+        if isinstance(exc, HostedHarnessError) and exc.code == "assembly_unavailable":
+            logger.warning("could not assemble run=%s: %s", job.id, exc.message)
+            return None, exc
+        logger.exception("could not assemble run=%s", job.id)
+        return None, HostedHarnessError(
+            "assembly_unavailable",
+            "this run's pinned environment and scenario versions could not be "
+            f"assembled: {type(exc).__name__}",
+            status_code=422,
+        )
 
 
 def _known_simulator_egress_inputs() -> dict[str, str]:
@@ -1144,13 +2059,13 @@ def _known_simulator_egress_inputs() -> dict[str, str]:
             values[str(alias)] = (
                 raw if "LOCATION" in upper_alias or "REGION" in upper_alias else ""
             )
-    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
-        if os.getenv(alias):
-            values.setdefault(alias, "")
     for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
         value = str(os.getenv(name) or "").strip()
         if value:
             values[name] = value
+    catalogue = _noise_catalogue_setting()
+    if catalogue:
+        values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     return values
 
 
@@ -1236,6 +2151,19 @@ def _persist_bundle_stage_outputs(
                     data=scenario_data,
                 )
             )
+    if "sub_goals" not in existing:
+        catalogue = _load_bundle_file(manifest, "sub_goals.json", job)
+        if isinstance(catalogue, dict):
+            goals = catalogue.get("sub_goals") or []
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Sub-goal catalogue",
+                    summary=f"{len(goals)} sub-goals",
+                    kind="sub_goals",
+                    data=catalogue,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -1276,47 +2204,36 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
     return results
 
 
-class DaytonaHostedGateway:
+class HostedHarnessGateway:
     def __init__(self) -> None:
-        from daytona import Daytona, DaytonaConfig
-
-        api_key = getattr(settings, "DAYTONA_API_KEY", "")
-        snapshot = getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
-        dockerfile = getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
-        if not api_key or not (snapshot or dockerfile):
+        try:
+            self.client = get_sandbox_provider()
+        except SandboxProviderUnavailableError as exc:
+            # The provider SDK is the optional `sandbox` extra. Retrying cannot
+            # install it, so this is neither a 503 nor retryable.
             raise HostedHarnessError(
-                "daytona_not_configured",
-                "DAYTONA_API_KEY and either ALK_DAYTONA_SNAPSHOT or "
-                "ALK_DAYTONA_DOCKERFILE are required",
+                "sandbox_sdk_missing",
+                str(exc),
+                status_code=501,
+                retryable=False,
+            ) from exc
+        except SandboxProviderConfigurationError as exc:
+            raise HostedHarnessError(
+                "sandbox_provider_not_configured",
+                str(exc),
                 status_code=503,
                 retryable=True,
-            )
-        self.snapshot = snapshot
-        self.dockerfile = dockerfile
-        self.snapshot_digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
-        self.client = Daytona(
-            DaytonaConfig(
-                api_key=api_key,
-                api_url=getattr(settings, "DAYTONA_API_URL", None),
-                target=getattr(settings, "DAYTONA_TARGET", None),
-                organization_id=getattr(settings, "DAYTONA_ORGANIZATION_ID", None),
-            )
-        )
+            ) from exc
 
+    # TODO: no caller since the authoring activity was removed; delete with its
+    # sandbox helpers.
     def author(self, job: HostedHarnessJob) -> bytes:
-        """Run ALK authoring (understand -> environment -> scenarios) inside a Daytona sandbox.
+        """Run ALK authoring inside an isolated managed sandbox.
 
-        Scenario generation is LLM-heavy and must run off the control-plane worker. This provisions
-        a throwaway sandbox with only the authoring model credentials (never the target call
-        secrets), runs the same ``authoring_entrypoint`` the local SDK uses, and returns the packed
-        frozen authoring archive that ``bundle_author_v2`` later seals inside the execution sandbox.
+        Scenario generation is model-heavy and must run off the control-plane worker. This
+        provisions a throwaway sandbox with only the authoring model credentials, runs the same
+        ``authoring_entrypoint`` the local SDK uses, and returns the frozen authoring archive.
         """
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-        )
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
@@ -1328,6 +2245,9 @@ class DaytonaHostedGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        from simulate.services.harness_agent_versions import stamp_built_commit
+
+        stamp_built_commit(job, commit_sha)
 
         # An imported provider target is part of the agent source of truth. Give the isolated
         # authoring control process only the one provider credential it needs to fetch a
@@ -1346,114 +2266,51 @@ class DaytonaHostedGateway:
 
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
+        simulator_env = _platform_simulator_material()
+        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
 
-        # Authoring reaches only the source host and the authoring model provider (Vertex/Claude).
-        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes the
-        # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
-        default_authoring_egress = [
-            "github.com",
-            "codeload.github.com",
-            "api.github.com",
-            "objects.githubusercontent.com",
-            "raw.githubusercontent.com",
-            "oauth2.googleapis.com",
-            "www.googleapis.com",
-            "sts.googleapis.com",
-            "accounts.google.com",
-            "aiplatform.googleapis.com",
-            "us-east5-aiplatform.googleapis.com",
-            "us-central1-aiplatform.googleapis.com",
-        ]
-        allowed_domains = list(
-            dict.fromkeys(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_EGRESS_DOMAINS",
-                    default_authoring_egress,
-                )
-            )
-        )[:20]
-        if authoring_target_secrets:
-            provider_domain = {
-                "vapi": "api.vapi.ai",
-                "retell": "api.retellai.com",
-                "retell_chat": "api.retellai.com",
-            }.get(connector)
-            if provider_domain and provider_domain not in allowed_domains:
-                allowed_domains = [provider_domain, *allowed_domains][:20]
+        allowed_domains = _authoring_egress_domains(
+            simulator_env, connector, provider_profile=bool(authoring_target_secrets)
+        )
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
+        # Authoring is never bound to an agent, so it gets the mark and no export.
+        simulation_mark, _accepted = _simulation_mark(job)
         authoring_env = {
-            **{
-                name: value
-                for name, value in simulator_env.items()
-                if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
-            },
-            "CLAUDE_CODE_USE_VERTEX": "1",
-            "GOOGLE_GENAI_USE_VERTEXAI": "True",
-            "CLOUD_ML_REGION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
-            ),
-            "GOOGLE_CLOUD_LOCATION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_GEMINI_LOCATION", "us-central1"
-            ),
-            "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+            name: value
+            for name, value in simulator_env.items()
+            if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
         }
-        if project_id:
-            authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
-            authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
 
-        ttl_minutes = int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40))
+        ttl_seconds = _authoring_ttl_seconds(self.client.name)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.authoring": "1",
                 },
-                "network_block_all": not allowed_domains,
-                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(
-                            4,
-                            (payload["runtime"]["memory_mb"] + 1023) // 1024,
-                        ),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+            )
             _mark_stage(job, "understanding_agent")
-            sandbox = self.client.create(launch_params, timeout=launch_timeout)
+            sandbox = self.client.create(
+                launch_spec, timeout=self.client.create_timeout_seconds
+            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
                 "/work/job.json",
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             authoring_secrets_arg = ""
             if authoring_target_secrets:
                 authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
@@ -1546,6 +2403,7 @@ class DaytonaHostedGateway:
                             ),
                             expected=job.scenario_count,
                             actual=produced,
+                            include_job=guest_pin_policy_released,
                         )
                         repair = sandbox.process.exec(
                             repair_command,
@@ -1583,17 +2441,12 @@ class DaytonaHostedGateway:
                 raise HostedHarnessError(
                     "authoring_failed", detail, status_code=422, retryable=False
                 )
-            # Pack the authoring directory whole rather than an allow-list of file names: the
-            # guest decides what a saved world consists of (world.sqlite today, world.py +
-            # state.json + manifest.json on newer guests), and an allow-list here silently
-            # drops the marker the next reuse needs. Only the sealed bundle is left out: it is
-            # large and bundle_author_v2 regenerates it from this directory on every launch.
-            # cost.json is this run's bill, not part of a saved world: left in, every reuse
-            # reads the first run's authoring cost back as its own.
+            # Preserve the validated environment bundle with the authored inputs.
+            # Later simulation Runs restore this exact snapshot instead of
+            # regenerating or re-authoring the environment.
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
-                "--exclude=./environment-bundle --exclude=__pycache__ "
-                "--exclude=./cost.json .",
+                "--exclude=__pycache__ --exclude=./cost.json .",
                 timeout=180,
             )
             if packed.exit_code:
@@ -1614,28 +2467,31 @@ class DaytonaHostedGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-            SessionExecuteRequest,
-        )
+
+        from simulate.services.harness_versioning import assembly as bundle_cache
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
+        # A pinned run replays its assembled pair; on a cache miss it certifies it first.
+        assembled, assembly_error = _prepare_assembly(job)
+        certify = assembled is not None and not assembled.hit
         authoring_archive = _authoring_archive_for(job)
         payload = dict(job.payload)
         if authoring_archive is not None:
             # Resolve cached authoring created before connector resolution shipped as well as
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
+        simulator_env = _platform_simulator_material()
+        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
-        # scenario-gen (extend) against it. The marker persists across infra retries and is
-        # cleared only once the extended authoring is stored (store_authoring_archive), so a
-        # mid-flight retry re-extends to the same total instead of replaying the old set.
+        # scenario-gen (extend) against it. The marker persists across infra retries and
+        # is cleared only once the extended authoring is stored
+        # (freeze_authoring_archive), so a mid-flight retry re-extends to the same total
+        # instead of replaying the old set.
         extend_command = (
-            _extend_command_for(job, payload) if authoring_archive is not None else None
+            _extend_command_for(job, payload, include_job=guest_pin_policy_released)
+            if authoring_archive is not None
+            else None
         )
         source = dict(payload["source"])
         if source["kind"] == "github":
@@ -1644,18 +2500,30 @@ class DaytonaHostedGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        from simulate.services.harness_agent_versions import stamp_built_commit
+
+        # An environment's build pins the versions naming only its branch to this commit.
+        stamp_built_commit(job, commit_sha)
         # Bundle authoring is performed inside the sandbox. The platform sends source plus any
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
             if authoring_archive is None
             else ({}, "")
         )
-        dispatch_payload = prepare_dispatch_payload(
-            payload, secrets_map, simulator_secrets=simulator_env, job=job
-        )
+        from simulate.services.harness_capacity import configured_capacity
+
+        # The export decision needs the selected snapshot, so capacity comes first.
+        try:
+            capacity = configured_capacity(scope_dispatch_to_rerun(payload))
+        except ValueError as exc:
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                str(exc),
+                status_code=503,
+            ) from exc
+        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             payload,
@@ -1667,25 +2535,74 @@ class DaytonaHostedGateway:
         # private-host protection remain fail-closed; the resolved cap is checked
         # after wildcard minimization and provider/connector additions.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
+        # Decided before the attempt is registered or a sandbox exists, and applied in one
+        # step below, so a failure anywhere in it leaves the secrets, the egress list and
+        # the document exactly as they were.
+        export_plan = _plan_observability_export(
+            job,
+            payload,
+            selected_snapshot=selected_snapshot,
+            allowed_domains=allowed_domains,
+            max_egress_domains=self.client.max_egress_domains,
+        )
+        simulation_mark, mark_accepted = _simulation_mark(job, export_plan)
+        if not mark_accepted:
+            # A guest must never get our key without the dictionary that says what to do
+            # with it.
+            export_plan = _ExportPlan()
+        secrets_map = {**secrets_map, **dict(export_plan.secrets)}
+        if export_plan.egress_domains is not None:
+            allowed_domains = set(export_plan.egress_domains)
+        dispatch_payload = scope_dispatch_to_rerun(
+            prepare_dispatch_payload(
+                payload, secrets_map, simulator_secrets=simulator_env, job=job
+            )
+        )
+        if export_plan.secrets:
+            dispatch_payload = attach_observability_export_secret_refs(
+                dispatch_payload, [alias for alias, _value in export_plan.secrets]
+            )
+        dispatch_payload = _with_used_scenario_keys(
+            _with_simulation_mark(dispatch_payload, simulation_mark), job
+        )
+        registered_snapshot_digest = (
+            capacity.snapshot_digest or self.client.runtime_digest
+        )
+        if self.client.name != "daytona" and (
+            (
+                capacity.snapshot_name
+                and capacity.snapshot_name != self.client.runtime_name
+            )
+            or (
+                capacity.snapshot_digest
+                and capacity.snapshot_digest != self.client.runtime_digest
+            )
+        ):
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                "configured resource profile does not match the selected sandbox runtime",
+                status_code=503,
+            )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=(
-                _DIRECT_IMAGE_WITH_ADJUSTMENTS
-                if getattr(self, "dockerfile", "")
-                else self.snapshot
-            ),
-            snapshot_digest=(self.snapshot_digest or None) if self.snapshot else None,
+            snapshot_name=selected_snapshot,
+            snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
+        dispatch_runtime = dict(dispatch_payload["runtime"])
+        dispatch_runtime["parallelism"] = capability.admitted_parallelism
+        dispatch_runtime["cpu_units"] = capacity.cpu_units
+        dispatch_runtime["memory_mb"] = capacity.memory_mb
+        dispatch_payload["runtime"] = dispatch_runtime
         cache_attempt_redaction_values(
             attempt.id,
             redaction_values(
                 {**secrets_map, **simulator_env},
-                extra=(simulator_vertex_credentials.decode("utf-8", errors="replace"),)
-                if simulator_vertex_credentials
-                else (),
+                extra=export_plan.redaction_values,
             ),
         )
         # Record provenance digests on the attempt.
@@ -1694,72 +2611,55 @@ class DaytonaHostedGateway:
                 f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
             )
         attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
-        authoring_seconds = max(
-            0,
-            int(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                    3600,
-                )
-            ),
-        )
-        ttl_seconds = max(
-            int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-            authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
-        )
-        ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-        # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
-        # domain-allowlist cannot express when media and signaling resolve to different IPs. When
-        # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
-        # otherwise the domain allowlist (block-all + allowlist) applies.
+        ttl_seconds = _execution_ttl_seconds(payload["runtime"], self.client.name)
+        # E2B can combine domain and CIDR rules, which keeps LiveKit/WebRTC UDP media bounded.
+        # Daytona deliberately ignores CIDRs to preserve its established domain-only behavior.
         unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
-        network_block_all = False if unrestricted else (not allowed_domains)
-        domain_allow_list = (
-            None if unrestricted else (",".join(sorted(allowed_domains)) or None)
-        )
+        allowed_cidrs = _webrtc_egress_cidrs(payload, secrets_map)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            if assembly_error is not None:
+                raise assembly_error
+            if certify:
+                allowed_domains = _with_certify_egress(
+                    allowed_domains,
+                    simulator_env,
+                    max_domains=self.client.max_egress_domains,
+                )
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=capacity.cpu_units,
+                memory_mb=capacity.memory_mb,
+                disk_gb=capacity.disk_gb,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.attempt": str(attempt.id),
                 },
-                "network_block_all": network_block_all,
-                "domain_allow_list": domain_allow_list,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(4, (payload["runtime"]["memory_mb"] + 1023) // 1024),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+                allowed_cidrs=allowed_cidrs,
+                unrestricted_egress=unrestricted,
+                runtime_name=selected_snapshot,
+            )
             sandbox = self.client.create(
-                launch_params,
-                timeout=launch_timeout,
+                launch_spec, timeout=self.client.create_timeout_seconds
             )
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+            conversation = ensure_conversation(job)
+            # A new attempt is chat's new home. Fence out whatever process held the previous
+            # lease; chat starts here on demand once this attempt is running.
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation
+            ).update(
+                state=HostedHarnessConversationLease.State.EXPIRED,
+                updated_at=timezone.now(),
+            )
+            sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            from simulate.services.harness_usage import record_sandbox_runtime
+
+            record_sandbox_runtime(attempt, started=True)
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -1767,6 +2667,17 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/work/job.json",
             )
+            if certify:
+                sandbox.fs.upload_file(
+                    json.dumps(
+                        bundle_cache.certify_job_payload(
+                            dispatch_payload, bundle_cache.certify_scenario_count(job)
+                        ),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    bundle_cache.CERTIFY_JOB_PATH,
+                )
             sandbox.fs.upload_file(
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
                 "/run/futureagi/secrets.json",
@@ -1785,17 +2696,20 @@ class DaytonaHostedGateway:
                     ).encode(),
                     authoring_secrets_path,
                 )
+            simulator_env["ALK_SIMULATOR_FUNDING"] = "platform"
             sandbox.fs.upload_file(
                 json.dumps(
                     simulator_env, sort_keys=True, separators=(",", ":")
                 ).encode(),
                 _SIMULATOR_SECRETS_PATH,
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
+            # Provider creation and uploads can consume much of the initial lease. Re-arm
+            # providers with mutable leases before exposing a full-duration capability.
+            self.client.renew_ttl(sandbox, ttl_seconds)
+            # The guest has not received its token yet. Start the runnable deadline here,
+            # after E2B/Daytona creation and source/secret uploads, which can consume many
+            # minutes without any guest work. Never refresh it after the guest starts.
+            capability = activate_attempt_capability(capability)
             sandbox.fs.upload_file(
                 json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")
@@ -1819,8 +2733,17 @@ class DaytonaHostedGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
             prepared = sandbox.process.exec(
-                "if [ -f /work/authoring.tar.gz ]; then "
+                (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + "if [ -f /work/authoring.tar.gz ]; then "
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
@@ -1830,14 +2753,10 @@ class DaytonaHostedGateway:
                 "chmod -R a-w /work/source && "
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
+                f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else "")
-                + " "
-                + (
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH
-                    if simulator_vertex_credentials is not None
-                    else ""
-                ),
+                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -1848,54 +2767,89 @@ class DaytonaHostedGateway:
                     retryable=True,
                 )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
-            # The fallback authoring command precedes hosted_entrypoint, so provide only the
-            # non-secret Vertex selectors and the protected credential-file path here.  API keys
-            # remain exclusively in simulator-secrets.json and are loaded (then deleted) by ALK.
+            # The fallback authoring command precedes hosted_entrypoint. Export platform-owned
+            # model routing, including the AgentCC credential needed to drive Gemini through the
+            # Claude SDK. Customer target API keys remain in simulator-secrets.json.
             authoring_exports = {
                 name: value
                 for name, value in simulator_env.items()
                 if name
                 in {
                     "ALK_HARNESS",
+                    "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
-                    "ALK_VERTEX_LOCATION",
-                    # Authoring writes the scenarios, so the switch is exported here too.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
+                    "ALK_CLAUDE_GATEWAY_URL",
+                    "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VOICEMAIL_SCENARIOS",
-                    "GOOGLE_APPLICATION_CREDENTIALS",
-                    "GOOGLE_CLOUD_LOCATION",
-                    "GOOGLE_CLOUD_PROJECT",
-                    "GOOGLE_GENAI_USE_VERTEXAI",
+                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                    "ALK_CAB_GUEST_POC_PIN",
                 }
             }
-            export_command = " ".join(
-                f"{name}={shlex.quote(value)}"
-                for name, value in sorted(authoring_exports.items())
-            )
+            authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
+            if overlay is not None:
+                authoring_exports["PYTHONPATH"] = "/work/alk-src"
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
                 if authoring_target_secrets
                 else ""
             )
+            simulation_only = bool(
+                (dispatch_payload.get("metadata") or {}).get("simulation_only")
+            )
+            # A fresh build is the conversation's harness's work; this command waits for it.
+            harness_builds = (
+                authoring_archive is None
+                and not simulation_only
+                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+            )
+            bundle_command = (
+                "rm -rf /work/bundle && "
+                "cp -a /work/authoring/environment-bundle /work/bundle && "
+                "if [ -f /work/authoring/runtime-validation.json ]; then "
+                "cp /work/authoring/runtime-validation.json /work/runtime-validation.json; "
+                "fi"
+                if simulation_only
+                else (
+                    "python -m fi.alk.harness.bundle_author_v2 "
+                    "--job /work/job.json --source /work/source "
+                    "--authoring /work/authoring --output /work/bundle && "
+                    "rm -rf /work/authoring/environment-bundle && "
+                    "cp -a /work/bundle /work/authoring/environment-bundle"
+                )
+            )
+            if certify:
+                bundle_command = bundle_cache.certify_command()
+            elif assembled is not None:
+                bundle_command = (
+                    bundle_cache.source_check_command(assembled.source_digest)
+                    + bundle_command
+                )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
-                SessionExecuteRequest(
+                SandboxCommandRequest(
                     command=(
-                        (f"export {export_command} && " if export_command else "")
-                        + "if [ ! -f /work/authoring/contract.json ]; then "
+                        "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        f"--adjustments {_ADJUSTMENTS_PATH} "
+                        + (
+                            "--await-harness "
+                            if harness_builds
+                            else f"--adjustments {_ADJUSTMENTS_PATH} "
+                        )
                         + provider_profile_args
-                        + "; "
-                        "fi && "
+                        + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
-                        + "python -m fi.alk.harness.bundle_author_v2 "
-                        "--job /work/job.json --source /work/source "
-                        "--authoring /work/authoring --output /work/bundle && "
+                        + bundle_command
+                        + " && "
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
+                    env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
                 ),
@@ -1906,6 +2860,8 @@ class DaytonaHostedGateway:
             attempt.state = HostedHarnessAttempt.State.RUNNING
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
+            if harness_builds:
+                _ask_harness_to_build(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -1917,7 +2873,7 @@ class DaytonaHostedGateway:
             ):
                 provider_reason = "organization_suspended_depleted_credits"
             details = {
-                "provider": "daytona",
+                "provider": self.client.name,
                 "exception_type": type(exc).__name__,
             }
             if isinstance(provider_status_code, int):
@@ -1930,7 +2886,11 @@ class DaytonaHostedGateway:
                 # user's environment to fix; keep its typed code instead of blaming the sandbox.
                 attempt.terminal_failure = {
                     "domain": "environment",
-                    "stage": "acquiring_source",
+                    "stage": (
+                        "validating_environment"
+                        if exc.code in _BUNDLE_CACHE_FAILURES
+                        else "acquiring_source"
+                    ),
                     "code": exc.code,
                     "message": exc.message,
                     "details": details,
@@ -1972,7 +2932,7 @@ class DaytonaHostedGateway:
                     provider_ref="",
                     verified_absent=True,
                     retry_pending=retry_pending,
-                    details={"provider": "daytona", "sandbox_created": False},
+                    details={"provider": self.client.name, "sandbox_created": False},
                 )
             else:
                 job = self._delete_and_record(attempt, retry_pending=retry_pending)
@@ -1985,6 +2945,522 @@ class DaytonaHostedGateway:
             attempt.job = job
             return attempt
 
+    def _start_chat_in_sandbox(
+        self,
+        *,
+        job: HostedHarnessJob,
+        conversation: HostedHarnessConversation,
+        attempt: HostedHarnessAttempt,
+        sandbox,
+        endpoint_base_url: str,
+    ) -> HostedHarnessConversationLease:
+        """Start the conversation process beside the job's existing harness process."""
+        simulator_env = _platform_simulator_material()
+        _add_scoped_guest_pin_policy(simulator_env, job)
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url=endpoint_base_url,
+            provider_ref=str(sandbox.id),
+            attempt=attempt,
+            ttl_seconds=_execution_ttl_seconds(
+                job.payload["runtime"], self.client.name
+            ),
+            control_only=True,
+            runtime_name=self.client.runtime_name,
+            runtime_digest=self.client.runtime_digest,
+        )
+        assert capability is not None  # no claim_ref: never given up
+        sandbox.fs.upload_file(
+            json.dumps(
+                capability.document, sort_keys=True, separators=(",", ":")
+            ).encode(),
+            _CHAT_CAPABILITIES_PATH,
+        )
+        sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+        environment = job.environment or job
+        basis = str(
+            ((environment.payload or {}).get("metadata") or {}).get(
+                "authoring_revision"
+            )
+            or ""
+        )
+        if basis:
+            sandbox.fs.upload_file(
+                json.dumps(
+                    {"authoring_revision": basis},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                f"/work/authoring/{AUTHORING_BASIS_FILE}",
+            )
+        overlay = _alk_source_overlay()
+        if overlay is not None:
+            sandbox.fs.upload_file(overlay, "/work/alk-chat-src.tar.gz")
+        prepared = sandbox.process.exec(
+            (
+                "rm -rf /work/alk-chat-src && mkdir -p /work/alk-chat-src && "
+                "tar -xzf /work/alk-chat-src.tar.gz -C /work/alk-chat-src && "
+                "rm /work/alk-chat-src.tar.gz && "
+                if overlay is not None
+                else ""
+            )
+            + "mkdir -p /work/authoring && "
+            "chown -R svc-control:svc-control /work/authoring && "
+            f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
+            timeout=60,
+        )
+        if prepared.exit_code:
+            raise HostedHarnessError(
+                "conversation_workspace_prepare_failed",
+                "the active hosted ALK sandbox could not prepare chat",
+                status_code=502,
+                retryable=True,
+            )
+        sandbox.process.create_session(_CHAT_SESSION)
+        chat_exports = {
+            name: value
+            for name, value in simulator_env.items()
+            if name
+            in {
+                "ALK_HARNESS",
+                "ALK_HARNESS_MODEL",
+                "ALK_HARNESS_WORKERS_AT_ONCE",
+                "ALK_SIMULATOR_FUNDING",
+                "ALK_VOICEMAIL_SCENARIOS",
+                "AGENTCC_BASE_URL",
+                "AGENTCC_API_KEY",
+                "ALK_CLAUDE_GATEWAY_URL",
+                "ALK_CLAUDE_GATEWAY_API_KEY",
+                "CLAUDE_CODE_USE_VERTEX",
+                "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                "ALK_CAB_GUEST_POC_PIN",
+            }
+        }
+        chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+        if overlay is not None:
+            chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
+        command = sandbox.process.execute_session_command(
+            _CHAT_SESSION,
+            SandboxCommandRequest(
+                # Settings go in the environment, never on the command line a process listing shows.
+                env=chat_exports,
+                command=(
+                    "python -m fi.alk.harness.hosted_chat_entrypoint "
+                    "--job /work/job.json --source /work/source "
+                    "--workspace /work/authoring "
+                    f"--capabilities {_CHAT_CAPABILITIES_PATH} "
+                    f"--policy {_CHAT_POLICY_PATH}"
+                ),
+                run_async=True,
+                suppress_input_echo=True,
+            ),
+        )
+        sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+        record_runtime_started(conversation)
+        return capability.lease
+
+    def ensure_conversation_runtime(
+        self,
+        job: HostedHarnessJob,
+        *,
+        conversation: HostedHarnessConversation,
+        endpoint_base_url: str,
+        claim_again: bool = True,
+    ) -> HostedHarnessConversationLease | None:
+        """Keep one live ALK conversation process for this environment, or wait for a home.
+
+        While the job runs, chat lives beside the harness in the current attempt's sandbox;
+        until that sandbox is running, messages stay queued and None is returned. Once the job
+        is terminal, chat gets its own sandbox restored from the latest workspace checkpoint,
+        and every call (one per user message) renews that sandbox's idle window.
+
+        Liveness is the process's own command polling, not a provider probe, and no provider
+        call is made while the conversation row is locked.
+        """
+        terminal_states = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        from simulate.services.harness_versioning import rebuild
+
+        attempt = None
+        wanted = None
+        if job.environment_id is None and job.state in terminal_states:
+            if rebuild.landing_pending(job):
+                # A rebuild's result is landing; chat restarts once it has.
+                return None
+            wanted = rebuild.wanted_agent_version(job, conversation)
+        if job.state not in terminal_states:
+            attempt = (
+                HostedHarnessAttempt.no_workspace_objects.filter(
+                    job=job,
+                    attempt_number=job.current_attempt_number,
+                    state=HostedHarnessAttempt.State.RUNNING,
+                )
+                .exclude(provider_ref__isnull=True)
+                .exclude(provider_ref="")
+                .first()
+            )
+            if attempt is None:
+                return None
+        now = timezone.now()
+        claim_ref = f"pending:{uuid.uuid4()}"
+        claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
+        retired_ref = ""
+        with transaction.atomic():
+            conversation = (
+                HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                    id=conversation.id
+                )
+            )
+            lease = (
+                HostedHarnessConversationLease.no_workspace_objects.select_for_update()
+                .filter(conversation=conversation)
+                .first()
+            )
+            home = attempt.id if attempt is not None else None
+            if (
+                lease is not None
+                and lease.attempt_id == home
+                and runtime_is_live(lease, now=now)
+                # A sandbox running as another agent than chat wants is retired,
+                # once its turn is over.
+                and (
+                    rebuild.runs_as_wanted_agent(lease, wanted)
+                    or bool(conversation.active_invocation_id)
+                    or _unacked_commands(conversation)
+                    .filter(state=HostedHarnessConversationMessage.State.DELIVERED)
+                    .exists()
+                )
+            ):
+                live = lease
+            elif runtime_start_pending(lease, now=now):
+                return lease
+            else:
+                live = None
+                # A chat sandbox of its own is retired here; an attempt's sandbox belongs to
+                # the attempt, whose cleanup still has to read its spend before deleting it.
+                if (
+                    lease is not None
+                    and lease.attempt_id is None
+                    and not lease.provider_ref.startswith("pending:")
+                ):
+                    retired_ref = lease.provider_ref
+                settle_interrupted_turn(conversation)
+                HostedHarnessConversationLease.no_workspace_objects.update_or_create(
+                    conversation=conversation,
+                    defaults={
+                        "attempt": attempt,
+                        "control_only": attempt is not None,
+                        "provider_ref": claim_ref,
+                        "state": HostedHarnessConversationLease.State.STARTING,
+                        "token_hash": claim_hash,
+                        "fence_hash": claim_hash,
+                        "expires_at": now + timedelta(minutes=10),
+                        "heartbeat_at": now,
+                        "command_watermark": conversation.command_acked_through,
+                        "event_watermark": conversation.event_acked_through,
+                        "snapshot_name": self.client.runtime_name,
+                        "snapshot_digest": self.client.runtime_digest,
+                    },
+                )
+                conversation.policy_hash = hashlib.sha256(_CHAT_POLICY).hexdigest()
+                conversation.state = HostedHarnessConversation.State.STARTING
+                conversation.save(
+                    update_fields=[
+                        "policy_hash",
+                        "state",
+                        "active_invocation_id",
+                        "updated_at",
+                    ]
+                )
+        if live is not None:
+            if attempt is None:
+                self._renew_chat_idle_window(live)
+            return live
+        if retired_ref:
+            self._delete_chat_sandbox(retired_ref, conversation.id)
+        try:
+            if attempt is not None:
+                return self._start_chat_in_sandbox(
+                    job=job,
+                    conversation=conversation,
+                    attempt=attempt,
+                    sandbox=self.client.get(
+                        str(attempt.provider_ref),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    ),
+                    endpoint_base_url=endpoint_base_url,
+                )
+            started = self._start_chat_sandbox(
+                job,
+                conversation=conversation,
+                endpoint_base_url=endpoint_base_url,
+                agent_version=wanted,
+                claim_ref=claim_ref,
+            )
+        except Exception as exc:
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation,
+                state=HostedHarnessConversationLease.State.STARTING,
+            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+            if getattr(exc, "code", None) == "authoring_artifacts_not_found":
+                retire_without_saved_workspace(conversation.id)
+                raise
+            HostedHarnessConversation.no_workspace_objects.filter(
+                id=conversation.id
+            ).update(
+                state=HostedHarnessConversation.State.DEGRADED,
+                updated_at=timezone.now(),
+            )
+            if isinstance(exc, HostedHarnessError):
+                raise
+            raise HostedHarnessError(
+                "conversation_runtime_start_failed",
+                "the hosted ALK conversation runtime could not be started",
+                status_code=503,
+                retryable=True,
+            ) from exc
+        if started is None and claim_again:
+            # A close gave the claim up meanwhile; the restart it asked for is this one.
+            return self.ensure_conversation_runtime(
+                job,
+                conversation=conversation,
+                endpoint_base_url=endpoint_base_url,
+                claim_again=False,
+            )
+        return started
+
+    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+        try:
+            self.client.delete(
+                self.client.get(
+                    provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+                ),
+                timeout=120,
+                wait=True,
+            )
+        except SandboxNotFoundError:
+            pass
+        except Exception:
+            logger.exception(
+                "retired conversation sandbox deletion failed conversation=%s",
+                conversation_id,
+            )
+
+    def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
+        """Keep a chat sandbox for the idle window after the user's latest message."""
+        ttl_seconds = _chat_idle_seconds()
+        try:
+            self.client.renew_ttl(
+                self.client.get(
+                    lease.provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+                ),
+                ttl_seconds,
+            )
+        except Exception:
+            # The process still polls; it simply keeps its previous deadline.
+            logger.exception(
+                "conversation sandbox renewal failed conversation=%s",
+                lease.conversation_id,
+            )
+            return
+        HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id).update(
+            expires_at=timezone.now() + timedelta(seconds=ttl_seconds),
+            updated_at=timezone.now(),
+        )
+
+    def _start_chat_sandbox(
+        self,
+        job: HostedHarnessJob,
+        *,
+        conversation: HostedHarnessConversation,
+        endpoint_base_url: str,
+        agent_version: Any = None,
+        claim_ref: str | None = None,
+    ) -> HostedHarnessConversationLease | None:
+        """Restore the latest workspace checkpoint into a sandbox of chat's own.
+
+        With ``agent_version`` the sandbox gets that version's agent settings and
+        source; secret refs name its credentials only, never a value. ``None`` when
+        ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
+        """
+        workspace_archive = chat_workspace_for(
+            job, conversation, chat_state=load_workspace_archive(conversation)
+        )
+        control_only = workspace_archive is None
+        if workspace_archive is None:
+            workspace_archive = _empty_workspace_archive()
+        if agent_version is not None:
+            from simulate.services.harness_agent_versions import (
+                _side_row,
+                apply_agent_version,
+            )
+            from simulate.services.harness_versioning.backfill import (
+                effective_runtime,
+            )
+
+            payload = copy.deepcopy(job.payload)
+            apply_agent_version(
+                payload,
+                effective_runtime(
+                    job, _side_row(agent_version.id), version=agent_version
+                ),
+                environment_id=job.id,
+            )
+            job = copy.copy(job)
+            job.payload = payload
+        source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
+        simulator_env = _platform_simulator_material()
+        _add_scoped_guest_pin_policy(simulator_env, job)
+        platform_host = _hostname_from_url(endpoint_base_url)
+        allowed_domains = _resolved_egress_domains(
+            job.payload,
+            {},
+            simulator_env,
+            platform_host,
+        )
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
+        # A chat sandbox is never bound to an agent, so it gets the mark and no export.
+        simulation_mark, _accepted = _simulation_mark(job)
+        ttl_seconds = _chat_idle_seconds()
+        launch_spec = SandboxLaunchSpec(
+            cpu_units=2,
+            memory_mb=4096,
+            disk_gb=10,
+            ttl_seconds=ttl_seconds,
+            os_user=str(getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control")),
+            labels={
+                "futureagi.job": str(job.id),
+                "futureagi.conversation": str(conversation.id),
+            },
+            allowed_domains=tuple(sorted(allowed_domains)),
+        )
+
+        sandbox = None
+        try:
+            sandbox = self.client.create(
+                launch_spec,
+                timeout=self.client.create_timeout_seconds,
+            )
+            capability = issue_conversation_capability(
+                conversation,
+                endpoint_base_url=endpoint_base_url,
+                provider_ref=str(sandbox.id),
+                attempt=None,
+                ttl_seconds=ttl_seconds,
+                control_only=control_only,
+                runtime_name=self.client.runtime_name,
+                runtime_digest=self.client.runtime_digest,
+                agent_version=agent_version,
+                claim_ref=claim_ref,
+            )
+            if capability is None:
+                self._delete_chat_sandbox(str(sandbox.id), conversation.id)
+                return None
+            sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
+            sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
+            sandbox.fs.upload_file(
+                json.dumps(
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(
+                            guest_job_document(job.payload), simulation_mark
+                        ),
+                        job,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
+                "/work/job.json",
+            )
+            sandbox.fs.upload_file(
+                json.dumps(
+                    capability.document, sort_keys=True, separators=(",", ":")
+                ).encode(),
+                _CHAT_CAPABILITIES_PATH,
+            )
+            sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
+            prepared = sandbox.process.exec(
+                "mkdir -p /work/authoring && "
+                "tar -xzf /work/conversation.tar.gz -C /work/authoring && "
+                "rm /work/conversation.tar.gz && "
+                "tar -xzf /work/source.tar.gz -C /work && "
+                "rm /work/source.tar.gz && "
+                "chown -R svc-control:svc-control /work/source /work/authoring && "
+                "chmod -R a-w /work/source && "
+                + (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
+                f"{_CHAT_POLICY_PATH}",
+                timeout=120,
+            )
+            if prepared.exit_code:
+                raise HostedHarnessError(
+                    "conversation_workspace_prepare_failed",
+                    "the hosted ALK conversation workspace could not be prepared",
+                    status_code=502,
+                    retryable=True,
+                )
+            sandbox.process.create_session(_CHAT_SESSION)
+            chat_exports = {
+                name: value
+                for name, value in simulator_env.items()
+                if name
+                in {
+                    "ALK_HARNESS",
+                    "ALK_HARNESS_MODEL",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
+                    "ALK_CLAUDE_GATEWAY_URL",
+                    "ALK_CLAUDE_GATEWAY_API_KEY",
+                    "CLAUDE_CODE_USE_VERTEX",
+                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+                    "ALK_CAB_GUEST_POC_PIN",
+                }
+            }
+            chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+            if overlay is not None:
+                chat_exports["PYTHONPATH"] = "/work/alk-src"
+            command = sandbox.process.execute_session_command(
+                _CHAT_SESSION,
+                SandboxCommandRequest(
+                    # Settings go in the environment, never on the command line a process listing shows.
+                    env=chat_exports,
+                    command=(
+                        "python -m fi.alk.harness.hosted_chat_entrypoint "
+                        "--job /work/job.json --source /work/source "
+                        "--workspace /work/authoring "
+                        f"--capabilities {_CHAT_CAPABILITIES_PATH} "
+                        f"--policy {_CHAT_POLICY_PATH}"
+                    ),
+                    run_async=True,
+                    suppress_input_echo=True,
+                ),
+            )
+            sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+            record_runtime_started(conversation)
+            return capability.lease
+        except Exception:
+            if sandbox is not None:
+                try:
+                    self.client.delete(sandbox, timeout=120, wait=True)
+                except Exception:
+                    logger.exception(
+                        "conversation sandbox cleanup failed conversation=%s",
+                        conversation.id,
+                    )
+            raise
+
     @staticmethod
     def _capture_diagnostics(
         attempt: HostedHarnessAttempt,
@@ -1993,7 +3469,7 @@ class DaytonaHostedGateway:
         command_id: str | None = None,
         command: Any | None = None,
         final: bool = False,
-    ) -> DaytonaDiagnostics | None:
+    ) -> SandboxDiagnostics | None:
         if (
             not final
             and attempt.diagnostics_captured_at
@@ -2008,7 +3484,10 @@ class DaytonaHostedGateway:
                 simulator_secrets = resolve_platform_simulator_secrets()
                 secret_values = cache_attempt_redaction_values(
                     attempt.id,
-                    redaction_values({**target_secrets, **simulator_secrets}),
+                    redaction_values(
+                        {**target_secrets, **simulator_secrets},
+                        extra=_ingest_key_values(attempt.job.organization_id),
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
                 attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
@@ -2019,7 +3498,7 @@ class DaytonaHostedGateway:
                 )
                 return None
         try:
-            return poll_daytona_diagnostics(
+            return poll_sandbox_diagnostics(
                 attempt,
                 sandbox,
                 session_id=_ENTRYPOINT_SESSION,
@@ -2049,6 +3528,7 @@ class DaytonaHostedGateway:
             command_id,
             request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
         )
+        self._sync_offline_control(attempt, sandbox)
         # Probe the primary command before best-effort progress enrichment. If the provider
         # toolbox is unavailable, fail this poll promptly instead of multiplying the outage by
         # every optional artifact read below. Reconciliation applies a short grace period and
@@ -2082,6 +3562,94 @@ class DaytonaHostedGateway:
             )
         return observation
 
+    @staticmethod
+    def _sync_offline_control(attempt: HostedHarnessAttempt, sandbox) -> None:
+        """Serve control requests through the provider filesystem when HTTPS is blocked.
+
+        Scenario registration is required before calls can begin, so terminal artifact recovery
+        is too late for it.  This mailbox keeps the operation provider-neutral and routes the
+        request through the same platform service functions as the HTTP endpoint.
+        """
+
+        listing = sandbox.process.exec(
+            "find /work/outbound-spool/control -maxdepth 1 -type f "
+            "-name '*.request.json' -print 2>/dev/null | sort",
+            timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
+        )
+        if listing.exit_code:
+            return
+        from simulate.services.hosted_harness import (
+            begin_scenarios,
+            provision_scenarios,
+        )
+
+        for request_path in str(listing.result or "").splitlines():
+            request_path = request_path.strip()
+            if not request_path:
+                continue
+            response_path = (
+                request_path.removesuffix(".request.json") + ".response.json"
+            )
+            try:
+                sandbox.fs.download_file(response_path, _PROGRESS_FILE_TIMEOUT_SECONDS)
+                continue
+            except Exception:  # noqa: BLE001 - absence means the request is pending
+                pass
+            try:
+                request = json.loads(
+                    sandbox.fs.download_file(
+                        request_path, _PROGRESS_FILE_TIMEOUT_SECONDS
+                    ).decode("utf-8")
+                )
+                if (
+                    str(request.get("job_id")) != str(attempt.job_id)
+                    or str(request.get("attempt_id")) != str(attempt.id)
+                    or int(request.get("attempt_number", -1)) != attempt.attempt_number
+                ):
+                    raise HostedHarnessError(
+                        "offline_control_binding_mismatch",
+                        "sandbox control request does not belong to this attempt",
+                        status_code=403,
+                    )
+                payload = request.get("payload")
+                if not isinstance(payload, dict):
+                    raise HostedHarnessError(
+                        "offline_control_payload_invalid",
+                        "sandbox control request payload must be an object",
+                        status_code=400,
+                    )
+                if payload.get("operation") == "provision":
+                    result = provision_scenarios(attempt, payload)
+                elif payload.get("operation") == "begin":
+                    result = begin_scenarios(attempt, payload)
+                else:
+                    raise HostedHarnessError(
+                        "offline_control_operation_unknown",
+                        "sandbox control operation is not supported",
+                        status_code=400,
+                    )
+                response = result
+            except HostedHarnessError as exc:
+                response = {
+                    "error": {"code": exc.code, "message": exc.message},
+                }
+            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+                logger.exception(
+                    "offline hosted control failed attempt=%s request=%s",
+                    attempt.id,
+                    request_path,
+                )
+                response = {
+                    "error": {
+                        "code": "offline_control_failed",
+                        "message": str(exc)[:1000],
+                    }
+                }
+            sandbox.fs.upload_file(
+                json.dumps(response, separators=(",", ":")).encode("utf-8"),
+                response_path,
+            )
+
     def adjust(
         self, job: HostedHarnessJob, request: dict[str, Any]
     ) -> HostedHarnessJob:
@@ -2091,7 +3659,6 @@ class DaytonaHostedGateway:
         the attempt-local inbox consumed by ALK at stage boundaries. Keeping the
         whole inbox in metadata also makes retries and the UI deterministic.
         """
-        from daytona import DaytonaNotFoundError
 
         terminal_states = {
             HostedHarnessJob.State.COMPLETED,
@@ -2131,7 +3698,7 @@ class DaytonaHostedGateway:
                 status_code=409,
                 retryable=True,
             )
-        if attempt.snapshot_name != _DIRECT_IMAGE_WITH_ADJUSTMENTS:
+        if not self.client.supports_adjustments:
             raise HostedHarnessError(
                 "adjustment_protocol_unavailable",
                 "this run started before live messages were enabled; start a new run to use them",
@@ -2142,7 +3709,7 @@ class DaytonaHostedGateway:
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError as exc:
+        except SandboxNotFoundError as exc:
             raise HostedHarnessError(
                 "adjustment_sandbox_missing",
                 "the active hosted sandbox no longer exists",
@@ -2170,18 +3737,19 @@ class DaytonaHostedGateway:
                 if existing is not None:
                     return locked
 
-            delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            delta = request.get("scenario_delta") or _scenario_delta(instruction)
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {
                 "adjustment_id": str(uuid.uuid4()),
                 "client_request_id": client_request_id,
                 "instruction": instruction,
-                "target_stage": _adjustment_stage(instruction, locked.current_stage),
+                "target_stage": request.get("target_stage")
+                or _adjustment_stage(instruction, locked.current_stage),
                 "scenario_delta": delta,
                 "status": "pending",
                 "created_at": timezone.now().isoformat(),
@@ -2231,6 +3799,52 @@ class DaytonaHostedGateway:
             except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
+        try:
+            event_lines = (
+                sandbox.fs.download_file(
+                    "/work/authoring/harness-events.jsonl",
+                    _PROGRESS_FILE_TIMEOUT_SECONDS,
+                )
+                .decode("utf-8")
+                .splitlines()
+            )
+        except Exception:  # noqa: BLE001 - the file appears after the first model event
+            event_lines = []
+
+        def _activity_events() -> list[dict[str, Any]]:
+            events: list[dict[str, Any]] = []
+            for line in event_lines[-200:]:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(item, dict):
+                    events.append(
+                        {
+                            "event_id": item.get("event_id"),
+                            "event_type": item.get("type") or item.get("event_type"),
+                            "sequence": item.get("sequence"),
+                            "payload": item.get("payload") or {},
+                        }
+                    )
+            return events
+
+        def _running_authoring_stage() -> str:
+            """The stage the pipeline last started; after a rewind the files alone would say later."""
+            for line in reversed(event_lines):
+                if "harness.stage.started" not in line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                return {
+                    "understand": "understanding_agent",
+                    "environment": "generating_environment",
+                    "scenarios": "generating_scenarios",
+                }.get(str((item.get("payload") or {}).get("stage") or ""), "")
+            return ""
+
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
         # The current hosted authoring pipeline writes the deterministic environment compiler
@@ -2242,12 +3856,41 @@ class DaytonaHostedGateway:
                 "/work/authoring/environment-bundle/environment-plan.json"
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
-        scenarios = _json("/work/authoring/scenarios.json")
+        sub_goals = _json("/work/authoring/sub_goals.json")
         bundle = _json("/work/bundle/manifest.json")
+        # Written when the world is sealed, so it appears later than the authoring
+        # documents above and only once a store has actually been built.
+        build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        coverage = _json("/work/authoring/coverage.json")
+        invariants = _json("/work/authoring/source-data-invariants.json")
+        certified = _json("/work/authoring/generic-harness/certification.json")
+        _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, spend, attempt.attempt_number)
+        metadata = (job.payload or {}).get("metadata") or {}
+        if not metadata.get("simulation_only"):
+            _record_harness_spend(job, spend, attempt.attempt_number)
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        # Certifying prunes the suite index; a run reads the suite it was assembled with.
+        scenarios = _json(
+            bundle_cache.SUITE_INDEX_PATH
+            if bundle_cache.certifies_here(job)
+            else "/work/authoring/scenarios.json"
+        )
+        if (
+            bundle_cache.wants_fill(job, attempt.attempt_number)
+            and isinstance(bundle, dict)
+            and _json("/work/runtime-validation.json") is not None
+        ):
+            bundle_cache.fill_bundle(job, attempt, sandbox, bundle)
+            job.refresh_from_db(fields=["payload"])
+        authoring_complete = (
+            isinstance(bundle, dict)
+            and isinstance(scenarios, list)
+            and len(scenarios) == job.scenario_count
+        )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -2256,29 +3899,32 @@ class DaytonaHostedGateway:
         # author a different suite for an already-registered RunTest.
         # A chat "add scenarios" extend re-authors the SAME RunTest up to N+delta, so it must
         # re-freeze even though a key already exists — gated on its one-shot marker.
-        # store_authoring_archive clears that marker in the same save.
-        metadata = (job.payload or {}).get("metadata") or {}
+        # freeze_authoring_archive clears that marker in the same save.
+        attempt_number = int(getattr(attempt, "attempt_number", None) or 1)
         if (
-            isinstance(bundle, dict)
-            and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
+            authoring_complete
             and (
                 not metadata.get("authoring_object_key")
                 or metadata.get("scenario_extend")
             )
+            and _freeze_failures(metadata, attempt_number) < FREEZE_FAILURE_LIMIT
         ):
             try:
                 packed = sandbox.process.exec(
                     "cd /work/authoring && "
                     "[ -f contract.json ] && [ -d scenarios ] && "
                     "tar -czf /tmp/authoring-rerun.tar.gz "
-                    "--exclude=./environment-bundle --exclude=__pycache__ .",
-                    timeout=180,
+                    "--exclude=__pycache__ --exclude=./cost.json .",
                 )
                 if packed.exit_code:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
                 body = sandbox.fs.download_file("/tmp/authoring-rerun.tar.gz", 300)
-                store_authoring_archive(job, body, advance_lifecycle=False)
+                freeze_authoring_archive(
+                    job,
+                    body,
+                    extending=bool(metadata.get("scenario_extend")),
+                    proved_since=getattr(attempt, "created_at", None),
+                )
                 job.refresh_from_db()
             except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
@@ -2286,20 +3932,49 @@ class DaytonaHostedGateway:
                     job.id,
                     attempt.id,
                 )
+                _note_freeze_failure(job, attempt_number)
+                job.refresh_from_db()
         outputs = authoring_stage_outputs(
             contract,
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            sub_goals=sub_goals,
+            build_output=build_output,
+            coverage=coverage,
         )
+        activities = _activity_events()
+        if activities:
+            outputs.append({"kind": "activity", "events": activities})
+        if isinstance(scenarios, list) and scenarios:
+            from simulate.services.harness_scenarios import index_scenarios
+
+            try:
+                index_scenarios(
+                    job,
+                    scenarios,
+                    prune=authoring_complete
+                    or isinstance(invariants, dict)
+                    or isinstance(certified, dict),
+                )
+            except Exception:  # noqa: BLE001 - indexing must never stop a run
+                logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            stage = "validating_environment"
-        DaytonaHostedGateway._sync_adjustment_progress(job, sandbox)
+            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            world_ir = _json("/work/authoring/generic-harness/world-ir.json")
+            if certified is not None:
+                stage = "validating_scenarios"
+            elif invariants is not None or (written and world_ir is not None):
+                stage = "validating_environment"
+            else:
+                stage = "generating_scenarios"
+        stage = _running_authoring_stage() or stage
+        HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
         # Once the guest event channel advances into runtime stages it is authoritative.
@@ -2313,9 +3988,11 @@ class DaytonaHostedGateway:
         }:
             job.current_stage = stage
         # Authoring archives use per-scenario files rather than a top-level
-        # scenarios.json.  ``store_authoring_archive`` has already materialized
+        # scenarios.json.  ``freeze_authoring_archive`` has already materialized
         # that snapshot, so a later heartbeat must enrich the visible stages
         # instead of deleting stages whose source file is not present here.
+        previous_stage = job.current_stage
+        previous_outputs = job.stage_outputs
         merged = {
             item.get("kind"): item
             for item in (job.stage_outputs or [])
@@ -2326,7 +4003,15 @@ class DaytonaHostedGateway:
         job.stage_outputs = sorted(
             merged.values(), key=lambda item: order.get(item.get("kind"), 99)
         )
-        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+        update_fields = ["current_stage", "stage_outputs", "updated_at"]
+        # This runs on every poll tick and re-reads the same files, so the common
+        # case is that nothing moved. Only a real change counts as the
+        # environment being updated; otherwise the list would report a fresh
+        # timestamp every fifteen seconds for a run sitting still.
+        if job.current_stage != previous_stage or job.stage_outputs != previous_outputs:
+            job.content_updated_at = timezone.now()
+            update_fields.append("content_updated_at")
+        job.save(update_fields=update_fields)
 
     @staticmethod
     def _sync_adjustment_progress(job: HostedHarnessJob, sandbox) -> None:
@@ -2346,32 +4031,294 @@ class DaytonaHostedGateway:
                 statuses[str(value["adjustment_id"])] = value
         if not statuses:
             return
-        payload = dict(job.payload)
-        metadata = dict(payload.get("metadata") or {})
-        adjustments = list(metadata.get("adjustments") or [])
-        merged = [
-            {**item, **statuses.get(str(item.get("adjustment_id")), {})}
-            for item in adjustments
+        # Merge into the locked row's list: an adjustment appended meanwhile must survive.
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload)
+            metadata = dict(payload.get("metadata") or {})
+            adjustments = list(metadata.get("adjustments") or [])
+            merged = [
+                {**item, **statuses.get(str(item.get("adjustment_id")), {})}
+                for item in adjustments
+            ]
+            if merged == adjustments:
+                return
+            metadata["adjustments"] = merged
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+        job.payload = locked.payload
+        job.updated_at = locked.updated_at
+
+    def _recover_offline_delivery(self, attempt: HostedHarnessAttempt) -> bool:
+        """Replay the guest's durable outbound mirror through normal ingestion.
+
+        Some Daytona organizations enforce their own outbound allow-list and reject a
+        per-sandbox callback allow-list.  Provider/model traffic may still work while the guest
+        cannot POST results to the platform.  Because the control plane owns the sandbox, recover
+        the signed, redacted wire records before cleanup instead of converting a completed run
+        into ``evidence_undeliverable``.
+        """
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            "test -d /work/outbound-spool && "
+            "tar -czf /tmp/offline-outbound.tar.gz -C /work outbound-spool",
+            timeout=120,
+        )
+        if packed.exit_code:
+            return False
+        max_bytes = int(attempt.job.max_artifact_bytes * 1.1) + 16 * 1024 * 1024
+        # Recordings can make the spool many GiB: keep it on disk, never in worker memory.
+        # Inflate while downloading so replay can read members in any order; every backward
+        # seek in a gzip stream would re-inflate it from the first byte.
+        with tempfile.TemporaryFile() as tar:
+            chunks = sandbox.fs.download_file_stream(
+                "/tmp/offline-outbound.tar.gz", 180
+            )
+            inflater = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+            received = 0
+            inflated = 0
+            try:
+                for chunk in chunks:
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise HostedHarnessError(
+                            "offline_delivery_too_large",
+                            "offline outbound archive exceeds the job artifact budget",
+                            status_code=413,
+                            retryable=False,
+                        )
+                    while chunk:
+                        block = inflater.decompress(chunk, 1024 * 1024)
+                        chunk = inflater.unconsumed_tail
+                        if inflater.unused_data:
+                            # `tar -czf` writes one gzip member; anything after it would
+                            # be dropped from replay and pile up in memory.
+                            raise ValueError(
+                                "offline outbound archive has data after its gzip stream"
+                            )
+                        inflated += len(block)
+                        if inflated > max_bytes:
+                            raise HostedHarnessError(
+                                "offline_delivery_too_large",
+                                "inflated offline outbound archive exceeds the job artifact budget",
+                                status_code=413,
+                                retryable=False,
+                            )
+                        tar.write(block)
+            finally:
+                close = getattr(chunks, "close", None)
+                if close is not None:
+                    close()
+            if not inflater.eof:
+                raise EOFError("offline outbound archive is truncated")
+            tar.seek(0)
+            with tarfile.open(fileobj=tar, mode="r:") as archive:
+                return self._replay_offline_spool(attempt, archive, max_bytes)
+
+    def _replay_offline_spool(
+        self, attempt: HostedHarnessAttempt, archive: tarfile.TarFile, max_bytes: int
+    ) -> bool:
+        from simulate.services.hosted_harness_ingestion import (
+            ingest_artifact,
+            ingest_event_batch,
+            ingest_manifest,
+            ingest_result_receipt,
+        )
+
+        members: dict[str, tarfile.TarInfo] = {}
+        expanded = 0
+        for member in archive.getmembers():
+            path = Path(member.name)
+            if (
+                not member.isfile()
+                or path.is_absolute()
+                or ".." in path.parts
+                or not path.parts
+                or path.parts[0] != "outbound-spool"
+            ):
+                continue
+            expanded += member.size
+            if expanded > max_bytes:
+                raise HostedHarnessError(
+                    "offline_delivery_too_large",
+                    "expanded offline outbound archive exceeds the job artifact budget",
+                    status_code=413,
+                    retryable=False,
+                )
+            members[path.as_posix()] = member
+
+        def read(name: str) -> bytes:
+            stream = archive.extractfile(members[name])
+            return stream.read() if stream is not None else b""
+
+        def json_file(name: str) -> dict[str, Any]:
+            value = json.loads(read(name).decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError(f"{name} must contain an object")
+            return value
+
+        artifact_prefix = "outbound-spool/artifacts/"
+        recovered_by_scenario: dict[str, list[str]] = {}
+        for name in sorted(members):
+            if not name.startswith(artifact_prefix) or not name.endswith(".json"):
+                continue
+            metadata = json_file(name)
+            digest = str(metadata["digest"])
+            ingest_artifact(
+                attempt,
+                digest=digest,
+                kind=str(metadata["kind"]),
+                size=int(metadata["size"]),
+                content_type=str(metadata["content_type"]),
+                scenario_key=metadata.get("scenario_key"),
+                stream=archive.extractfile(members[f"{artifact_prefix}{digest}.bin"]),
+            )
+            recovered_by_scenario.setdefault(metadata.get("scenario_key"), []).append(
+                digest
+            )
+
+        events_name = "outbound-spool/events.spool.jsonl"
+        events_body = read(events_name) if events_name in members else b""
+        events = [
+            json.loads(line)
+            for line in events_body.decode("utf-8").splitlines()
+            if line.strip()
         ]
-        if merged == adjustments:
-            return
-        metadata["adjustments"] = merged
-        payload["metadata"] = metadata
-        job.payload = payload
-        job.save(update_fields=["payload", "updated_at"])
+        for offset in range(0, len(events), 100):
+            ingest_event_batch(attempt, events[offset : offset + 100])
+
+        receipt_prefix = "outbound-spool/receipts/"
+        receipts = [
+            name
+            for name in sorted(members)
+            if name.startswith(receipt_prefix) and name.endswith(".json")
+        ]
+        for name in receipts:
+            receipt = json_file(name)
+            ingest_result_receipt(
+                attempt,
+                receipt,
+                digest_body=receipt,
+                recovered_artifact_ids=recovered_by_scenario.get(
+                    receipt.get("scenario_key"), []
+                ),
+                replay_usage=False,
+            )
+
+        manifest_name = "outbound-spool/manifest.json"
+        if manifest_name not in members:
+            return False
+        manifest = json_file(manifest_name)
+        ingest_manifest(attempt, manifest, digest_body=manifest)
+        logger.info(
+            "recovered offline hosted delivery attempt=%s events=%s receipts=%s artifacts=%s",
+            attempt.id,
+            len(events),
+            len(receipts),
+            sum(
+                name.startswith(artifact_prefix) and name.endswith(".json")
+                for name in members
+            ),
+        )
+        return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
+        from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
+        settled = HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job,
+            attempt_number=job.current_attempt_number,
+            cleanup_verified_at__isnull=False,
+        ).exists()
+        if settled:
+            # A prior platform version considered sandbox absence sufficient cleanup.
+            # Re-run the idempotent telephony backstop so cancelling such a job again
+            # also repairs an orphaned SIP call.
+            cleanup_hosted_phone_rooms(job)
+            return job
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
         ).first()
         if attempt is None or not attempt.provider_ref:
+            cleanup_hosted_phone_rooms(job)
+            if attempt is not None:
+                attempt.terminal_stage = "canceled"
+                attempt.terminal_reason = reason
+                attempt.terminal_failure = None
+                attempt.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_reason",
+                        "terminal_failure",
+                        "updated_at",
+                    ]
+                )
+                forget_attempt_redaction_values(attempt.id)
+                return record_cleanup(
+                    attempt.id,
+                    provider_ref="",
+                    verified_absent=True,
+                    details={"provider": self.client.name, "sandbox_created": False},
+                )
+            from simulate.models import CallExecution, TestExecution
+
+            job.state = HostedHarnessJob.State.CANCELED
+            job.current_stage = HostedHarnessJob.State.CANCELED
+            job.terminal_at = timezone.now()
+            job.save(
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "updated_at",
+                    *finish_deferred_delete(job),
+                ]
+            )
+            if job.test_execution_id:
+                TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id
+                ).update(
+                    status=TestExecution.ExecutionStatus.CANCELLED,
+                    completed_at=job.terminal_at,
+                )
+                CallExecution.no_workspace_objects.filter(
+                    test_execution_id=job.test_execution_id,
+                    status__in=(
+                        CallExecution.CallStatus.PENDING,
+                        CallExecution.CallStatus.REGISTERED,
+                        CallExecution.CallStatus.ONGOING,
+                    ),
+                ).update(
+                    status=CallExecution.CallStatus.CANCELLED,
+                    completed_at=job.terminal_at,
+                )
             return job
+
+        # Hang up the PSTN leg before any provider call. Reconnecting to or
+        # deleting a remote sandbox can take tens of seconds, while Stop must
+        # disconnect the caller promptly. This pass is best effort because the
+        # verified post-delete pass below also closes any room recreated during
+        # the shutdown race.
+        try:
+            cleanup_hosted_phone_rooms(job)
+        except Exception:
+            logger.exception(
+                "hosted phone pre-delete cleanup failed attempt=%s",
+                attempt.id,
+            )
         try:
             sandbox = self.client.get(str(attempt.provider_ref))
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
+            # Sandbox deletion and SIP hangup are separate provider boundaries.
+            # A missing sandbox therefore does not prove that the call ended.
+            cleanup_hosted_phone_rooms(job)
             attempt.terminal_stage = "canceled"
             attempt.terminal_reason = reason
             attempt.save(
@@ -2382,45 +4329,54 @@ class DaytonaHostedGateway:
                 attempt.id,
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
-        sandbox.fs.upload_file(
-            json.dumps({"reason": reason}, separators=(",", ":")).encode(),
-            "/run/futureagi/cancel.json",
+        try:
+            try:
+                sandbox.fs.upload_file(
+                    json.dumps({"reason": reason}, separators=(",", ":")).encode(),
+                    "/run/futureagi/cancel.json",
+                )
+                sandbox.process.exec(
+                    # The bracketed first character still matches the guest entrypoint,
+                    # but not this shell's own command line. An unbracketed `pkill -f`
+                    # can terminate its invoking shell before cleanup reaches deletion.
+                    "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
+                    timeout=30,
+                )
+            except Exception:
+                logger.exception(
+                    "hosted guest cancellation signal failed attempt=%s",
+                    attempt.id,
+                )
+        finally:
+            # Guest signaling is best effort. Provider deletion is the cleanup
+            # contract and must still run when the guest control channel is gone.
+            attempt.terminal_stage = "canceled"
+            attempt.terminal_reason = reason
+            attempt.terminal_failure = None
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_reason",
+                    "terminal_failure",
+                    "updated_at",
+                ]
+            )
+
+        return self._delete_and_record(
+            attempt,
+            # Re-run after sandbox termination to close the create/delete race. Do
+            # not record cleanup complete until room absence is independently
+            # verified. A transient failure is retried through SandboxNotFound.
+            after_provider_cleanup=lambda: cleanup_hosted_phone_rooms(job),
         )
-        sandbox.process.exec(
-            "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
-            timeout=30,
-        )
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            observation = self.inspect(attempt)
-            if observation["exit_code"] is not None:
-                break
-            time.sleep(2)
-        # Cleanup derives the final job state from the attempt's terminal
-        # stage. The already-absent branch sets this above; the normal branch
-        # must do the same or an intentional cancellation is misreported as a
-        # platform failure after the sandbox is deleted.
-        attempt.terminal_stage = "canceled"
-        attempt.terminal_reason = reason
-        attempt.terminal_failure = None
-        attempt.save(
-            update_fields=[
-                "terminal_stage",
-                "terminal_reason",
-                "terminal_failure",
-                "updated_at",
-            ]
-        )
-        self._delete_and_record(attempt)
-        return HostedHarnessJob.no_workspace_objects.get(id=job.id)
 
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
         # the domain is retryable and the whole-job attempt budget remains
-        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
-        # (superseded) never reach here.
+        # (spine §0.6 + §1 `retry`). Exit 3 (superseded) never reaches here; exit 0
+        # does only when the platform lost results the guest produced.
         retry = attempt.job.payload.get("retry", {})
         cycle_start = int(
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
@@ -2430,16 +4386,55 @@ class DaytonaHostedGateway:
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
+    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
+        """The keys of the executions this attempt was sent and delivered no result for.
+
+        None when it was sent none: a build's product is its bundle, not call results. A
+        result an earlier attempt delivered is not this attempt's.
+        """
+        job = attempt.job
+        if job.environment_id is None:
+            return None
+        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+        if rerun_keys:
+            executions = executions.filter(execution_key__in=rerun_keys)
+        if not executions.exists():
+            return None
+        received = HostedHarnessReceipt.no_workspace_objects.filter(
+            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
+        ).values("execution_id")
+        return sorted(
+            executions.exclude(id__in=received).values_list("execution_key", flat=True)
+        )
+
+    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
+        """Scope the relaunch to the calls this attempt left without a result, as an in-run
+        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
+
+        With no result in, that scope is every call. A build relaunches whole.
+        """
+        missing = self._results_missing(attempt)
+        if not missing:
+            return
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=attempt.job_id
+            )
+            metadata = {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            }
+            job.payload = {**job.payload, "metadata": metadata}
+            job.save(update_fields=["payload", "updated_at"])
+
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
-        from daytona import DaytonaConflictError, DaytonaError, DaytonaNotFoundError
 
-        # ``launch`` can fail before Daytona returns a sandbox id.  That path has already
+        # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
-        # attempt budget is exhausted).  The workflow deliberately polls the returned attempt
-        # once to learn that durable state; do not try ``client.get("")`` and replace the useful
-        # ``sandbox_launch_failed`` diagnosis with a misleading ``sandbox_disappeared`` error.
+        # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
@@ -2456,7 +4451,7 @@ class DaytonaHostedGateway:
 
         try:
             observation = self.inspect(attempt)
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             retry_pending = False
             if not attempt.terminal_event_received:
                 attempt.terminal_stage = "failed"
@@ -2482,14 +4477,12 @@ class DaytonaHostedGateway:
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
                 retry_pending=retry_pending,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
-        except DaytonaError as exc:
-            # Daytona can keep reporting a sandbox as STARTED while its toolbox/daemon is no
-            # longer reachable. The SDK's default file timeout is much longer than the Temporal
-            # poll activity timeout, which previously left the workflow retrying the poll for
-            # hours with no terminal diagnosis. Tolerate a short control-plane wobble, then
-            # retire the sandbox and start a genuinely fresh infrastructure attempt.
+        except SandboxProviderError as exc:
+            # A provider may still report the sandbox as running while its control channel is
+            # unavailable. Tolerate a short wobble, then replace it using the infrastructure
+            # retry budget.
             grace_seconds = int(
                 getattr(
                     settings,
@@ -2518,7 +4511,7 @@ class DaytonaHostedGateway:
                     "grace period"
                 ),
                 "details": {
-                    "provider": "daytona",
+                    "provider": self.client.name,
                     "exception_type": type(exc).__name__,
                     "grace_seconds": grace_seconds,
                 },
@@ -2537,7 +4530,7 @@ class DaytonaHostedGateway:
                     attempt,
                     retry_pending=self._should_retry(attempt, "infrastructure"),
                 )
-            except DaytonaConflictError:
+            except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
                 # lifecycle 409 ("state change in progress"). Cleanup is not verified yet, so
                 # let the next workflow poll observe absence instead of burning all activity
@@ -2554,11 +4547,9 @@ class DaytonaHostedGateway:
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
 
-        # Event/manifest ingestion runs independently from the provider poll.  The attempt object
-        # held by the workflow may predate the terminal HTTP requests even though both commits are
-        # already visible in the database by the time Daytona reports process exit.  Refresh the
-        # delivery fields before classifying exit 0, or a fully acknowledged run is overwritten
-        # with the false `terminal_delivery_incomplete` platform failure.
+        # Event/manifest ingestion runs independently from the provider poll. The attempt object
+        # held by the workflow may predate terminal HTTP requests even though both commits are
+        # visible by the time the provider reports process exit. Refresh before classifying it.
         attempt.refresh_from_db(
             fields=[
                 "terminal_event_received",
@@ -2570,11 +4561,35 @@ class DaytonaHostedGateway:
                 "updated_at",
             ]
         )
+        if exit_code in {0, 4} and (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ):
+            try:
+                self._recover_offline_delivery(attempt)
+            except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
+                logger.exception(
+                    "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
+                    attempt.id,
+                    attempt.provider_ref,
+                )
+            attempt.refresh_from_db(
+                fields=[
+                    "terminal_event_received",
+                    "manifest_acked",
+                    "terminal_stage",
+                    "terminal_reason",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
         retry_pending = False
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
-        elif exit_code == 4:
+        elif exit_code == 4 and (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ):
             # Spine v1.14 exit 4: terminal state reached, but the terminal
             # event could not be delivered (events channel died or the platform
             # rejected the final drain). Still an infrastructure failure — and
@@ -2604,7 +4619,7 @@ class DaytonaHostedGateway:
                 ]
             )
             retry_pending = self._should_retry(attempt, "infrastructure")
-        elif exit_code != 0 and not attempt.terminal_event_received:
+        elif exit_code not in {0, 4} and not attempt.terminal_event_received:
             guest_logs = observation.get("logs", "")
             # Older/full-pipeline guests return the stage's status directly. A failed
             # environment-authoring stage therefore exits 1, which used to be reported and
@@ -2620,9 +4635,9 @@ class DaytonaHostedGateway:
             )
             authoring_invalid = exit_code == 78 or authoring_failed
             label = (
-                "Generated environment failed real-runtime validation after bounded repair"
+                RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
+                else AUTHORING_FAILED
                 if authoring_failed
                 else f"guest entrypoint exited {exit_code}"
             )
@@ -2658,9 +4673,60 @@ class DaytonaHostedGateway:
             retry_pending = not authoring_invalid and self._should_retry(
                 attempt, "infrastructure"
             )
+            if exit_code == 78:
+                from simulate.services.harness_versioning.assembly import mark_failed
+
+                try:
+                    mark_failed(attempt.job, attempt.terminal_failure["message"])
+                except Exception:  # noqa: BLE001 - the cache never changes the outcome
+                    logger.exception(
+                        "could not mark the bundle cache failed attempt=%s", attempt.id
+                    )
+        elif (
+            exit_code == 0
+            and attempt.terminal_event_received
+            and not attempt.manifest_acked
+            and attempt.terminal_stage == "completed"
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in, and the results are what the run page and a check
+            # run read; only the manifest listing the artifacts was lost. Keep the scored
+            # Run: manifest_acked stays False as the record of what never arrived.
+            logger.warning(
+                "hosted run kept without its manifest attempt=%s provider_ref=%s",
+                attempt.id,
+                attempt.provider_ref,
+            )
+        elif (
+            exit_code == 0
+            and not attempt.terminal_event_received
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in and only the guest's terminal event was lost. The
+            # platform records its own ending, as it does for a cancel: a reason no guest
+            # sends, and terminal_event_received stays False.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            attempt.save(
+                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
+            )
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
+            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
+            # Retry only results the guest produced and the platform lost: an ending the
+            # guest reported as failed or canceled is its own.
+            retry_pending = (
+                not attempt.terminal_event_received
+                or attempt.terminal_stage == "completed"
+            ) and self._should_retry(attempt, "infrastructure")
+            if retry_pending:
+                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",
@@ -2683,17 +4749,74 @@ class DaytonaHostedGateway:
             )
         return self._delete_and_record(attempt, retry_pending=retry_pending)
 
+    def _cleanup_conversation_runtime(self, job: HostedHarnessJob) -> None:
+        """Delete the control-only chat sandbox after the execution becomes terminal."""
+        conversation = HostedHarnessConversation.no_workspace_objects.filter(
+            job=job
+        ).first()
+        if conversation is None:
+            return
+        lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation,
+            control_only=True,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).first()
+        if lease is None:
+            return
+        provider_ref = str(lease.provider_ref or "")
+        absent = not provider_ref or provider_ref.startswith("pending:")
+        if not absent:
+            try:
+                sandbox = self.client.get(
+                    provider_ref,
+                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                )
+            except SandboxNotFoundError:
+                absent = True
+            except Exception:
+                logger.exception(
+                    "conversation sandbox cleanup deferred conversation=%s",
+                    conversation.id,
+                )
+                return
+            else:
+                try:
+                    absent = self.client.delete(sandbox, timeout=120, wait=True)
+                    if not absent:
+                        try:
+                            self.client.get(
+                                provider_ref,
+                                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                            )
+                        except SandboxNotFoundError:
+                            absent = True
+                except Exception:
+                    logger.exception(
+                        "conversation sandbox deletion failed conversation=%s",
+                        conversation.id,
+                    )
+                    return
+        if absent:
+            lease.state = HostedHarnessConversationLease.State.EXPIRED
+            lease.save(update_fields=["state", "updated_at"])
+
     def _delete_and_record(
-        self, attempt: HostedHarnessAttempt, *, retry_pending: bool = False
+        self,
+        attempt: HostedHarnessAttempt,
+        *,
+        retry_pending: bool = False,
+        after_provider_cleanup: Callable[[], Any] | None = None,
     ) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
 
         try:
             sandbox = self.client.get(
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             absent = True
         else:
             # A terminal poll normally finalized diagnostics already. Launch failures and
@@ -2703,23 +4826,30 @@ class DaytonaHostedGateway:
                 self._capture_diagnostics(attempt, sandbox, final=True)
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
-            self.client.delete(sandbox, timeout=120, wait=True)
-            try:
-                self.client.get(
-                    str(attempt.provider_ref),
-                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
-                )
-            except DaytonaNotFoundError:
-                absent = True
-            else:
-                absent = False
-        return record_cleanup(
+            _read_harness_usage(attempt, sandbox)
+            absent = self.client.delete(sandbox, timeout=120, wait=True)
+            if not absent:
+                try:
+                    self.client.get(
+                        str(attempt.provider_ref),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                except SandboxNotFoundError:
+                    absent = True
+        if after_provider_cleanup is not None:
+            after_provider_cleanup()
+        job = record_cleanup(
             attempt.id,
             provider_ref=str(attempt.provider_ref),
             verified_absent=absent,
             retry_pending=retry_pending,
-            details={"provider": "daytona", "deleted_at": timezone.now().isoformat()},
+            details={
+                "provider": self.client.name,
+                "deleted_at": timezone.now().isoformat(),
+            },
         )
+        self._cleanup_conversation_runtime(job)
+        return job
 
 
 def _empty_source_archive() -> bytes:
@@ -2762,7 +4892,9 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         try:
             response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
             return response.read()
-        except Exception as exc:
+        except S3Error as exc:
+            if exc.code != "NoSuchKey":
+                raise
             raise HostedHarnessError(
                 "authoring_artifacts_not_found",
                 "the frozen ALK authoring artifacts could not be loaded",
@@ -2811,11 +4943,12 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        "runtime-validation.json",
     ):
         path = bundle_dir / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers"):
+    for directory_name in ("scenarios", "handlers", "generic-harness"):
         directory = bundle_dir / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
@@ -2919,11 +5052,17 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         "collections.json",
         "contract.json",
         "simulator_prompt.md",
+        "runtime-validation.json",
     ):
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers"):
+    for directory_name in (
+        "scenarios",
+        "handlers",
+        "generic-harness",
+        "environment-bundle",
+    ):
         directory = authoring_root / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
@@ -3004,6 +5143,22 @@ def _provider_import_authoring_material(
     return ({secret_name: value} if value else {}), connector
 
 
+# Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+
+
+def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the job payload without metadata only the server reads."""
+    document = dict(payload)
+    if isinstance(document.get("metadata"), dict):
+        document["metadata"] = {
+            key: value
+            for key, value in document["metadata"].items()
+            if key not in _SERVER_ONLY_METADATA
+        }
+    return document
+
+
 def prepare_dispatch_payload(
     payload: dict[str, Any],
     secrets_map: dict[str, str],
@@ -3019,16 +5174,23 @@ def prepare_dispatch_payload(
     API keys and secret values remain exclusively in ``secrets.json`` and the stored job payload is
     never mutated.
     """
-    dispatched = dict(payload)
+    dispatched = guest_job_document(payload)
     agent = dict(dispatched.get("agent") or {})
     # The secret values remain exclusively in the one-shot secrets file, but ALK's
     # bundle preflight still needs to know which environment names were resolved.
     # Without this names-only declaration, alternative credential groups (notably
     # uploaded Google ADC + project) are incorrectly reported as unsatisfied.
     metadata = dict(dispatched.get("metadata") or {})
+    # The generic source/world/compiler/certification path is the production contract. Agent
+    # providers and transports remain adapters selected later from the submitted contract; they
+    # must not select a different understanding implementation.
+    metadata.setdefault("generic_harness_v1", True)
     metadata["environment_value_names"] = sorted(
         {
-            *(str(name).upper() for name in metadata.get("environment_value_names", [])),
+            *(
+                str(name).upper()
+                for name in metadata.get("environment_value_names", [])
+            ),
             *(str(name).upper() for name in secrets_map),
         }
     )
@@ -3045,6 +5207,9 @@ def prepare_dispatch_payload(
     )
     if (
         connector in {"livekit", "vapi", "retell"}
+        # Phone targets read the platform URL from simulator secrets. Mirroring
+        # it into target config would violate ALK's platform-owned dialer guard.
+        and not (connector in {"vapi", "retell"} and config.get("phone_number"))
         and not config.get("livekit_url")
         and livekit_url
     ):
@@ -3052,60 +5217,32 @@ def prepare_dispatch_payload(
         agent["config"] = config
         dispatched["agent"] = agent
     if job is not None:
-        metadata = dict(dispatched.get("metadata") or {})
         offered = _offered_eval_catalogue(job)
         if offered:
             # Offered, not required: a guest that ignores it selects nothing.
+            metadata = dict(dispatched.get("metadata") or {})
             metadata["available_evals"] = offered
-        metadata["telemetry"] = _telemetry_context(job, dispatched)
-        dispatched["metadata"] = metadata
+            dispatched["metadata"] = metadata
     return dispatched
 
 
-def _telemetry_context(job: Any, dispatched: dict[str, Any]) -> dict[str, Any]:
-    """Identifiers the guest attaches to its traces.
-
-    Every harness job reports into one platform-owned Observe account rather than the customer's,
-    so tenancy has to travel as attributes or a run cannot be told apart from the thousands of
-    others in the same project. These are identifiers only: no names, addresses, emails, prompts or
-    credentials, so the trace stays debuggable without carrying anyone's data into it.
-    """
-    agent = dispatched.get("agent") or {}
-    security = dispatched.get("security") or {}
-    context = {
-        "organization_id": str(getattr(job, "organization_id", "") or ""),
-        "workspace_id": str(getattr(job, "workspace_id", "") or ""),
-        "job_id": str(getattr(job, "id", "") or ""),
-        "run_id": str(getattr(job, "run_id", "") or ""),
-        "connector": str(agent.get("connector") or ""),
-        "scenario_count": dispatched.get("scenario_count"),
-        "read_only_source": bool(security.get("read_only_source", True)),
-        "snapshot": str(os.environ.get("ALK_DAYTONA_SNAPSHOT") or ""),
-        "deployment": str(os.environ.get("CLOUD_DEPLOYMENT") or "self-hosted"),
-    }
-    return {name: value for name, value in context.items() if value not in ("", None)}
-
-
 def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
-    """The platform evals this job may select, filtered to its own modality and tenant."""
-    from simulate.services.harness_evals import offered_evals
+    """The platform evals this job may select, filtered to its tenant and, once a contract exists, its modality.
+
+    The union-and-`any` logic moved into `harness_evals.briefing_evals`, which
+    is the one place that knows the list format. What stays here is the job:
+    reading the authored modality off `stage_outputs`, and never failing a
+    launch over a catalogue.
+    """
+    from simulate.services.harness_evals import briefing_evals
 
     try:
-        authored = _authored_modality(job)
-        if authored:
-            return offered_evals(job.organization, job.workspace, authored)
-        # No contract yet at launch, so offer both sets and mark a shared name `any`.
-        by_name: dict[str, dict[str, Any]] = {}
-        for modality in ("voice", "text"):
-            for entry in offered_evals(job.organization, job.workspace, modality):
-                name = str(entry.get("name"))
-                if name in by_name:
-                    by_name[name] = {**by_name[name], "modality": "any"}
-                    continue
-                by_name[name] = dict(entry)
-        return list(by_name.values())
+        return briefing_evals(job.organization, job.workspace, _authored_modality(job))
     except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
-        logger.exception("harness_eval_catalogue_failed", job_id=str(job.id))
+        structlog_logger.exception(
+            "harness_eval_catalogue_failed",
+            job_id=str(getattr(job, "id", "") or ""),
+        )
         return []
 
 
@@ -3169,6 +5306,32 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
     return str(value)
 
 
+def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
+    """Recover the structured ALK journal during polling and before teardown."""
+    from simulate.serializers.harness_usage import HarnessUsageRequestSerializer
+    from simulate.services.harness_usage import (
+        record_harness_usage,
+        record_sandbox_runtime,
+    )
+
+    record_sandbox_runtime(attempt)
+
+    try:
+        body = sandbox.fs.download_file(
+            "/work/usage.json", _PROGRESS_FILE_TIMEOUT_SECONDS
+        )
+    except Exception:
+        # Early failures and older snapshots have no usage journal.
+        logger.debug("usage journal unavailable attempt=%s", attempt.id, exc_info=True)
+        return
+    try:
+        serializer = HarnessUsageRequestSerializer(data=json.loads(body))
+        serializer.is_valid(raise_exception=True)
+        record_harness_usage(attempt, serializer.validated_data, emit=False)
+    except Exception:
+        logger.exception("could not recover usage journal attempt=%s", attempt.id)
+
+
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
     """Record the guest's ledger from a sandbox that is about to go away.
 
@@ -3196,43 +5359,60 @@ def _record_harness_spend(
         total = float(spend.get("total_usd") or 0.0)
     except (TypeError, ValueError):
         return
-    payload = dict(job.payload or {})
-    metadata = dict(payload.get("metadata") or {})
-    recorded = metadata.get("harness_spend")
-    attempts = (
-        dict((recorded or {}).get("attempts") or {})
-        if isinstance(recorded, dict)
-        else {}
-    )
     key = str(int(attempt_number or 1))
-    mine = attempts.get(key)
-    if isinstance(mine, dict):
-        try:
-            if float(mine.get("total_usd") or 0.0) > total:
-                return
-        except (TypeError, ValueError):
-            pass
-    attempts[key] = {
-        "total_usd": round(total, 6),
-        "unpriced_turns": int(spend.get("unpriced_turns") or 0),
-        "stages": spend.get("stages") or [],
-    }
-    metadata["harness_spend"] = {
-        "total_usd": round(
-            sum(float(one.get("total_usd") or 0.0) for one in attempts.values()), 6
-        ),
-        "unpriced_turns": sum(
-            int(one.get("unpriced_turns") or 0) for one in attempts.values()
-        ),
-        "attempts": attempts,
-    }
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.save(update_fields=["payload", "updated_at"])
+    # Re-read under the lock so a refusal or another attempt's entry written meanwhile is kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        recorded = metadata.get("harness_spend")
+        attempts = (
+            dict((recorded or {}).get("attempts") or {})
+            if isinstance(recorded, dict)
+            else {}
+        )
+        mine = attempts.get(key)
+        if isinstance(mine, dict):
+            try:
+                if float(mine.get("total_usd") or 0.0) > total:
+                    return
+            except (TypeError, ValueError):
+                pass
+        attempts[key] = {
+            "total_usd": round(total, 6),
+            "unpriced_turns": int(spend.get("unpriced_turns") or 0),
+            "stages": spend.get("stages") or [],
+        }
+        metadata["harness_spend"] = {
+            "total_usd": round(
+                sum(float(one.get("total_usd") or 0.0) for one in attempts.values()),
+                6,
+            ),
+            "unpriced_turns": sum(
+                int(one.get("unpriced_turns") or 0) for one in attempts.values()
+            ),
+            "attempts": attempts,
+        }
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    job.payload = locked.payload
+    job.updated_at = locked.updated_at
 
 
 def authoring_stage_outputs(
-    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+    contract: Any,
+    environment: Any,
+    scenarios: Any,
+    bundle: Any = None,
+    sub_goals: Any = None,
+    build_output: Any = None,
+    certification: Any = None,
+    repair_history: Any = None,
+    action_certification: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -3273,7 +5453,106 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    if isinstance(sub_goals, dict):
+        goals = sub_goals.get("sub_goals") or []
+        suite = sub_goals.get("suite_evals") or []
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "sub_goals",
+                "title": "Sub-goal catalogue",
+                "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
+                "data": _secret_safe(sub_goals),
+            }
+        )
+    stores = _seeded_stores(build_output)
+    if stores:
+        tables = sum(len(store["tables"]) for store in stores)
+        rows = sum(store["total_rows"] for store in stores)
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "stores",
+                "title": "Seeded world state",
+                "summary": f"{tables} tables · {rows} rows",
+                "data": stores,
+            }
+        )
+    if isinstance(coverage, dict):
+        placed = coverage.get("placed")
+        total = coverage.get("scenarios")
+        axes = coverage.get("axes") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000006",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": f"{placed} of {total} placed across {len(axes)} axes",
+                "data": _secret_safe(coverage),
+            }
+        )
+    if isinstance(certification, dict):
+        status = str(certification.get("status") or "unknown")
+        repairs = (
+            (repair_history or {}).get("results")
+            if isinstance(repair_history, dict)
+            else []
+        )
+        actions = (
+            (action_certification or {}).get("actions")
+            if isinstance(action_certification, dict)
+            else []
+        )
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000006",
+                "kind": "certification",
+                "title": "Environment certification",
+                "summary": f"{status} · {len(repairs or [])} repairs · {len(actions or [])} action probes",
+                "data": _secret_safe(
+                    {
+                        "certificate": certification,
+                        "repair_history": repair_history or {},
+                        "action_certification": action_certification or {},
+                    }
+                ),
+            }
+        )
     return outputs
+
+
+def _seeded_stores(build_output: Any) -> list[dict[str, Any]]:
+    """The tables each built store holds, from the sealed build output.
+
+    ``build.json`` records a baseline per store, and ``row_counts`` is populated
+    for postgres stores only, so a store backed by anything else contributes no
+    tables rather than a row of zeroes. Only identifiers and counts are carried;
+    the digests and baseline references stay in the artifact, since nothing in
+    the UI reads them and they say where the sealed data lives.
+    """
+    records = build_output.get("stores") if isinstance(build_output, dict) else None
+    stores: list[dict[str, Any]] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        counts = record.get("row_counts")
+        tables = [
+            {"name": str(name), "rows": int(rows)}
+            for name, rows in sorted((counts or {}).items())
+            if isinstance(rows, int)
+        ]
+        if not tables:
+            continue
+        stores.append(
+            {
+                "capability": str(record.get("capability") or ""),
+                "engine": str(record.get("engine") or ""),
+                "strategy": str(record.get("strategy") or ""),
+                "tables": tables,
+                "total_rows": sum(table["rows"] for table in tables),
+            }
+        )
+    return stores
 
 
 def authoring_stage_outputs_from_archive(
@@ -3282,7 +5561,16 @@ def authoring_stage_outputs_from_archive(
     """Read only the bounded JSON snapshots from a sealed authoring archive."""
     documents: dict[str, Any] = {}
     scenario_documents: list[dict[str, Any]] = []
-    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    wanted = {
+        "contract.json",
+        "environment.json",
+        "scenarios.json",
+        "sub_goals.json",
+        "certification.json",
+        "repair-history.json",
+        "action-certification.json",
+        "coverage.json",
+    }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -3323,14 +5611,641 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        sub_goals=documents.get("sub_goals.json"),
+        certification=documents.get("certification.json"),
+        repair_history=documents.get("repair-history.json"),
+        action_certification=documents.get("action-certification.json"),
+        coverage=documents.get("coverage.json"),
     )
+
+
+def authoring_content_digest(body: bytes) -> str:
+    """Stable revision of files a Run can consume, ignoring chat-only state."""
+    entries: list[tuple[str, bytes]] = []
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            parts = _archive_parts(member.name)
+            if (
+                not member.isfile()
+                or not parts
+                or parts[0].startswith(".")
+                or parts == ("cost.json",)
+                or "__pycache__" in parts
+            ):
+                continue
+            source = archive.extractfile(member)
+            if source is not None:
+                entries.append(("/".join(parts), source.read()))
+    digest = hashlib.sha256()
+    for path, data in sorted(entries):
+        encoded = path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return f"sha256:{digest.hexdigest()}"
+
+
+AUTHORING_BASIS_FILE = ".futureagi-authoring-basis.json"
+# Which unsaved changes a chat workspace was composed from: a random token only.
+DRAFT_BASIS_FILE = ".futureagi-draft-basis.json"
+# Root files the platform writes into a chat workspace; never carried from a checkpoint.
+_STAMPED_FILES = (AUTHORING_BASIS_FILE, ".futureagi-published.json", DRAFT_BASIS_FILE)
+
+
+def _with_root_json(body: bytes, name: str, value: dict[str, str]) -> bytes:
+    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    out = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source,
+        gzip.GzipFile(fileobj=out, mode="wb", mtime=0) as zipped,
+        tarfile.open(fileobj=zipped, mode="w") as target,
+    ):
+        for member in source.getmembers():
+            if _archive_parts(member.name) == (name,):
+                continue
+            target.addfile(
+                member, source.extractfile(member) if member.isfile() else None
+            )
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        info.mode = 0o600
+        target.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _root_json_value(body: bytes, name: str, key: str) -> str:
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            if _archive_parts(member.name) != (name,):
+                continue
+            source = archive.extractfile(member) if member.isfile() else None
+            if source is None:
+                return ""
+            try:
+                value = json.loads(source.read().decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return ""
+            return str((value or {}).get(key) or "")
+    return ""
+
+
+def with_authoring_basis(body: bytes, revision: str) -> bytes:
+    """Stamp the environment revision a chat workspace was built from."""
+    return _with_root_json(body, AUTHORING_BASIS_FILE, {"authoring_revision": revision})
+
+
+def authoring_basis(body: bytes) -> str:
+    """The environment revision a chat workspace declares it was built from."""
+    return _root_json_value(body, AUTHORING_BASIS_FILE, "authoring_revision")
+
+
+def with_draft_basis(body: bytes, token: str) -> bytes:
+    """Stamp the composition of unsaved changes a chat workspace was built from."""
+    return _with_root_json(body, DRAFT_BASIS_FILE, {"token": token})
+
+
+def draft_basis_token(body: bytes) -> str:
+    """The composition of unsaved changes a chat workspace declares it was built from."""
+    return _root_json_value(body, DRAFT_BASIS_FILE, "token")
+
+
+# A run replays these byte for byte against their sealed manifests, so an edit never touches them.
+_SEALED_ARCHIVE_ROOTS = frozenset({"environment-bundle", "generic-harness"})
+
+
+def _scenario_token(value: object) -> str:
+    """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
+    return Path(str(value or "").strip()).name.lower().replace("-", "_")
+
+
+def _suite_tokens(suite: list[dict]) -> set[str]:
+    return {
+        token
+        for one in suite
+        for field in ("name", "scenario_key", "folder")
+        if (token := _scenario_token(one.get(field)))
+    }
+
+
+def _document_tokens(folder: str, document: object) -> set[str]:
+    tokens = {_scenario_token(folder)}
+    if isinstance(document, dict):
+        tokens |= {
+            _scenario_token(document.get(field)) for field in ("name", "scenario_key")
+        }
+    return tokens - {""}
+
+
+def _scenario_folder_kept(folder: str, document: object, tokens: set[str]) -> bool:
+    """A folder goes only when its own scenario.json names a scenario the suite no longer has."""
+    if not isinstance(document, dict):
+        return True
+    return bool(_document_tokens(folder, document) & tokens)
+
+
+def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
+    own = _document_tokens(folder, document)
+    return next(
+        (
+            one
+            for one in suite
+            if {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+            & own
+        ),
+        None,
+    )
+
+
+def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
+    """Land an edited suite in every live authoring or chat workspace."""
+    environment = job.environment or job
+    job_ids = [
+        environment.id,
+        *environment.simulation_runs.values_list("id", flat=True),
+    ]
+    refs = set(
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation__job_id__in=job_ids,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).values_list("provider_ref", flat=True)
+    )
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        )
+        .exclude(provider_ref__isnull=True)
+        .exclude(
+            state__in=(
+                HostedHarnessAttempt.State.FAILED,
+                HostedHarnessAttempt.State.SUPERSEDED,
+                HostedHarnessAttempt.State.CLEANING_UP,
+            )
+        )
+        .first()
+    )
+    if attempt is not None and attempt.provider_ref:
+        refs.add(attempt.provider_ref)
+    if not refs:
+        return False
+
+    client = HostedHarnessGateway().client
+    delivered = False
+    for ref in refs:
+        try:
+            sandbox = client.get(
+                str(ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+            )
+            _push_scenarios_to_sandbox(sandbox, suite)
+            delivered = True
+        except Exception:  # noqa: BLE001 - a stopped guest is the ordinary case
+            logger.warning(
+                "could not deliver edited suite to live workspace job=%s provider_ref=%s",
+                job.id,
+                ref,
+                exc_info=True,
+            )
+    return delivered
+
+
+def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
+    tokens = _suite_tokens(suite)
+    listed = sandbox.process.exec(
+        "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
+    )
+    present = sorted(name for name in (listed.result or "").split() if name)
+    for folder in present:
+        read = sandbox.process.exec(
+            f"cat /work/authoring/scenarios/{shlex.quote(folder)}/scenario.json",
+            timeout=60,
+        )
+        try:
+            document = json.loads(read.result or "") if not read.exit_code else None
+        except ValueError:
+            document = None
+        if not _scenario_folder_kept(folder, document, tokens):
+            sandbox.process.exec(
+                f"rm -rf /work/authoring/scenarios/{shlex.quote(folder)}",
+                timeout=60,
+            )
+            continue
+        edit = _edit_for(folder, document, suite)
+        if edit is None or not isinstance(document, dict):
+            continue
+        document.update(
+            {
+                key: value
+                for key, value in edit.items()
+                if key not in {"scenario_key", "scenario_id"}
+            }
+        )
+        sandbox.fs.upload_file(
+            json.dumps(document, indent=2).encode("utf-8"),
+            f"/work/authoring/scenarios/{folder}/scenario.json",
+        )
+    sandbox.fs.upload_file(
+        json.dumps(suite, indent=2).encode("utf-8"),
+        "/work/authoring/scenarios.json",
+    )
+
+
+class AuthoringArchiveKept(Exception):
+    """The edited suite could not be written into the archive without breaking a run."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "authoring_archive_kept",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+SCENARIO_EDIT_ON_RUN = "scenario_edit_on_run"
+
+
+def rewrite_authoring_scenarios(
+    job: HostedHarnessJob, suite: list[dict], *, user: Any = None
+) -> str | None:
+    """Write an edited suite back into the environment's authoring archive."""
+    from simulate.services.harness_versioning.versions import (
+        is_versioned,
+        record_authoring,
+    )
+
+    if job.environment_id is not None:
+        # A run's suite is a copy taken when it started; saving it would roll back the
+        # environment's newer scenarios.
+        raise AuthoringArchiveKept(
+            "Edit scenarios from the environment",
+            code=SCENARIO_EDIT_ON_RUN,
+            status_code=409,
+        )
+    versioned = is_versioned(job)
+    metadata = (job.payload or {}).get("metadata") or {}
+    object_key = str(metadata.get("authoring_object_key") or "").strip()
+    if not object_key:
+        return None
+    client = get_storage_client()
+    response = None
+    try:
+        response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
+        body = response.read()
+    except Exception as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
+        logger.exception("could not read authoring archive for amend job=%s", job.id)
+        raise AuthoringArchiveKept("the saved scenarios could not be read") from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+    rewritten = _rewritten_authoring_archive(body, suite)
+    if rewritten is None:
+        logger.error(
+            "harness_amend_archive_kept job=%s: the rewrite would lose files a run needs",
+            job.id,
+        )
+        raise AuthoringArchiveKept("the change would lose files a run needs")
+    if versioned:
+        # A versioned archive is never overwritten: the edit becomes the next suite version.
+        try:
+            recorded = record_authoring(
+                job,
+                rewritten,
+                origin="manual",
+                user=user,
+                expected_pair_key=object_key,
+            )
+        except HostedHarnessError as exc:
+            raise AuthoringArchiveKept(
+                exc.message, code=exc.code, status_code=exc.status_code
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
+            logger.exception("could not version an amended suite job=%s", job.id)
+            raise AuthoringArchiveKept("the change could not be saved") from exc
+        if recorded is None:
+            raise AuthoringArchiveKept("the change could not be saved")
+        return recorded.pair_key
+    # A new content-keyed object; an archive a run replayed is never overwritten.
+    from simulate.services.harness_versioning import archives
+
+    new_key = archives.pair_key(job.organization_id, job.id, rewritten)
+    archives.put_archive(new_key, rewritten)
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            pk=job.pk
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        metadata["authoring_object_key"] = new_key
+        metadata["authoring_revision"] = authoring_content_digest(rewritten)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["payload", "content_updated_at", "updated_at"])
+    job.refresh_from_db()
+    return new_key
+
+
+def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> int:
+    """Bring saved chat workspaces forward with a UI scenario amendment."""
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
+    )
+    conversations = list(
+        HostedHarnessConversation.no_workspace_objects.filter(
+            job_id__in=[
+                environment.id,
+                *environment.simulation_runs.values_list("id", flat=True),
+            ],
+            latest_workspace_object_key__isnull=False,
+        )
+    )
+    client = get_storage_client()
+    rewritten_count = 0
+    for conversation in conversations:
+        response = None
+        try:
+            response = client.get_object(
+                UPLOAD_BUCKET_NAME, conversation.latest_workspace_object_key
+            )
+            body = response.read()
+            rewritten = _rewritten_authoring_archive(body, suite)
+            if rewritten is None:
+                logger.warning(
+                    "could not reconcile conversation workspace job=%s conversation=%s",
+                    job.id,
+                    conversation.id,
+                )
+                continue
+            if revision:
+                rewritten = with_authoring_basis(rewritten, revision)
+            rewritten_count += replace_conversation_workspace(
+                conversation,
+                rewritten,
+                expected_key=conversation.latest_workspace_object_key,
+                scenario_count=len(suite),
+            )
+        except Exception:  # noqa: BLE001 - the revision fence still prevents rollback
+            logger.warning(
+                "could not refresh conversation workspace job=%s conversation=%s",
+                job.id,
+                conversation.id,
+                exc_info=True,
+            )
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+    return rewritten_count
+
+
+def replace_conversation_workspace(
+    conversation: HostedHarnessConversation,
+    body: bytes,
+    *,
+    expected_key: str | None,
+    scenario_count: int,
+) -> int:
+    """Store a platform-rebased chat workspace if no newer checkpoint replaced it."""
+    digest = hashlib.sha256(body).hexdigest()
+    key = (
+        f"harness-conversations/{conversation.organization_id}/"
+        f"{conversation.id}/{digest}.tar.gz"
+    )
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=key,
+        data=io.BytesIO(body),
+        length=len(body),
+        content_type="application/gzip",
+    )
+    return HostedHarnessConversation.no_workspace_objects.filter(
+        id=conversation.id,
+        latest_workspace_object_key=expected_key,
+    ).update(
+        latest_workspace_digest=f"sha256:{digest}",
+        latest_workspace_object_key=key,
+        latest_scenario_count=scenario_count,
+        updated_at=timezone.now(),
+    )
+
+
+def _archive_parts(name: str) -> tuple[str, ...]:
+    return tuple(part for part in Path(name).parts if part not in {"", "."})
+
+
+def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None:
+    """The archive with the suite's edits applied, or None when the result would break a run."""
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source:
+        members = [
+            (member, source.extractfile(member).read() if member.isfile() else None)
+            for member in source.getmembers()
+        ]
+    documents: dict[str, object] = {}
+    folders: set[str] = set()
+    for member, data in members:
+        parts = _archive_parts(member.name)
+        if len(parts) < 2 or parts[0] != "scenarios":
+            continue
+        folders.add(parts[1])
+        if parts[2:] == ("scenario.json",) and data is not None:
+            try:
+                documents[parts[1]] = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                documents[parts[1]] = None
+    tokens = _suite_tokens(suite)
+    kept = {
+        folder
+        for folder in folders
+        if _scenario_folder_kept(folder, documents.get(folder), tokens)
+    }
+    held = set().union(
+        *(_document_tokens(folder, documents.get(folder)) for folder in kept)
+    )
+    if folders and any(
+        not {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+        & held
+        for one in suite
+    ):
+        return None
+
+    out = io.BytesIO()
+    written: set[tuple[str, ...]] = set()
+    with tarfile.open(fileobj=out, mode="w:gz") as target:
+        for member, data in members:
+            parts = _archive_parts(member.name)
+            if len(parts) >= 2 and parts[0] == "scenarios" and parts[1] not in kept:
+                continue
+            if data is None:
+                target.addfile(member)
+                written.add(parts)
+                continue
+            if parts[:1] == ("scenarios",) and parts[2:] == ("scenario.json",):
+                document = documents.get(parts[1])
+                edit = _edit_for(parts[1], document, suite)
+                if isinstance(document, dict) and edit is not None:
+                    document = {
+                        **document,
+                        **{
+                            key: value
+                            for key, value in edit.items()
+                            if key not in {"scenario_key", "scenario_id"}
+                        },
+                    }
+                    data = json.dumps(document, indent=2).encode("utf-8")
+            elif parts == ("scenarios.json",):
+                data = json.dumps(suite, indent=2).encode("utf-8")
+            member.size = len(data)
+            target.addfile(member, io.BytesIO(data))
+            written.add(parts)
+
+    for member, data in members:
+        parts = _archive_parts(member.name)
+        if parts[-1:] != ("manifest.json",) or parts[:1] not in {
+            (root,) for root in _SEALED_ARCHIVE_ROOTS
+        }:
+            continue
+        try:
+            listed = json.loads((data or b"{}").decode("utf-8")).get("files") or []
+        except (UnicodeDecodeError, ValueError, AttributeError):
+            continue
+        if any(
+            parts[:-1] + _archive_parts(str(record.get("path") or "")) not in written
+            for record in listed
+            if isinstance(record, dict) and record.get("path")
+        ):
+            return None
+    return out.getvalue()
+
+
+def _authored_payload(payload: dict[str, Any], body: bytes) -> dict[str, Any]:
+    """The payload changes every freshly stored authoring archive brings."""
+    payload = resolve_authored_connector(dict(payload), body)
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_mode"] = "fresh"
+    # A chat "add scenarios" run consumes its one-shot extend marker here, once the
+    # extended authoring is durably stored, so a later plain rerun replays this set
+    # without re-extending.
+    metadata.pop("scenario_extend", None)
+    payload["metadata"] = metadata
+    return payload
+
+
+def freeze_authoring_archive(
+    job: HostedHarnessJob,
+    body: bytes,
+    *,
+    extending: bool,
+    proved_since: datetime | None = None,
+) -> None:
+    """Store a build's or an extend's authoring archive.
+
+    An environment that already has versions is recorded as its next versions, which
+    move the archive pointer in the same save; if recording fails nothing moves and the
+    error reaches the caller, so the freeze is tried again. Otherwise the archive is
+    stored as one object, and a first build also records versions when versioning is on.
+    """
+    from simulate.services.harness_versioning.versions import (
+        is_versioned,
+        record_authoring,
+        record_authoring_quietly,
+    )
+
+    origin = "extend" if extending else "authoring"
+    # Read fresh: a backfill can version the environment while the archive downloads.
+    if job.environment_id is None and is_versioned(job):
+        record_authoring(
+            job,
+            body,
+            origin=origin,
+            proved_since=proved_since,
+            prepare_payload=lambda payload: _authored_payload(payload, body),
+            consumes_extend_marker=extending,
+        )
+        if extending:
+            from simulate.services.harness_versioning.nudges import schedule_reconcile
+            from simulate.services.harness_versioning.rebuild import (
+                schedule_deferred_activations,
+            )
+
+            schedule_reconcile(job.id)
+            schedule_deferred_activations(job.id)
+        return
+    store_authoring_archive(job, body, advance_lifecycle=False)
+    if job.environment_id is None and is_versioned(job):
+        # A backfill versioned the environment while the legacy store ran; keep its
+        # versions in step with the archive just stored.
+        record_authoring(job, body, origin=origin, proved_since=proved_since)
+    elif not extending:
+        # An extend is versioned only once the first build is.
+        record_authoring_quietly(job, body, origin=origin, proved_since=proved_since)
+
+
+# A versioned freeze that keeps failing for one attempt stops being retried after this.
+FREEZE_FAILURE_LIMIT = 5
+
+
+def _freeze_failures(metadata: dict[str, Any], attempt_number: int) -> int:
+    failures = metadata.get("versioning_freeze_failures") or {}
+    try:
+        return int(failures.get(str(attempt_number)) or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _note_freeze_failure(job: HostedHarnessJob, attempt_number: int) -> None:
+    """Count a failed freeze of an environment with versions, per attempt."""
+    from simulate.services.harness_versioning.versions import is_versioned
+
+    if job.environment_id is not None or not is_versioned(job):
+        return
+    try:
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload or {})
+            metadata = dict(payload.get("metadata") or {})
+            failures = dict(metadata.get("versioning_freeze_failures") or {})
+            count = _freeze_failures(metadata, attempt_number) + 1
+            failures[str(attempt_number)] = count
+            metadata["versioning_freeze_failures"] = failures
+            if count >= FREEZE_FAILURE_LIMIT:
+                # The extend marker stays, so the job keeps saying it never finished.
+                metadata["versioning_error"] = {
+                    "code": "freeze_failed",
+                    "attempt": attempt_number,
+                }
+                logger.error(
+                    "harness versioned freeze gave up job=%s attempt=%s failures=%s",
+                    job.id,
+                    attempt_number,
+                    count,
+                )
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+    except Exception:  # noqa: BLE001 - counting must never stop a run
+        logger.exception("could not count a freeze failure job=%s", job.id)
 
 
 def store_authoring_archive(
     job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
 ) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
-    object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
+    digest = hashlib.sha256(body).hexdigest()
+    object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(
@@ -3340,24 +6255,32 @@ def store_authoring_archive(
         length=len(body),
         content_type="application/gzip",
     )
-    payload = resolve_authored_connector(dict(job.payload or {}), body)
-    metadata = dict(payload.get("metadata") or {})
-    metadata["authoring_object_key"] = object_key
-    metadata["authoring_mode"] = "fresh"
-    # A chat "add scenarios" run consumes its one-shot extend marker here, once the extended
-    # authoring is durably stored, so a later plain rerun replays this set without re-extending.
-    metadata.pop("scenario_extend", None)
-    payload["metadata"] = metadata
-    job.payload = payload
-    update_fields = ["payload", "updated_at"]
-    if advance_lifecycle:
-        job.stage_outputs = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
+    stage_outputs = (
+        authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
+        if advance_lifecycle
+        else None
+    )
+    # Re-read under the lock so keys written since the caller read the job are kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
         )
-        job.current_stage = "validating_scenarios"
-        job.state = HostedHarnessJob.State.ADMITTED
-        update_fields.extend(["stage_outputs", "current_stage", "state"])
-    job.save(update_fields=update_fields)
+        payload = _authored_payload(dict(locked.payload or {}), body)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["authoring_object_key"] = object_key
+        metadata["authoring_revision"] = authoring_content_digest(body)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.content_updated_at = timezone.now()
+        update_fields = ["payload", "content_updated_at", "updated_at"]
+        if advance_lifecycle:
+            locked.stage_outputs = stage_outputs
+            locked.current_stage = "validating_scenarios"
+            locked.state = HostedHarnessJob.State.ADMITTED
+            update_fields.extend(["stage_outputs", "current_stage", "state"])
+        locked.save(update_fields=update_fields)
+    for name in update_fields:
+        setattr(job, name, getattr(locked, name))
     return object_key
 
 

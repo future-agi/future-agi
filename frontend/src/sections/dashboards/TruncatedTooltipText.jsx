@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { DESCRIPTION_TOOLTIP_SX } from "./constants";
-import useIsTruncated from "./hooks/useIsTruncated";
+import useIsTruncated from "src/hooks/useIsTruncated";
 
 /** Reveals a description in a tooltip only once its single line is clipped.
  *  Children is a render prop taking the ref to measure, so each caller keeps

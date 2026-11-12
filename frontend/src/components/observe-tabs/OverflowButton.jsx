@@ -34,7 +34,7 @@ const OverflowButton = ({
         sx={{
           px: 1,
           py: 0.75,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           fontSize: 13,
           fontWeight: "fontWeightMedium",
           color: activeTabInOverflow ? "primary.main" : "text.secondary",
@@ -60,7 +60,7 @@ const OverflowButton = ({
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { minWidth: 180, maxHeight: 300 },
+            sx: { minWidth: 200, maxHeight: 300 },
           },
         }}
       >
