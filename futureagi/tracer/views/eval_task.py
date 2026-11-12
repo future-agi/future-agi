@@ -3126,8 +3126,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         # its proof starts here. Keeping the original floor
                         # would re-evaluate, and bill, every row since the
                         # task first activated. A conversion has already
-                        # persisted its own new floor.
-                        reset["start_time"] = update_fields["last_run"]
+                        # persisted its own new floor. This edit accepts the
+                        # coverage, so it also stamps last_run, which the
+                        # serializer keeps at the floor for edits that don't.
+                        reset["start_time"] = reset["last_run"] = update_fields[
+                            "last_run"
+                        ]
                     EvalTask.objects.filter(id=eval_task.id).update(**reset)
                     for field, value in reset.items():
                         setattr(eval_task, field, value)

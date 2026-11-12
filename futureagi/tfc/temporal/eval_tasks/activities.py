@@ -473,28 +473,41 @@ def _set_task_status_sync(
     """
     close_old_connections()
     try:
-        from django.db.models import Case, When
-        from django.db.models.functions import Coalesce
+        from django.db.models import Case, Value, When
+        from django.db.models.functions import Coalesce, Greatest, Least
         from django.utils import timezone
 
         from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
+        now = timezone.now()
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
             # Continuous start_time is its acceptance/activation floor, not
             # worker startup time. Creation falls back to created_at; a
             # conversion, or an explicit rerun that resets the cursor, persists
             # a new start_time in its edit transaction. Preserve it (and any
-            # partial cursor) through outages, restarts and resumes.
+            # partial cursor) through outages, restarts and resumes. Without a
+            # cursor, a row saved before that floor was persisted starts no
+            # earlier than its last acceptance: ``continuous_coverage_floor``,
+            # in SQL so the guarded transition stays a single UPDATE.
             fields["start_time"] = Case(
+                When(
+                    run_type=RunType.CONTINUOUS,
+                    continuous_cursor__isnull=True,
+                    last_run__isnull=False,
+                    then=Greatest(
+                        Coalesce("start_time", "created_at"),
+                        Least("last_run", Value(now)),
+                    ),
+                ),
                 When(
                     run_type=RunType.CONTINUOUS,
                     then=Coalesce("start_time", "created_at"),
                 ),
-                default=timezone.now(),
+                default=Value(now),
             )
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
-            fields["end_time"] = timezone.now()
+            fields["end_time"] = now
 
         qs = EvalTask.objects.filter(id=task_id)
         if expected_status is not None:
