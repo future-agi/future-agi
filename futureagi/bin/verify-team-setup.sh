@@ -107,9 +107,7 @@ check_package() {
     fi
 }
 
-check_package "black" "black (formatter)"
-check_package "isort" "isort (import sorter)"
-check_package "ruff" "ruff (linter)"
+check_package "ruff" "ruff (linter and formatter)"
 check_package "bandit" "bandit (security)"
 check_package "mypy" "mypy (type checker)"
 check_package "django" "Django"

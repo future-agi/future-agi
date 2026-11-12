@@ -284,5 +284,24 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual({(f, c) for f, _, c in found}, {("futureagi/app/now_broken.py", "invalid-syntax")}, proc.stdout)
 
 
+class RuffPinTests(unittest.TestCase):
+    """`make lint`, `make format` and the futureagi pre-commit hooks run the ruff CI pins."""
+
+    def test_the_makefile_and_the_pre_commit_config_pin_the_ci_ruff(self):
+        workflow = (ROOT / ".github" / "workflows" / "python-lint.yml").read_text()
+        pinned = re.search(r'RUFF_VERSION:\s*"([0-9.]+)"', workflow).group(1)
+
+        makefile = (ROOT / "futureagi" / "Makefile").read_text()
+        make_pin = re.search(r"^RUFF_VERSION := ([0-9.]+)$", makefile, re.MULTILINE)
+        self.assertIsNotNone(make_pin, "futureagi/Makefile does not set RUFF_VERSION")
+        self.assertEqual(make_pin.group(1), pinned)
+        self.assertIn('"ruff==$(RUFF_VERSION)"', makefile)
+
+        pre_commit = (ROOT / "futureagi" / ".pre-commit-config.yaml").read_text()
+        hook_pin = re.search(r"repo: https://github\.com/astral-sh/ruff-pre-commit\n\s+rev: v([0-9.]+)\n", pre_commit)
+        self.assertIsNotNone(hook_pin, "futureagi/.pre-commit-config.yaml has no ruff-pre-commit hook")
+        self.assertEqual(hook_pin.group(1), pinned)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

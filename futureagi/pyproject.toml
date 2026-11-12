@@ -307,30 +307,6 @@ dev = [
     "types-pyyaml",
 ]
 
-[tool.black]
-line-length = 88
-exclude = '''
-/(
-    \.git
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 88
-known_third_party = ["your_third_party_packages"]
-known_first_party = ["your_project_name"]
-multi_line_output = 3
-include_trailing_comma = true
-use_parentheses = true
-
 [tool.bandit]
 exclude_dirs = ["tests", "*/tests/*", "agentic_eval/tests"]
 skips = ["B101", "B601"]  # B101: assert_used, B601: paramiko_calls
@@ -363,7 +339,7 @@ select = [
     "TID251", # flake8-tidy-imports: banned-api
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
+    "E501",  # line too long (ruff format wraps what it can)
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]
