@@ -32,9 +32,9 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
-from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.harness_worker_steps import worker_steps
 from simulate.services.harness_workers import WORKERS_KEY
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -801,7 +801,7 @@ class CallWorkerSerializer(serializers.Serializer):
             "completed",
             "failed",
             "no_return",
-            "timed_out",
+            "deadline_passed",
             "cancel_requested",
             "cancelled",
             "infrastructure",

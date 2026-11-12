@@ -49,8 +49,9 @@ def record_call_workers(call_execution_id: str, second_read: bool = False) -> No
     from simulate.services.harness_workers import record_call_workers as record
 
     timeline = record(call_execution_id)
-    # Read again when a declared worker was not seen yet, or when this read was not whole (spans still arriving, the
-    # span read failed or hit its bound): the later read then replaces what an incomplete tree got wrong.
+    # Read again when a declared worker was not seen yet, when this read was not whole (spans still arriving, the
+    # span read failed or hit its bound), or when no span had arrived at all, so a record built from the sandbox's rows
+    # alone still meets the spans that come later: the later read then replaces what an incomplete tree got wrong.
     if (
         timeline
         and not second_read
@@ -58,6 +59,7 @@ def record_call_workers(call_execution_id: str, second_read: bool = False) -> No
             any(not one["observed"] for one in timeline["workers"])
             or not timeline.get("tree_complete", True)
             or timeline.get("collection") in ("partial", "unavailable")
+            or not timeline.get("spans_received", True)
         )
     ):
         record_call_workers.apply_async(

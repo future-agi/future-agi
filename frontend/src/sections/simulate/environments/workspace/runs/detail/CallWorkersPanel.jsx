@@ -637,7 +637,8 @@ function WorkerRow({ block, names, start, cutOff, onOpenTrace, traceIds }) {
             {block.relationship === "unknown" ? (
               <UnknownParent sx={{ mt: 0.5, ml: 2.25 }} />
             ) : null}
-            {C.cutShort[worker?.state] ? (
+            {/* Only a hand-off that did not come back takes the worker's end; one that returned ended by its return. */}
+            {!block.returned && !block.transfer && C.cutShort[worker?.state] ? (
               <Chip
                 size="small"
                 variant="outlined"

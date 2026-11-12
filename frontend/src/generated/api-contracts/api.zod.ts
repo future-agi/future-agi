@@ -54006,7 +54006,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "completed",
           "failed",
           "no_return",
-          "timed_out",
+          "deadline_passed",
           "cancel_requested",
           "cancelled",
           "infrastructure",

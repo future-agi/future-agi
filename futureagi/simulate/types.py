@@ -155,7 +155,7 @@ class HarnessWorker(TypedDict):
             "completed",
             "failed",
             "no_return",
-            "timed_out",
+            "deadline_passed",
             "cancel_requested",
             "cancelled",
             "infrastructure",

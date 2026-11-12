@@ -989,8 +989,7 @@ def _span_dict(span: Any) -> WorkerSpan:
 
 
 # How a trial ended, for the workers still out when it did, as the call recorded it: it ended with no return from them,
-# it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it). `timed_out` is only
-# ever the world's own record that it refused a worker past its deadline.
+# it failed outside the agent, or it was cancelled (confirmed once the platform has stopped it).
 _STILL_OUT = {
     "ended": "no_return",
     "infrastructure": "infrastructure",
@@ -1002,40 +1001,59 @@ _STILL_OUT = {
 def worker_states(
     timeline: WorkerTimeline, *, trial: str, past_deadline: Iterable[str] = ()
 ) -> WorkerTimeline:
-    """The timeline with each worker's end state: `completed` or `failed` once it returned, `timed_out` when the world
-    refused it past its deadline (`past_deadline`, by worker id), `not_observed` when it sent nothing, else what the trial's own ending makes it. Every
-    partial event stays; no return is invented."""
-    returned = {
-        event["worker_id"]: event
-        for event in timeline["events"]
-        if event["type"] == "returned"
+    """The timeline with each worker's end state. Each hand-off is matched to its own return by delegation id: a
+    worker every hand-off of which came back is `completed`, or `failed` when a return was an error. One the world
+    refused past its worker-action deadline (`past_deadline`, by worker id, or a refused call of its own) and that did
+    not come back is `deadline_passed`: a refusal is the world seeing it, and says only that its later world calls
+    were refused, never that its execution was stopped. A worker with no event at all is `not_observed`; one with a
+    hand-off still out takes the trial's own ending. Every partial event stays; no return is invented."""
+    events = timeline["events"]
+    handed: dict[str, list[str]] = {}
+    for event in events:
+        if event["type"] == "delegated":
+            handed.setdefault(event["worker_id"], []).append(
+                str(event.get("delegation_id") or "")
+            )
+    returns = {
+        str(event.get("delegation_id") or ""): event
+        for event in events
+        if event["type"] == "returned" and event.get("delegation_id")
     }
+    # A record that kept no delegation ids pairs a worker's hand-offs with its returns in order instead.
+    unkeyed: dict[str, list[WorkerEvent]] = {}
+    for event in events:
+        if event["type"] == "returned" and not event.get("delegation_id"):
+            unkeyed.setdefault(event["worker_id"], []).append(event)
     # Refused past its deadline: by the trial's world changes, or by the refusal code on its own recorded calls.
     late = set(past_deadline) | {
         str(event["worker_id"]).rsplit("/", 1)[-1]
-        for event in timeline["events"]
+        for event in events
         if event.get("refusal_code") == "deadline_passed" and event.get("worker_id")
-    }
-    # Only a hand-off the record shows can be still out; a worker seen only through its tool calls has no recorded
-    # end, so it gets no end state rather than an invented one.
-    # A control pass never returns, so only a delegated hand-off with no return can be still out.
-    handed = {
-        event["worker_id"]
-        for event in timeline["events"]
-        if event["type"] == "delegated"
     }
     workers = []
     for worker in timeline["workers"]:
-        back = returned.get(worker["worker_id"])
-        if not worker["observed"]:
-            state = "not_observed"
+        delegations = handed.get(worker["worker_id"], [])
+        spare = list(unkeyed.get(worker["worker_id"], []))
+        back = [
+            returns.get(one) if one else (spare.pop(0) if spare else None)
+            for one in delegations
+        ]
+        # A hand-off with no return of its own is still out, whatever another hand-off to the same worker returned.
+        out = any(one is None for one in back)
+        if delegations and not out:
+            state = (
+                "failed"
+                if any(one.get("status") == "error" for one in back if one)
+                else "completed"
+            )
         elif worker["id"] in late:
-            state = "timed_out"
-        elif back is not None:
-            state = "failed" if back.get("status") == "error" else "completed"
-        elif worker["worker_id"] in handed:
+            state = "deadline_passed"
+        elif not worker["observed"]:
+            state = "not_observed"
+        elif out:
             state = _STILL_OUT.get(trial, "no_return")
         else:
+            # Seen only through its tool calls: no recorded end, so no end state rather than an invented one.
             workers.append(dict(worker))
             continue
         workers.append({**worker, "state": state})

@@ -764,13 +764,14 @@ describe("CallWorkersPanel", () => {
       ).toBeNull();
     });
 
-    it("marks a worker the trial cut short, keeping its steps so far, and leaves a finished one unmarked", () => {
+    it("marks only the hand-off a worker never came back from, keeping its steps so far", () => {
       result = {
         data: {
-          ...twoTurns(),
+          // The first hand-off returned; the second never did, so only the second takes the worker's end.
+          ...twoTurns({ returned: null }),
           workers: TIMELINE.workers.map((one) =>
             one.worker_id === handoff.worker_id
-              ? { ...one, state: "timed_out" }
+              ? { ...one, state: "deadline_passed" }
               : { ...one, state: "not_observed" },
           ),
         },
@@ -778,9 +779,14 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(2);
+      const [chip] = screen.getAllByTestId("worker-cut-short");
+      expect(screen.getAllByTestId("worker-cut-short")).toHaveLength(1);
+      expect(screen.getAllByTestId("turn")[1]).toContainElement(chip);
+      expect(chip).toHaveTextContent("past its action deadline");
       expect(
-        screen.getByText("Cut short: Order-lookup worker (timed out)"),
+        screen.getByText(
+          "Cut short: Order-lookup worker (past its action deadline)",
+        ),
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });

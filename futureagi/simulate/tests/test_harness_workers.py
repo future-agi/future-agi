@@ -2598,13 +2598,21 @@ def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
     ).is_valid()
 
 
-@pytest.mark.parametrize("subject", ["worker:Order lookup", "worker:order-lookup_2", "task"])
+@pytest.mark.parametrize(
+    "subject", ["worker:Order lookup", "worker:order-lookup_2", "task"]
+)
 def test_a_worker_subject_the_harness_accepts_is_accepted_on_the_receipt(subject):
     """The harness keeps a worker's id as its source names it, spaces included; one refused subject would refuse the
     whole receipt and lose the call's result (same rule as agent-learning-kit's catalogue)."""
     from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
 
-    goal = {"name": "g", "held": True, "reason": None, "judged": False, "subject": subject}
+    goal = {
+        "name": "g",
+        "held": True,
+        "reason": None,
+        "judged": False,
+        "subject": subject,
+    }
     assert HarnessSubGoalSerializer(data=goal).is_valid()
 
 
@@ -2612,7 +2620,13 @@ def test_a_worker_subject_the_harness_accepts_is_accepted_on_the_receipt(subject
 def test_a_blank_or_unknown_subject_is_still_refused(subject):
     from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
 
-    goal = {"name": "g", "held": True, "reason": None, "judged": False, "subject": subject}
+    goal = {
+        "name": "g",
+        "held": True,
+        "reason": None,
+        "judged": False,
+        "subject": subject,
+    }
     assert not HarnessSubGoalSerializer(data=goal).is_valid()
 
 
@@ -2624,16 +2638,31 @@ def test_a_worker_s_own_failed_check_never_fails_the_scenario_and_is_labelled_as
         "status": "passed",
         "sub_goals": [
             {"name": "refund_issued", "held": True, "verdict": "pass"},
-            {"name": "lookup_read_only", "held": False, "verdict": "fail", "subject": "worker:order_lookup"},
+            {
+                "name": "lookup_read_only",
+                "held": False,
+                "verdict": "fail",
+                "subject": "worker:order_lookup",
+            },
         ],
         "evaluations": [],
     }
     # Fix my agent reads the task's checks only: the scenario passed.
     assert judged_sub_goals(receipt) == {"refund_issued": True}
     # The worker's check is still published, carrying whose it is.
-    worker = [one for one in _receipt_evaluations(receipt) if one["name"] == "lookup_read_only"]
+    worker = [
+        one
+        for one in _receipt_evaluations(receipt)
+        if one["name"] == "lookup_read_only"
+    ]
     assert worker == [
-        {"name": "lookup_read_only", "kind": "checkpoint", "passed": False, "reason": "", "subject": "worker:order_lookup"}
+        {
+            "name": "lookup_read_only",
+            "kind": "checkpoint",
+            "passed": False,
+            "reason": "",
+            "subject": "worker:order_lookup",
+        }
     ]
 
 
@@ -2689,14 +2718,18 @@ def test_each_worker_ends_in_one_state_and_a_worker_still_out_takes_the_trial_s_
         )
 
 
-def test_a_worker_the_world_refused_past_its_deadline_ends_timed_out_even_after_a_late_return():
+def test_a_worker_refused_past_its_deadline_that_still_returned_ends_by_its_return_not_by_the_deadline():
     from types import SimpleNamespace
 
     from simulate.services.harness_workers import deadline_refused
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
+    # The deadline only refused its later world calls; it did not stop the worker, which went on and returned.
     states, _ = _ended("ended", past_deadline={"order_lookup"})
-    assert (states["order_lookup"], states["refund"]) == ("timed_out", "failed")
+    assert (states["order_lookup"], states["refund"]) == ("completed", "failed")
+    # One that did not come back ends past its deadline, never cut short by the trial's own ending.
+    states, _ = _ended("ended", past_deadline={"audit"})
+    assert states["audit"] == "deadline_passed"
 
     def entry(who, code):
         return {"who": who, "refused_actions": [{"action": "x", "code": code}]}
@@ -2714,6 +2747,31 @@ def test_a_worker_the_world_refused_past_its_deadline_ends_timed_out_even_after_
     )
     assert deadline_refused(call) == {"refund"}
     assert deadline_refused(SimpleNamespace(call_metadata={})) == set()
+
+
+def test_a_worker_with_one_hand_off_back_and_another_still_out_takes_the_trial_s_ending():
+    from simulate.services.harness_workers import worker_states
+
+    spans = [
+        _span("c", None, "agent", "coordinator", "t0", "t9"),
+        _span("d1", "c", "tool", "refund", "t1", "t2"),
+        _span("r1", "d1", "agent", "Refund worker", "t1", "t2"),
+        _span("d2", "c", "tool", "refund", "t3", None),
+        _span("r2", "d2", "agent", "Refund worker", "t3", None),
+    ]
+    for trial, still_out in [("ended", "no_return"), ("cancelled", "cancelled")]:
+        timeline = worker_states(
+            worker_timeline(spans, DECLARED, run_key=RUN), trial=trial
+        )
+        states = {one["id"]: one.get("state") for one in timeline["workers"]}
+        # The first refund came back; the second never did. The earlier return does not make the worker done.
+        assert states["refund"] == still_out
+
+
+def test_a_worker_seen_only_in_the_world_s_refusals_is_past_its_deadline_not_unobserved():
+    states, _ = _ended("ended", past_deadline={"notifier"})
+    # The world refusing it is the world seeing it, so it is never "Not observed".
+    assert states["notifier"] == "deadline_passed"
 
 
 def test_a_trial_s_ending_is_read_from_its_call_its_receipt_and_its_job():
@@ -2805,10 +2863,10 @@ def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
     assert [one.get("state") for one in workers if one["observed"]] == [None, None]
     # The world refusing one past its deadline is still a recorded end.
     late = worker_states(timeline, trial="ended", past_deadline={"refund"})["workers"]
-    assert {one["id"]: one.get("state") for one in late}["refund"] == "timed_out"
+    assert {one["id"]: one.get("state") for one in late}["refund"] == "deadline_passed"
 
 
-def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_timed_out():
+def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_past_its_deadline():
     from simulate.services.harness_workers import worker_states
 
     traced = [
@@ -2831,7 +2889,7 @@ def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_timed_out():
         for one in worker_states(timeline, trial="ended")["workers"]
     }
     # The world's own refusal is the record; a worker with no such call gets no invented end.
-    assert (states["order_lookup"], states["refund"]) == ("timed_out", None)
+    assert (states["order_lookup"], states["refund"]) == ("deadline_passed", None)
 
 
 def test_a_worker_handed_control_gets_no_end_state_since_a_control_pass_never_returns():
@@ -3023,6 +3081,13 @@ def test_a_read_that_was_not_whole_gets_one_more_read_later():
         {**seen, "tree_complete": False},
         {**seen, "collection": "partial"},
         {**seen, "collection": "unavailable"},
+        # Built from the sandbox's rows alone, every worker seen and the tree whole: the spans may still be on the way.
+        {
+            **seen,
+            "collection": "complete",
+            "tree_complete": True,
+            "spans_received": False,
+        },
     ):
         with (
             patch(

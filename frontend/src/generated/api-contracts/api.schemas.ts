@@ -25873,7 +25873,7 @@ export const CallWorkerApiState = {
   completed: "completed",
   failed: "failed",
   no_return: "no_return",
-  timed_out: "timed_out",
+  deadline_passed: "deadline_passed",
   cancel_requested: "cancel_requested",
   cancelled: "cancelled",
   infrastructure: "infrastructure",

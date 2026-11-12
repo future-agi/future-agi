@@ -96801,7 +96801,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "completed",
             "failed",
             "no_return",
-            "timed_out",
+            "deadline_passed",
             "cancel_requested",
             "cancelled",
             "infrastructure",
