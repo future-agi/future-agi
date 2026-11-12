@@ -1998,8 +1998,8 @@ def merge(api, policy, settings, context, approver):
         # Re-read AFTER approval. GitHub can take a moment to update protection; a
         # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
         pr, _ = validate_live(api, policy, settings, context)
-        # "unstable" means only non-required checks are failing or pending (E2E is
-        # advisory); validate_live just re-verified every required check and the
+        # "unstable" means only non-required checks are failing or pending;
+        # validate_live just re-verified every required check and the
         # review on this head. blocked, behind, dirty and unknown still wait.
         state = pr.get("mergeable_state")
         if state not in {"clean", "unstable"}:

@@ -150,10 +150,12 @@ still dispatched on every sweep, because nothing tells the sweep when that
 wait ends. A dispatch on `dev` with input `pr_number` re-evaluates a PR at
 once; it cannot reset the review budget.
 
-The existing E2E suite remains **advisory**, given the observed failure rate.
-It is not added to the minimum required checks. If an administrator explicitly
-makes it required, this controller respects that requirement and does not
-silently ignore it. The label instructions describe the medium/high human
+Branch protection on `dev` and `main` requires both "Backend Tests Pass" and
+"E2E Tests Pass" since 12 Nov 2026, so both are in the policy's minimum
+required checks. The controller also unions the branch's own required checks,
+so a check an administrator adds later is respected too. "E2E Tests Pass" runs
+with `if: always()` and concludes success when the path filter skips the stack
+jobs, so a PR that does not touch the app does not wait on the suite. The label instructions describe the medium/high human
 policy; this workflow does not replace repository rules that enforce the
 number of human approvals.
 
@@ -709,7 +711,7 @@ merge. Each entry in `post_merge_workflows` uses the paths of that workflow's
 push filter, so a dispatch happens when a person's merge of the same files
 would have started a push run:
 
-- `backend-ci.yml`, advisory `e2e-ci.yml` with `stack: distributed`, and
+- `backend-ci.yml`, `e2e-ci.yml` with `stack: distributed`, and
   `sdk-compatibility.yml` (SDK Compatibility), after every merge;
 - `standalone-ci.yml` (Standalone install CI) and `update-ci.yml` (Update CI)
   when the merge changes a file their push filters name, for example any

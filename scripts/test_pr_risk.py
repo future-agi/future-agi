@@ -186,7 +186,8 @@ class FakeGitHub:
         )
         self.pr = pr()
         self.files = [file()]
-        self.checks = [check()]
+        # Both are required on dev since 12 Nov 2026.
+        self.checks = [check(), check("E2E Tests Pass", id=60)]
         self.comments = []
         self.reviews = []
         self.labels = []
@@ -835,7 +836,7 @@ class EvidenceTests(unittest.TestCase):
         ]
         names = risk.protection(api, POLICY)
         self.assertEqual(
-            names, {"Backend Tests Pass": None, "extra-classic": None, "extra-org": 77}
+            names, {"Backend Tests Pass": None, "E2E Tests Pass": None, "extra-classic": None, "extra-org": 77}
         )
         api.rules = []
         with self.assertRaises(risk.PolicyError):
@@ -884,7 +885,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_dev_rules_must_dismiss_stale_approvals_on_push(self):
         # The same rules call: an active pull_request rule with the setting.
-        self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None})
+        self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
         for change in (
             lambda rules: rules[1]["parameters"].update(dismiss_stale_reviews_on_push=False),
             lambda rules: rules[1]["parameters"].pop("dismiss_stale_reviews_on_push"),
@@ -898,7 +899,7 @@ class EvidenceTests(unittest.TestCase):
         api = FakeGitHub()
         api.rules[1]["parameters"]["dismiss_stale_reviews_on_push"] = False
         api.rules.append({"type": "pull_request", "parameters": {"dismiss_stale_reviews_on_push": True}})
-        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None})
+        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
 
     def test_classic_contexts_alone_cannot_establish_strictness(self):
         api = FakeGitHub()
@@ -911,7 +912,7 @@ class EvidenceTests(unittest.TestCase):
             risk.protection(api, POLICY)
         api = FakeGitHub()
         api.classic_present = False
-        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None})
+        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
 
     def test_missing_or_invalid_classic_contexts_are_not_ignored(self):
         api = FakeGitHub()
@@ -1251,7 +1252,8 @@ class ControllerTests(unittest.TestCase):
     def new_head(self, sha, text=None, force=False):
         """A pushed revision: new head SHA, CI green on it, optionally a new diff."""
         self.api.push(sha, force=force)
-        self.api.checks[0]["head_sha"] = sha
+        for required in self.api.checks[:2]:
+            required["head_sha"] = sha
         if text is not None:
             self.api.files[0]["patch"] = "@@ -1 +1 @@\n+" + text
 
@@ -2389,7 +2391,8 @@ class ControllerTests(unittest.TestCase):
 
     def test_untrusted_push_on_a_trusted_authors_pr_goes_to_a_person(self):
         self.api.push("1" * 40, actor="someone-else")
-        self.api.checks[0]["head_sha"] = "1" * 40
+        for required in self.api.checks[:2]:
+            required["head_sha"] = "1" * 40
         self.prepare()
         self.assertFalse(self.reservations())
         self.assertEqual(self.outputs["context"], "")
