@@ -12,6 +12,11 @@ from model_hub.models.skills_hub_v12 import HubSkillContextBinding
 from model_hub.services.skills_hub.v12.credentials import canonical_digest
 from model_hub.tests.skills_hub import test_i2_integration as http_fixtures
 from model_hub.tests.skills_hub.r3_l04 import conftest as native_fixtures
+
+
+def stored_native(configuration):
+    """Native evidence identity as production stores it."""
+    return {"schema": 1, "digest": canonical_digest(configuration), "native": configuration}
 from model_hub.tests.skills_hub.r3_l04 import test_native_privacy as privacy
 from model_hub.tests.skills_hub.r3_l05 import test_release_requests as fixtures
 
@@ -54,9 +59,9 @@ def test_options_contract_and_authored_list(admin, actors, candidate, hub_skill)
 def test_native_share_is_explicit_owner_only_and_expiry_guarded(
     admin, actors, evidence, native_configuration, organization, workspace
 ):
-    # Synthetic terminal evidence fixture. The production record stores the raw
-    # frozen native configuration, not the older test fixture's wrapper.
-    evidence.configuration = native_configuration
+    # Synthetic terminal evidence fixture, stored as production stores it:
+    # {schema, digest, native} (native_evidence.create_native_evidence).
+    evidence.configuration = stored_native(native_configuration)
     evidence.save(update_fields=["configuration"])
     path = BASE + f"native-evidence/{evidence.pk}/share/"
     denied = admin.post(path, {"acknowledge_snapshot_sharing": False}, format="json")
@@ -100,7 +105,7 @@ def test_native_share_is_explicit_owner_only_and_expiry_guarded(
 def test_options_returns_typed_native_evidence_and_exact_target(
     admin, candidate, hub_skill, evidence, native_configuration, organization, workspace
 ):
-    evidence.configuration = native_configuration
+    evidence.configuration = stored_native(native_configuration)
     evidence.candidate_digest = candidate[1].digest
     evidence.save(update_fields=["configuration", "candidate_digest"])
     binding = HubSkillContextBinding.objects.create(

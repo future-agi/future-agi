@@ -115,7 +115,12 @@ def test_feedback_and_unknown_results_are_not_erased(
 def test_native_completion_remains_unknown_without_verified_result_reader(
     admin, hub_skill, candidate, evidence, native_configuration, organization, workspace
 ):
-    evidence.configuration = native_configuration
+    # Stored as production stores native evidence: {schema, digest, native}.
+    evidence.configuration = {
+        "schema": 1,
+        "digest": canonical_digest(native_configuration),
+        "native": native_configuration,
+    }
     evidence.candidate_digest = candidate[1].digest
     evidence.visibility = "workspace"
     evidence.save(update_fields=["configuration", "candidate_digest", "visibility"])

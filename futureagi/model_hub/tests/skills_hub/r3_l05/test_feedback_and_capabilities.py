@@ -192,7 +192,8 @@ def test_native_only_packet_is_typed_and_requires_exact_runtime_target(
         visibility="workspace",
         candidate_digest=candidate[1].digest,
         execution_fingerprint=canonical_digest("native execution"),
-        configuration=config,
+        # Stored as production stores native evidence: {schema, digest, native}.
+        configuration={"schema": 1, "digest": canonical_digest(config), "native": config},
         planned_matrix=[],
         payload_expires_at=timezone.now() + timedelta(days=1),
     )
