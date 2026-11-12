@@ -1,7 +1,11 @@
 import pytest
 
 from accounts.models import Organization
-from simulate.models import HarnessEnvironmentVersion, HostedHarnessJob
+from simulate.models import (
+    HarnessEnvironmentVersion,
+    HarnessSuiteMember,
+    HostedHarnessJob,
+)
 from simulate.serializers.harness_environment import (
     HarnessCapabilityCasePageSerializer,
     HarnessCapabilitySelectionReportSerializer,
@@ -357,6 +361,45 @@ class TestRunHoldBackApi:
         body = response.json()
         assert body["selection"]["held_back"]["keys"] == [LOOKUP_KEYS[0]]
         assert body["selection"]["held_back"]["by"] == {"scenario_dropped": 1}
+        assert (body["selection"]["running"], body["total_calls"]) == (9, 9)
+
+    def test_a_case_dropped_because_it_grades_nothing_is_held_back_not_refused(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        """Certification drops a case exactly when none of its sub-goals is in the
+        catalogue, so a real drop also grades nothing: Run all still sends the rest."""
+        monkeypatch.setattr(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "hb-api-real-drop",
+            warnings=[{"code": "scenario_dropped", "keys": [LOOKUP_KEYS[0]]}],
+        )
+        member = HarnessSuiteMember.no_workspace_objects.get(
+            suite_version=environment.suite_version, scenario_key=LOOKUP_KEYS[0]
+        )
+        member.content = {**member.content, "sub_goals": ["no_longer_in_catalogue"]}
+        member.save(update_fields=["content"])
+        _built(environment)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": REFUND_KEYS + LOOKUP_KEYS, "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="hb-api-real-drop",
+        )
+
+        assert response.status_code == 202, response.content
+        body = response.json()
+        assert body["selection"]["held_back"]["keys"] == [LOOKUP_KEYS[0]]
         assert (body["selection"]["running"], body["total_calls"]) == (9, 9)
 
     def test_only_dropped_cases_answer_409_naming_certification(

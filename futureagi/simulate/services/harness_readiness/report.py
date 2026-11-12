@@ -275,7 +275,9 @@ def readiness_report(
     if cached is not None:
         return cached
     report = _computed_report(pairing, bundle)
-    cache.set(key, report, timeout=REPORT_TTL_SECONDS)
+    # An unreadable archive is tried again on the next read, not remembered.
+    if not report["pairing"]["evidence_unreadable"]:
+        cache.set(key, report, timeout=REPORT_TTL_SECONDS)
     return report
 
 
@@ -369,6 +371,7 @@ def _computed_report(
             "suite_version": refs["suite"],
             "evidence": evidence.source,
             "agent_tools": {"read": tools is not None, "count": len(tools or [])},
+            "evidence_unreadable": evidence.unreadable,
         },
         "validation": view,
         "answer": answer(
