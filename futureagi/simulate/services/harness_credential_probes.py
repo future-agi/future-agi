@@ -43,9 +43,21 @@ class ProviderProbe:
     build: Callable[[Mapping[str, str]], ProbeRequest]
     # Statuses that mean "the key is wrong" rather than "the request is wrong".
     rejected_statuses: frozenset[int] = frozenset({401, 403})
+    # The aliases are alternative names for one key, not a set needed together: the probe
+    # applies when any is present, and checks each one present (``probe``).
+    any_alias: bool = False
 
     def applies(self, values: Mapping[str, str]) -> bool:
-        return all(str(values.get(alias) or "").strip() for alias in self.aliases)
+        return bool(self.used(values))
+
+    def used(self, values: Mapping[str, str]) -> tuple[str, ...]:
+        """The aliases this probe checks for ``values``; none when it doesn't apply."""
+        present = tuple(
+            alias for alias in self.aliases if str(values.get(alias) or "").strip()
+        )
+        if self.any_alias:
+            return present[:1]
+        return present if len(present) == len(self.aliases) else ()
 
 
 @dataclass(frozen=True)
@@ -86,6 +98,16 @@ def _bearer(url: str, alias: str, **extra_headers: str):
 def _header(url: str, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest("GET", url, {header: values[alias].strip(), **extra_headers})
+
+    return build
+
+
+def _header_first(url: str, aliases: tuple[str, ...], header: str):
+    """Like ``_header``, with the first of several alternative names that is present."""
+
+    def build(values: Mapping[str, str]) -> ProbeRequest:
+        alias = next(name for name in aliases if str(values.get(name) or "").strip())
+        return ProbeRequest("GET", url, {header: values[alias].strip()})
 
     return build
 
@@ -172,18 +194,46 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
             **{"Cartesia-Version": "2025-04-16"},
         ),
     ),
+    # LiveKit's ElevenLabs plugin reads ELEVEN_API_KEY; ELEVENLABS_API_KEY is the older
+    # name the agent-learning-kit asked for, and an agent that passes its own key may read it.
+    # Each one supplied is checked.
     "elevenlabs": ProviderProbe(
         "ElevenLabs",
-        ("ELEVENLABS_API_KEY",),
-        _header("https://api.elevenlabs.io/v1/user", "ELEVENLABS_API_KEY", "xi-api-key"),
+        ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"),
+        _header_first(
+            "https://api.elevenlabs.io/v1/user",
+            ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"),
+            "xi-api-key",
+        ),
+        any_alias=True,
     ),
 }
 
 
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
-    """Exercise one provider's credentials. Callers pass only providers that ``applies``."""
+    """Exercise one provider's credentials. Callers pass only providers that ``applies``.
+    For an any-alias provider given several of its names, each is checked, since an agent may
+    read any of them; the first rejected one is the answer."""
     spec = PROVIDER_PROBES[provider]
-    named = " + ".join(spec.aliases)
+    if spec.any_alias:
+        present = tuple(
+            alias for alias in spec.aliases if str(values.get(alias) or "").strip()
+        )
+        if len(present) > 1:
+            results = [_probe_once(provider, spec, {alias: values[alias]}) for alias in present]
+            failed = next((result for result in results if not result.ok), None)
+            if failed is not None:
+                return failed
+            return ProbeResult(
+                provider, spec.label, present, True,
+                f"{spec.label} accepted {' and '.join(present)}",
+            )
+    return _probe_once(provider, spec, values)
+
+
+def _probe_once(provider: str, spec: ProviderProbe, values: Mapping[str, str]) -> ProbeResult:
+    aliases = spec.used(values) or spec.aliases
+    named = " + ".join(aliases)
     try:
         request = spec.build(values)
         response = requests.request(
@@ -196,31 +246,32 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider, spec.label, aliases, False,
             f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
         )
     except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider, spec.label, aliases, False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
         )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider, spec.label, aliases, False,
             f"{spec.label} rejected {named} (HTTP {response.status_code})",
         )
     if response.status_code >= 400:
         return ProbeResult(
-            provider, spec.label, spec.aliases, False,
+            provider, spec.label, aliases, False,
             f"{spec.label} returned HTTP {response.status_code} for {named}",
         )
     return ProbeResult(
-        provider, spec.label, spec.aliases, True, f"{spec.label} accepted {named}"
+        provider, spec.label, aliases, True, f"{spec.label} accepted {named}"
     )
 
 
 def probe_all(values: Mapping[str, str]) -> list[ProbeResult]:
-    """Probe every provider whose full alias set is present. Order follows the registry."""
+    """Probe every provider whose credentials are present (all its aliases, or for an any-alias
+    provider such as ElevenLabs, one of them). Order follows the registry."""
     return [
         probe(name, values)
         for name, spec in PROVIDER_PROBES.items()
