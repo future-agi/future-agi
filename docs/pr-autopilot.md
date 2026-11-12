@@ -426,9 +426,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    SHA equal to the tip only means the PR was opened after that commit, not
    that its branch contains it. A PR that is behind `dev` spends no review
    round and waits. If the PR passes every other part of the merge decision
-   (item 2: trusted author, LOW, no hold, review key, hours, mergeability),
-   the bot posts one behind-dev note (marker `pr-autopilot:behind-dev`)
-   that names the head. The note says that the autopilot reviews and merges
+   (item 2: trusted author, LOW, no hold, review key, hours, mergeability)
+   and no standing escalation names its head, the bot posts one behind-dev
+   note (marker `pr-autopilot:behind-dev`) that names the head. Merging
+   `dev` in does not lift an escalation, so an escalated head gets no such
+   note. The note says that the autopilot reviews and merges
    only a head that contains the live `dev` tip, and that the author (or
    another trusted author) merges `dev` into the branch locally and pushes.
    It also says that a push or an "Update branch" by anyone not on the
@@ -1174,8 +1176,9 @@ unreadable records, persistent budgets, HTTP 404/410 versus transient API
 failures and the HTTP code on `GitHub.request` errors, clearing a superseded
 escalation, pusher trust and the `branch_creation` row, dismissed approvals,
 the compare-only behind-dev rule, the behind-dev note (one per head, only for
-a PR the merge decision would otherwise allow, cleared once the branch
-contains the tip, and parked by the sweep), the sweep's
+a PR the merge decision would otherwise allow and not on an escalated head,
+cleared once the branch contains the tip, and parked by the sweep), the
+sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads, and `dev`
 moving just before the merge call), audit

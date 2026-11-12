@@ -1544,6 +1544,13 @@ def audited_head(api, number):
     return None
 
 
+def noted_at(comments, marker, head):
+    """The bot's live note under `marker`, if it names `head`."""
+    note = live_note(comments, marker)
+    match = NOTED_HEAD.search(note["body"]) if note else None
+    return note if match and match[1] == head else None
+
+
 def parked(api, pr):
     """The PR waits on a person, the owner or the author at its current head: a
     standing escalation, merge-blocked, approver or behind-dev note names that
@@ -1554,12 +1561,8 @@ def parked(api, pr):
     number, head = pr["number"], pr["head"]["sha"]
     try:
         comments = api.pages(f"issues/{number}/comments")
-        for marker in PARKING_NOTES:
-            note = live_note(comments, marker)
-            if note:
-                match = NOTED_HEAD.search(note["body"])
-                if match and match[1] == head:
-                    return True
+        if any(noted_at(comments, marker, head) for marker in PARKING_NOTES):
+            return True
         return bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), head, None)
     except PolicyError:
         return False
@@ -1717,8 +1720,10 @@ def prepare(api, policy, settings, event, event_name):
     if base is None:
         # Behind dev: the author updates the branch. No review round is spent.
         # The note is the PR's only sign of this wait, and it parks the PR
-        # until the head changes (PARKING_NOTES).
-        if decision["allow"]:
+        # until the head changes (PARKING_NOTES). Not on a head that a standing
+        # escalation already hands to a person: merging dev in does not lift
+        # an escalation, so the note would only send the author on an errand.
+        if decision["allow"] and not noted_at(comments, ESCALATION_MARKER, pr["head"]["sha"]):
             post_note(
                 api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, pr["head"]["sha"]
             )

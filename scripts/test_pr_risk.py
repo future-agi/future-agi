@@ -2506,6 +2506,33 @@ class ControllerTests(unittest.TestCase):
                 self.summary.assert_called_with(
                     "Waiting: the branch is behind dev; update it from dev to continue.")
 
+    def test_no_behind_dev_note_on_a_head_already_handed_to_a_person(self):
+        # An escalation of this head (here a push by someone not on the list)
+        # survives a merge of dev, so telling the author to merge dev would
+        # only waste a push.
+        self.api.push("1" * 40, actor="someone-else")
+        for required in self.api.checks[:3]:
+            required["head_sha"] = "1" * 40
+        self.prepare()
+        [escalation] = self.escalations()
+        self.assertIn("not a trusted author", escalation)
+        self.fall_behind()
+        self.prepare()
+        self.assertEqual(self.behind_notes(), [])
+        # An escalation that names an older head, or that no longer applies,
+        # does not stop the note.
+        for state in ("older head", "no longer applies"):
+            with self.subTest(state=state):
+                self.api = FakeGitHub()
+                os.environ["POLICY_SHA"] = os.environ["GITHUB_SHA"] = BASE
+                risk.escalate(self.api, 42, [], OTHER if state == "older head" else HEAD,
+                              "A person must review this PR.")
+                if state == "no longer applies":
+                    risk.resolve_escalation(self.api, self.api.comments, {"head": HEAD, "base": BASE})
+                self.fall_behind()
+                self.prepare()
+                self.assertEqual(len(self.behind_notes()), 1)
+
     def test_the_behind_dev_note_no_longer_applies_once_the_branch_contains_the_tip(self):
         self.fall_behind()
         self.prepare()
