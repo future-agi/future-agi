@@ -1,10 +1,12 @@
-import { request, type Request, type Page } from '@playwright/test';
+import { request, type Request, type Response, type Page } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace, type OtlpAttributes, type SendTraceConfig, type SeededTrace } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { selectPageSize, pagerButton, waitForCurrentPage } from '../../lib/pager';
+import { CursorPageAccumulator, type ListChunk } from '../../lib/cursor-pages';
+import { readJsonWithin } from '../../lib/response-body';
 
 // TraceGrid.buildParams / tracer/serializers/trace.py: numbered sorted reads and
 // cursor reads share this endpoint, envelope and SYSTEM_METRIC numeric filter.
@@ -20,7 +22,7 @@ const ELIGIBLE = PAGE_SIZE + 3;
 test.use({ viewport: { width: 1440, height: 900 } });
 
 type TraceRow = { trace_id: string; input: string; output: string; total_tokens: number; cost: number };
-type TracePage = { result: { table: TraceRow[]; metadata: { total_rows: number; total_rows_is_lower_bound?: boolean; next_cursor?: string; has_more?: boolean } } };
+type TracePage = { result: ListChunk<TraceRow> };
 type Shape = 'or' | 'nested' | 'parent-only' | 'siblings' | 'independent-root' | 'explicit' | 'experiment';
 type Case = { key: string; shape: Shape; total: number; cost: number; display?: string; user: string; session: string; start: bigint; input: string; output: string; seeded: SeededTrace };
 const wire = (r: Request): Record<string, any> => r.method() === 'POST' ? r.postDataJSON() : Object.fromEntries(new URL(r.url()).searchParams);
@@ -172,23 +174,123 @@ test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters,
       return q.project_id === projectId && JSON.parse(q.filters).some((f: any) => f.column_id === 'total_tokens'
         && f.filter_config.filter_op === 'greater_than' && f.filter_config.filter_value === 20);
     };
-    let lastQuery: Record<string, any> = {};
-    const capturePage = async (action: () => Promise<unknown>, predicate: (r: Request) => boolean = filtered) => {
-      const pending = page.waitForResponse(r => predicate(r.request()), { timeout: UI_READY });
-      await action();
-      const response = await pending;
-      expect(response.status()).toBe(200);
-      lastQuery = wire(response.request());
-      const body = await response.json() as TracePage;
-      await expect.poll(() => gridIds(page), { timeout: UI_READY }).toEqual(ids(body.result.table));
-      const replay = await actor.api.post<TracePage>(LIST, lastQuery);
-      expect(ids(replay.result.table)).toEqual(ids(body.result.table));
-      for (const row of body.result.table) {
-        const c = cases.find(c => c.seeded.traceId === row.trace_id)!;
+    const canonical = [...eligible].sort((a, b) => b.start > a.start ? 1 : b.start < a.start ? -1 : b.seeded.traceId.localeCompare(a.seeded.traceId));
+    const eligibleIds = eligible.map(c => c.seeded.traceId).sort();
+    // Retain responses before clicking Next: TraceGrid can prefetch, and a
+    // terminal chunk can overflow into page 2 without another network request.
+    const responses: Response[] = [];
+    const recordResponse = (response: Response) => { if (filtered(response.request())) responses.push(response); };
+    page.on('response', recordResponse);
+    const remaining = (deadline: number) => {
+      const ms = deadline - Date.now();
+      if (ms <= 0) throw new Error('List walk exceeded UI_READY (60s) before completing its logical page');
+      return ms;
+    };
+    const within = async <T,>(operation: Promise<T>, deadline: number): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([operation, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('List walk exceeded UI_READY (60s); no terminal result accepted')), remaining(deadline));
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    const createWalk = (root: Record<string, any>, load: (query: Record<string, unknown>, deadline: number) => Promise<TracePage>) => {
+      // TraceGrid disables cursor mode for usage sorts; those responses have
+      // exact numbered totals rather than has_more/next_cursor metadata.
+      const numberedSort = JSON.parse(root.sort_params || '[]').length > 0;
+      const accumulator = new CursorPageAccumulator<TraceRow>(root.page_size, row => row.trace_id, { maxHops: 8, allowNumbered: numberedSort });
+      const readPage = async (deadline: number) => {
+        while (!accumulator.pageReady) {
+          remaining(deadline);
+          const query = accumulator.nextQuery(root);
+          const body = await within(load(query, deadline), deadline);
+          const metadata = body.result.metadata;
+          if (typeof metadata.has_more === 'boolean') {
+            expect(typeof metadata.query_complete).toBe('boolean');
+            if (metadata.query_complete) expect([metadata.query_status, metadata.query_error_code]).toEqual(['complete', null]);
+            else {
+              expect(body.result.table).toEqual([]);
+              expect(metadata.has_more).toBe(true);
+              expect(metadata.query_status).toBe('degraded');
+              expect(['deadline_exceeded', 'query_budget_exceeded']).toContain(metadata.query_error_code);
+            }
+          }
+          accumulator.append(body.result);
+        }
+        return accumulator.takePage();
+      };
+      return { accumulator, readPage };
+    };
+    const assertComplete = (walk: ReturnType<typeof createWalk>, expected: Case[]) => {
+      // Check the minted, nonempty cohort BEFORE any UI/API equality: two
+      // equally empty/truncated walks must never pass as parity.
+      expect(ids(walk.accumulator.allRows).sort()).toEqual(eligibleIds);
+      walk.accumulator.assertTerminal();
+      expect(ids(walk.accumulator.allRows)).toEqual(expected.map(c => c.seeded.traceId));
+      expect(walk.accumulator.metadata!.total_rows).toBe(ELIGIBLE);
+    };
+    const assertRows = (rows: TraceRow[]) => {
+      for (const row of rows) {
+        const c = eligible.find(c => c.seeded.traceId === row.trace_id)!;
+        expect(c, `Unexpected trace ${row.trace_id}`).toBeDefined();
         expect(row.total_tokens).toBe(c.total); near(row.cost, c.cost);
         expect([row.input, row.output]).toEqual([c.input, c.output]);
       }
-      return body;
+    };
+    let lastQuery: Record<string, any> = {};
+    let browser: ReturnType<typeof createWalk>;
+    let replayPages: TraceRow[][];
+    let expectedOrder = canonical;
+    const capturePage = async (action: () => Promise<unknown>, predicate: (r: Request) => boolean = filtered, expected = canonical) => {
+      const deadline = Date.now() + UI_READY;
+      const startIndex = responses.length;
+      await action();
+      const findRoot = () => responses.slice(startIndex).find(r => predicate(r.request()) && !wire(r.request()).cursor && (wire(r.request()).page_number ?? 0) === 0);
+      await expect.poll(findRoot, { timeout: remaining(deadline), message: 'Browser root list request' }).toBeDefined();
+      const response = findRoot()!;
+      lastQuery = wire(response.request());
+      expect(lastQuery.cursor).toBeUndefined();
+      let position = responses.indexOf(response) - 1;
+      browser = createWalk(lastQuery, async (query, end) => {
+        const findResponse = () => responses.slice(position + 1).find(candidate => {
+          const params = wire(candidate.request());
+          return query.cursor !== undefined ? params.cursor === query.cursor
+            : params.cursor === undefined && (params.page_number ?? 0) === (query.page_number ?? 0);
+        });
+        await expect.poll(findResponse, { timeout: remaining(end), message: 'Browser continuation matching the previous response cursor/numbered page' }).toBeDefined();
+        const next = findResponse()!;
+        position = responses.indexOf(next);
+        expect(next.status()).toBe(200);
+        expect(wire(next.request())).toEqual(query);
+        return readJsonWithin<TracePage>(next, remaining(end));
+      });
+      const replay = createWalk(lastQuery, query => actor.api.post<TracePage>(LIST, query));
+      replayPages = [];
+      do { replayPages.push(await replay.readPage(deadline)); }
+      while (!replay.accumulator.terminal || replay.accumulator.bufferedCount > 0);
+      expectedOrder = expected;
+      assertComplete(replay, expectedOrder);
+      assertRows(replay.accumulator.allRows);
+      const rows = await browser.readPage(deadline);
+      expect(ids(rows)).toEqual(ids(replayPages[0]));
+      assertRows(rows);
+      await expect.poll(() => gridIds(page), { timeout: remaining(deadline) }).toEqual(ids(rows));
+      if (replayPages.length === 1) assertComplete(browser, expectedOrder);
+      return rows;
+    };
+    const captureNextPage = async () => {
+      const deadline = Date.now() + UI_READY;
+      await pagerButton(page, 'Next page').click();
+      const rows = await browser.readPage(deadline);
+      assertComplete(browser, expectedOrder);
+      expect(replayPages).toHaveLength(2);
+      expect(ids(rows)).toEqual(ids(replayPages[1]));
+      expect(rows).toHaveLength(ELIGIBLE - PAGE_SIZE);
+      assertRows(rows);
+      await expect.poll(() => gridIds(page), { timeout: remaining(deadline) }).toEqual(ids(rows));
+      await waitForCurrentPage(page, 2);
+      await expect(pagerButton(page, 'Next page')).toBeDisabled({ timeout: remaining(deadline) });
+      return rows;
     };
     await test.step('B: actual Total Tokens greater than 20 filter', async () => {
       await page.goto(`/dashboard/observe/${projectId}/llm-tracing?tab=traces`, { waitUntil: 'domcontentloaded' });
@@ -204,32 +306,30 @@ test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters,
         await page.getByPlaceholder('Value', { exact: true }).fill('20');
         await page.keyboard.press('Tab');
       });
-      expect(ids(result.result.table).sort()).toEqual(eligible.map(c => c.seeded.traceId).sort());
+      expect(ids(result).sort()).toEqual(eligibleIds);
       await page.keyboard.press('Escape');
       await expect(page.getByRole('tab', { name: 'Basic', exact: true })).toBeHidden({ timeout: UI_READY });
     }, { timeout: UI_READY });
-    let first: TracePage;
+    let first: TraceRow[];
     await test.step('B: page size 10 is sent on the wire', async () => {
       first = await capturePage(() => selectPageSize(page, PAGE_SIZE), r => filtered(r) && wire(r).page_size === PAGE_SIZE);
-      expect(first.result.table).toHaveLength(PAGE_SIZE);
+      expect(first).toHaveLength(PAGE_SIZE);
     }, { timeout: UI_READY });
     await test.step('B: complete second page has no duplicate or omission', async () => {
-      const second = await capturePage(() => pagerButton(page, 'Next page').click());
-      await waitForCurrentPage(page, 2);
-      const union = [...ids(first.result.table), ...ids(second.result.table)];
-      expect(union.sort()).toEqual(eligible.map(c => c.seeded.traceId).sort());
-      expect(second.result.metadata.total_rows).toBe(ELIGIBLE);
-      expect(second.result.metadata.total_rows_is_lower_bound).toBe(false);
-      await expect(pagerButton(page, 'Next page')).toBeDisabled({ timeout: UI_READY });
+      const second = await captureNextPage();
+      expect([...ids(first), ...ids(second)]).toEqual(canonical.map(c => c.seeded.traceId));
+      expect(browser.accumulator.metadata!.has_more).toBe(false);
+      expect(browser.accumulator.metadata!.total_rows_is_lower_bound).toBe(false);
       await pagerButton(page, 'Previous page').click();
       await waitForCurrentPage(page, 1);
+      await expect.poll(() => gridIds(page), { timeout: UI_READY }).toEqual(ids(first));
     }, { timeout: UI_READY });
     for (const [column, label, direction] of [
       ['total_tokens', 'Tokens', 'asc'], ['total_tokens', 'Tokens', 'desc'],
       ['cost', 'Total Cost', 'asc'], ['cost', 'Total Cost', 'desc'],
     ] as const) {
-      let sortedFirst: TracePage;
-      const expected = [...eligible].sort((a, b) => b.start > a.start ? 1 : b.start < a.start ? -1 : b.seeded.traceId.localeCompare(a.seeded.traceId));
+      let sortedFirst: TraceRow[];
+      const expected = [...canonical];
       const value = (c: Case) => column === 'cost' ? c.cost : c.total;
       expected.sort((a, b) => direction === 'asc' ? value(a) - value(b) : value(b) - value(a));
       await test.step(`B: real ${direction} ${label} sort request and first page`, async () => {
@@ -237,19 +337,22 @@ test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters,
         await page.mouse.wheel(1800, 0);
         sortedFirst = await capturePage(() => page.getByRole('button', { name: `Sort ${label}`, exact: true }).click(),
           r => filtered(r) && JSON.parse(wire(r).sort_params || '[]')[0]?.direction === direction
-            && JSON.parse(wire(r).sort_params || '[]')[0]?.column_id === column);
+            && JSON.parse(wire(r).sort_params || '[]')[0]?.column_id === column, expected);
         expect(lastQuery.cursor).toBeUndefined();
-        expect(ids(sortedFirst.result.table)).toEqual(expected.slice(0, PAGE_SIZE).map(c => c.seeded.traceId));
-        expect(sortedFirst.result.metadata.total_rows).toBe(ELIGIBLE);
+        expect(lastQuery.page_size).toBe(PAGE_SIZE);
+        expect(ids(sortedFirst)).toEqual(expected.slice(0, PAGE_SIZE).map(c => c.seeded.traceId));
+        // Exact totals are asserted on terminal walks, not partial chunks.
+        expect(replayPages.flat()).toHaveLength(ELIGIBLE);
       }, { timeout: UI_READY });
       await test.step(`B: ${direction} second page and stable return`, async () => {
-        const second = await capturePage(() => pagerButton(page, 'Next page').click());
-        expect([...ids(sortedFirst.result.table), ...ids(second.result.table)]).toEqual(expected.map(c => c.seeded.traceId));
+        const second = await captureNextPage();
+        expect([...ids(sortedFirst), ...ids(second)]).toEqual(expected.map(c => c.seeded.traceId));
         await pagerButton(page, 'Previous page').click();
         await waitForCurrentPage(page, 1);
-        await expect.poll(() => gridIds(page), { timeout: UI_READY }).toEqual(ids(sortedFirst.result.table));
+        await expect.poll(() => gridIds(page), { timeout: UI_READY }).toEqual(ids(sortedFirst));
       }, { timeout: UI_READY });
     }
+    page.off('response', recordResponse);
     await testInfo.attach('filtered-sorted-request', { body: JSON.stringify(lastQuery), contentType: 'application/json' });
     for (const key of ['tiny', 'small', 'zero', 'nested', 'parent-only', 'equal-calls', 'root-content']) {
       const c = cases.find(c => c.key === key)!;
