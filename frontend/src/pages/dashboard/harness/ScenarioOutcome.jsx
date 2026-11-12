@@ -7,6 +7,7 @@ import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
 
 import { callSummary, readable } from "./harnessShared";
+import RunFailure, { failureHeadline } from "./RunFailure";
 
 const chipStatus = (status) => {
   if (status === "passed") return STATUS_TYPES.PASS;
@@ -68,16 +69,25 @@ export default function ScenarioOutcome({ outcome }) {
             {summary}
           </Typography>
         )}
-        {outcome.failure?.message && (
-          <Typography variant="caption" color="error.main" sx={{ minWidth: 0 }}>
-            {[outcome.failure.domain, outcome.failure.code]
-              .filter(Boolean)
-              .map(readable)
-              .join(" · ")}
-            {" — "}
-            {outcome.failure.message}
-          </Typography>
-        )}
+        {outcome.failure?.message &&
+          (failureHeadline(outcome.failure) ? (
+            <Box sx={{ color: "error.main", minWidth: 0 }}>
+              <RunFailure failure={outcome.failure} dense />
+            </Box>
+          ) : (
+            <Typography
+              variant="caption"
+              color="error.main"
+              sx={{ minWidth: 0 }}
+            >
+              {[outcome.failure.domain, outcome.failure.code]
+                .filter(Boolean)
+                .map(readable)
+                .join(" · ")}
+              {" — "}
+              {outcome.failure.message}
+            </Typography>
+          ))}
         {(failed.length > 0 || unjudged.length > 0) && (
           <Link
             component="button"
@@ -90,7 +100,11 @@ export default function ScenarioOutcome({ outcome }) {
           >
             {checksLabel}
             <Iconify
-              icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
+              icon={
+                open
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={14}
             />
           </Link>

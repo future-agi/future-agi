@@ -26,6 +26,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import RunFailure from "./RunFailure";
 import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
@@ -1310,11 +1311,7 @@ export default function HarnessDetail() {
                   )}
                   {status?.failure && (
                     <Alert severity="error" variant="outlined">
-                      <Typography variant="subtitle2">
-                        {readable(status.failure.domain)} ·{" "}
-                        {status.failure.code}
-                      </Typography>
-                      {status.failure.message}
+                      <RunFailure failure={status.failure} />
                       {status.failure.action && (
                         <Typography variant="body2" sx={{ mt: 0.75 }}>
                           Next step: {status.failure.action}

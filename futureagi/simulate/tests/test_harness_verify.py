@@ -1124,7 +1124,7 @@ def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
     }
 
     assert coding_agent_failure_message(failure) == (
-        "Generated environment failed real-runtime validation after bounded repair. "
+        "We couldn't run this agent version in its environment. "
         "Didn't start — the agent exited before it was ready. Fix the crash on startup, "
         "then push a new agent version. (cause: agent_exited_before_ready)"
     )

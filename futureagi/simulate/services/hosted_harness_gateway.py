@@ -862,9 +862,7 @@ _GUEST_INNER_EXCEPTION = re.compile(
 
 
 # The labels of a guest's typed failures; the stored message adds the cause it printed.
-RUNTIME_VALIDATION_FAILED = (
-    "Generated environment failed real-runtime validation after bounded repair"
-)
+RUNTIME_VALIDATION_FAILED = "We couldn't run this agent version in its environment"
 AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
 
 # Why a candidate failed real-runtime validation, as the harness names it. The only failure
