@@ -552,6 +552,12 @@ export default function ReadyToRunSection({
   const fixRun = useFixRun(envId, { enabled: grouped }).data ?? null;
   useFollowFixRun(envId, fixRun);
   const start = useStartGroupFix(envId);
+  // A refusal belongs to the run state it met; once the run moves on, drop it.
+  const fixState = fixRun?.state;
+  const resetStart = start.reset;
+  useEffect(() => {
+    resetStart();
+  }, [fixState, resetStart]);
   const { data: drafts } = useDrafts(envId, { enabled: grouped });
   useRereadWhenDefaultsMove(envId, versions.data?.defaults);
   // The chat shows only while a fix runs; the user answers its questions there.

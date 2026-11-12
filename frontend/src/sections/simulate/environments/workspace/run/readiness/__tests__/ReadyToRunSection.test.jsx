@@ -14,6 +14,7 @@ const refetch = vi.fn();
 const saveCredentials = vi.fn();
 let agentVersions = [];
 let fixRun = null;
+const resetFix = vi.fn();
 let drafts;
 const startFix = vi.fn();
 
@@ -71,7 +72,11 @@ vi.mock("src/api/simulate-environments/readinessFix", () => ({
   ]),
   useFixRun: () => ({ data: fixRun }),
   useFollowFixRun: () => {},
-  useStartGroupFix: () => ({ mutate: startFix, isPending: false }),
+  useStartGroupFix: () => ({
+    mutate: startFix,
+    isPending: false,
+    reset: resetFix,
+  }),
 }));
 vi.mock("../FixChat", () => ({
   default: () => <div data-testid="fix-chat" />,
@@ -471,7 +476,7 @@ describe("ReadyToRunSection", () => {
       }),
     );
     expect(
-      screen.getByRole("button", { name: "Fix 0 with builder chat" }),
+      screen.getByRole("button", { name: "Tick lines to send" }),
     ).toBeDisabled();
   });
 
@@ -513,6 +518,20 @@ describe("ReadyToRunSection", () => {
     const [, groupButton] = screen.getAllByRole("button", { name: "Re-check" });
     await userEvent.click(groupButton);
     expect(recheck).toHaveBeenCalledWith(picks);
+  });
+
+  it("drops a fix refusal once the fix run moves on", () => {
+    report = groupedReport();
+    fixRun = { state: "fixing" };
+    const { rerender } = render(
+      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
+    );
+    resetFix.mockClear();
+    fixRun = { state: "done" };
+    rerender(
+      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
+    );
+    expect(resetFix).toHaveBeenCalled();
   });
 
   it("shows the chat only while a fix runs", () => {
