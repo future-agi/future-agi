@@ -47,6 +47,21 @@ class StoredTelephonySerializer(serializers.Serializer):
     direction_supported = serializers.ListField(child=serializers.CharField())
 
 
+class StoredFrameworkSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    version = serializers.CharField(allow_null=True)
+    label = serializers.CharField(required=False)
+
+
+class StoredSourceEchoSerializer(serializers.Serializer):
+    subfolder = serializers.CharField(required=False, allow_blank=True)
+
+
+class StoredExtensionSerializer(serializers.Serializer):
+    framework = StoredFrameworkSerializer(allow_null=True)
+    source = StoredSourceEchoSerializer(allow_null=True)
+
+
 class StoredAgentSerializer(serializers.Serializer):
     schema_version = serializers.CharField()
     type = serializers.CharField()
@@ -63,6 +78,7 @@ class StoredAgentSerializer(serializers.Serializer):
     gaps = serializers.ListField(child=serializers.CharField())
     instrumentation = serializers.CharField()
     setup_hash = serializers.CharField()
+    extension = StoredExtensionSerializer()
 
 
 class StoredAgentResponseSerializer(serializers.Serializer):
@@ -70,3 +86,4 @@ class StoredAgentResponseSerializer(serializers.Serializer):
     sdk_version = serializers.CharField()
     stored_at = serializers.DateTimeField()
     setup_stale = serializers.BooleanField()
+    origin = serializers.ChoiceField(choices=("build", "reading"))

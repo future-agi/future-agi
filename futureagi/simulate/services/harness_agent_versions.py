@@ -15,7 +15,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
@@ -49,6 +49,8 @@ MAX_CREDENTIAL_BLOB_BYTES = 16 * 1024 * 1024
 # A new version with the identity of a live row of these statuses is that row.
 _NOT_DEDUPED = (Status.FAILED, Status.DISCARDED)
 _RETRYABLE = (Status.FAILED, Status.PENDING)
+# What a version's reading wrote on its report, kept when the check writes its own.
+_KEPT_REPORT_KEYS = frozenset({"reading", "step"})
 # The environment payload's record of its default's last move by hand.
 HAND_MOVE_KEY = "agent_default_hand_move"
 # Activations turned down for a reason the environment may want to override: offered.
@@ -59,6 +61,8 @@ _OFFERED = frozenset(
 # nothing recorded is still going to move it.
 _WAIT_LIMIT = timedelta(hours=1)
 # Kept per version, never inherited by a child.
+# The environments a version was offered to.
+OFFERED_KEY = "offered_to_environments"
 _OWN_PAYLOAD_KEYS = (
     "legacy_secret_refs",
     "secret_refs",
@@ -68,6 +72,7 @@ _OWN_PAYLOAD_KEYS = (
     "requested_at",
     "created_for_environment",
     "discarded_by",
+    OFFERED_KEY,
 )
 _PROVIDER_ALIASES = {
     ProviderType.VAPI: CONNECTOR_ALIASES["vapi"],
@@ -89,6 +94,8 @@ _TRIGGER_LABELS = {
     Trigger.CREDENTIALS: "Credentials changed",
     Trigger.PROVIDER_SYNC: "Provider synced",
     Trigger.BACKFILL: "Backfilled",
+    Trigger.CONNECT: "Connected",
+    Trigger.SYNC: "Synced",
 }
 
 
@@ -745,7 +752,7 @@ def create_agent_version(
     definition: AgentDefinition,
     *,
     parent: AgentVersion | None,
-    env: HostedHarnessJob,
+    env: HostedHarnessJob | None,
     source: Mapping[str, Any] | None = None,
     prompt: str | None = None,
     agent_payload: Mapping[str, Any] | None = None,
@@ -764,6 +771,10 @@ def create_agent_version(
     version's own provider row. A live version with the same identity is returned
     instead of a new one: made ``env``'s default when its check already passed, else
     its check is queued.
+    Without ``env`` the version is the connected agent's own: no environment asked
+    for it, a parent without a side row contributes only its prompt, and a pass makes
+    it the agent's production version, which the environments following production
+    then move to (``activate_agent_version``).
     Without ``activate`` nothing is queued or made a default: the caller checks it.
     Without ``explicit_reuse`` (a change found in the background) a reused version
     moves the default as a background activation does, never by hand.
@@ -792,19 +803,23 @@ def create_agent_version(
                 status_code=422,
             )
         parent_runtime = _side_row(parent.id, blob=True) if parent else None
-        if parent is not None and parent_runtime is None:
+        if parent is not None and parent_runtime is None and env is not None:
             # Not an empty agent: the environment it is pinned to runs its own.
             if env.agent_version_id != parent.id:
                 raise _agent_versions_unavailable()
             parent_runtime = legacy_side_row(env, parent)
         parent_row = _own_provider_row(getattr(parent, "id", None))
         legacy_parent = parent_runtime is not None and legacy_runtime(parent_runtime)
+        if legacy_parent and env is None:
+            # A legacy row's credentials live in an environment's refs; with no
+            # environment to read them from the new version would drop them.
+            raise _agent_versions_unavailable()
         # A legacy row is shared: the asking environment's own facts are the parent's.
         parent_facts = effective_runtime(env, parent_runtime)
         replaced_names: set[str] = set()
         if parent_runtime is None:
             secret_set, provider_secrets = CredentialSet(), _row_values(parent_row)
-        elif legacy_parent:
+        elif legacy_parent and env is not None:
             secret_set, provider_secrets = _legacy_values(env, organization, replaced)
             replaced_names = replaced & set(
                 ((env.payload or {}).get("agent") or {}).get("secret_refs") or {}
@@ -849,24 +864,33 @@ def create_agent_version(
         access = (
             source_access({"source": source})
             if source is not None
-            else base.get("source_access") or source_access(env.payload or {})
+            else base.get("source_access")
+            or source_access((env.payload if env is not None else None) or {})
         )
         payload["source_access"] = copy.deepcopy(access)
+        asking = env is not None and activate
         # A version checked by its caller (a rerun's) is never made a default by it.
-        payload["requested_by_environments"] = [str(env.id)] if activate else []
+        payload["requested_by_environments"] = [str(env.id)] if asking else []
         # Each asking environment's default then: a later move of it is not undone.
         payload["requested_defaults"] = (
-            {str(env.id): _default_id(env)} if activate else {}
+            {str(env.id): _default_id(env)} if asking else {}
         )
         requested_at = timezone.now()
         payload["requested_at"] = (
-            {str(env.id): requested_at.isoformat()} if activate else {}
+            {str(env.id): requested_at.isoformat()} if asking else {}
         )
-        payload["created_for_environment"] = str(env.id)
+        if env is not None:
+            payload["created_for_environment"] = str(env.id)
+        else:
+            payload.setdefault("definition_owner", CONNECTED_OWNER)
         # A legacy parent's description may be another environment's prompt.
         description = (
             prompt
-            or (configured_prompt(env.payload) if legacy_parent else "")
+            or (
+                configured_prompt(env.payload)
+                if legacy_parent and env is not None
+                else ""
+            )
             or (parent.description if parent else "")
             or ""
         )
@@ -915,7 +939,7 @@ def create_agent_version(
         if existing is not None:
             stored = existing.agent_payload or {}
             requested = list(stored.get("requested_by_environments") or [])
-            if activate:
+            if activate and env is not None:
                 restarted = (
                     {"check_started_at": requested_at}
                     if existing.preflight_status == Status.PENDING
@@ -999,6 +1023,7 @@ def create_agent_version(
                 version.description,
                 source_kind,
                 source_facts,
+                payload.get("config"),
             )
             version.save(update_fields=["configuration_snapshot", "updated_at"])
             runtime.agent_version = version
@@ -1026,15 +1051,21 @@ def create_agent_version(
             # Asked for by a person, a newer default does not stand in its way; found
             # in the background, it moves only what a background activation would.
             try:
-                _activate(
-                    reused.agent_version, [env.id], explicit=explicit_reuse, user=user
-                )
+                if env is None:
+                    activate_agent_version(reused.agent_version)
+                else:
+                    _activate(
+                        reused.agent_version,
+                        [env.id],
+                        explicit=explicit_reuse,
+                        user=user,
+                    )
             except Exception as exc:  # noqa: BLE001 - recorded; a default move retries
                 logger.warning(
                     "harness_agent_version_activation_failed version=%s"
                     " environment=%s error=%s",
                     reused.agent_version_id,
-                    env.id,
+                    getattr(env, "id", None),
                     type(exc).__name__,
                 )
         return reused.agent_version
@@ -1178,10 +1209,26 @@ def change_credentials(
 
 
 def _schedule_preflight(version_id: Any) -> None:
-    from simulate.tasks.harness_agent_versions import schedule_agent_preflight
+    """Start the version's check: a code version of an Agents-page agent goes through
+    its workflow (read, then checked); any other is checked at once."""
+    from simulate.services.agent_version_steps import (
+        document_reading_applies_to,
+        workflow_applies_to,
+    )
+    from simulate.tasks.harness_agent_versions import (
+        schedule_agent_document_reading,
+        schedule_agent_preflight,
+    )
 
     try:
-        schedule_agent_preflight(version_id)
+        if workflow_applies_to(version_id):
+            from simulate.temporal.client import start_agent_version_workflow
+
+            start_agent_version_workflow(str(version_id))
+        else:
+            schedule_agent_preflight(version_id)
+            if document_reading_applies_to(version_id):
+                schedule_agent_document_reading(version_id)
     except Exception:  # noqa: BLE001 - a retry starts it again
         logger.exception("could not start the agent preflight version=%s", version_id)
 
@@ -1364,6 +1411,13 @@ def preflight_agent_version(
             passed, report = False, _report([], [], [], "preflight_error")
     status = Status.PASSED if passed else Status.FAILED
     now = timezone.now()
+    # What the version's reading left on the report stays beside the check's own.
+    kept = {
+        name: value
+        for name, value in (runtime.preflight_report or {}).items()
+        if name in _KEPT_REPORT_KEYS
+    }
+    report = {**kept, **report}
     # A version discarded while it was checked stays discarded.
     updated = HarnessAgentVersionRuntime.no_workspace_objects.filter(
         id=runtime.id, preflight_status=Status.PENDING
@@ -1860,7 +1914,10 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
     its own) is recorded as not having asked and stays where it is. An environment is
     skipped when the version was discarded meanwhile, a newer version is already its
     default, or the version is not one it can pick. A rerun's version, asked for by
-    none, moves no environment. Returns the environments moved.
+    none, moves no environment. A connected agent's version becomes production only
+    when the agent has none yet; a later one is offered to each environment that
+    tests the agent, which moves only when its rebuild lands, and waits to be made
+    production by hand. Returns the environments moved.
     """
     from simulate.services.harness_versioning.assembly import legacy_runtime
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
@@ -1880,6 +1937,25 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         str(environment_id)
         for environment_id in payload.get("requested_by_environments") or []
     ]
+    if (
+        not requested
+        and not payload.get("created_for_environment")
+        and payload.get("definition_owner") == CONNECTED_OWNER
+    ):
+        moved = _activate_production(version, only_if_none=True)
+        if moved == "has_production":
+            offered = [
+                str(environment.id)
+                for environment in bound_environments(version.agent_definition_id)
+                if environment.agent_version_id != version.id
+            ]
+            _record_activation(version.id, dict.fromkeys(offered, "not_requested"))
+            for environment_id in offered:
+                schedule_environment_nudge(
+                    environment_id, version.id, default_moved=False
+                )
+            return []
+        return moved if isinstance(moved, list) else []
     others = []
     # TODO: offer legacy sharers a version of their own (Q6).
     if parent is not None and not legacy_runtime(parent):
@@ -1903,10 +1979,37 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
             ),
         )
         return []
-    _record_activation(version.id, dict.fromkeys(others, "not_requested"))
+    # A version made on the Agents page is offered; one another environment's
+    # change made is that environment's.
+    outcome = (
+        "offered" if not payload.get("created_for_environment") else "not_requested"
+    )
+    _record_activation(version.id, dict.fromkeys(others, outcome))
+    if outcome == "offered":
+        record_offers(version.id, others)
     for environment_id in others:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, requested)
+
+
+def record_offers(version_id: Any, environment_ids: Iterable[Any]) -> None:
+    """Remember the environments a version was offered to: each may list and pick it,
+    as it may a version it asked for."""
+    offered = [str(one) for one in environment_ids]
+    if not offered:
+        return
+    with transaction.atomic():
+        runtime = _side_row(version_id, lock=True)
+        if runtime is None:
+            return
+        stored = runtime.agent_payload or {}
+        known = list(stored.get(OFFERED_KEY) or [])
+        merged = list(dict.fromkeys([*known, *offered]))
+        if merged == known:
+            return
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload={**stored, OFFERED_KEY: merged}, updated_at=timezone.now()
+        )
 
 
 def _recent(at: Any) -> bool:
@@ -2138,10 +2241,180 @@ def environment_owned(definition_id: Any) -> bool:
     ).exists()
 
 
+def connected_agent(definition_id: Any) -> bool:
+    """Whether an agent was connected on the Agents page, which alone makes its
+    versions and moves its production one."""
+    return HarnessAgentVersionRuntime._base_manager.filter(
+        agent_definition_id=definition_id,
+        agent_payload__definition_owner=CONNECTED_OWNER,
+    ).exists()
+
+
 def agent_definition_owner(job: HostedHarnessJob) -> str:
     """``environment`` for an agent made with the environment, else ``legacy``."""
     metadata = (job.payload or {}).get("metadata") or {}
     return str(metadata.get("agent_definition_owner") or "legacy")
+
+
+CONNECTED_OWNER = "connected"
+POLICY_KEY = "agent_policy"
+POLICY_FOLLOW = "follow"
+POLICY_PINNED = "pinned"
+
+
+def bound_environments(definition_id: Any) -> list[HostedHarnessJob]:
+    """The live environments that test this agent, oldest first."""
+    return list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            run_test__agent_definition_id=definition_id,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        ).order_by("created_at")
+    )
+
+
+def environment_policy(environment: HostedHarnessJob) -> str:
+    """Whether the environment follows the agent's production version or is pinned.
+    Only one that chose to follow does; any other keeps its version and is offered
+    a new one, so a production change never moves an environment that didn't ask."""
+    policy = ((environment.payload or {}).get("metadata") or {}).get(POLICY_KEY)
+    return POLICY_FOLLOW if policy == POLICY_FOLLOW else POLICY_PINNED
+
+
+ProductionOutcome = Literal["promoted", "has_production", "discarded"]
+
+
+def make_production(
+    version: AgentVersion, *, only_if_none: bool = False
+) -> ProductionOutcome:
+    """Make a connected agent's version its production one: the active version the
+    Agents page shows and the one following environments move to. With
+    ``only_if_none`` an agent that already has one keeps it; a discarded version
+    never becomes production."""
+    Statuses = AgentVersion.StatusChoices
+    with transaction.atomic():
+        lock_agent_production(version.agent_definition_id)
+        if (
+            only_if_none
+            and AgentVersion._base_manager.filter(
+                agent_definition_id=version.agent_definition_id,
+                status=Statuses.ACTIVE,
+            )
+            .exclude(id=version.id)
+            .exists()
+        ):
+            return "has_production"
+        runtime = _side_row(version.id, lock=True)
+        if runtime is not None and runtime.preflight_status == Status.DISCARDED:
+            return "discarded"
+        now = timezone.now()
+        AgentVersion._base_manager.filter(
+            agent_definition_id=version.agent_definition_id, status=Statuses.ACTIVE
+        ).exclude(id=version.id).update(status=Statuses.ARCHIVED, updated_at=now)
+        AgentVersion._base_manager.filter(id=version.id).update(
+            status=Statuses.ACTIVE, updated_at=now
+        )
+    return "promoted"
+
+
+def _activate_production(
+    version: AgentVersion, *, only_if_none: bool = False
+) -> list[Any] | ProductionOutcome:
+    """A connected agent's passed version becomes production; environments following
+    production are moved to it as if they had asked, pinned ones are offered it."""
+    from simulate.services.agent_compatibility import (
+        CLEAN,
+        UNMEASURED,
+        environment_compatibility,
+        stored_document,
+    )
+    from simulate.services.harness_versioning.nudges import schedule_environment_nudge
+
+    outcome = make_production(version, only_if_none=only_if_none)
+    if outcome != "promoted":
+        return outcome
+    document = stored_document(version)
+    following, pinned, offered = [], [], {}
+    for environment in bound_environments(version.agent_definition_id):
+        if environment.agent_version_id == version.id:
+            continue
+        if environment_policy(environment) != POLICY_FOLLOW:
+            pinned.append(str(environment.id))
+            continue
+        fit = environment_compatibility(environment, version, document=document)
+        # Only a change read as compatible moves a follower; a major change, and
+        # one that can't be judged yet, is offered and never applied. A world
+        # never built has nothing the move could break.
+        if fit["status"] == CLEAN or (
+            fit["status"] == UNMEASURED and fit.get("reason") == "environment_not_built"
+        ):
+            following.append(str(environment.id))
+        else:
+            offered[str(environment.id)] = (
+                "unmeasured" if fit["status"] == UNMEASURED else "major_change"
+            )
+    if following:
+        _request_for(version.id, following)
+    _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
+    for environment_id in [*pinned, *offered]:
+        schedule_environment_nudge(environment_id, version.id, default_moved=False)
+    return _activate(version, following)
+
+
+def _note_request(
+    version_id: Any, environment_ids: list[str], *, waiting: bool
+) -> None:
+    asked_at = timezone.now().isoformat()
+    with transaction.atomic():
+        runtime = _side_row(version_id, lock=True)
+        if runtime is None:
+            return
+        stored = runtime.agent_payload or {}
+        payload = {
+            **stored,
+            "requested_at": {
+                **(stored.get("requested_at") or {}),
+                **dict.fromkeys(environment_ids, asked_at),
+            },
+        }
+        if waiting:
+            payload["requested_by_environments"] = list(
+                dict.fromkeys(
+                    [*(stored.get("requested_by_environments") or []), *environment_ids]
+                )
+            )
+        runtime.agent_payload = payload
+        runtime.save(update_fields=["agent_payload", "updated_at"])
+
+
+def _request_for(version_id: Any, environment_ids: list[str]) -> None:
+    """Add environments to the ones waiting for this version, keeping earlier ones."""
+    _note_request(version_id, environment_ids, waiting=True)
+
+
+def stamp_requested_at(version_id: Any, environment_id: Any) -> None:
+    """Record that the environment asked for this version now, with nothing to wait
+    for: a follow set by hand stands as the environment's own request, so a later
+    return to an earlier production is not read as superseded by it."""
+    _note_request(version_id, [str(environment_id)], waiting=False)
+
+
+def promote_to_production(version: AgentVersion) -> list[Any]:
+    """Make a connected agent's checked version production by hand, whether or not
+    it was production before: followers move again, so a return to an earlier
+    version carries them back. Returns the environments moved."""
+    if _side_row(version.id) is None:
+        make_production(version)
+        return []
+    moved = _activate_production(version)
+    if moved == "discarded":
+        raise HostedHarnessError(
+            "version_discarded",
+            "This version was discarded; it can't be made production",
+            status_code=409,
+        )
+    return moved
 
 
 def mirror_default_status(version: AgentVersion) -> None:
@@ -2151,7 +2424,7 @@ def mirror_default_status(version: AgentVersion) -> None:
     Statuses = AgentVersion.StatusChoices
     with transaction.atomic():
         # One mirror per agent at a time, so a shared agent never has two active.
-        advisory_xact_lock(f"harness-agent-mirror:{version.agent_definition_id}")
+        lock_agent_production(version.agent_definition_id)
         now = timezone.now()
         AgentVersion._base_manager.filter(
             agent_definition_id=version.agent_definition_id, status=Statuses.ACTIVE
@@ -2166,14 +2439,22 @@ def _own_snapshot_facts(
     description: str,
     source_kind: str,
     source: Mapping[str, Any] | None,
+    config: Mapping[str, Any] | None = None,
 ) -> None:
-    """The snapshot reads the definition: a version's own prompt and phone number are
-    what it stands for. Without a prompt of its own it keeps the definition's."""
+    """The snapshot reads the definition: a version's own prompt, phone number,
+    LiveKit agent name and who speaks first are what it stands for. Without one of
+    its own it keeps the definition's."""
     if description:
         snapshot["description"] = description
     phone_number = (source or {}).get("phone_number")
     if source_kind == HarnessAgentVersionRuntime.SourceKind.PHONE and phone_number:
         snapshot["contact_number"] = phone_number
+    agent_name = (source or {}).get("agent_name")
+    if source_kind == HarnessAgentVersionRuntime.SourceKind.LIVEKIT and agent_name:
+        snapshot["livekit_agent_name"] = agent_name
+    speaks_first = (config or {}).get("target_speaks_first")
+    if isinstance(speaks_first, bool):
+        snapshot["target_speaks_first"] = speaks_first
 
 
 def resnapshot_version(version_id: Any, definition_id: Any = None) -> None:
@@ -2193,7 +2474,13 @@ def resnapshot_version(version_id: Any, definition_id: Any = None) -> None:
         and row.trigger != Trigger.CREATION
     ):
         # A changed version keeps its own prompt and phone number, as when made.
-        _own_snapshot_facts(snapshot, fresh.description, row.source_kind, row.source)
+        _own_snapshot_facts(
+            snapshot,
+            fresh.description,
+            row.source_kind,
+            row.source,
+            (row.agent_payload or {}).get("config"),
+        )
     if snapshot != fresh.configuration_snapshot:
         AgentVersion._base_manager.filter(id=fresh.id).update(
             configuration_snapshot=snapshot
@@ -2204,7 +2491,8 @@ def lineage_version_ids(
     environment: HostedHarnessJob, definition_id: Any
 ) -> set[str] | None:
     """The versions of an environment-owned agent this environment lists and picks:
-    its default and those it asked for. ``None`` for any other agent."""
+    its default, those it asked for and those it was offered. ``None`` for any other
+    agent."""
     if definition_id is None or not environment_owned(definition_id):
         return None
     # Not the default's lineage: a creation reusing another environment's version
@@ -2216,6 +2504,7 @@ def lineage_version_ids(
         version_id,
         requested_by,
         created_for,
+        offered_to,
     ) in HarnessAgentVersionRuntime.no_workspace_objects.filter(
         agent_definition_id=definition_id,
         organization_id=environment.organization_id,
@@ -2223,8 +2512,11 @@ def lineage_version_ids(
         "agent_version_id",
         "agent_payload__requested_by_environments",
         "agent_payload__created_for_environment",
+        f"agent_payload__{OFFERED_KEY}",
     ):
-        if requested_here(requested_by, created_for, environment.id):
+        if requested_here(requested_by, created_for, environment.id) or str(
+            environment.id
+        ) in {str(one) for one in offered_to or []}:
             allowed.add(str(version_id))
     return allowed
 
@@ -2284,7 +2576,7 @@ def check_creation_credentials(
 
     detected, required_files, scanned = (
         source_analysis
-        if isinstance(source_analysis, (tuple, list)) and len(source_analysis) == 3
+        if isinstance(source_analysis, tuple | list) and len(source_analysis) == 3
         else ([], [], 0)
     )
     scan = {
@@ -2369,6 +2661,11 @@ def target_identity(
         inbound,
         speaks_first if isinstance(speaks_first, bool) else None,
     )
+
+
+def lock_agent_production(definition_id: Any) -> None:
+    """Serialise every change to which of an agent's versions is production."""
+    advisory_xact_lock(f"harness-agent-mirror:{definition_id}")
 
 
 def advisory_xact_lock(name: str) -> None:
@@ -2509,6 +2806,100 @@ def _provider_identifiers(connector: str, config: Mapping[str, Any]):
     )
 
 
+def _bind_connected_agent(
+    job: HostedHarnessJob, definition: AgentDefinition, metadata: dict[str, Any]
+) -> AgentVersion:
+    """Pin a new environment to a connected agent's version: the one the creation
+    names, else production. The environment takes the version's source and
+    credential names and writes nothing to the agent; it stays pinned unless the
+    creation asks to follow production."""
+    if not (
+        AgentDefinition._base_manager.select_for_update()
+        .filter(id=definition.id, deleted=False)
+        .exists()
+    ):
+        raise HostedHarnessError(
+            "agent_not_found", "that agent no longer exists", status_code=404
+        )
+    payload = job.payload
+    agent = dict(payload.get("agent") or {})
+    requested = metadata.get("agent_version_id")
+    version = None
+    if requested:
+        version = AgentVersion.no_workspace_objects.filter(
+            id=requested, agent_definition=definition
+        ).first()
+        if version is None:
+            raise HostedHarnessError(
+                "version_not_found",
+                "that version is not one of this agent's",
+                status_code=404,
+            )
+    version = version or definition.active_version or definition.latest_version
+    if version is None:
+        raise HostedHarnessError(
+            "agent_has_no_version",
+            "This agent has no version to build from yet",
+            status_code=409,
+        )
+    from simulate.services.agent_connect import require_found_check
+
+    require_found_check(definition)
+    runtime = _side_row(version.id)
+    if runtime is not None and runtime.preflight_status not in (
+        Status.PASSED,
+        Status.LEGACY,
+    ):
+        raise HostedHarnessError(
+            "version_not_ready",
+            "This version has not passed its check yet",
+            status_code=409,
+            details={"preflight_status": runtime.preflight_status},
+        )
+    source = dict(payload.get("source") or {})
+    if runtime is not None and runtime.source_kind in (
+        HarnessAgentVersionRuntime.SourceKind.GITHUB,
+        HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+    ):
+        access = (runtime.agent_payload or {}).get("source_access") or {}
+        source = {
+            **source,
+            "kind": str(runtime.source_kind),
+            **{name: value for name, value in (runtime.source or {}).items() if value},
+            **{
+                name: access[name]
+                for name in ("visibility", "installation_id")
+                if access.get(name)
+            },
+        }
+    names = version_credential_names(runtime) if runtime is not None else []
+    metadata.update(
+        agent_definition_owner=CONNECTED_OWNER,
+        agent_definition_id=str(definition.id),
+        build_agent_version_id=str(version.id),
+    )
+    metadata.setdefault(POLICY_KEY, POLICY_PINNED)
+    job.agent_version = version
+    job.payload = {
+        **payload,
+        "source": source,
+        "agent": {
+            **agent,
+            "secret_refs": {name: agent_version_secret_ref(name) for name in names},
+        },
+        "metadata": metadata,
+    }
+    job.save(update_fields=["agent_version", "payload", "updated_at"])
+    logger.info(
+        "harness_environment_agent_bound job=%s definition=%s version=%s names=%d",
+        job.id,
+        definition.id,
+        version.id,
+        len(names),
+    )
+    return version
+
+
 def ensure_environment_agent(
     job: HostedHarnessJob,
     *,
@@ -2540,9 +2931,7 @@ def ensure_environment_agent(
         found, reason = _requested_definition(job, raw_id, connector)
         if found is not None:
             if not environment_owned(found.id):
-                # TODO: bind the customer's agent (connected branch) once P26/P26a
-                # merge.
-                reason = "connected_unavailable"
+                return _bind_connected_agent(job, found, metadata)
             elif key is not None and key == _definition_key(found):
                 definition = found
             else:

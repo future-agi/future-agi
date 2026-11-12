@@ -35,6 +35,10 @@ QUEUE_XL = "tasks_xl"
 #   released Agent Learning Kit as a child process (plan §9.1)
 QUEUE_RUNNER = "simulation_runner"
 
+# How long one agent reading or scan activity may run: sandbox, upload, the
+# reading itself and clean-up.
+READING_ACTIVITY_TIMEOUT_SECONDS = 3000
+
 
 # =============================================================================
 # Scalability Constants

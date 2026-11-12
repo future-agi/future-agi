@@ -60,13 +60,13 @@ def test_a_repository_run_stores_the_agent_on_the_version_the_prompt_created(def
 
 
 @pytest.mark.django_db
-def test_a_run_with_no_prompt_gets_one_active_version_with_an_empty_description(definition):
+def test_a_run_with_no_prompt_gets_one_active_version_with_the_documents_prompt(definition):
     hosted_harness._store_authored_agent(_job("github"), definition, _sent())
 
     version = AgentVersion.objects.get(agent_definition=definition)
     assert version.status == "active"
-    assert version.description == ""
-    assert version.configuration_snapshot["description"] == ""
+    assert version.description == "You are the booking assistant for Harbor Hotels."
+    assert version.configuration_snapshot["description"] == "You are the booking assistant for Harbor Hotels."
     assert stored_agent(version.id)["name"] == "harbor_hotels"
 
 
@@ -175,6 +175,29 @@ def test_a_provision_posted_with_an_agent_stores_it_through_the_url(organization
     agent = AgentDefinition.objects.get(id=job.run_test.agent_definition_id)
     version = AgentVersion.objects.get(agent_definition=agent)
     assert stored_agent(version.id)["name"] == "harbor_hotels"
+
+
+@pytest.mark.django_db
+def test_the_write_back_lands_on_the_frozen_pin_not_the_moved_default(definition):
+    frozen = definition.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    moved_to = definition.create_version(
+        description="p2", commit_message="v2", status="active"
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        payload={
+            "source": {"kind": "github"},
+            "metadata": {"build_agent_version_id": str(frozen.id)},
+        },
+        agent_version=moved_to,
+    )
+
+    hosted_harness._store_authored_agent(job, definition, _sent())
+
+    assert stored_agent(frozen.id)["kind"] == "source"
+    assert stored_agent(moved_to.id) is None
 
 
 @pytest.mark.django_db

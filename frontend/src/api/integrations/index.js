@@ -1,4 +1,9 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { getErrorMessage } from "src/sections/settings/integrations/utils";
@@ -56,7 +61,10 @@ export const useIntegrationConnections = (options = {}) => {
 export const useSlackChannels = (connectionId, options = {}) =>
   useInfiniteQuery({
     queryKey: [...integrationKeys.all, "slack-channels", connectionId],
-    queryFn: ({ pageParam }) => axios.get(endpoints.integrations.slack.channels(connectionId), { params: pageParam ? { cursor: pageParam } : undefined }),
+    queryFn: ({ pageParam }) =>
+      axios.get(endpoints.integrations.slack.channels(connectionId), {
+        params: pageParam ? { cursor: pageParam } : undefined,
+      }),
     select: (response) => ({
       ...response,
       channels: response.pages.flatMap((page) => {
@@ -64,7 +72,8 @@ export const useSlackChannels = (connectionId, options = {}) =>
         return result?.channels || [];
       }),
     }),
-    getNextPageParam: (lastPage) => lastPage?.data?.result?.next_cursor || undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage?.data?.result?.next_cursor || undefined,
     initialPageParam: undefined,
     enabled: !!connectionId && (options.enabled ?? true),
     staleTime: 30_000,
@@ -78,6 +87,67 @@ export const useStartSlackInstall = () =>
         endpoints.integrations.slack.install,
         connectionId ? { connection_id: connectionId } : {},
       ),
+  });
+
+export const useStartGitHubInstall = () =>
+  useMutation({
+    mutationFn: () => axios.post(endpoints.integrations.github.install, {}),
+  });
+
+// Finishes the install GitHub redirected back from, as the signed-in user who
+// started it; the callback itself saves nothing.
+export const useCompleteGitHubInstall = () =>
+  useMutation({
+    mutationFn: (handoff) =>
+      axios.post(endpoints.integrations.github.installComplete, handoff),
+  });
+
+export const useGitHubConnection = (options = {}) =>
+  useQuery({
+    queryKey: [...integrationKeys.connections(), "github"],
+    queryFn: () =>
+      axios.get(endpoints.integrations.connections.list, {
+        params: { platform: "github" },
+      }),
+    select: (response) => response.data?.result?.connections?.[0] ?? null,
+    staleTime: 1000 * 60 * 2,
+    ...options,
+  });
+
+export const useSourceRepositories = (connectionId, query, options = {}) =>
+  useQuery({
+    queryKey: [
+      ...integrationKeys.all,
+      "source-repositories",
+      connectionId,
+      query,
+    ],
+    queryFn: () =>
+      axios.get(endpoints.integrations.connections.repositories(connectionId), {
+        params: { q: query },
+      }),
+    select: (response) => response.data?.result?.repositories ?? [],
+    enabled: !!connectionId && (options.enabled ?? true),
+    staleTime: 1000 * 60,
+    ...options,
+  });
+
+export const useSourceBranches = (connectionId, repositoryId, options = {}) =>
+  useQuery({
+    queryKey: [
+      ...integrationKeys.all,
+      "source-branches",
+      connectionId,
+      repositoryId,
+    ],
+    queryFn: () =>
+      axios.get(
+        endpoints.integrations.connections.branches(connectionId, repositoryId),
+      ),
+    select: (response) => response.data?.result?.branches ?? [],
+    enabled: !!connectionId && !!repositoryId && (options.enabled ?? true),
+    staleTime: 1000 * 60,
+    ...options,
   });
 
 export const useIntegrationConnection = (connectionId, options = {}) => {

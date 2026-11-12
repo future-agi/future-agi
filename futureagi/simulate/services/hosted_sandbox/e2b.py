@@ -12,6 +12,7 @@ from .base import (
     SandboxCommandLogs,
     SandboxCommandRequest,
     SandboxExecResult,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxPreview,
@@ -23,11 +24,13 @@ from .base import (
 
 
 def _translate_error(exc: Exception) -> SandboxProviderError | None:
-    from e2b import SandboxException, SandboxNotFoundException
+    from e2b import FileNotFoundException, SandboxException, SandboxNotFoundException
 
     status_code = getattr(exc, "status_code", None)
     if isinstance(exc, SandboxNotFoundException):
         return SandboxNotFoundError(str(exc), status_code=status_code)
+    if isinstance(exc, FileNotFoundException):
+        return SandboxFileNotFoundError(str(exc), status_code=status_code)
     if isinstance(exc, SandboxException):
         return SandboxProviderError(str(exc), status_code=status_code)
     return None

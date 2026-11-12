@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import uuid
 from typing import Any
 
 from django.conf import settings
@@ -83,6 +84,30 @@ def _validate_phone_connectivity(payload) -> None:
             "phone_dialer_caller_id_invalid",
             "Platform SIP_OUTBOUND_FROM_NUMBER must be an E.164 caller ID",
             status_code=503,
+        )
+
+
+def _validate_github_installation(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> None:
+    source = payload.get("source") or {}
+    installation_id = str(source.get("installation_id") or "")
+    if source.get("kind") != "github" or not installation_id:
+        return
+    from integrations.services.github_app import installation_connected
+
+    if organization_id is None or not installation_connected(
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        installation_id=installation_id,
+    ):
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "github_installation_not_connected",
+            "Connect GitHub in Settings > Integrations before building from a"
+            " private repository",
+            status_code=422,
         )
 
 
@@ -593,7 +618,9 @@ def _preflight_source_connectors(organization, payload):
         return [], [], 0
     probe = HostedHarnessJob(organization=organization, payload=payload)
     archive, _commit = HostedSourceAcquirer().acquire(probe)
-    detected, required_files, scanned = detect_source_credentials(archive)
+    detected, required_files, scanned = detect_source_credentials(
+        archive, subfolder=payload["source"].get("subfolder")
+    )
     if payload["agent"]["connector"] != "auto":
         detected = []
     return detected, required_files, scanned
@@ -1215,12 +1242,53 @@ def _rerun_credentials_agent(
     return version
 
 
+def _builds_connected_agent(organization, workspace, payload) -> bool:
+    """Whether a creation binds to an agent connected on the Agents page, whose
+    version already passed its own check and lends the environment its credentials.
+    The agent must be the workspace's own and able to run the connector asked for,
+    the same test the bind itself applies."""
+    from simulate.models import AgentDefinition
+    from simulate.services.harness_agent_versions import (
+        _connector_agent_type,
+        environment_owned,
+    )
+
+    raw = ((payload.get("metadata") or {}).get("agent_definition_id")) or ""
+    try:
+        definition_id = uuid.UUID(str(raw))
+    except ValueError:
+        return False
+    definition = (
+        AgentDefinition.no_workspace_objects.filter(
+            id=definition_id,
+            organization=organization,
+            workspace_id=getattr(workspace, "id", None),
+            deleted=False,
+        )
+        .only("id", "agent_type")
+        .first()
+    )
+    if definition is None or environment_owned(definition_id):
+        return False
+    connector = str((payload.get("agent") or {}).get("connector") or "auto").lower()
+    return connector == "auto" or definition.agent_type == _connector_agent_type(
+        connector
+    )
+
+
 def _environment_agent_maker(
-    organization, payload, secret_values, analysis, user, repository_id=None
+    organization,
+    payload,
+    secret_values,
+    analysis,
+    user,
+    repository_id=None,
+    workspace=None,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
     from simulate.services.harness_agent_versions import (
+        CreationCheck,
         check_creation_credentials,
         ensure_environment_agent,
         submitted_credentials,
@@ -1229,8 +1297,12 @@ def _environment_agent_maker(
     secret_submitted = submitted_credentials(
         organization, payload["agent"]["secret_refs"], secret_values
     )
-    check = check_creation_credentials(
-        organization, payload, secret_submitted, analysis
+    check = (
+        CreationCheck(report={}, required_variable_names=[])
+        if _builds_connected_agent(organization, workspace, payload)
+        else check_creation_credentials(
+            organization, payload, secret_submitted, analysis
+        )
     )
 
     def make(job) -> None:
@@ -1330,22 +1402,24 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
-            if versioning_enabled():
+            # A replay answers with its job, whatever GitHub says now.
+            replayed = find_replayed_job(
+                organization,
+                payload,
+                idempotency_key=idempotency_key,
+                workspace=workspace,
+            )
+            if replayed is None and versioning_enabled():
                 from simulate.services.harness_agent_changes import (
                     validate_public_github_source,
                 )
 
                 # Before the source is cloned; GitHub is asked once replays are out.
-                if (
-                    find_replayed_job(
-                        organization,
-                        payload,
-                        idempotency_key=idempotency_key,
-                        workspace=workspace,
-                    )
-                    is None
-                ):
-                    validate_public_github_source(payload, lookup=False)
+                validate_public_github_source(payload, lookup=False)
+            if replayed is None:
+                _validate_github_installation(
+                    organization.id, getattr(workspace, "id", None), payload
+                )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         from simulate.services.harness_usage import (
@@ -1403,6 +1477,7 @@ class HostedHarnessProvider:
                         source_analysis,
                         request.user,
                         repository_id,
+                        workspace=workspace,
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
@@ -1469,6 +1544,11 @@ class HostedHarnessProvider:
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
+            _validate_github_installation(
+                getattr(request_organization(request), "id", None),
+                getattr(request_workspace(request), "id", None),
+                payload,
+            )
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -2966,6 +3046,9 @@ class SandboxHarnessProvider:
                 flat["github_ref"] = source["ref"]
             if source.get("commit_sha"):
                 flat["github_commit_sha"] = source["commit_sha"]
+            if source.get("subfolder"):
+                flat["github_subfolder"] = source["subfolder"]
+                flat["metadata"] = {**flat["metadata"], "generic_harness_v1": True}
             flat["github_visibility"] = source.get("visibility", "public")
             if source.get("installation_id"):
                 flat["github_installation_id"] = source["installation_id"]

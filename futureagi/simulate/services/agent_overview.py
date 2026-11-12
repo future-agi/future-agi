@@ -19,6 +19,7 @@ from simulate.models import (
     AgentDefinition,
     AgentVersion,
     AgentVersionSetup,
+    HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
 from simulate.selectors.runs import user_executions
@@ -53,9 +54,21 @@ def annotate_agent_rows(
     )
     source_kind = KT("payload__source__kind")
     source_kinds = first_environment.annotate(kind=source_kind).values("kind")
+    version_source_kinds = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_definition=OuterRef("pk"),
+            agent_version__deleted=False,
+        )
+        .order_by("-agent_version__version_number")
+        .values("source_kind")
+    )
     return queryset.annotate(
         _agent_kind=Subquery(stored_setups.values("agent_kind")[:1]),
-        _build_source_kind=Subquery(source_kinds[:1]),
+        _build_source_kind=Coalesce(
+            Subquery(source_kinds[:1]),
+            Subquery(version_source_kinds[:1]),
+            output_field=CharField(),
+        ),
         _version_count=Coalesce(
             Subquery(
                 versions.values("agent_definition")
@@ -110,7 +123,77 @@ def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str,
 
 def observability_on(agent: AgentDefinition) -> bool:
     row = agent.observability_provider
-    return bool(row and row.enabled and not row.project.deleted)
+    return bool(row and row.enabled and not row.deleted and not row.project.deleted)
+
+
+def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] | None:
+    """The Observe project the agent's production traces or calls land in.
+
+    A code agent's is the one the user linked; a hosted agent's is the one its
+    calls are pulled into while observability is on.
+    """
+    if kind == "source":
+        project = agent.production_project
+        if project is None or project.deleted:
+            return None
+    elif observability_on(agent):
+        project = agent.observability_provider.project
+    else:
+        return None
+    return {"id": str(project.id), "name": project.name}
+
+
+def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
+    """How many environments test each agent, keyed by agent id; absent when none."""
+    rows = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            run_test__agent_definition_id__in=agent_ids,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        )
+        .values("run_test__agent_definition_id")
+        .annotate(total=Count("id"))
+    )
+    return {row["run_test__agent_definition_id"]: row["total"] for row in rows}
+
+
+def version_list_context(versions: list[AgentVersion]) -> dict[str, Any]:
+    """What the versions list needs beside each row: its side row and how many
+    environments have it as their default."""
+    from simulate.models import HarnessAgentVersionRuntime
+
+    ids = [version.id for version in versions]
+    runtimes = {
+        runtime.agent_version_id: runtime
+        for runtime in HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id__in=ids
+        ).defer("credential_blob", "diff")
+    }
+    counts = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            agent_version_id__in=ids,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        )
+        .values("agent_version_id")
+        .annotate(total=Count("id"))
+    )
+    return {
+        "runtimes": runtimes,
+        "environments_count": {row["agent_version_id"]: row["total"] for row in counts},
+    }
+
+
+def environments_testing(version: AgentVersion) -> int:
+    """How many environments have this version as their default."""
+    return HostedHarnessJob.no_workspace_objects.filter(
+        agent_version=version,
+        run_test__deleted=False,
+        environment__isnull=True,
+        deleted=False,
+    ).count()
 
 
 def recent_agent_runs(agent: AgentDefinition, limit: int) -> list[dict[str, Any]]:

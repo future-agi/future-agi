@@ -80,6 +80,7 @@ class StoredAgentAnswer:
     sdk_version: str
     stored_at: datetime
     setup_stale: bool
+    origin: str = AgentVersionSetup.Origin.BUILD
 
 
 @dataclass(frozen=True)
@@ -234,11 +235,23 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     if setup is None:
         return None
     return StoredAgentAnswer(
-        agent=_rebuilt_agent(setup, with_raw_setup=False),
+        agent={
+            **_rebuilt_agent(setup, with_raw_setup=False),
+            "extension": _shown_extension(setup.raw_setup),
+        },
         sdk_version=setup.sdk_version,
         stored_at=setup.created_at,
         setup_stale=_setup_is_stale(setup, agent_version.agent_definition),
+        origin=setup.origin,
     )
+
+
+def _shown_extension(raw_setup: Any) -> dict[str, Any]:
+    raw = raw_setup if isinstance(raw_setup, dict) else {}
+    return {
+        name: raw[name] if isinstance(raw.get(name), dict) else None
+        for name in ("framework", "source")
+    }
 
 
 def _rebuilt_agent(setup: AgentVersionSetup, *, with_raw_setup: bool) -> dict[str, Any]:
@@ -320,22 +333,46 @@ def _rebuilt_agent(setup: AgentVersionSetup, *, with_raw_setup: bool) -> dict[st
 
 
 def store_agent(
-    *, agent_version_id: UUID, agent: dict, sdk_version: str
-) -> Literal["stored", "unchanged"]:
+    *,
+    agent_version_id: UUID,
+    agent: dict,
+    sdk_version: str,
+    origin: str = AgentVersionSetup.Origin.BUILD,
+    replace_reading: bool = False,
+) -> Literal["stored", "unchanged", "replaced"]:
+    """Keep the agent document on a version, once. A build seeded from the version's
+    reading knows what the reading could not (the framework's version), so with
+    ``replace_reading`` it replaces a document a reading stored; any other second
+    document is refused."""
     try:
-        version = _checked_version(agent_version_id, agent, sdk_version)
+        version = _checked_version(
+            agent_version_id,
+            agent,
+            sdk_version,
+            listed_provider=origin != AgentVersionSetup.Origin.READING,
+        )
         existing = _first_write(
-            agent_version_id, lambda: _insert_agent(version, agent, sdk_version)
+            agent_version_id,
+            lambda: _insert_agent(version, agent, sdk_version, origin=origin),
         )
         if existing is None:
-            outcome: Literal["stored", "unchanged"] = "stored"
+            outcome: Literal["stored", "unchanged", "replaced"] = "stored"
         elif (
             existing.status == AgentVersionSetup.Status.STORED
             and existing.setup_hash == agent["setup_hash"]
         ):
             outcome = "unchanged"
+        elif (
+            replace_reading
+            and existing.status == AgentVersionSetup.Status.STORED
+            and existing.origin == AgentVersionSetup.Origin.READING
+        ):
+            _replace_agent(existing, version, agent, sdk_version, origin=origin)
+            outcome = "replaced"
         else:
             raise AgentStoreError("setup_outcome_already_stored")
+        if outcome != "unchanged":
+            _fill_version_prompt(version, agent)
     except AgentStoreError as error:
         logger.warning(
             "agent_setup_rejected",
@@ -353,6 +390,22 @@ def store_agent(
         outcome=outcome,
     )
     return outcome
+
+
+def _fill_version_prompt(version: AgentVersion, agent: dict) -> None:
+    """Give a version whose prompt is still blank the one its document found, so the
+    evals and simulations that read the version's prompt get it."""
+    units = agent.get("behaviour") or []
+    prompt = str((units[0] or {}).get("instructions") or "").strip() if units else ""
+    if not prompt or str(version.description or "").strip():
+        return
+    AgentVersion.no_workspace_objects.filter(id=version.id).update(
+        description=prompt,
+        configuration_snapshot={
+            **(version.configuration_snapshot or {}),
+            "description": prompt,
+        },
+    )
 
 
 def store_setup_failure(
@@ -391,7 +444,11 @@ def setup_outcome(agent_version_id: UUID) -> SetupOutcome | None:
 
 
 def _checked_version(
-    agent_version_id: UUID, agent: dict, sdk_version: str
+    agent_version_id: UUID,
+    agent: dict,
+    sdk_version: str,
+    *,
+    listed_provider: bool = True,
 ) -> AgentVersion:
     try:
         text = json.dumps(agent, ensure_ascii=False, allow_nan=False)
@@ -409,25 +466,34 @@ def _checked_version(
     except _Invalid:
         raise AgentStoreError("agent_invalid") from None
     if agent["kind"] == "hosted":
-        _check_hosted(version, agent["provider_ref"], sdk_version)
+        _check_hosted(
+            version, agent["provider_ref"], sdk_version, listed=listed_provider
+        )
     return version
 
 
 def _check_hosted(
-    version: AgentVersion, provider_ref: dict[str, Any], sdk_version: str
+    version: AgentVersion,
+    provider_ref: dict[str, Any],
+    sdk_version: str,
+    *,
+    listed: bool = True,
 ) -> None:
-    from simulate.services.provider_list import (
-        ProviderListNotPublished,
-        ProviderListVersionNotFound,
-        read_provider_list,
-    )
+    """A hosted document names a provider the SDK publishes, unless the platform
+    mapped it itself (``listed`` off), and the assistant the version's key is for."""
+    if listed:
+        from simulate.services.provider_list import (
+            ProviderListNotPublished,
+            ProviderListVersionNotFound,
+            read_provider_list,
+        )
 
-    try:
-        snapshot = read_provider_list(sdk_version=sdk_version)
-    except (ProviderListNotPublished, ProviderListVersionNotFound):
-        raise AgentStoreError("agent_schema_unavailable") from None
-    if provider_ref["provider"] not in snapshot.providers:
-        raise AgentStoreError("provider_not_listed")
+        try:
+            snapshot = read_provider_list(sdk_version=sdk_version)
+        except (ProviderListNotPublished, ProviderListVersionNotFound):
+            raise AgentStoreError("agent_schema_unavailable") from None
+        if provider_ref["provider"] not in snapshot.providers:
+            raise AgentStoreError("provider_not_listed")
     credentials = ProviderCredentials.no_workspace_objects.filter(
         agent_version=version
     ).first()
@@ -582,7 +648,7 @@ def _word(value: Any, words: tuple[str, ...]) -> None:
 def _directions(inbound: bool, outbound: bool) -> list[str]:
     return [
         direction
-        for direction, present in zip(_DIRECTIONS, (inbound, outbound))
+        for direction, present in zip(_DIRECTIONS, (inbound, outbound), strict=False)
         if present
     ]
 
@@ -608,37 +674,71 @@ def _first_write(
     return None
 
 
-def _insert_agent(version: AgentVersion, agent: dict, sdk_version: str) -> None:
+def _replace_agent(
+    existing: AgentVersionSetup,
+    version: AgentVersion,
+    agent: dict,
+    sdk_version: str,
+    *,
+    origin: str,
+) -> None:
+    """A build's document in place of a reading's, under the same row id, so the
+    version's contract key and anything pointing at the row stay."""
+    with transaction.atomic():
+        locked = AgentVersionSetup.all_objects.select_for_update().get(id=existing.id)
+        if locked.setup_hash == agent["setup_hash"]:
+            return
+        locked.behaviour_units.all().delete()
+        locked.tools.all().delete()
+        locked.telephony.all().delete()
+        for name, value in _setup_columns(agent, sdk_version, origin).items():
+            setattr(locked, name, value)
+        locked.save()
+        _insert_children(locked, agent)
+    logger.info(
+        "agent_setup_replaced",
+        agent_version_id=str(version.id),
+        setup_hash=agent["setup_hash"],
+        origin=origin,
+    )
+
+
+def _setup_columns(agent: dict, sdk_version: str, origin: str) -> dict[str, Any]:
     provider_ref = agent["provider_ref"] or {}
     model = agent["model"] or {}
     voice = agent["voice"] or {}
-    setup = AgentVersionSetup.objects.create(
-        agent_version=version,
-        status=AgentVersionSetup.Status.STORED,
-        setup_hash=agent["setup_hash"],
-        schema_version=agent["schema_version"],
-        sdk_version=sdk_version,
-        agent_type=agent["type"],
-        agent_kind=agent["kind"],
-        name=agent["name"],
-        provider=provider_ref.get("provider", ""),
-        provider_agent_id=provider_ref.get("id", ""),
-        provider_version=provider_ref.get("version"),
-        model_provider=model.get("provider"),
-        model_name=model.get("name"),
-        model_temperature=model.get("temperature"),
-        model_max_tokens=model.get("max_tokens"),
-        voice_provider=voice.get("provider"),
-        voice_id=voice.get("voice_id"),
-        voice_language=voice.get("language"),
-        voice_speed=voice.get("speed"),
-        supports_inbound="inbound" in agent["supports"],
-        supports_outbound="outbound" in agent["supports"],
-        direction_answer=agent["direction_answer"],
-        gaps=list(agent["gaps"]),
-        instrumentation=agent.get("instrumentation", "none"),
-        raw_setup=agent["extension"],
-    )
+    return {
+        "status": AgentVersionSetup.Status.STORED,
+        "failure_code": "",
+        "failure_message": "",
+        "setup_hash": agent["setup_hash"],
+        "schema_version": agent["schema_version"],
+        "sdk_version": sdk_version,
+        "agent_type": agent["type"],
+        "agent_kind": agent["kind"],
+        "name": agent["name"],
+        "provider": provider_ref.get("provider", ""),
+        "provider_agent_id": provider_ref.get("id", ""),
+        "provider_version": provider_ref.get("version"),
+        "model_provider": model.get("provider"),
+        "model_name": model.get("name"),
+        "model_temperature": model.get("temperature"),
+        "model_max_tokens": model.get("max_tokens"),
+        "voice_provider": voice.get("provider"),
+        "voice_id": voice.get("voice_id"),
+        "voice_language": voice.get("language"),
+        "voice_speed": voice.get("speed"),
+        "supports_inbound": "inbound" in agent["supports"],
+        "supports_outbound": "outbound" in agent["supports"],
+        "direction_answer": agent["direction_answer"],
+        "gaps": list(agent["gaps"]),
+        "instrumentation": agent.get("instrumentation", "none"),
+        "raw_setup": agent["extension"],
+        "origin": origin,
+    }
+
+
+def _insert_children(setup: AgentVersionSetup, agent: dict) -> None:
     AgentBehaviourUnit.objects.bulk_create(
         AgentBehaviourUnit(
             setup=setup,
@@ -674,3 +774,16 @@ def _insert_agent(version: AgentVersion, agent: dict, sdk_version: str) -> None:
         )
         for position, entry in enumerate(agent["telephony"])
     )
+
+
+def _insert_agent(
+    version: AgentVersion,
+    agent: dict,
+    sdk_version: str,
+    *,
+    origin: str = AgentVersionSetup.Origin.BUILD,
+) -> None:
+    setup = AgentVersionSetup.objects.create(
+        agent_version=version, **_setup_columns(agent, sdk_version, origin)
+    )
+    _insert_children(setup, agent)

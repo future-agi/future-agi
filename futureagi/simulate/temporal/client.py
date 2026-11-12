@@ -680,6 +680,50 @@ async def _start_agent_fix_workflow_async(fix_run_id: str) -> str:
     return workflow_id
 
 
+def start_agent_version_workflow(version_id: str) -> str:
+    return async_to_sync(_start_agent_version_workflow_async)(version_id)
+
+
+async def _start_agent_version_workflow_async(version_id: str) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.agent_version import AgentVersionInput
+    from simulate.temporal.workflows.agent_version_workflow import (
+        AgentVersionWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"agent-version-{version_id}"
+    # A run already going is joined (a second Sync coalesces); a finished one is
+    # started again (a retry).
+    await client.start_workflow(
+        AgentVersionWorkflow.run,
+        AgentVersionInput(version_id=str(version_id)),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_agent_version_workflow(version_id: str) -> None:
+    """Ask a version's workflow to stop between steps; nothing when it has none."""
+    try:
+        async_to_sync(_cancel_agent_version_workflow_async)(version_id)
+    except Exception:  # noqa: BLE001 - a workflow already over has nothing to stop
+        logger.info("agent_version_workflow_not_cancelled", version_id=str(version_id))
+
+
+async def _cancel_agent_version_workflow_async(version_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"agent-version-{version_id}")
+    await handle.signal("cancel")
+
+
 def cancel_agent_fix_workflow(fix_run_id: str) -> None:
     async_to_sync(_cancel_agent_fix_workflow_async)(fix_run_id)
 

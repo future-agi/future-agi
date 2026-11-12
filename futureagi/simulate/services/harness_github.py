@@ -1,7 +1,9 @@
-"""Unauthenticated reads of public GitHub repositories, on one shared budget.
+"""Reads of public GitHub repositories.
 
-Every caller (the head poller, push re-reads, comparisons) draws on the same hourly
-count, so together they stay under GitHub's per-address limit. No token is sent.
+With a fallback installation configured, every read carries that installation's
+token and counts against its own hourly limit. Without one, no token is sent and
+every caller (the head poller, push re-reads, comparisons) draws on the same hourly
+count, so together they stay under GitHub's per-address limit.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ _TIMEOUT = (5, 15)
 _HOUR = 3600
 RATE_RESET_KEY = "harness:gh-rate-reset"
 REMAINING_KEY = "harness:gh-remaining"
+TOKEN_RATE_RESET_KEY = "harness:gh-token-rate-reset"
+TOKEN_REMAINING_KEY = "harness:gh-token-remaining"
 
 
 @dataclass(frozen=True)
@@ -71,15 +75,45 @@ def _hour_key() -> str:
     return "harness:gh-calls:" + datetime.now(UTC).strftime("%Y%m%d%H")
 
 
-def rate_limited_now() -> bool:
-    reset = cache.get(RATE_RESET_KEY)
+def _token_configured() -> bool:
+    return bool(getattr(settings, "GITHUB_APP_FALLBACK_INSTALLATION_ID", ""))
+
+
+def _read_token() -> str | None:
+    from integrations.services.github_app import fallback_read_token
+
+    return fallback_read_token()
+
+
+def _keys(token: str | None) -> tuple[str, str]:
+    if token:
+        return TOKEN_RATE_RESET_KEY, TOKEN_REMAINING_KEY
+    return RATE_RESET_KEY, REMAINING_KEY
+
+
+def _limited(reset_key: str) -> bool:
+    reset = cache.get(reset_key)
     return reset is not None and float(reset) > time.time()
 
 
-def remaining() -> int | None:
-    """GitHub's last reported remaining calls this hour, when known."""
-    value = cache.get(REMAINING_KEY)
+def _remaining(remaining_key: str) -> int | None:
+    value = cache.get(remaining_key)
     return int(value) if value is not None else None
+
+
+def rate_limited_now() -> bool:
+    """Whether GitHub asked the path reads take now to wait."""
+    if _token_configured():
+        return _limited(TOKEN_RATE_RESET_KEY)
+    return _limited(RATE_RESET_KEY)
+
+
+def remaining() -> int | None:
+    """GitHub's last reported remaining calls this hour on the path reads take
+    now, when known."""
+    if _token_configured():
+        return _remaining(TOKEN_REMAINING_KEY)
+    return _remaining(REMAINING_KEY)
 
 
 def _count(key: str) -> int:
@@ -127,7 +161,7 @@ def _take_call(reserve: int, purpose: str, owner: str | None = None) -> bool:
     key = _hour_key()
     capped = ("webhook", "create", "compare")
     if reserve:
-        left = remaining()
+        left = _remaining(REMAINING_KEY)
         if left is not None and left <= reserve:
             return False
         used = int(cache.get(key) or 0) - sum(
@@ -149,7 +183,9 @@ def _reset_at(headers: Any) -> float:
         return 0
 
 
-def _note_rate_limit(response: requests.Response, purpose: str) -> bool:
+def _note_rate_limit(
+    response: requests.Response, purpose: str, reset_key: str = RATE_RESET_KEY
+) -> bool:
     headers = response.headers
     retry_after = headers.get("Retry-After")
     if headers.get("X-RateLimit-Remaining") != "0" and retry_after is None:
@@ -164,7 +200,7 @@ def _note_rate_limit(response: requests.Response, purpose: str) -> bool:
         reset_at = 0
     if reset_at <= time.time():
         reset_at = time.time() + 60
-    cache.set(RATE_RESET_KEY, reset_at, max(int(reset_at - time.time()) + 1, 1))
+    cache.set(reset_key, reset_at, max(int(reset_at - time.time()) + 1, 1))
     logger.warning(
         "harness_github_rate_limited purpose=%s reset_at=%d", purpose, int(reset_at)
     )
@@ -180,10 +216,13 @@ def github_get(
     reserve: int = 0,
     owner: str | None = None,
 ) -> GitHubResponse:
-    """``GET`` one API path built from checked names only; never authenticated."""
-    if rate_limited_now():
+    """``GET`` one API path built from checked names only, with the fallback
+    installation's token when there is one; without it, within the shared budget."""
+    token = _read_token()
+    reset_key, remaining_key = _keys(token)
+    if _limited(reset_key):
         return GitHubResponse("rate_limited")
-    if not _take_call(reserve, purpose, owner):
+    if not token and not _take_call(reserve, purpose, owner):
         logger.info("harness_github_budget_spent purpose=%s", purpose)
         return GitHubResponse("budget")
     headers = {
@@ -191,6 +230,8 @@ def github_get(
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "futureagi-harness",
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if etag:
         headers["If-None-Match"] = etag
     base = str(getattr(settings, "GITHUB_API_ENDPOINT", "https://api.github.com"))
@@ -210,8 +251,14 @@ def github_get(
         # Gone when GitHub's window resets, so a low count never outlives it.
         reset = _reset_at(response.headers)
         ttl = max(int(reset - time.time()), 1) if reset else _HOUR
-        cache.set(REMAINING_KEY, int(left), ttl)
+        cache.set(remaining_key, int(left), ttl)
     code = response.status_code
+    if code == 401 and token:
+        from integrations.services.github_app import forget_fallback_read_token
+
+        forget_fallback_read_token()
+        logger.warning("harness_github_token_rejected purpose=%s", purpose)
+        return GitHubResponse("error")
     if code == 200:
         try:
             body = response.json() if "json" in accept else response.text
@@ -222,7 +269,7 @@ def github_get(
         return GitHubResponse("not_modified", etag=etag)
     if code in (404, 422):
         return GitHubResponse("not_found")
-    if code in (403, 429) and _note_rate_limit(response, purpose):
+    if code in (403, 429) and _note_rate_limit(response, purpose, reset_key):
         return GitHubResponse("rate_limited")
     logger.warning("harness_github_unexpected purpose=%s status=%s", purpose, code)
     return GitHubResponse("error")

@@ -69,7 +69,8 @@ def _require_harness_action(organization_id: str, action: str) -> None:
 
 def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
     """A usage refusal as a hosted harness error, for a caller that reads only that shape:
-    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    the fix engine tells the organization's plan limit apart from the fix's own budget.
+    """
     if is_oss():
         return None
     from ee.usage.exceptions import UsageLimitExceeded
@@ -210,9 +211,11 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.execution.execution_key
-        if receipt.execution_id
-        else receipt.scenario.scenario_key: receipt
+        (
+            receipt.execution.execution_key
+            if receipt.execution_id
+            else receipt.scenario.scenario_key
+        ): receipt
         for receipt in (
             cached
             if cached is not None
@@ -457,6 +460,65 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
                 },
             )
         )
+
+
+def record_agent_reading_usage(
+    *, organization_id, workspace_id, subject_id, run_id, spend: dict
+) -> dict | None:
+    """Price the model stages of one reading of an agent (or one scan for agents)
+    and bill them like a build's authoring. Returns the priced report, or None
+    when nothing was billed. One event per stage of each reading run, so a repeated
+    call for the same run bills nothing twice and a retried reading bills again."""
+    if is_oss() or not isinstance(spend, dict):
+        return None
+    records = [
+        record
+        for item in spend.get("stages") or []
+        if isinstance(item, dict) and (record := _authoring_stage_record(item))
+    ]
+    stages = [record["stage"] for record in records]
+    if len(set(stages)) != len(stages):
+        raise HostedHarnessError(
+            "reading_usage_invalid", "Each reading stage must be reported once."
+        )
+    if not records:
+        return None
+    report = {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": records,
+    }
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    for item in records:
+        if not item["credits"]:
+            continue
+        emit(
+            UsageEvent(
+                event_id=str(uuid5(UUID(str(run_id)), f"reading:{item['stage']}")),
+                org_id=str(organization_id),
+                event_type=BillingEventType.HARNESS_AUTHORING,
+                amount=item["credits"],
+                timestamp=timezone.now(),
+                properties={
+                    "source": "agent_reading",
+                    "source_id": str(subject_id),
+                    "reading_run_id": str(run_id),
+                    "workspace_id": str(workspace_id or ""),
+                    "phase": "reading",
+                    "authoring_stage": item["stage"],
+                    "model": item["model"],
+                    "input_tokens": item["tokens_in"],
+                    "output_tokens": item["tokens_out"],
+                    "cached_input_tokens": item["tokens_cached"],
+                    "raw_cost_usd": item["cost_usd"],
+                    "pricing_source": item["pricing_source"],
+                    "complete": spend.get("complete"),
+                },
+            )
+        )
+    return report
 
 
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:

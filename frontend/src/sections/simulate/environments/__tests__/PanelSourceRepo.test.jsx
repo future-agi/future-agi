@@ -134,7 +134,7 @@ describe("PanelSourceRepo", () => {
     runPreflight();
 
     expect(await screen.findByText("Ready to build")).toBeInTheDocument();
-    expect(screen.getByText("12 source files scanned")).toBeInTheDocument();
+    expect(screen.getByText("12 code files scanned")).toBeInTheDocument();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
   });
 

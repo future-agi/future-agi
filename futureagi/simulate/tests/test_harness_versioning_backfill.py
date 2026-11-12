@@ -2106,8 +2106,32 @@ class TestAgentResolution:
             "provider",
             {"provider": "retell", "assistant_id": "ag_1"},
         ),
+        (
+            {
+                "source": {
+                    "kind": "github",
+                    "repository": "acme/agent",
+                    "ref": "main",
+                    "commit_sha": "a" * 40,
+                    "subfolder": "agents/support",
+                    "installation_id": "i-1",
+                }
+            },
+            "github",
+            {
+                "repository": "acme/agent",
+                "ref": "main",
+                "commit_sha": "a" * 40,
+                "subfolder": "agents/support",
+            },
+        ),
+        (
+            {"source": {"kind": "github", "repository": "acme/agent", "subfolder": ""}},
+            "github",
+            {"repository": "acme/agent"},
+        ),
     ],
-    ids=["archive", "phone", "livekit", "remote", "vapi", "retell"],
+    ids=["archive", "phone", "livekit", "remote", "vapi", "retell", "github", "root"],
 )
 def test_legacy_source_by_kind(payload, kind, source):
     assert legacy_source(payload) == (kind, source)

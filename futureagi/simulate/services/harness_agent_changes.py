@@ -31,6 +31,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.harness_agent_versions import (
+    CONNECTED_OWNER,
     _agent_versions_unavailable,
     _busy,
     _default_lineage,
@@ -98,7 +99,7 @@ _REPOSITORY_ID_KEY = "agent_source_repository_id"
 
 @dataclass(frozen=True)
 class WatchedSource:
-    environment_id: UUID
+    environment_id: UUID | None
     definition_id: UUID
     parent_version_id: UUID
     repository: str
@@ -108,6 +109,8 @@ class WatchedSource:
     # GitHub's id for the repository: its head is read by id, never by a name a
     # later owner could take.
     repository_id: int | None = None
+    connected: bool = False
+    installation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,7 +136,9 @@ def watched_sources(
     *, repository: str | None = None, definition_id: Any = None
 ) -> list[WatchedSource]:
     """Live, pinned, built environments whose effective default agent version is a
-    public GitHub source; optionally only those on ``repository`` (any case)."""
+    public GitHub source, and connected agents on a GitHub source (private ones
+    too, read through their installation) with no such environment; optionally
+    only those on ``repository`` (any case)."""
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         environment__isnull=True,
         deleted=False,
@@ -157,8 +162,8 @@ def watched_sources(
     found = []
     private = 0
     for job in jobs.order_by("created_at"):
-        if _busy(job) or agent_definition_owner(job) == "connected":
-            # Connected agents change through their sync only.
+        connected = agent_definition_owner(job) == "connected"
+        if not connected and _busy(job):
             continue
         facts = _facts(job)
         if facts is None or facts.source_kind != SourceKind.GITHUB:
@@ -167,7 +172,7 @@ def watched_sources(
         built = (job.payload or {}).get("source") or {}
         access = (facts.agent_payload or {}).get("source_access") or {}
         visibility = access.get("visibility") or built.get("visibility")
-        if visibility == "private":
+        if visibility == "private" and not connected:
             private += 1
             continue
         name = str(source.get("repository") or "")
@@ -204,11 +209,110 @@ def watched_sources(
                 ),
                 organization_id=job.organization_id,
                 repository_id=access.get("repository_id") or recorded.get("id"),
+                connected=connected,
+                installation_id=_private_installation(visibility, access, built),
             )
         )
     if private:
         logger.info("harness_agent_watch_private_skipped count=%d", private)
+    watched = {one.definition_id for one in found if one.connected}
+    found.extend(
+        one
+        for one in _connected_agents(repository=repository, definition_id=definition_id)
+        if one.definition_id not in watched
+    )
     return found
+
+
+def _private_installation(
+    visibility: Any, access: Mapping[str, Any], built: Mapping[str, Any]
+) -> str | None:
+    if visibility != "private":
+        return None
+    return str(access.get("installation_id") or built.get("installation_id") or "")
+
+
+def _connected_agents(
+    *, repository: str | None, definition_id: Any
+) -> list[WatchedSource]:
+    """Connected agents whose production version is a GitHub source, one each."""
+    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_payload__definition_owner=CONNECTED_OWNER,
+        source_kind=SourceKind.GITHUB,
+        agent_version__status=AgentVersion.StatusChoices.ACTIVE,
+        agent_version__deleted=False,
+        agent_definition__deleted=False,
+    ).defer("credential_blob", "diff")
+    if definition_id is not None:
+        rows = rows.filter(agent_definition_id=definition_id)
+    if repository is not None:
+        rows = rows.filter(source__repository__iexact=repository)
+    found: dict[Any, WatchedSource] = {}
+    for row in rows.order_by("agent_definition_id", "-created_at"):
+        if row.agent_definition_id in found:
+            continue
+        source = row.source or {}
+        access = (row.agent_payload or {}).get("source_access") or {}
+        name = str(source.get("repository") or "")
+        stored_ref = str(source.get("ref") or "")
+        ref = short_ref(stored_ref)
+        if (
+            not safe_repository(name)
+            or _PINNED_REF.fullmatch(stored_ref)
+            or (ref is not None and not safe_ref(ref))
+        ):
+            continue
+        found[row.agent_definition_id] = WatchedSource(
+            environment_id=None,
+            definition_id=row.agent_definition_id,
+            parent_version_id=row.agent_version_id,
+            repository=name,
+            ref=ref,
+            commit_sha=source.get("commit_sha"),
+            organization_id=row.organization_id,
+            repository_id=access.get("repository_id"),
+            connected=True,
+            installation_id=_private_installation(access.get("visibility"), access, {}),
+        )
+    return list(found.values())
+
+
+def _outcome_key(watched: WatchedSource) -> str:
+    return str(watched.environment_id or watched.definition_id)
+
+
+def read_head(watched: WatchedSource, *, purpose: str, reserve: int = 0) -> HeadResult:
+    """The head of a watched source: a private one through its installation, any
+    other from GitHub's public API."""
+    if watched.installation_id is None:
+        return github_head(
+            watched.repository,
+            watched.ref,
+            purpose=purpose,
+            reserve=reserve,
+            repository_id=watched.repository_id,
+        )
+    if not watched.installation_id:
+        return HeadResult("error")
+    from integrations.services.github_app import GitHubAppError, branch_head
+
+    try:
+        sha = branch_head(
+            watched.installation_id,
+            repository=watched.repository,
+            repository_id=watched.repository_id,
+            ref=watched.ref,
+        )
+    except GitHubAppError:
+        logger.warning(
+            "harness_agent_private_head_unreadable definition=%s",
+            watched.definition_id,
+            exc_info=True,
+        )
+        return HeadResult("error")
+    if sha is None:
+        return HeadResult("not_found")
+    return HeadResult("ok", sha) if _SHA.fullmatch(sha) else HeadResult("error")
 
 
 def _pair(watched: WatchedSource) -> tuple[str, str | None]:
@@ -555,6 +659,22 @@ def _observe_one(
     return ("created" if version.version_number >= first_new else "reused"), version
 
 
+def _observe_connected(
+    watched: WatchedSource, head: str
+) -> tuple[str, AgentVersion | None]:
+    """A connected agent's version at ``head``, made once for the agent however many
+    environments test it; none when Sync or an earlier look already made it."""
+    from simulate.services.agent_versions import version_at_head
+
+    definition = AgentDefinition.no_workspace_objects.filter(
+        id=watched.definition_id
+    ).first()
+    if definition is None:
+        return "skipped_missing", None
+    version, created = version_at_head(definition, head, trigger=Trigger.PUSH)
+    return ("created" if created else "unchanged"), version
+
+
 def observe_repository_head(
     definition: AgentDefinition | Any,
     *,
@@ -563,7 +683,8 @@ def observe_repository_head(
     purpose: str = "poll",
 ) -> dict[str, str]:
     """Make the next agent version for each environment watching this definition's
-    GitHub source whose head it has not observed; returns {environment_id: outcome}.
+    GitHub source whose head it has not observed; returns {environment_id: outcome},
+    keyed by the definition id for a connected agent watched with no environment.
 
     With ``heads`` only the (repository, ref) pairs it holds are looked at; without,
     each pair's head is read once.
@@ -576,25 +697,27 @@ def observe_repository_head(
     only_given = heads is not None
     heads = {} if heads is None else heads
     outcomes: dict[str, str] = {}
+    connected_outcomes: dict[Any, str] = {}
     for watched in watched_sources(repository=repository, definition_id=definition_id):
         pair = _pair(watched)
         head = heads.get(pair)
         if head is None:
             if only_given:
                 continue
-            head = heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
-                purpose=purpose,
-                repository_id=watched.repository_id,
-            )
+            head = heads[pair] = read_head(watched, purpose=purpose)
         if head.status not in ("ok", "not_modified") or not head.sha:
-            outcomes[str(watched.environment_id)] = "head_unavailable"
+            outcomes[_outcome_key(watched)] = "head_unavailable"
             if head.status in ("rate_limited", "budget"):
                 break
             continue
+        if watched.connected and watched.definition_id in connected_outcomes:
+            outcomes[_outcome_key(watched)] = connected_outcomes[watched.definition_id]
+            continue
         try:
-            outcome, version = _observe_one(watched, head.sha, purpose)
+            if watched.connected:
+                outcome, version = _observe_connected(watched, head.sha)
+            else:
+                outcome, version = _observe_one(watched, head.sha, purpose)
         except HostedHarnessError as exc:
             outcome, version = f"error:{exc.code}", None
         except Exception as exc:  # noqa: BLE001 - one environment never stops another
@@ -604,7 +727,9 @@ def observe_repository_head(
                 type(exc).__name__,
             )
             outcome, version = "error", None
-        outcomes[str(watched.environment_id)] = outcome
+        if watched.connected:
+            connected_outcomes[watched.definition_id] = outcome
+        outcomes[_outcome_key(watched)] = outcome
         logger.info(
             "harness_agent_head_observed definition=%s environment=%s outcome=%s"
             " head=%s purpose=%s version=%s",
@@ -662,13 +787,7 @@ def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for pair in order[:limit]:
         sources = groups[pair]
-        head = github_head(
-            sources[0].repository,
-            pair[1],
-            purpose="poll",
-            reserve=_POLL_RESERVE,
-            repository_id=sources[0].repository_id,
-        )
+        head = read_head(sources[0], purpose="poll", reserve=_POLL_RESERVE)
         if head.status in ("rate_limited", "budget"):
             counts[head.status] += 1
             break
@@ -725,12 +844,7 @@ def receive_push(
             cache.delete(
                 _head_key(watched.repository, watched.ref, watched.repository_id)
             )
-            heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
-                purpose="webhook",
-                repository_id=watched.repository_id,
-            )
+            heads[pair] = read_head(watched, purpose="webhook")
             if heads[pair].status in ("rate_limited", "budget"):
                 _poll_first(pair)
     counts: Counter[str] = Counter()
@@ -807,6 +921,65 @@ def _unchanged() -> HostedHarnessError:
         "Nothing changed",
         status_code=422,
         details={"piece": "agent"},
+    )
+
+
+@dataclass(frozen=True)
+class AgentEdit:
+    config: dict[str, Any] | None
+    prompt: str | None
+
+    @property
+    def changed(self) -> bool:
+        return self.config is not None or self.prompt is not None
+
+    @property
+    def trigger(self) -> str:
+        return Trigger.PROMPT if self.prompt is not None else Trigger.AGENT_PAYLOAD
+
+
+def edit_agent_config(
+    kind: str,
+    agent_payload: Mapping[str, Any],
+    *,
+    description: str,
+    prompt: str | None = None,
+    settings: Mapping[str, Any] | None = None,
+    settings_field: str = "agent_payload.config",
+) -> AgentEdit:
+    """A prompt and settings edit applied to a version's agent payload: the config
+    when it moved, and the prompt when it moved. A phone or LiveKit agent's prompt
+    is in its config, where the build reads it; a provider agent's is its
+    description. Only the settings its connector takes are allowed."""
+    config = dict(agent_payload.get("config") or {})
+    before = copy.deepcopy(config)
+    prompt_changed = False
+    if prompt is not None:
+        if kind not in _PROMPT_KINDS:
+            # A code agent's prompt belongs to its source.
+            raise _unsupported("prompt")
+        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
+            "target_system_prompt" in config
+        )
+        now = (
+            str(config.get("target_system_prompt") or "") if in_config else description
+        )
+        prompt_changed = prompt != now
+        if in_config:
+            config["target_system_prompt"] = prompt
+    connector = (
+        str(kind)
+        if kind != SourceKind.PROVIDER
+        else str(agent_payload.get("connector"))
+    )
+    allowed = _SETTINGS.get(connector, ())
+    for name, value in (settings or {}).items():
+        if kind not in _PROMPT_KINDS or name not in allowed:
+            raise _unsupported(f"{settings_field}.{name}")
+        config[name] = value
+    return AgentEdit(
+        config=config if config != before else None,
+        prompt=prompt if prompt_changed else None,
     )
 
 
@@ -901,47 +1074,28 @@ def change_agent_source(
             trigger=Trigger.UPLOAD,
         )
 
-    config = dict(current.get("config") or {})
-    before = copy.deepcopy(config)
-    prompt_changed = False
-    if prompt is not None:
-        if kind not in _PROMPT_KINDS:
-            # A code agent's prompt belongs to its source.
-            raise _unsupported("prompt")
-        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
-            "target_system_prompt" in config
-        )
-        now = (
-            str(config.get("target_system_prompt") or "")
-            if in_config
-            else (parent.description or "")
-        )
-        prompt_changed = prompt != now
-        if in_config:
-            config["target_system_prompt"] = prompt
-    connector = (
-        str(kind) if kind != SourceKind.PROVIDER else str(current.get("connector"))
+    edit = edit_agent_config(
+        kind,
+        current,
+        description=parent.description or "",
+        prompt=prompt,
+        settings=(agent_payload or {}).get("config"),
     )
-    allowed = _SETTINGS.get(connector, ())
-    for name, value in ((agent_payload or {}).get("config") or {}).items():
-        if kind not in _PROMPT_KINDS or name not in allowed:
-            raise _unsupported(f"agent_payload.config.{name}")
-        config[name] = value
-    if not prompt_changed and config == before:
+    if not edit.changed:
         raise _unchanged()
     changes: dict[str, Any] = {}
-    if config != before:
+    if edit.config is not None:
         # The environment's own source, so how it is reached stays as it was.
-        changes["agent_payload"] = {**current, "config": config}
+        changes["agent_payload"] = {**current, "config": edit.config}
         changes["source"] = env_source
-    if prompt_changed:
-        changes["prompt"] = prompt
+    if edit.prompt is not None:
+        changes["prompt"] = edit.prompt
     return _made(
         parent,
         environment,
         user,
         make_default=make_default,
-        trigger=Trigger.PROMPT if prompt_changed else Trigger.AGENT_PAYLOAD,
+        trigger=edit.trigger,
         **changes,
     )
 

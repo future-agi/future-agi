@@ -170,8 +170,8 @@ export default function ConnectedAgentsView({ onConnect }) {
     return (
       <EmptyState
         icon="solar:link-circle-linear"
-        title="No connected agents yet"
-        description="Connect your agent from a hosted platform, an endpoint, a repository or an upload. Simulations run against a copy of it."
+        title="No agents yet"
+        description="Bring one from code or a hosted platform. Simulations run against a copy of it."
         action={
           <Button
             variant="contained"
@@ -179,7 +179,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             size="small"
             onClick={onConnect}
           >
-            Connect an agent
+            Connect agent
           </Button>
         }
       />
@@ -206,8 +206,12 @@ export default function ConnectedAgentsView({ onConnect }) {
           }}
           size="small"
           placeholder="Search"
-          sx={{ width: 250 }}
+          sx={{ width: 280 }}
         />
+        <Box sx={{ flex: 1 }} />
+        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+          Connected means we can reach it: its repository, platform or upload.
+        </Typography>
       </ListToolbar>
       <DataTable
         columns={columns}
@@ -223,16 +227,18 @@ export default function ConnectedAgentsView({ onConnect }) {
             : "No agents match your search"
         }
       />
-      <DataTablePagination
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(0);
-        }}
-      />
+      {total > 0 && (
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+        />
+      )}
     </Box>
   );
 }

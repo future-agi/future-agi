@@ -5,6 +5,10 @@ from simulate.models.agent_definition import (
     AgentDefinitionAuthenticationChoices,
     AgentTypeChoices,
 )
+from simulate.serializers.harness_job import (
+    HarnessAgentConfigChangeSerializer,
+    check_credential_values,
+)
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 
 
@@ -104,3 +108,47 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
                         f"{', '.join(valid_languages)}"
                     )
         return value
+
+
+class AgentVersionChangeRequestSerializer(serializers.Serializer):
+    """One change to a connected agent, by kind: sync the branch, a new upload, a
+    prompt or settings edit, or changed credentials."""
+
+    kind = serializers.ChoiceField(choices=("sync", "upload", "credentials", "manual"))
+    archive_artifact_id = serializers.UUIDField(required=False)
+    prompt = serializers.CharField(required=False, allow_blank=True, max_length=65_536)
+    settings = HarnessAgentConfigChangeSerializer(required=False)
+    secret_values = serializers.DictField(
+        child=serializers.CharField(max_length=65_536, trim_whitespace=False),
+        required=False,
+    )
+
+    def validate_secret_values(self, value):
+        problems = check_credential_values(value)
+        if problems:
+            raise serializers.ValidationError(problems)
+        return value
+
+    def validate(self, attrs):
+        kind = attrs["kind"]
+        needed = {
+            "upload": ("archive_artifact_id",),
+            "manual": ("prompt", "settings"),
+            "credentials": ("secret_values",),
+        }.get(kind, ())
+        if needed and not any(name in attrs for name in needed):
+            raise serializers.ValidationError({needed[0]: f"required for kind {kind}"})
+        extra = [
+            name
+            for name in ("archive_artifact_id", "prompt", "settings", "secret_values")
+            if name in attrs and name not in needed
+        ]
+        if extra:
+            raise serializers.ValidationError(
+                {extra[0]: f"not part of a {kind} change"}
+            )
+        if kind == "credentials" and not attrs["secret_values"]:
+            raise serializers.ValidationError({"secret_values": "nothing to change"})
+        if "settings" in attrs and not attrs["settings"]:
+            raise serializers.ValidationError({"settings": "nothing to change"})
+        return attrs

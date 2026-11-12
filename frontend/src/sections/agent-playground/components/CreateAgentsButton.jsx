@@ -7,7 +7,7 @@ import { LoadingButton } from "@mui/lab";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
-import { CONNECT_AGENT_PATH } from "../agentsTabs";
+import useConnectAgentPath from "../useConnectAgentPath";
 import { useCreateGraph } from "src/api/agent-playground/agent-playground";
 import { useAgentPlaygroundStoreShallow } from "../store";
 
@@ -37,6 +37,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const popover = usePopover();
+  const connectPath = useConnectAgentPath();
 
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
     setCurrentAgent: s.setCurrentAgent,
@@ -55,7 +56,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const handleSelect = (id) => {
     popover.onClose();
     if (id === "playground") createGraph();
-    else navigate(CONNECT_AGENT_PATH);
+    else navigate(connectPath);
   };
 
   return (

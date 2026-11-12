@@ -112,6 +112,17 @@ export function environmentNameFor(draft) {
   return "agent";
 }
 
+const SUBFOLDER_PATTERN = /^(?!.*(^|\/)\.{1,2}(\/|$))[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+const SUBFOLDER_MAX_LENGTH = 512;
+
+export const normalizeSubfolder = (value) =>
+  String(value || "").trim().replace(/^\.\/+/, "").replace(/\/+$/, "");
+
+export const isValidSubfolder = (value) => {
+  const folder = normalizeSubfolder(value);
+  return !folder || (folder.length <= SUBFOLDER_MAX_LENGTH && SUBFOLDER_PATTERN.test(folder));
+};
+
 // parsed.ref (from a pasted tree URL) beats the panel's default "main"; an
 // explicitly typed non-default branch beats both. Empty on both sides → omit.
 function resolveRef(parsedRef, draftRef) {
@@ -129,7 +140,10 @@ function envelope(draft, name) {
     // to the default when a draft predates the field.
     scenario_count: draft.scenarioCount ?? SCENARIO_COUNT,
     artifacts: { ...ARTIFACTS },
-    metadata: { name, authoring_key: name },
+    metadata: {
+      name: String(draft.displayName || "").trim() || name,
+      authoring_key: name,
+    },
   };
   const parallelism = Math.min(
     MAX_PARALLELISM,
@@ -164,6 +178,8 @@ function repoPayload(draft, name) {
   };
   const ref = resolveRef(parsed.ref, draft.ref);
   if (ref) source.ref = ref;
+  const subfolder = normalizeSubfolder(draft.subfolder);
+  if (subfolder) source.subfolder = subfolder;
   if (draft.visibility === "private" && String(draft.installationId || "").trim()) {
     source.installation_id = String(draft.installationId).trim();
   }

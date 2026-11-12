@@ -39,10 +39,11 @@ from simulate.services.harness_agent_versions import (
     submitted_credentials,
 )
 from simulate.services.harness_credentials import AGENT_VERSION_FILE_KEY
-from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_provider import _environment_agent_maker, serialize_job
 from simulate.services.harness_versioning import run_warnings
 from simulate.services.hosted_harness import canonical_digest, create_hosted_job
 from simulate.services.hosted_harness_gateway import PlatformSecretResolver
+from simulate.tests.test_harness_connected_versions import _connect
 from simulate.tests.test_harness_provider import _v1_payload
 from tfc.telemetry.middleware import _mask_sensitive
 
@@ -515,7 +516,7 @@ class TestRequestedAgent:
         assert job.agent_version.agent_definition_id == definition_id
         assert "requested_agent_definition_id" not in job.payload["metadata"]
 
-    def test_a_customer_agent_is_not_bound_yet(
+    def test_a_customer_agent_is_bound_and_left_untouched(
         self, client, user, workspace, gates, caplog
     ):
         customer = AgentDefinition.no_workspace_objects.create(
@@ -542,11 +543,11 @@ class TestRequestedAgent:
         with caplog.at_level(logging.INFO):
             job = _job(_post(client, workspace, body))
 
-        assert job.agent_version.agent_definition_id != customer.id
+        assert job.agent_version.agent_definition_id == customer.id
         metadata = job.payload["metadata"]
-        assert metadata["requested_agent_definition_id"] == str(customer.id)
-        assert metadata["agent_definition_id"] != str(customer.id)
-        assert "reason=connected_unavailable" in caplog.text
+        assert metadata["agent_definition_id"] == str(customer.id)
+        assert metadata["agent_definition_owner"] == "connected"
+        assert "harness_environment_agent_bound" in caplog.text
         customer.refresh_from_db()
         assert (customer.description, customer.assistant_id) == ("theirs", "asst-1")
         assert before == list(
@@ -939,3 +940,112 @@ class TestSecretHygiene:
             user.organization, {}, {"VAPI_API_KEY": "val-vapi-1", "DB_URL": "val-db-1"}
         )
         _no_values(repr(submitted))
+
+
+class TestConnectedAgentCreationCheck:
+    CHECKED = CreationCheck(report={"checked": True}, required_variable_names=["DB"])
+
+    @pytest.fixture
+    def maker(self, monkeypatch):
+        calls = SimpleNamespace(asked=[], made=[])
+
+        def check(*args):
+            calls.asked.append(args)
+            return self.CHECKED
+
+        def ensure(_job, **kwargs):
+            calls.made.append(kwargs["check"])
+
+        monkeypatch.setattr(service, "check_creation_credentials", check)
+        monkeypatch.setattr(service, "ensure_environment_agent", ensure)
+
+        def make(organization, agent_definition_id, workspace, connector="auto"):
+            payload = {
+                "agent": {"secret_refs": {}, "connector": connector},
+                "metadata": {"agent_definition_id": agent_definition_id},
+            }
+            _environment_agent_maker(
+                organization, payload, {}, None, None, workspace=workspace
+            )(None)
+            return calls
+
+        return make
+
+    @pytest.fixture
+    def agent(self, user, workspace):
+        return AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=user.organization,
+            workspace=workspace,
+        )
+
+    def test_a_connected_agent_is_bound_without_a_creation_check(
+        self, maker, user, agent, workspace
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id), workspace)
+
+        assert calls.asked == []
+        assert calls.made == [CreationCheck(report={}, required_variable_names=[])]
+
+    def test_an_agent_an_environment_made_is_checked(
+        self, maker, user, agent, workspace
+    ):
+        version = _connect(agent)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=version
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload={**runtime.agent_payload, "definition_owner": "environment"}
+        )
+
+        calls = maker(user.organization, str(agent.id), workspace)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_another_workspaces_agent_is_checked(self, maker, user, agent):
+        from accounts.models.workspace import Workspace
+
+        _connect(agent)
+        elsewhere = Workspace.objects.create(
+            name="Elsewhere", organization=user.organization, created_by=user
+        )
+
+        calls = maker(user.organization, str(agent.id), elsewhere)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    def test_a_connector_the_agent_cannot_run_is_checked(
+        self, maker, user, agent, workspace
+    ):
+        _connect(agent)
+
+        calls = maker(user.organization, str(agent.id), workspace, connector="vapi")
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]
+
+    @pytest.mark.parametrize("case", ["not_uuid", "unknown", "other_organization"])
+    def test_a_creation_naming_no_agent_of_its_own_is_checked(
+        self, maker, user, agent, case
+    ):
+        from accounts.models import Organization
+
+        organization, agent_definition_id = {
+            "not_uuid": (user.organization, "not-a-uuid"),
+            "unknown": (user.organization, str(uuid.uuid4())),
+            "other_organization": (
+                Organization.objects.create(name="Other Org"),
+                str(agent.id),
+            ),
+        }[case]
+
+        calls = maker(organization, agent_definition_id, agent.workspace)
+
+        assert len(calls.asked) == 1
+        assert calls.made == [self.CHECKED]

@@ -3,7 +3,10 @@ import { CODE_UPLOAD_COPY } from "src/sections/simulate/environments/codeUpload.
 
 const ignoredDirectories = new Set([
   ".git",
+  ".mypy_cache",
   ".next",
+  ".pytest_cache",
+  ".ruff_cache",
   ".venv",
   "__pycache__",
   "build",
@@ -23,6 +26,35 @@ const safeEnvironmentTemplates = new Set([
 // part plus one `paths` field, so an over-large folder is rejected server-side
 // before anything is stored. Reject it here first, with a clear message, so the
 // picker never fires a doomed upload.
+const ENTRY_FILE_NAMES = [
+  "main.py",
+  "app.py",
+  "agent.py",
+  "server.py",
+  "bot.py",
+  "index.ts",
+  "main.ts",
+  "server.ts",
+  "index.js",
+  "main.js",
+  "server.js",
+];
+const CODE_FILE = /\.(py|ts|js|mjs)$/;
+const NOT_ENTRY_DIR = /(^|\/)(tests?|__tests__|examples?|docs?)\//;
+
+// The file that most likely starts the agent, or "" so the reader finds it;
+// never a lock file or README just because it sorts first.
+export function guessEntryFile(fileNames = []) {
+  const code = fileNames
+    .map(String)
+    .filter((path) => CODE_FILE.test(path) && !NOT_ENTRY_DIR.test(path));
+  for (const name of ENTRY_FILE_NAMES) {
+    const hit = code.find((path) => path.split("/").at(-1) === name);
+    if (hit) return hit;
+  }
+  return "";
+}
+
 export const MAX_UPLOAD_FILES = 1000;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 

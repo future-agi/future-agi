@@ -25,6 +25,7 @@ from simulate.services.agent_setup import (
     store_agent,
     store_setup_failure,
     stored_agent,
+    stored_agent_answer,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.middleware.workspace_context import set_workspace_context
@@ -238,6 +239,40 @@ def test_source_agent_round_trips(version):
 
     assert stored_agent(version.id, with_raw_setup=True) == agent
     assert stored_agent(version.id) == _without_extension(agent)
+
+
+@pytest.mark.django_db
+def test_the_page_sees_the_framework_and_folder_but_not_the_contract(version):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    agent = source_agent(
+        extension={
+            "contract": {"agent": "harbor_hotels", "api_key": "[redacted]"},
+            "framework": {"name": "other", "version": None, "label": "Haystack"},
+            "source": {"subfolder": "agents/harbor"},
+        }
+    )
+    store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.3.0")
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
+
+    assert shown["agent"]["extension"] == {
+        "framework": {"name": "other", "version": None, "label": "Haystack"},
+        "source": {"subfolder": "agents/harbor"},
+    }
+    assert "contract" not in str(shown)
+    assert "[redacted]" not in str(shown)
+
+
+@pytest.mark.django_db
+def test_a_document_read_before_frameworks_shows_neither(version):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
+
+    assert shown["agent"]["extension"] == {"framework": None, "source": None}
 
 
 @pytest.mark.django_db
@@ -663,12 +698,15 @@ def test_store_logs_the_outcome_without_the_document(version):
 
 
 @pytest.mark.django_db
-def test_versions_keep_no_part_of_the_agent(version):
+def test_versions_keep_no_part_of_the_agent_but_a_blank_prompt(version):
     snapshot = copy.deepcopy(AgentVersion.objects.get(id=version.id).configuration_snapshot)
 
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
-    assert AgentVersion.objects.get(id=version.id).configuration_snapshot == snapshot
+    assert AgentVersion.objects.get(id=version.id).configuration_snapshot == {
+        **snapshot,
+        "description": "You are the booking assistant for Harbor Hotels.",
+    }
 
 
 @pytest.fixture
@@ -888,3 +926,57 @@ def test_summary_ignores_workspace_context(organization, user, provider_list):
         summary = agent_summary(definition.id, agent_version_id=pinned)
         assert (summary.agent_version_id, summary.agent_stored) == (version.id, True)
         assert (summary.credential_id, summary.key_present) == (credential.id, True)
+
+
+PROMPT = "You are the booking assistant for Harbor Hotels."
+
+
+def _version_row(version):
+    return AgentVersion.no_workspace_objects.get(id=version.id)
+
+
+@pytest.mark.django_db
+def test_a_blank_version_takes_the_prompt_its_document_found(version):
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    stored = _version_row(version)
+    assert stored.description == PROMPT
+    assert stored.configuration_snapshot["description"] == PROMPT
+
+
+@pytest.mark.django_db
+def test_a_version_with_a_prompt_keeps_it(definition):
+    version = definition.create_version(
+        description="Our own prompt.", commit_message="first", status="active"
+    )
+    before = _version_row(version).configuration_snapshot
+
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+
+    stored = _version_row(version)
+    assert stored.description == "Our own prompt."
+    assert stored.configuration_snapshot == before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instructions", [None, "   "])
+def test_a_document_without_a_prompt_leaves_the_version_blank(version, instructions):
+    agent = source_agent()
+    agent["behaviour"][0]["instructions"] = instructions
+
+    store_agent(agent_version_id=version.id, agent=agent, sdk_version="0.2.3")
+
+    assert _version_row(version).description == ""
+
+
+@pytest.mark.django_db
+def test_the_same_document_again_leaves_the_prompt_alone(version):
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+    AgentVersion.no_workspace_objects.filter(id=version.id).update(description="")
+
+    again = store_agent(
+        agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+
+    assert again == "unchanged"
+    assert _version_row(version).description == ""

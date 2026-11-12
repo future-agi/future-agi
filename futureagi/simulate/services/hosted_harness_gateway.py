@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 import uuid
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -24,16 +23,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
-import jwt
-import requests
 import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
+from integrations.services.github_app import (
+    GitHubAppError,
+    installation_credential,
+)
 from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessConversation,
@@ -45,11 +47,17 @@ from simulate.models import (
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.agent_contracts import store_build_contract
+from simulate.services.code_archives import (
+    store_commit_archive,
+    stored_commit_archive,
+)
 from simulate.services.hosted_harness import (
     RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
+    platform_set_failure,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -77,6 +85,7 @@ from simulate.services.hosted_harness_diagnostics import (
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxProviderConfigurationError,
@@ -147,6 +156,12 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+# The raw contract a version was read into, handed to a build so it starts at the
+# world stage instead of reading the agent again.
+_SEED_CONTRACT_PATH = "/work/seed/contract.json"
+# The provider's definition of a Vapi or Retell agent, as the sandbox's
+# agent-learning-kit caches it; a rebuild onto a version reads that version's.
+_PROVIDER_PROFILE_PATH = "/work/provider-import-profile.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -678,83 +693,22 @@ def _extend_command_for(
 
 
 class GitHubAppTokenProvider:
-    def __init__(self, *, app_id: str, private_key: str) -> None:
-        self.app_id = app_id
-        self.private_key = private_key
-
     @classmethod
     def from_settings(cls) -> GitHubAppTokenProvider:
-        app_id = getattr(settings, "GITHUB_APP_ID", "")
-        private_key = getattr(settings, "GITHUB_APP_PRIVATE_KEY", "").replace(
-            "\\n", "\n"
-        )
-        if not app_id or not private_key:
-            raise HostedHarnessError(
-                "github_app_not_configured",
-                "GitHub App credentials are not configured",
-                status_code=503,
-                retryable=True,
-            )
-        return cls(app_id=str(app_id), private_key=private_key)
-
-    def installation_token(self, installation_id: str) -> str:
-        now = int(time.time())
-        app_jwt = jwt.encode(
-            {"iat": now - 30, "exp": now + 540, "iss": self.app_id},
-            self.private_key,
-            algorithm="RS256",
-        )
-        response = requests.post(
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {app_jwt}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 201:
-            raise HostedHarnessError(
-                "github_installation_token_failed",
-                f"GitHub rejected installation {installation_id}",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
-        token = response.json().get("token")
-        if not token:
-            raise HostedHarnessError(
-                "github_installation_token_missing",
-                "GitHub returned no installation token",
-                status_code=502,
-                retryable=True,
-            )
-        return str(token)
-
-    def revoke(self, token: str) -> None:
-        response = requests.delete(
-            "https://api.github.com/installation/token",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 204:
-            raise HostedHarnessError(
-                "github_installation_token_revoke_failed",
-                "GitHub installation token could not be revoked",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
+        return cls()
 
     @contextmanager
     def credential(self, installation_id: str):
-        token = self.installation_token(installation_id)
         try:
-            yield token
-        finally:
-            self.revoke(token)
+            with installation_credential(installation_id) as token:
+                yield token
+        except GitHubAppError as exc:
+            raise HostedHarnessError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+                retryable=exc.retryable,
+            ) from exc
 
 
 # Dependency manifests and code are where a voice framework shows up; prose (README, docs)
@@ -806,8 +760,23 @@ _VERTEX_ADC_SIGNATURES = (
 TARGET_GOOGLE_ADC_ALIAS = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
 
 
-def detect_source_credentials(archive: bytes) -> tuple[list[str], list[str], int]:
-    """Return voice connectors, required credential-file aliases, and files read."""
+def _in_agent_reach(member_name: str, subfolder: str | None) -> bool:
+    folder = (subfolder or "").strip("/")
+    if not folder:
+        return True
+    path = member_name.removeprefix("./").removeprefix("source/")
+    if path.startswith(f"{folder}/"):
+        return True
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    parts = folder.split("/")
+    return parent in {"/".join(parts[:depth]) for depth in range(len(parts))}
+
+
+def detect_source_credentials(
+    archive: bytes, *, subfolder: str | None = None
+) -> tuple[list[str], list[str], int]:
+    """Return voice connectors, required credential-file aliases, and files read,
+    from the agent's folder and the files directly above it when ``subfolder`` is set."""
     found: set[str] = set()
     required_files: set[str] = set()
     scanned = 0
@@ -815,6 +784,8 @@ def detect_source_credentials(archive: bytes) -> tuple[list[str], list[str], int
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
             for member in tar:
                 if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
+                    continue
+                if not _in_agent_reach(member.name, subfolder):
                     continue
                 path = "/" + member.name.lower()
                 if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
@@ -992,73 +963,112 @@ def github_checkout(
     return environment
 
 
+_SOURCE_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SOURCE_REF = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def acquire_source_archive(
+    organization_id: Any,
+    workspace_id: Any,
+    source: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[bytes, str]:
+    """The ``source/``-rooted tar.gz of a job's or a version's source, and the commit
+    it stands at (empty for an upload). A GitHub commit the workspace already stored
+    is read from its archive; any other is cloned once and stored for it."""
+    kind = source["kind"]
+    if kind in {"remote", "provider"}:
+        return _empty_source_archive(), ""
+    if kind == "archive":
+        return (
+            load_source_archive(organization_id, source.get("archive_artifact_id")),
+            "",
+        )
+    if kind != "github":
+        raise HostedHarnessError(
+            "archive_source_not_configured",
+            "archive source acquisition requires a configured archive registry",
+            status_code=422,
+        )
+    repository = str(source.get("repository") or "")
+    ref = str(source.get("ref") or "HEAD")
+    if not _SOURCE_REPOSITORY.fullmatch(repository):
+        raise HostedHarnessError(
+            "github_repository_invalid", "invalid GitHub repository"
+        )
+    if ".." in ref or not _SOURCE_REF.fullmatch(ref):
+        raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
+    pinned_commit = str(source.get("commit_sha") or "").lower()
+    if pinned_commit:
+        stored = stored_commit_archive(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            repository=repository,
+            commit_sha=pinned_commit,
+        )
+        if stored is not None:
+            return stored, pinned_commit
+    credential = nullcontext("")
+    if source.get("visibility") == "private":
+        installation_id = str(source.get("installation_id") or "")
+        credential = GitHubAppTokenProvider.from_settings().credential(installation_id)
+    with (
+        credential as token,
+        tempfile.TemporaryDirectory(prefix=f"harness-source-{label}-") as temp,
+    ):
+        checkout = Path(temp) / "source"
+        github_checkout(
+            repository, str(source.get("commit_sha") or ref), checkout, token
+        )
+        completed = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        commit_sha = completed.stdout.strip().lower()
+        expected = source.get("commit_sha")
+        if expected and commit_sha != str(expected).lower():
+            raise HostedHarnessError(
+                "github_commit_mismatch",
+                "resolved checkout does not match commit_sha",
+                status_code=409,
+            )
+        shutil.rmtree(checkout / ".git", ignore_errors=True)
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+            tar.add(checkout, arcname="source", recursive=True)
+        max_bytes = getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024)
+        if archive.tell() > max_bytes:
+            raise HostedHarnessError(
+                "source_archive_too_large",
+                "compressed source exceeds the hosted source limit",
+                status_code=413,
+            )
+        body = archive.getvalue()
+        store_commit_archive(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            repository=repository,
+            commit_sha=commit_sha,
+            body=body,
+        )
+        return body, commit_sha
+
+
 class HostedSourceAcquirer:
-    _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-    _REF = re.compile(r"^[A-Za-z0-9._/-]+$")
+    _REPOSITORY = _SOURCE_REPOSITORY
+    _REF = _SOURCE_REF
 
     def acquire(self, job: HostedHarnessJob) -> tuple[bytes, str]:
-        source = job.payload["source"]
-        if source["kind"] in {"remote", "provider"}:
-            return _empty_source_archive(), ""
-        if source["kind"] == "archive":
-            return _load_source_archive(job), ""
-        if source["kind"] != "github":
-            raise HostedHarnessError(
-                "archive_source_not_configured",
-                "archive source acquisition requires a configured archive registry",
-                status_code=422,
-            )
-        repository = str(source.get("repository") or "")
-        ref = str(source.get("ref") or "HEAD")
-        if not self._REPOSITORY.fullmatch(repository):
-            raise HostedHarnessError(
-                "github_repository_invalid", "invalid GitHub repository"
-            )
-        if ".." in ref or not self._REF.fullmatch(ref):
-            raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
-        credential = nullcontext("")
-        if source.get("visibility") == "private":
-            installation_id = str(source.get("installation_id") or "")
-            credential = GitHubAppTokenProvider.from_settings().credential(
-                installation_id
-            )
-        with (
-            credential as token,
-            tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
-        ):
-            checkout = Path(temp) / "source"
-            github_checkout(
-                repository, str(source.get("commit_sha") or ref), checkout, token
-            )
-            completed = subprocess.run(
-                ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=True,
-            )
-            commit_sha = completed.stdout.strip().lower()
-            expected = source.get("commit_sha")
-            if expected and commit_sha != str(expected).lower():
-                raise HostedHarnessError(
-                    "github_commit_mismatch",
-                    "resolved checkout does not match commit_sha",
-                    status_code=409,
-                )
-            shutil.rmtree(checkout / ".git", ignore_errors=True)
-            archive = io.BytesIO()
-            with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-                tar.add(checkout, arcname="source", recursive=True)
-            max_bytes = getattr(
-                settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024
-            )
-            if archive.tell() > max_bytes:
-                raise HostedHarnessError(
-                    "source_archive_too_large",
-                    "compressed source exceeds the hosted source limit",
-                    status_code=413,
-                )
-            return archive.getvalue(), commit_sha
+        return acquire_source_archive(
+            job.organization_id,
+            job.workspace_id,
+            job.payload["source"],
+            label=str(job.id),
+        )
 
 
 def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:
@@ -2090,9 +2100,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2467,7 +2479,6 @@ class HostedHarnessGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         _mark_stage(job, "acquiring_source")
@@ -2497,6 +2508,20 @@ class HostedHarnessGateway:
         if source["kind"] == "github":
             source["commit_sha"] = commit_sha
         payload["source"] = source
+        # A fresh build from a version already read starts from that reading; only the
+        # conversation's harness takes one.
+        seed_contract = (
+            _seed_contract_for(job)
+            if authoring_archive is None
+            and not (payload.get("metadata") or {}).get("simulation_only")
+            and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+            else None
+        )
+        if seed_contract is not None:
+            payload["metadata"] = {
+                **(payload.get("metadata") or {}),
+                "seeded_contract": True,
+            }
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
@@ -2733,6 +2758,8 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            if seed_contract is not None:
+                sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -2756,7 +2783,8 @@ class HostedHarnessGateway:
                 f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else "")
-                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else ""),
+                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else "")
+                + (f" {_SEED_CONTRACT_PATH}" if seed_contract is not None else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -2842,6 +2870,11 @@ class HostedHarnessGateway:
                             else f"--adjustments {_ADJUSTMENTS_PATH} "
                         )
                         + provider_profile_args
+                        + (
+                            f"--seed-contract {_SEED_CONTRACT_PATH} "
+                            if seed_contract is not None
+                            else ""
+                        )
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
                         + bundle_command
@@ -3383,6 +3416,11 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            # A rebuild onto a provider agent's version sees that version's
+            # definition, not whatever the build fetched.
+            profile = _provider_profile_bytes(agent_version)
+            if profile is not None:
+                sandbox.fs.upload_file(profile, _PROVIDER_PROFILE_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -3550,6 +3588,8 @@ class HostedHarnessGateway:
         if capture is not None:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
+        if command.exit_code:
+            observation["refusal_file"] = read_failure_file(sandbox)
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
             # snapshot so an operator can diagnose a run from either surface.
@@ -3926,6 +3966,7 @@ class HostedHarnessGateway:
                     proved_since=getattr(attempt, "created_at", None),
                 )
                 job.refresh_from_db()
+                store_build_contract(job, archive=body)
             except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
@@ -4431,7 +4472,6 @@ class HostedHarnessGateway:
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
-
         # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
         # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
@@ -4584,7 +4624,35 @@ class HostedHarnessGateway:
                 ]
             )
         retry_pending = False
-        if exit_code == 3:
+        refusal = None
+        # Exit 3 is the chain fenced by a newer attempt: never a failure of its own.
+        if exit_code not in (0, 3) and not attempt.terminal_event_received:
+            refusal = refusal_failure(observation)
+            if refusal is None and observation.get("refusal_file") is not None:
+                logger.warning(
+                    "refusal_file_invalid attempt=%s exit_code=%s",
+                    attempt.id,
+                    exit_code,
+                )
+        if refusal is not None:
+            kept = platform_set_failure(attempt)
+            attempt.terminal_stage = "failed"
+            attempt.terminal_failure = kept or refusal
+            attempt.state = HostedHarnessAttempt.State.FAILED
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
+            retry_pending = (
+                kept is None
+                and refusal["retryable"]
+                and self._should_retry(attempt, str(refusal["domain"]))
+            )
+        elif exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
         elif exit_code == 4 and (
@@ -4642,19 +4710,24 @@ class HostedHarnessGateway:
                 else f"guest entrypoint exited {exit_code}"
             )
             cause = guest_failure_cause(guest_logs)
+            kept = platform_set_failure(attempt)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
+            attempt.terminal_failure = kept or {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment"
+                    if authoring_failed
+                    else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed"
+                    if authoring_failed
+                    else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
@@ -4670,10 +4743,16 @@ class HostedHarnessGateway:
                     "updated_at",
                 ]
             )
-            retry_pending = not authoring_invalid and self._should_retry(
-                attempt, "infrastructure"
+            # A failure the platform set is final: the same build would fail again.
+            retry_pending = (
+                kept is None
+                and not authoring_invalid
+                and self._should_retry(attempt, "infrastructure")
             )
-            if exit_code == 78:
+            if (
+                exit_code == 78
+                and observation.get("refusal_file") != FAILURE_FILE_UNREADABLE
+            ):
                 from simulate.services.harness_versioning.assembly import mark_failed
 
                 try:
@@ -4810,7 +4889,6 @@ class HostedHarnessGateway:
         retry_pending: bool = False,
         after_provider_cleanup: Callable[[], Any] | None = None,
     ) -> HostedHarnessJob:
-
         try:
             sandbox = self.client.get(
                 str(attempt.provider_ref),
@@ -4876,6 +4954,43 @@ def _safe_source_member(raw_path: str) -> str:
             status_code=400,
         )
     return candidate
+
+
+def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
+    """The raw contract of the version the build is tied to, when the sandbox's
+    agent-learning-kit can start from one; None otherwise."""
+    if not getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False):
+        return None
+    from simulate.services.agent_contracts import (
+        SEED_MAX_BYTES,
+        contract_bytes,
+        stored_version_contract,
+    )
+    from simulate.services.hosted_harness import frozen_build_pin
+
+    pinned = frozen_build_pin(job)
+    version_id = pinned.id if pinned is not None else job.agent_version_id
+    if version_id is None:
+        return None
+    contract = stored_version_contract(version_id)
+    if not contract:
+        return None
+    body = contract_bytes(contract)
+    if len(body) > SEED_MAX_BYTES:
+        structlog_logger.info(
+            "hosted_build_not_seeded",
+            job_id=str(job.id),
+            agent_version_id=str(version_id),
+            reason="contract_too_large",
+            size_bytes=len(body),
+        )
+        return None
+    structlog_logger.info(
+        "hosted_build_seeded",
+        job_id=str(job.id),
+        agent_version_id=str(version_id),
+    )
+    return body
 
 
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
@@ -5093,9 +5208,20 @@ def authored_contract(body: bytes) -> dict[str, Any]:
     """The ``contract.json`` inside a frozen authoring archive, or ``{}`` when unreadable."""
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            member = archive.extractfile("contract.json")
-            contract = json.load(member) if member is not None else {}
-    except (KeyError, tarfile.TarError, json.JSONDecodeError, OSError, TypeError):
+            member = next(
+                (
+                    entry
+                    for entry in archive.getmembers()
+                    if entry.isfile()
+                    and Path(entry.name).name == "contract.json"
+                    and len([part for part in Path(entry.name).parts if part != "."])
+                    == 1
+                ),
+                None,
+            )
+            handle = archive.extractfile(member) if member is not None else None
+            contract = json.load(handle) if handle is not None else {}
+    except (tarfile.TarError, json.JSONDecodeError, OSError, TypeError):
         return {}
     return contract if isinstance(contract, dict) else {}
 
@@ -5128,8 +5254,12 @@ def _provider_import_authoring_material(
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "")
-    inspect_connect_only_chat = mode == "connect_only" and connector == "retell_chat"
-    if mode != "provider_import" and not inspect_connect_only_chat:
+    inspect_connect_only = mode == "connect_only" and connector in {
+        "vapi",
+        "retell",
+        "retell_chat",
+    }
+    if mode != "provider_import" and not inspect_connect_only:
         return {}, connector
     secret_name = {
         "vapi": "VAPI_API_KEY",
@@ -5217,7 +5347,10 @@ def prepare_dispatch_payload(
         agent["config"] = config
         dispatched["agent"] = agent
     if job is not None:
-        offered = _offered_eval_catalogue(job)
+        offered = _offered_eval_catalogue(
+            job,
+            seeded=bool((payload.get("metadata") or {}).get("seeded_contract")),
+        )
         if offered:
             # Offered, not required: a guest that ignores it selects nothing.
             metadata = dict(dispatched.get("metadata") or {})
@@ -5226,8 +5359,11 @@ def prepare_dispatch_payload(
     return dispatched
 
 
-def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
+def _offered_eval_catalogue(job: Any, *, seeded: bool = False) -> list[dict[str, Any]]:
     """The platform evals this job may select, filtered to its tenant and, once a contract exists, its modality.
+
+    A build seeded from a reading is offered what the reading was, the list for no
+    contract yet, or the seed no longer matches its job and the agent is read again.
 
     The union-and-`any` logic moved into `harness_evals.briefing_evals`, which
     is the one place that knows the list format. What stays here is the job:
@@ -5237,7 +5373,11 @@ def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
     from simulate.services.harness_evals import briefing_evals
 
     try:
-        return briefing_evals(job.organization, job.workspace, _authored_modality(job))
+        return briefing_evals(
+            job.organization,
+            job.workspace,
+            "" if seeded else _authored_modality(job),
+        )
     except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
         structlog_logger.exception(
             "harness_eval_catalogue_failed",
@@ -5301,9 +5441,49 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
         }
     if isinstance(value, list):
         return [_secret_safe(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     return str(value)
+
+
+_REFUSAL_FILE = "/work/authoring/failure.json"
+_REFUSAL_FILE_INVALID = "invalid"
+FAILURE_FILE_UNREADABLE = "unreadable"
+
+
+def read_failure_file(sandbox, path: str = _REFUSAL_FILE) -> Any:
+    """The failure the guest wrote before exiting: None when absent, the parsed object,
+    invalid, or unreadable when the read itself failed."""
+    try:
+        body = sandbox.fs.download_file(path, _PROGRESS_FILE_TIMEOUT_SECONDS)
+    except (SandboxNotFoundError, SandboxFileNotFoundError, FileNotFoundError):
+        return None
+    except Exception:  # noqa: BLE001 - unknown, so never read as "no file"
+        logger.warning("refusal_file_unreadable path=%s", path, exc_info=True)
+        return FAILURE_FILE_UNREADABLE
+    if not body:
+        return None
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _REFUSAL_FILE_INVALID
+
+
+def refusal_failure(observation: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The guest's declared failure, validated; None when absent or malformed."""
+    from simulate.serializers.hosted_harness import HarnessFailureSerializer
+
+    value = observation.get("refusal_file")
+    if not isinstance(value, dict):
+        return None
+    serializer = HarnessFailureSerializer(data=value)
+    if not serializer.is_valid():
+        return None
+    retryable = value.get("retryable", False)
+    details = value.get("details", {})
+    if not isinstance(retryable, bool) or not isinstance(details, dict):
+        return None
+    return {**serializer.validated_data, "retryable": retryable, "details": details}
 
 
 def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
@@ -5755,6 +5935,84 @@ def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
         ),
         None,
     )
+
+
+def _provider_profile_bytes(agent_version: Any) -> bytes | None:
+    if agent_version is None:
+        return None
+    from simulate.services.provider_profile import profile_bytes_for_version
+
+    return profile_bytes_for_version(agent_version)
+
+
+def _live_sandbox_refs(job: HostedHarnessJob) -> set[str]:
+    """Every live authoring or chat sandbox of the job's environment."""
+    environment = job.environment or job
+    job_ids = [
+        environment.id,
+        *environment.simulation_runs.values_list("id", flat=True),
+    ]
+    refs = set(
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation__job_id__in=job_ids,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).values_list("provider_ref", flat=True)
+    )
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        )
+        .exclude(provider_ref__isnull=True)
+        .exclude(
+            state__in=(
+                HostedHarnessAttempt.State.FAILED,
+                HostedHarnessAttempt.State.SUPERSEDED,
+                HostedHarnessAttempt.State.CLEANING_UP,
+            )
+        )
+        .first()
+    )
+    if attempt is not None and attempt.provider_ref:
+        refs.add(attempt.provider_ref)
+    return {str(ref) for ref in refs if ref}
+
+
+def push_provider_profile_into_live_sandbox(
+    job: HostedHarnessJob, agent_version: Any
+) -> bool:
+    """Put a version's provider definition into every live workspace of the
+    environment, so a rebuild onto it reads the agent as that version holds it."""
+    profile = _provider_profile_bytes(agent_version)
+    if profile is None:
+        return False
+    refs = _live_sandbox_refs(job)
+    if not refs:
+        return False
+    client = HostedHarnessGateway().client
+    delivered = False
+    for ref in refs:
+        try:
+            sandbox = client.get(ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS)
+            sandbox.fs.upload_file(profile, _PROVIDER_PROFILE_PATH)
+            delivered = True
+        except Exception:  # noqa: BLE001 - a stopped guest is the ordinary case
+            logger.warning(
+                "provider_profile_not_delivered job=%s provider_ref=%s",
+                job.id,
+                ref,
+                exc_info=True,
+            )
+    logger.info(
+        "provider_profile_pushed job=%s agent_version=%s sandboxes=%d delivered=%s",
+        job.id,
+        getattr(agent_version, "id", None),
+        len(refs),
+        delivered,
+    )
+    return delivered
 
 
 def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
@@ -6327,6 +6585,7 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
         data=io.BytesIO(body),
         length=len(body),
         content_type="application/gzip",
+        metadata={"folder-name": quote((name or "uploaded-agent")[:255])},
     )
     return {
         "source_id": source_id,
@@ -6336,15 +6595,36 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
     }
 
 
+def stored_upload_name(organization_id: Any, source_id: Any) -> str | None:
+    """The folder name an upload was stored with; None for an older upload or one
+    that can't be read."""
+    try:
+        stat = get_storage_client().stat_object(
+            UPLOAD_BUCKET_NAME, _source_object_key(organization_id, str(source_id))
+        )
+    except (S3Error, HTTPError):
+        return None
+    for key, value in (getattr(stat, "metadata", None) or {}).items():
+        if str(key).lower() in ("x-amz-meta-folder-name", "folder-name"):
+            return unquote(str(value)) or None
+    return None
+
+
 def _load_source_archive(job: HostedHarnessJob) -> bytes:
-    source_id = str(job.payload["source"].get("archive_artifact_id") or "")
+    return load_source_archive(
+        job.organization_id, job.payload["source"].get("archive_artifact_id")
+    )
+
+
+def load_source_archive(organization_id: Any, archive_artifact_id: Any) -> bytes:
+    source_id = str(archive_artifact_id or "")
     if not source_id:
         raise HostedHarnessError(
             "archive_artifact_missing",
             "archive source requires archive_artifact_id",
             status_code=422,
         )
-    key = _source_object_key(job.organization_id, source_id)
+    key = _source_object_key(organization_id, source_id)
     response = None
     try:
         response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)

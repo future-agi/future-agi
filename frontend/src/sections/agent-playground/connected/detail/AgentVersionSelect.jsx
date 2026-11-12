@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import React from "react";
-import { Box, MenuItem, Select, Skeleton } from "@mui/material";
+import { Box, MenuItem, Select } from "@mui/material";
 import { MONO, ago } from "./format";
 import usePinnedVersions from "./usePinnedVersions";
 import { LineSkeleton } from "./bits";
@@ -51,9 +51,9 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       renderValue={() => {
         if (!selected) return "";
-        return selected.isActive
-          ? `${selected.label} · active`
-          : `Viewing ${selected.label}`;
+        if (selected.isActive) return `${selected.label} · in production`;
+        if (selected.isDraft) return `${selected.label} · draft`;
+        return `Viewing ${selected.label}`;
       }}
       sx={{ minWidth: 120 }}
       // Long histories scroll inside the menu instead of running off the page.
@@ -72,7 +72,10 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
             {v.label}
           </Box>
           <Box component="span" sx={{ color: "text.subtitle" }}>
-            {[v.isActive ? "active" : null, ago(v.createdAt)]
+            {[
+              v.isActive ? "in production" : v.isDraft ? "draft" : null,
+              ago(v.createdAt),
+            ]
               .filter(Boolean)
               .join(" · ")}
           </Box>

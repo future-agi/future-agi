@@ -12512,6 +12512,20 @@ export const IntegrationsConnectionsListQueryParams = zod.object({
     .min(1)
     .max(integrationsConnectionsListQueryPageSizeMax)
     .default(integrationsConnectionsListQueryPageSizeDefault),
+  platform: zod
+    .enum([
+      "langfuse",
+      "datadog",
+      "posthog",
+      "pagerduty",
+      "mixpanel",
+      "cloud_storage",
+      "message_queue",
+      "linear",
+      "slack",
+      "github",
+    ])
+    .optional(),
 });
 
 export const integrationsConnectionsListResponseStatusDefault = true;
@@ -12558,6 +12572,7 @@ export const IntegrationsConnectionsListResponse = zod.object({
           "message_queue",
           "linear",
           "slack",
+          "github",
         ]),
         display_name: zod
           .string()
@@ -12662,6 +12677,7 @@ export const IntegrationsConnectionsCreateBody = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   host_url: zod
     .string()
@@ -12746,6 +12762,7 @@ export const IntegrationsConnectionsValidateCredentialsBody = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   host_url: zod
     .string()
@@ -12808,6 +12825,63 @@ export const IntegrationsConnectionsValidateCredentialsResponse = zod.object({
       .optional(),
   }),
 });
+
+export const IntegrationsConnectionsRepositoriesListParams = zod.object({
+  connection_id: zod.string(),
+});
+
+export const integrationsConnectionsRepositoriesListQueryQDefault = ``;
+export const integrationsConnectionsRepositoriesListQueryQMax = 100;
+
+export const integrationsConnectionsRepositoriesListQueryPageDefault = 1;
+export const integrationsConnectionsRepositoriesListQueryPageMax = 200;
+
+export const IntegrationsConnectionsRepositoriesListQueryParams = zod.object({
+  q: zod
+    .string()
+    .max(integrationsConnectionsRepositoriesListQueryQMax)
+    .default(integrationsConnectionsRepositoriesListQueryQDefault),
+  page: zod
+    .number()
+    .min(1)
+    .max(integrationsConnectionsRepositoriesListQueryPageMax)
+    .default(integrationsConnectionsRepositoriesListQueryPageDefault),
+});
+
+export const IntegrationsConnectionsRepositoriesListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    repositories: zod.array(
+      zod.object({
+        id: zod.number(),
+        full_name: zod.string().min(1),
+        default_branch: zod.string(),
+        private: zod.boolean(),
+      }),
+    ),
+    next_page: zod.number(),
+  }),
+});
+
+export const IntegrationsConnectionsRepositoriesBranchesListParams = zod.object(
+  {
+    connection_id: zod.string(),
+    repository_id: zod.string(),
+  },
+);
+
+export const IntegrationsConnectionsRepositoriesBranchesListResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      branches: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          is_default: zod.boolean(),
+        }),
+      ),
+    }),
+  });
 
 export const IntegrationsConnectionsSlackChannelsListParams = zod.object({
   connection_id: zod.string(),
@@ -12874,6 +12948,7 @@ export const IntegrationsConnectionsReadResponse = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   display_name: zod
     .string()
@@ -13010,6 +13085,7 @@ export const IntegrationsConnectionsUpdateResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -13147,6 +13223,7 @@ export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -13270,6 +13347,7 @@ export const IntegrationsConnectionsPauseResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -13368,6 +13446,7 @@ export const IntegrationsConnectionsResumeResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -13439,6 +13518,55 @@ export const IntegrationsConnectionsSyncNowResponse = zod.object({
     .default(integrationsConnectionsSyncNowResponseStatusDefault),
   result: zod.object({
     message: zod.string().min(1),
+  }),
+});
+
+export const IntegrationsGithubInstallCreateBody = zod.object({});
+
+export const IntegrationsGithubInstallCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    install_url: zod.string().url().min(1),
+  }),
+});
+
+/**
+ * The signed-in user finishes the install GitHub redirected them back from.
+ */
+export const integrationsGithubInstallCompleteCreateBodyStateMax = 2048;
+
+export const integrationsGithubInstallCompleteCreateBodySetupActionDefault = ``;
+export const integrationsGithubInstallCompleteCreateBodySetupActionMax = 32;
+
+export const integrationsGithubInstallCompleteCreateBodyCodeDefault = ``;
+export const integrationsGithubInstallCompleteCreateBodyCodeMax = 255;
+
+export const integrationsGithubInstallCompleteCreateBodyInstallationIdDefault = ``;
+export const integrationsGithubInstallCompleteCreateBodyInstallationIdMax = 32;
+
+export const IntegrationsGithubInstallCompleteCreateBody = zod.object({
+  state: zod
+    .string()
+    .min(1)
+    .max(integrationsGithubInstallCompleteCreateBodyStateMax),
+  setup_action: zod
+    .string()
+    .max(integrationsGithubInstallCompleteCreateBodySetupActionMax)
+    .default(integrationsGithubInstallCompleteCreateBodySetupActionDefault),
+  code: zod
+    .string()
+    .max(integrationsGithubInstallCompleteCreateBodyCodeMax)
+    .default(integrationsGithubInstallCompleteCreateBodyCodeDefault),
+  installation_id: zod
+    .string()
+    .max(integrationsGithubInstallCompleteCreateBodyInstallationIdMax)
+    .default(integrationsGithubInstallCompleteCreateBodyInstallationIdDefault),
+});
+
+export const IntegrationsGithubInstallCompleteCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    outcome: zod.enum(["connected", "requested", "already_connected"]),
   }),
 });
 
@@ -33486,6 +33614,12 @@ export const SimulateAgentDefinitionsListResponseItem = zod.object({
       }),
     )
     .optional(),
+  observe_project: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
 });
 export const SimulateAgentDefinitionsListResponse = zod.array(
   SimulateAgentDefinitionsListResponseItem,
@@ -33721,6 +33855,52 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   source: zod.string().min(1).optional(),
   environment_count: zod.number().optional(),
   observability_enabled: zod.boolean().optional(),
+  observe_project: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
+  connected: zod.boolean().optional(),
+  managed_by: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
+  found_check: zod
+    .object({
+      required: zod.boolean(),
+      done_at: zod.string().datetime({ offset: true }),
+    })
+    .optional(),
+});
+
+/**
+ * GET /agent-definitions/{id}/build-preflight/?version_id=.
+ */
+export const SimulateAgentDefinitionsBuildPreflightListParams = zod.object({
+  agent_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsBuildPreflightListQueryParams = zod.object(
+  {
+    version_id: zod.string().uuid().optional(),
+  },
+);
+
+export const SimulateAgentDefinitionsBuildPreflightListResponse = zod.object({
+  ok: zod.boolean().optional(),
+  version_id: zod.string().min(1).optional(),
+  checks: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1).optional(),
+        status: zod.enum(["ok", "blocked"]).optional(),
+        message: zod.string().min(1).optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -33749,6 +33929,7 @@ export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   observability_enabled: zod.boolean().optional(),
+  production_project_id: zod.string().uuid().optional(),
   agent_name: zod
     .string()
     .min(1)
@@ -33937,6 +34118,20 @@ export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
     .optional(),
 });
 
+/**
+ * POST /agent-definitions/{id}/found-check/: what the first reading found is
+confirmed; the agent can be built from now.
+ */
+export const SimulateAgentDefinitionsFoundCheckCreateParams = zod.object({
+  agent_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsFoundCheckCreateBody = zod.object({});
+
+export const SimulateAgentDefinitionsFoundCheckCreateResponse = zod.object({
+  found_checked_at: zod.string().datetime({ offset: true }).optional(),
+});
+
 export const SimulateAgentDefinitionsRunsListParams = zod.object({
   agent_id: zod.string(),
 });
@@ -33970,6 +34165,11 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
           id: zod.string().uuid(),
           version_number: zod.number(),
         }),
+        environment_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        partial: zod.boolean(),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
@@ -34022,11 +34222,173 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
     .describe("Commit message for the agent version"),
   is_active: zod.string().optional(),
   is_latest: zod.string().optional(),
+  in_production: zod.boolean().optional(),
+  origin: zod.string().optional(),
+  preflight_status: zod.string().optional(),
+  check_step: zod
+    .enum(["snapshot", "reading", "check"])
+    .optional()
+    .describe(
+      "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+    ),
+  check_failure: zod
+    .object({
+      code: zod.string().min(1),
+      message: zod.string(),
+      retryable: zod.boolean(),
+    })
+    .optional()
+    .describe("Why a failed check failed, when the version carries a reason."),
+  environments_count: zod.number().optional(),
+  source: zod
+    .object({
+      kind: zod.string().min(1),
+      repository: zod.string().min(1).optional(),
+      ref: zod.string().min(1).optional(),
+      commit_sha: zod.string().min(1).optional(),
+      subfolder: zod.string().min(1).optional(),
+      archive_artifact_id: zod.string().min(1).optional(),
+    })
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
 });
 export const SimulateAgentDefinitionsVersionsListResponse = zod.array(
   SimulateAgentDefinitionsVersionsListResponseItem,
 );
+
+/**
+ * POST /agent-definitions/{id}/versions/change/: a new version by kind.
+ */
+export const SimulateAgentDefinitionsVersionsChangeCreateParams = zod.object({
+  agent_id: zod.string(),
+});
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodyPromptMax = 65536;
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodySettingsPhoneNumberMax = 512;
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodySettingsAgentNameMax = 512;
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodySecretValuesMaxOne = 65536;
+
+export const SimulateAgentDefinitionsVersionsChangeCreateBody = zod.object({
+  kind: zod.enum(["sync", "upload", "credentials", "manual"]),
+  archive_artifact_id: zod.string().uuid().optional(),
+  prompt: zod
+    .string()
+    .max(simulateAgentDefinitionsVersionsChangeCreateBodyPromptMax)
+    .optional(),
+  settings: zod
+    .object({
+      phone_number: zod
+        .string()
+        .min(1)
+        .max(
+          simulateAgentDefinitionsVersionsChangeCreateBodySettingsPhoneNumberMax,
+        )
+        .optional(),
+      agent_name: zod
+        .string()
+        .min(1)
+        .max(
+          simulateAgentDefinitionsVersionsChangeCreateBodySettingsAgentNameMax,
+        )
+        .optional(),
+      target_speaks_first: zod.boolean().optional(),
+    })
+    .optional(),
+  secret_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateAgentDefinitionsVersionsChangeCreateBodySecretValuesMaxOne,
+        ),
+    )
+    .optional(),
+});
+
+export const SimulateAgentDefinitionsVersionsChangeCreateResponse = zod.object({
+  version: zod
+    .object({
+      id: zod.string().uuid().optional(),
+      version_number: zod
+        .number()
+        .optional()
+        .describe("Version number of the agent"),
+      version_name: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("Human-readable version name (e.g., 'v1.2.3')"),
+      version_name_display: zod.string().optional(),
+      status: zod
+        .enum(["draft", "active", "archived", "deprecated"])
+        .optional()
+        .describe("Current status of this version"),
+      status_display: zod.string().min(1).optional(),
+      score: zod
+        .string()
+        .optional()
+        .describe("Performance score (0.0 to 10.0)"),
+      test_count: zod
+        .number()
+        .optional()
+        .describe("Number of tests run for this version"),
+      pass_rate: zod.string().optional().describe("Test pass rate percentage"),
+      description: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("Description of changes in this version"),
+      commit_message: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("Commit message for the agent version"),
+      release_notes: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("Detailed release notes for this version"),
+      agent_definition: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("Parent agent definition"),
+      organization: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("Organization this version belongs to"),
+      configuration_snapshot: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Snapshot of agent configuration at this version"),
+      is_active: zod.string().optional(),
+      is_latest: zod.string().optional(),
+      agent_kind: zod.string().min(1).optional(),
+      api_key: zod.string().min(1).optional(),
+      source: zod
+        .object({
+          kind: zod.string().min(1),
+          repository: zod.string().min(1).optional(),
+          ref: zod.string().min(1).optional(),
+          commit_sha: zod.string().min(1).optional(),
+          subfolder: zod.string().min(1).optional(),
+          archive_artifact_id: zod.string().min(1).optional(),
+        })
+        .optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      updated_at: zod.string().datetime({ offset: true }).optional(),
+    })
+    .optional(),
+  created: zod.boolean().optional(),
+  up_to_date: zod.boolean().optional(),
+});
 
 /**
  * Create a new version of an agent definition.
@@ -34166,6 +34528,16 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   is_latest: zod.string().optional(),
   agent_kind: zod.string().min(1).optional(),
   api_key: zod.string().min(1).optional(),
+  source: zod
+    .object({
+      kind: zod.string().min(1),
+      repository: zod.string().min(1).optional(),
+      ref: zod.string().min(1).optional(),
+      commit_sha: zod.string().min(1).optional(),
+      subfolder: zod.string().min(1).optional(),
+      archive_artifact_id: zod.string().min(1).optional(),
+    })
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -34249,6 +34621,16 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        source: zod
+          .object({
+            kind: zod.string().min(1),
+            repository: zod.string().min(1).optional(),
+            ref: zod.string().min(1).optional(),
+            commit_sha: zod.string().min(1).optional(),
+            subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
+          })
+          .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -34315,10 +34697,21 @@ export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
     gaps: zod.array(zod.string().min(1)),
     instrumentation: zod.string().min(1),
     setup_hash: zod.string().min(1),
+    extension: zod.object({
+      framework: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+        label: zod.string().min(1).optional(),
+      }),
+      source: zod.object({
+        subfolder: zod.string().optional(),
+      }),
+    }),
   }),
   sdk_version: zod.string().min(1),
   stored_at: zod.string().datetime({ offset: true }),
   setup_stale: zod.boolean(),
+  origin: zod.enum(["build", "reading"]),
 });
 
 /**
@@ -34634,16 +35027,155 @@ export const SimulateAgentDefinitionsVersionsCallExecutionsListResponse =
   zod.array(SimulateAgentDefinitionsVersionsCallExecutionsListResponseItem);
 
 /**
- * Soft delete an agent version.
+ * GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.
  */
-export const SimulateAgentDefinitionsVersionsDeleteDeleteParams = zod.object({
+export const SimulateAgentDefinitionsVersionsCodeChangesListParams = zod.object(
+  {
+    agent_id: zod.string(),
+    version_id: zod.string(),
+  },
+);
+
+export const SimulateAgentDefinitionsVersionsCodeChangesListQueryParams =
+  zod.object({
+    against: zod.string().uuid().optional(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCodeChangesListResponse =
+  zod.object({
+    against: zod.string().min(1).optional(),
+    files: zod
+      .array(
+        zod.object({
+          path: zod.string().min(1).optional(),
+          status: zod.enum(["added", "removed", "modified"]).optional(),
+        }),
+      )
+      .optional(),
+    unavailable: zod.string().min(1).optional(),
+  });
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.
+ */
+export const SimulateAgentDefinitionsVersionsCodeFileListParams = zod.object({
   agent_id: zod.string(),
   version_id: zod.string(),
 });
 
-export const SimulateAgentDefinitionsVersionsDeleteDeleteResponse = zod.object({
-  message: zod.string().min(1).optional(),
+export const simulateAgentDefinitionsVersionsCodeFileListQueryPathMax = 4096;
+
+export const SimulateAgentDefinitionsVersionsCodeFileListQueryParams =
+  zod.object({
+    path: zod
+      .string()
+      .max(simulateAgentDefinitionsVersionsCodeFileListQueryPathMax),
+  });
+
+export const SimulateAgentDefinitionsVersionsCodeFileListResponse = zod.object({
+  path: zod.string().min(1).optional(),
+  size: zod.number().optional(),
+  kind: zod.enum(["text", "binary", "too_large"]).optional(),
+  language: zod.string().min(1).optional(),
+  content: zod.string().optional(),
 });
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/tree/.
+ */
+export const SimulateAgentDefinitionsVersionsCodeTreeListParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsCodeTreeListResponse = zod.object({
+  subfolder: zod.string().optional(),
+  files: zod
+    .array(
+      zod.object({
+        path: zod.string().min(1).optional(),
+        size: zod.number().optional(),
+        kind: zod.enum(["text", "binary", "too_large"]).optional(),
+      }),
+    )
+    .optional(),
+  truncated: zod.boolean().optional(),
+});
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.
+ */
+export const SimulateAgentDefinitionsVersionsCompatibilityListParams =
+  zod.object({
+    agent_id: zod.string(),
+    version_id: zod.string(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCompatibilityListQueryParams =
+  zod.object({
+    environment_id: zod.string().uuid(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCompatibilityListResponse =
+  zod.object({
+    environment_id: zod.string().min(1).optional(),
+    version_id: zod.string().min(1).optional(),
+    status: zod
+      .enum([
+        "clean",
+        "new_tool",
+        "tool_removed_or_changed",
+        "new_rule",
+        "unmeasured",
+      ])
+      .optional(),
+    base: zod.string().min(1).optional(),
+    reason: zod.string().min(1).optional(),
+    same_version: zod.boolean().optional(),
+    tools_added: zod.array(zod.string().min(1)).optional(),
+    tools_removed: zod.array(zod.string().min(1)).optional(),
+    tools_changed: zod
+      .array(
+        zod.object({
+          name: zod.string().min(1).optional(),
+          before: zod
+            .object({
+              arguments: zod.array(zod.string().min(1)).optional(),
+              required: zod.array(zod.string().min(1)).optional(),
+              kind: zod.string().min(1).optional(),
+            })
+            .optional(),
+          after: zod
+            .object({
+              arguments: zod.array(zod.string().min(1)).optional(),
+              required: zod.array(zod.string().min(1)).optional(),
+              kind: zod.string().min(1).optional(),
+            })
+            .optional(),
+        }),
+      )
+      .optional(),
+    services_added: zod.array(zod.string().min(1)).optional(),
+    rules_added: zod.array(zod.string().min(1)).optional(),
+    prompt_changed: zod.boolean().optional(),
+    model_changed: zod.boolean().optional(),
+  });
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/discard/.
+ */
+export const SimulateAgentDefinitionsVersionsDiscardCreateParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsDiscardCreateBody = zod.object({});
+
+export const SimulateAgentDefinitionsVersionsDiscardCreateResponse = zod.object(
+  {
+    message: zod.string().min(1).optional(),
+  },
+);
 
 /**
  * Get the eval summary of an agent version.
@@ -34673,6 +35205,102 @@ export const SimulateAgentDefinitionsVersionsEvalSummaryListResponse =
         output: zod.object({}).passthrough(),
       }),
     ),
+  });
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/production/.
+ */
+export const SimulateAgentDefinitionsVersionsProductionCreateParams =
+  zod.object({
+    agent_id: zod.string(),
+    version_id: zod.string(),
+  });
+
+export const SimulateAgentDefinitionsVersionsProductionCreateBody = zod.object(
+  {},
+);
+
+export const SimulateAgentDefinitionsVersionsProductionCreateResponse =
+  zod.object({
+    version: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        version_number: zod
+          .number()
+          .optional()
+          .describe("Version number of the agent"),
+        version_name: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("Human-readable version name (e.g., 'v1.2.3')"),
+        version_name_display: zod.string().optional(),
+        status: zod
+          .enum(["draft", "active", "archived", "deprecated"])
+          .optional()
+          .describe("Current status of this version"),
+        status_display: zod.string().min(1).optional(),
+        score: zod
+          .string()
+          .optional()
+          .describe("Performance score (0.0 to 10.0)"),
+        test_count: zod
+          .number()
+          .optional()
+          .describe("Number of tests run for this version"),
+        pass_rate: zod
+          .string()
+          .optional()
+          .describe("Test pass rate percentage"),
+        description: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("Description of changes in this version"),
+        commit_message: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("Commit message for the agent version"),
+        release_notes: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("Detailed release notes for this version"),
+        agent_definition: zod
+          .string()
+          .uuid()
+          .optional()
+          .describe("Parent agent definition"),
+        organization: zod
+          .string()
+          .uuid()
+          .optional()
+          .describe("Organization this version belongs to"),
+        configuration_snapshot: zod
+          .object({})
+          .passthrough()
+          .optional()
+          .describe("Snapshot of agent configuration at this version"),
+        is_active: zod.string().optional(),
+        is_latest: zod.string().optional(),
+        agent_kind: zod.string().min(1).optional(),
+        api_key: zod.string().min(1).optional(),
+        source: zod
+          .object({
+            kind: zod.string().min(1),
+            repository: zod.string().min(1).optional(),
+            ref: zod.string().min(1).optional(),
+            commit_sha: zod.string().min(1).optional(),
+            subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
+          })
+          .optional(),
+        created_at: zod.string().datetime({ offset: true }).optional(),
+        updated_at: zod.string().datetime({ offset: true }).optional(),
+      })
+      .optional(),
+    moved_environment_ids: zod.array(zod.string().min(1)).optional(),
   });
 
 /**
@@ -34753,12 +35381,204 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        source: zod
+          .object({
+            kind: zod.string().min(1),
+            repository: zod.string().min(1).optional(),
+            ref: zod.string().min(1).optional(),
+            commit_sha: zod.string().min(1).optional(),
+            subfolder: zod.string().min(1).optional(),
+            archive_artifact_id: zod.string().min(1).optional(),
+          })
+          .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
       .optional(),
   },
 );
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/retry/.
+ */
+export const SimulateAgentDefinitionsVersionsRetryCreateParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsRetryCreateBody = zod.object({});
+
+/**
+ * POST /agents/connect/: the agent and its first version, read on their own.
+ */
+
+export const simulateAgentsConnectCreateBodyRepositoryRegExp = new RegExp(
+  "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+);
+
+export const simulateAgentsConnectCreateBodyRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+export const simulateAgentsConnectCreateBodyVisibilityDefault = `public`;
+export const simulateAgentsConnectCreateBodyInstallationIdMax = 255;
+
+export const simulateAgentsConnectCreateBodyNameMax = 255;
+
+export const simulateAgentsConnectCreateBodyCommitShaRegExp = new RegExp(
+  "^[0-9a-fA-F]{40}$",
+);
+export const simulateAgentsConnectCreateBodySubfolderMax = 512;
+
+export const simulateAgentsConnectCreateBodySubfolderRegExp = new RegExp(
+  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+);
+export const simulateAgentsConnectCreateBodyEnvValuesMaxOne = 65536;
+
+export const SimulateAgentsConnectCreateBody = zod.object({
+  kind: zod.enum(["github", "archive"]),
+  repository: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyRepositoryRegExp)
+    .optional(),
+  ref: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyRefRegExp)
+    .optional(),
+  visibility: zod
+    .enum(["public", "private"])
+    .default(simulateAgentsConnectCreateBodyVisibilityDefault),
+  installation_id: zod
+    .string()
+    .min(1)
+    .max(simulateAgentsConnectCreateBodyInstallationIdMax)
+    .optional(),
+  repository_id: zod.number().min(1).optional(),
+  archive_artifact_id: zod.string().uuid().optional(),
+  name: zod.string().min(1).max(simulateAgentsConnectCreateBodyNameMax),
+  commit_sha: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsConnectCreateBodyCommitShaRegExp)
+    .optional(),
+  subfolder: zod
+    .string()
+    .max(simulateAgentsConnectCreateBodySubfolderMax)
+    .regex(simulateAgentsConnectCreateBodySubfolderRegExp)
+    .optional(),
+  env_values: zod
+    .record(
+      zod.string(),
+      zod.string().min(1).max(simulateAgentsConnectCreateBodyEnvValuesMaxOne),
+    )
+    .optional(),
+});
+
+export const SimulateAgentsConnectCreateResponse = zod.object({
+  agent_id: zod.string().uuid().optional(),
+  version_id: zod.string().uuid().optional(),
+  exists: zod.boolean().optional(),
+});
+
+export const SimulateAgentsConnectAvailabilityListResponse = zod.object({
+  reading_enabled: zod.boolean().optional(),
+});
+
+/**
+ * POST /agents/scan/: find the agents in a source; the drawer polls the result.
+ */
+
+export const simulateAgentsScanCreateBodyRepositoryRegExp = new RegExp(
+  "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+);
+
+export const simulateAgentsScanCreateBodyRefRegExp = new RegExp(
+  "^[A-Za-z0-9._/-]+$",
+);
+export const simulateAgentsScanCreateBodyVisibilityDefault = `public`;
+export const simulateAgentsScanCreateBodyInstallationIdMax = 255;
+
+export const SimulateAgentsScanCreateBody = zod.object({
+  kind: zod.enum(["github", "archive"]),
+  repository: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsScanCreateBodyRepositoryRegExp)
+    .optional(),
+  ref: zod
+    .string()
+    .min(1)
+    .regex(simulateAgentsScanCreateBodyRefRegExp)
+    .optional(),
+  visibility: zod
+    .enum(["public", "private"])
+    .default(simulateAgentsScanCreateBodyVisibilityDefault),
+  installation_id: zod
+    .string()
+    .min(1)
+    .max(simulateAgentsScanCreateBodyInstallationIdMax)
+    .optional(),
+  repository_id: zod.number().min(1).optional(),
+  archive_artifact_id: zod.string().uuid().optional(),
+});
+
+/**
+ * GET /agents/scan/{id}/.
+ */
+export const SimulateAgentsScanReadParams = zod.object({
+  scan_id: zod.string(),
+});
+
+export const SimulateAgentsScanReadResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  status: zod
+    .enum(["pending", "running", "found", "none", "error", "failed"])
+    .optional(),
+  kind: zod.string().min(1).optional(),
+  repository: zod.string().min(1).optional(),
+  ref: zod.string().min(1).optional(),
+  commit_sha: zod.string().min(1).optional(),
+  agents: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1).optional(),
+        subfolder: zod.string().optional(),
+        entry: zod.string().min(1).optional(),
+        framework: zod
+          .object({
+            name: zod.string().min(1).optional(),
+            version: zod.string().min(1).optional(),
+            label: zod.string().min(1).optional(),
+          })
+          .optional(),
+        confidence: zod.enum(["high", "medium", "low"]).optional(),
+        evidence: zod.array(zod.string().min(1)).optional(),
+        env_names: zod.array(zod.string().min(1)).optional(),
+        estimates: zod
+          .object({
+            tools: zod.number().optional(),
+            prompt_files: zod.number().optional(),
+          })
+          .optional(),
+      }),
+    )
+    .optional(),
+  truncated: zod.boolean().optional(),
+  error: zod
+    .object({
+      code: zod.string().min(1).optional(),
+      message: zod.string().min(1).optional(),
+    })
+    .optional(),
+  failure: zod
+    .object({
+      code: zod.string().min(1).optional(),
+      message: zod.string().min(1).optional(),
+      retryable: zod.boolean().optional(),
+    })
+    .optional(),
+});
 
 export const SimulateApiAgentDefinitionOperationsListQueryParams = zod.object({
   page: zod
@@ -38492,6 +39312,11 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       sub_goals_count: zod.number(),
       tools_count: zod.number(),
       runs_count: zod.number(),
+      agent_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
+      agent_policy: zod.enum(["follow", "pinned"]),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
       last_run: zod.object({
@@ -38509,6 +39334,11 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
           id: zod.string().uuid(),
           version_number: zod.number(),
         }),
+        environment_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        partial: zod.boolean(),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
@@ -38544,6 +39374,11 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     sub_goals_count: zod.number(),
     tools_count: zod.number(),
     runs_count: zod.number(),
+    agent_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
+    agent_policy: zod.enum(["follow", "pinned"]),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
     flows_count: zod.number(),
@@ -38753,6 +39588,11 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     sub_goals_count: zod.number(),
     tools_count: zod.number(),
     runs_count: zod.number(),
+    agent_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
+    agent_policy: zod.enum(["follow", "pinned"]),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
     flows_count: zod.number(),
@@ -38938,6 +39778,87 @@ reference the same credentials.
  */
 export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * Follow the agent's production version, or pin this environment to one.
+ */
+export const SimulateApiHarnessEnvironmentsAgentPolicyParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsAgentPolicyBody = zod.object({
+  policy: zod.enum(["follow", "pinned"]),
+  version_id: zod.string().uuid().optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsAgentPolicyResponse = zod.object({
+  policy: zod.enum(["follow", "pinned"]).optional(),
+  agent_version: zod
+    .object({
+      id: zod.string().uuid(),
+      label: zod.string().min(1),
+      status: zod.enum(["draft", "active", "discarded"]),
+      is_default: zod.boolean(),
+      created_at: zod.string().datetime({ offset: true }),
+      created_by: zod.object({
+        id: zod.string().min(1),
+        name: zod.string(),
+      }),
+      origin: zod.string().min(1),
+      summary: zod.string(),
+      hash: zod.string().min(1),
+      parent_id: zod.string().uuid(),
+      derived_from_agent_version_id: zod.string().uuid(),
+      scenario_count: zod.number(),
+      source: zod
+        .object({})
+        .passthrough()
+        .describe("An agent version's non-secret source facts."),
+      prompt: zod
+        .string()
+        .describe(
+          "The default agent version's prompt; null on every other item.",
+        ),
+      preflight_status: zod.string().min(1),
+      preflight_report: zod
+        .object({})
+        .passthrough()
+        .describe(
+          "An agent version's last check: check statuses and names only.",
+        ),
+      preflighted_at: zod.string().datetime({ offset: true }),
+      check_started_at: zod
+        .string()
+        .datetime({ offset: true })
+        .describe("When an agent version's latest check was asked for."),
+      credential_names: zod
+        .array(zod.string().min(1))
+        .describe(
+          "An agent version's credential names, provider keys included.",
+        ),
+      required_variable_names: zod
+        .array(zod.string().min(1))
+        .describe("The variables an agent version's source reads, when known."),
+      activation_outcome: zod
+        .string()
+        .min(1)
+        .describe(
+          "Why a passed agent version is or isn't this environment's default, as last recorded.",
+        ),
+      requested_here: zod
+        .boolean()
+        .describe("Whether this environment asked for an agent version."),
+      pickable: zod
+        .boolean()
+        .describe(
+          "Whether an agent version can be picked for a run of this environment or made its default.",
+        ),
+      discardable: zod
+        .boolean()
+        .describe("Whether this environment can discard an agent version."),
+    })
+    .optional(),
 });
 
 /**
@@ -39869,6 +40790,11 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       sub_goals_count: zod.number(),
       tools_count: zod.number(),
       runs_count: zod.number(),
+      agent_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
+      agent_policy: zod.enum(["follow", "pinned"]),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
       flows_count: zod.number(),
@@ -42087,6 +43013,12 @@ export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
 );
 export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 
+export const simulateApiHarnessJobsCreateBodySourceSubfolderMax = 512;
+
+export const simulateApiHarnessJobsCreateBodySourceSubfolderRegExp = new RegExp(
+  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+);
+
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
 export const simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne = 65536;
 
@@ -42202,6 +43134,11 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         .string()
         .min(1)
         .max(simulateApiHarnessJobsCreateBodySourceInstallationIdMax)
+        .optional(),
+      subfolder: zod
+        .string()
+        .max(simulateApiHarnessJobsCreateBodySourceSubfolderMax)
+        .regex(simulateApiHarnessJobsCreateBodySourceSubfolderRegExp)
         .optional(),
       archive_artifact_id: zod.string().uuid().optional(),
       endpoint: zod.string().url().min(1).optional(),
@@ -42435,6 +43372,13 @@ export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
   new RegExp("^[0-9a-fA-F]{40}$");
 export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
 
+export const simulateApiHarnessJobsPreflightBodySourceSubfolderMax = 512;
+
+export const simulateApiHarnessJobsPreflightBodySourceSubfolderRegExp =
+  new RegExp(
+    "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+  );
+
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
 export const simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne = 65536;
 
@@ -42550,6 +43494,11 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         .string()
         .min(1)
         .max(simulateApiHarnessJobsPreflightBodySourceInstallationIdMax)
+        .optional(),
+      subfolder: zod
+        .string()
+        .max(simulateApiHarnessJobsPreflightBodySourceSubfolderMax)
+        .regex(simulateApiHarnessJobsPreflightBodySourceSubfolderRegExp)
         .optional(),
       archive_artifact_id: zod.string().uuid().optional(),
       endpoint: zod.string().url().min(1).optional(),
@@ -43868,6 +44817,7 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       "infrastructure",
       "grading",
       "platform_sync",
+      "artifact",
     ]),
     stage: zod
       .string()
@@ -54124,6 +55074,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "infrastructure",
         "grading",
         "platform_sync",
+        "artifact",
       ]),
       failure_code: zod.string().min(1),
     }),
@@ -70802,7 +71753,9 @@ export const tracerSavedSqlQueryCreateBodyChartXMax = 128;
 
 export const tracerSavedSqlQueryCreateBodyChartYMax = 128;
 
-export const tracerSavedSqlQueryCreateBodyChartDefault = { type: "table" };
+export const tracerSavedSqlQueryCreateBodyChartDefault = {
+  type: "table" as const,
+};
 export const tracerSavedSqlQueryCreateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryCreateBodyWindowHoursMax = 744;
 
@@ -70872,7 +71825,7 @@ export const tracerSavedSqlQueryPartialUpdateBodyChartXMax = 128;
 export const tracerSavedSqlQueryPartialUpdateBodyChartYMax = 128;
 
 export const tracerSavedSqlQueryPartialUpdateBodyChartDefault = {
-  type: "table",
+  type: "table" as const,
 };
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursMax = 744;

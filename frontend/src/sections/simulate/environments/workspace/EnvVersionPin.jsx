@@ -13,6 +13,8 @@ import {
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment-version pin: the header names the default environment version,
 // and clicking it lists every version of the world, where an earlier active one
@@ -24,6 +26,7 @@ export default function EnvVersionPin({ env }) {
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
+  const { canEdit } = useSimulationAccess();
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
@@ -202,16 +205,21 @@ export default function EnvVersionPin({ env }) {
                   .join(" · ")}
               </Typography>
               {canMakeDefault("environment", v) && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="inherit"
-                  disabled={move.isPending}
-                  onClick={() => setConfirming(v)}
-                  sx={{ mt: 0.75 }}
+                <ViewerLock
+                  locked={!canEdit}
+                  title={WORKSPACE_COPY.viewer.versions}
                 >
-                  {actionLabel(v, index)}
-                </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={!canEdit || move.isPending}
+                    onClick={() => setConfirming(v)}
+                    sx={{ mt: 0.75 }}
+                  >
+                    {actionLabel(v, index)}
+                  </Button>
+                </ViewerLock>
               )}
             </Box>
           ))}

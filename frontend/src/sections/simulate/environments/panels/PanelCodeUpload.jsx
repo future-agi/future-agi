@@ -4,6 +4,7 @@ import { Box, Stack, Typography, Button, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fData } from "src/utils/format-number";
 import {
+  guessEntryFile,
   prepareSourceFolder,
   uploadErrorText,
   uploadSourceFolder,
@@ -19,9 +20,12 @@ import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 
 const initial = {
+  name: "",
   folderName: "",
   fileNames: [],
   entry: "",
@@ -48,7 +52,7 @@ function reducer(s, a) {
         ...s,
         folderName: a.folderName,
         fileNames: a.fileNames,
-        entry: s.entry || a.fileNames[0] || "",
+        entry: s.entry || guessEntryFile(a.fileNames),
         summary: null,
         archiveArtifactId: null,
         uploading: true,
@@ -99,6 +103,7 @@ FolderInput.propTypes = { onPick: PropTypes.func.isRequired };
 export default function PanelCodeUpload() {
   const [form, dispatch] = useReducer(reducer, initial);
   const build = usePanelBuild();
+  const { canEdit } = useSimulationAccess();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
     dispatch({ type: "set", field, value });
@@ -109,6 +114,7 @@ export default function PanelCodeUpload() {
   // a stale upload clobber the current selection.
   const uploadSeq = useRef(0);
   const {
+    name,
     folderName,
     fileNames,
     entry,
@@ -138,6 +144,7 @@ export default function PanelCodeUpload() {
 
   const buildSource = () => ({
     kind: "upload",
+    displayName: name.trim(),
     folderName,
     entry: entry.trim(),
     files: fileNames.map((name) => ({ name })),
@@ -273,6 +280,16 @@ export default function PanelCodeUpload() {
 
       {chosen && (
         <Field
+          label="Name"
+          value={name}
+          onChange={set("name")}
+          placeholder={folderName}
+          helper={CODE_UPLOAD_COPY.nameHelper}
+        />
+      )}
+
+      {chosen && (
+        <Field
           label="Entry file"
           value={entry} onChange={set("entry")}
           mono
@@ -296,7 +313,8 @@ export default function PanelCodeUpload() {
       />
       <RuntimePreflight
         status={build.status}
-        canRun={canGo}
+        canRun={canEdit && canGo}
+        blockedReason={!canEdit ? WORKSPACE_COPY.viewer.create : null}
         onRun={() => build.runPreflight(buildSource())}
         result={build.result}
         error={build.error}
@@ -307,9 +325,9 @@ export default function PanelCodeUpload() {
         onDismiss={build.creditExhaustion.onDismiss}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        disabled={!canEdit || !build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
       />
     </Stack>

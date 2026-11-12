@@ -126,7 +126,14 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "retell": ProviderProbe(
         "Retell",
         ("RETELL_API_KEY",),
-        _bearer("https://api.retellai.com/list-agents", "RETELL_API_KEY"),
+        lambda values: ProbeRequest(
+            "POST",
+            "https://api.retellai.com/v2/list-agents",
+            {
+                "Authorization": f"Bearer {values['RETELL_API_KEY'].strip()}",
+                "Content-Type": "application/json",
+            },
+        ),
     ),
     "openai": ProviderProbe(
         "OpenAI",

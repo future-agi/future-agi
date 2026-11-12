@@ -48,6 +48,7 @@ export const HOSTED_AGENT_DETAIL = {
   source: "vapi",
   environment_count: 0,
   observability_enabled: false,
+  observe_project: null,
 };
 
 export const CODE_AGENT_DETAIL = {
@@ -85,6 +86,7 @@ export const CODE_AGENT_DETAIL = {
   source: "github",
   environment_count: 1,
   observability_enabled: false,
+  observe_project: null,
 };
 
 export const ENVIRONMENT_RUN = {
@@ -99,6 +101,8 @@ export const ENVIRONMENT_RUN = {
     name: "ride-voice-agent",
   },
   agent_version: { id: "93956ae6", version_number: 3 },
+  environment_version: { id: "7e1c2a90", version_number: 7 },
+  partial: false,
   outcome_passed: 3,
   outcome_failed: 7,
   outcome_skipped: 0,
@@ -115,6 +119,8 @@ export const SIMULATE_RUN = {
   status: "running",
   environment: null,
   agent_version: null,
+  environment_version: null,
+  partial: null,
   outcome_passed: null,
   outcome_failed: null,
   outcome_skipped: null,
@@ -202,6 +208,12 @@ export const CODE_VERSION_DETAIL = {
   is_latest: true,
   agent_kind: "source",
   api_key: null,
+  source: {
+    kind: "github",
+    repository: "https://github.com/acme/uber-voice-agent",
+    ref: "main",
+    commit_sha: "3f9a2c1d8e7b6a5f4c3d2e1f0a9b8c7d6e5f4a3b",
+  },
   created_at: "2026-10-14T11:50:22.198107Z",
 };
 
@@ -228,6 +240,7 @@ export const HOSTED_VERSION_DETAIL = {
   is_latest: true,
   agent_kind: null,
   api_key: "sk-a...9f2c",
+  source: null,
   created_at: "2026-10-15T09:00:00Z",
 };
 
@@ -243,6 +256,7 @@ export const AGENT_ENVIRONMENTS = {
       name: "ride-voice-agent",
       stage: "completed",
       status: "completed",
+      agent_version: { id: "93956ae6", version_number: 3 },
       last_run: ENVIRONMENT_RUN,
     },
     {
@@ -250,6 +264,7 @@ export const AGENT_ENVIRONMENTS = {
       name: "Refund edge cases",
       stage: "failed",
       status: "failed",
+      agent_version: null,
       last_run: null,
     },
   ],
