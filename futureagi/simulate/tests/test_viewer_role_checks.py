@@ -95,6 +95,11 @@ def _signs_in_without_a_workspace(view_cls):
     )
 
 
+def _declared_responses(handler, method):
+    schema = getattr(handler, "_swagger_auto_schema", None) or {}
+    return schema.get(method, schema).get("responses", {})
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("method,url,action", VIEWER_REFUSALS)
 def test_a_viewer_is_told_which_action_needs_the_member_role(
@@ -144,8 +149,7 @@ def test_every_labelled_simulation_write_declares_the_viewer_refusal():
         f"{method.upper()} {route}"
         for route, method, _view_cls, handler in _simulation_write_handlers()
         if getattr(handler, "_viewer_denied_action", None)
-        and "responses" in getattr(handler, "_swagger_auto_schema", {})
-        and handler._swagger_auto_schema["responses"].get(403)
+        and _declared_responses(handler, method).get(403)
         is not ViewerReadOnlyErrorSerializer
     ]
 

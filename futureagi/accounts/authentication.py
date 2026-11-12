@@ -126,20 +126,33 @@ WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
 _VIEWER_REASON_PREFIX = "/simulate/"
 
 
+_WRITE_METHODS = ("post", "put", "patch", "delete")
+
+
+def _with_viewer_refusal(schema):
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    return {
+        **schema,
+        "responses": {
+            403: ViewerReadOnlyErrorSerializer,
+            **schema.get("responses", {}),
+        },
+    }
+
+
 def viewer_denied(action):
     def mark(handler):
         handler._viewer_denied_action = action
-        schema = getattr(handler, "_swagger_auto_schema", None)
-        if isinstance(schema, dict) and "responses" in schema:
-            from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
-
+        schema = getattr(handler, "_swagger_auto_schema", None) or {}
+        methods = [method for method in _WRITE_METHODS if method in schema]
+        if methods:
             handler._swagger_auto_schema = {
                 **schema,
-                "responses": {
-                    403: ViewerReadOnlyErrorSerializer,
-                    **schema["responses"],
-                },
+                **{method: _with_viewer_refusal(schema[method]) for method in methods},
             }
+        else:
+            handler._swagger_auto_schema = _with_viewer_refusal(schema)
         return handler
 
     return mark
