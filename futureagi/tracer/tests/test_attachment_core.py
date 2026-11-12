@@ -594,7 +594,8 @@ def test_replay_and_delete_do_not_resurrect(setup):
 @pytest.mark.parametrize(
     "index,field,maximum",
     [
-        (0, "active_transfers", 128),
+        (0, "active_transfers", 128 // uploads.GLOBAL_SHARDS),
+        (0, "initialization_attempts", 960 // uploads.GLOBAL_SHARDS),
         (1, "reserved_bytes", 2 * 1024**3),
         (2, "active_transfers", 16),
         (2, "validation_jobs", 1024),
@@ -603,10 +604,13 @@ def test_replay_and_delete_do_not_resurrect(setup):
 )
 def test_finite_aggregate_admission(setup, index, field, maximum):
     scope, _ = setup
-    key = uploads._budget_keys(scope)[index]
-    AttachmentBudget.objects.create(
-        key=key, window_started_at=timezone.now(), **{field: maximum}
-    )
+    # The deployment budget (index 0) is sharded and the upload's shard comes
+    # from an id allocated inside initialize, so every shard is filled.
+    shards = range(uploads.GLOBAL_SHARDS) if index == 0 else [0]
+    for key in {uploads._budget_keys(scope, shard)[index] for shard in shards}:
+        AttachmentBudget.objects.create(
+            key=key, window_started_at=timezone.now(), **{field: maximum}
+        )
     with pytest.raises(AttachmentError, match="throttled"):
         initialized(setup)
     assert not AttachmentUpload.objects.exists()
@@ -841,3 +845,69 @@ def test_reservation_sweep_uses_the_unsettled_partial_index(setup):
         )
     assert "(expires_at) WHERE (settled_at IS NULL)" in definition
     assert "attachment_reservation_due_idx" in plan
+
+
+def _upload_ids(monkeypatch, *shards):
+    """Make initialize allocate upload ids that land on the given shards."""
+    ids = iter(
+        uuid.UUID(int=index * uploads.GLOBAL_SHARDS + shard)
+        for index, shard in enumerate(shards, start=1)
+    )
+    monkeypatch.setattr(uploads, "uuid4", lambda: next(ids))
+
+
+def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
+    """An upload is charged to one ``global:<shard>`` row named by its id, and
+    settling it releases that same row. No single 'global' row exists."""
+    _upload_ids(monkeypatch, 5)
+    upload, token, _, _ = initialized(setup)
+    assert uploads.global_shard(upload.id) == 5
+    charged = {
+        row.key: (row.active_transfers, row.validation_jobs, row.reserved_bytes)
+        for row in AttachmentBudget.objects.filter(key__startswith="global")
+    }
+    assert charged == {"global:5": (1, 1, upload.expected_bytes)}
+    uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
+    row = AttachmentBudget.objects.get(key="global:5")
+    assert (row.active_transfers, row.validation_jobs, row.reserved_bytes) == (0, 0, 0)
+    assert AttachmentBudget.objects.filter(key__startswith="global").count() == 1
+
+
+def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
+    """Each shard holds 1/GLOBAL_SHARDS of the deployment caps."""
+    scope, _ = setup
+    cap = uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    AttachmentBudget.objects.create(
+        key="global:3", window_started_at=timezone.now(), active_transfers=cap
+    )
+    _upload_ids(monkeypatch, 3, 4)
+    with pytest.raises(AttachmentError, match="throttled"):
+        initialized(setup)
+    upload, _, _, _ = initialized(setup)
+    assert uploads.global_shard(upload.id) == 4
+    assert AttachmentBudget.objects.get(key="global:3").active_transfers == cap
+
+
+def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
+    """Per-scope budgets stay authoritative: a project admits exactly its own
+    cap of transfers spread over every shard (each shard's cap is half the
+    project's), and the next one is refused by the project row, not a shard."""
+    scope, _ = setup
+    project_cap = uploads.BUDGETS[2][0]
+    assert project_cap > uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    shards = [index % uploads.GLOBAL_SHARDS for index in range(project_cap + 1)]
+    _upload_ids(monkeypatch, *shards)
+    current, _ = session(setup)
+    for _ in range(project_cap):
+        initialized(setup, current=current)
+    with pytest.raises(AttachmentError, match="throttled"):
+        initialized(setup, current=current)
+    project = AttachmentBudget.objects.get(key=f"project:{scope.project_id}")
+    assert project.active_transfers == project_cap
+    by_shard = dict(
+        AttachmentBudget.objects.filter(key__startswith="global:").values_list(
+            "key", "active_transfers"
+        )
+    )
+    assert sum(by_shard.values()) == project_cap
+    assert max(by_shard.values()) < uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS

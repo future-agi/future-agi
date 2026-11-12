@@ -297,7 +297,10 @@ class UploadReservation(ScopedAttachmentRecord):
 
 
 class AttachmentBudget(models.Model):
-    """Stable lock rows. Lock global, organization, project in that order."""
+    """Stable lock rows: ``global:<shard>``, ``org:<id>``, ``project:<id>``.
+
+    Lock one global shard, then the organization, then the project row.
+    """
 
     key = models.CharField(max_length=80, primary_key=True)
     reserved_bytes = models.PositiveBigIntegerField(default=0)
