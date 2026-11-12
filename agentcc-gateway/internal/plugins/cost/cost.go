@@ -3,6 +3,7 @@ package cost
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -30,6 +31,10 @@ const (
 	// model names cannot grow it without limit.
 	maxUnpricedWarnings = 1024
 )
+
+// cachedTokensKey records how many prompt tokens a chat request was priced
+// at the cached rate for.
+const cachedTokensKey = "cost_cached_tokens"
 
 // Where an operator sets a missing price, by the unit the endpoint is billed
 // in. The budget plugin does not read the model database: it prices chat
@@ -60,9 +65,14 @@ type Plugin struct {
 	now func() time.Time
 	// providerTypes gives the type a provider's config records, "" for none.
 	providerTypes func(orgID, providerID string) string
+	// cachedInPrompt says whether a provider's usage counts the prompt tokens
+	// it read from its prompt cache inside prompt_tokens.
+	cachedInPrompt func(orgID, providerID string) bool
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
+	usageWarned         sync.Map     // key → struct{}: odd usage already warned about
+	usageWarnedCount    atomic.Int32 // size of usageWarned, for the cap
 }
 
 // New creates a new cost tracking plugin.
@@ -93,6 +103,13 @@ func (p *Plugin) clock() time.Time {
 // so a reseller configured under another ID is still known by its type.
 func (p *Plugin) SetProviderTypes(f func(orgID, providerID string) string) {
 	p.providerTypes = f
+}
+
+// SetCachedTokensInPrompt gives the plugin, per provider, whether its usage
+// counts cached prompt tokens inside prompt_tokens. Only those are priced at
+// the cached rate.
+func (p *Plugin) SetCachedTokensInPrompt(f func(orgID, providerID string) bool) {
+	p.cachedInPrompt = f
 }
 
 // providerType is the type rc's provider's config records, or "".
@@ -150,10 +167,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	table := p.tableName(rc)
 	model = priceKey(db, model, rc.Provider, table)
 
-	opts := modeldb.CostOptions{
-		Cached: rc.Metadata["cache_status"] == "hit",
-		At:     p.clock(),
-	}
+	opts := modeldb.CostOptions{At: p.clock()}
 
 	var cost float64
 	var ok bool
@@ -236,6 +250,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
+		opts.CachedTokens = p.cachedTokens(rc, model, usage)
 		providerType := p.providerType(rc)
 		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
 		opts.TablePrice = keep
@@ -244,6 +259,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			fallback := priceKey(db, rc.Model, rc.Provider, table)
 			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
 			cost, ok = db.CalculateCost(cmp.Or(ownKey, fallback), usage.PromptTokens, usage.CompletionTokens, opts)
+		}
+		if ok && opts.CachedTokens > 0 {
+			rc.Metadata[cachedTokensKey] = strconv.Itoa(opts.CachedTokens)
 		}
 	}
 
@@ -421,6 +439,58 @@ func resellerPrice(db *modeldb.ModelDB, model, provider, table, configuredType s
 		}
 	}
 	return "", true
+}
+
+// cachedTokens is how many of a chat request's prompt tokens to price at the
+// cached rate: the count its usage reports, when the provider that served it
+// counts them inside the prompt. A count above the prompt means the upstream
+// counts them some other way, so none is discounted.
+func (p *Plugin) cachedTokens(rc *models.RequestContext, model string, usage *models.Usage) int {
+	if p.cachedInPrompt == nil || rc.Provider == "" || !p.cachedInPrompt(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider) {
+		return 0
+	}
+	cached := cachedPromptTokens(usage)
+	if cached > usage.PromptTokens {
+		p.warnOnce("cached\x00"+rc.Provider+"\x00"+model,
+			"cost: provider reported more cached prompt tokens than prompt tokens; pricing the whole prompt at the input rate",
+			"provider", rc.Provider,
+			"model", model,
+			"request_id", rc.RequestID,
+			"prompt_tokens", usage.PromptTokens,
+			"cached_tokens", cached,
+		)
+		return 0
+	}
+	return cached
+}
+
+// cachedPromptTokens is the prompt_tokens_details.cached_tokens count usage
+// carries; 0 when it carries none, or one that is not a whole number of
+// tokens.
+func cachedPromptTokens(u *models.Usage) int {
+	if u == nil || u.PromptTokensDetails == nil {
+		return 0
+	}
+	var details struct {
+		CachedTokens int `json:"cached_tokens"`
+	}
+	if err := json.Unmarshal(*u.PromptTokensDetails, &details); err != nil || details.CachedTokens < 0 {
+		return 0
+	}
+	return details.CachedTokens
+}
+
+// warnOnce logs msg the first time key is seen, for up to
+// maxUnpricedWarnings keys, so a caller cannot grow the set without limit.
+func (p *Plugin) warnOnce(key, msg string, args ...any) {
+	if p.usageWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.usageWarned.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	p.usageWarnedCount.Add(1)
+	slog.Warn(msg, args...)
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

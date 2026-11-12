@@ -94,6 +94,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// CachedTokensInPrompt is true: Azure OpenAI counts cached tokens inside
+// prompt_tokens, as OpenAI does.
+func (p *Provider) CachedTokensInPrompt() bool { return true }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.

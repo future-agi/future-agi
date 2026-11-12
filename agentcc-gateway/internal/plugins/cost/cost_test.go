@@ -3,6 +3,7 @@ package cost
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -264,21 +265,49 @@ func TestProcessResponse_ResolvedModelPreferred(t *testing.T) {
 
 func TestProcessResponse_CachedCost(t *testing.T) {
 	t.Parallel()
-	p := testPlugin()
-	rc := newRC("gpt-4o-mini", 1000, 500)
-	rc.Metadata["cache_status"] = "hit"
 
-	p.ProcessResponse(context.Background(), rc)
+	costOf := func(t *testing.T, status, details string) string {
+		t.Helper()
+		p := testPlugin()
+		p.SetCachedTokensInPrompt(func(_, id string) bool { return id == "openai" })
+		rc := newRC("gpt-4o-mini", 1000, 500)
+		rc.Provider = "openai"
+		if status != "" {
+			rc.Metadata["cache_status"] = status
+		}
+		if details != "" {
+			raw := json.RawMessage(details)
+			rc.Response.Usage.PromptTokensDetails = &raw
+		}
+		p.ProcessResponse(context.Background(), rc)
+		costStr, ok := rc.Metadata["cost"]
+		if !ok {
+			t.Fatal("Metadata[cost] not set")
+		}
+		return costStr
+	}
 
-	costStr, ok := rc.Metadata["cost"]
-	if !ok {
-		t.Fatal("Metadata[cost] not set for cached request")
+	// The gateway's own cache status prices nothing.
+	for _, status := range []string{"hit", "hit_exact", "hit_semantic"} {
+		t.Run("status="+status, func(t *testing.T) {
+			// gpt-4o-mini: 1000 * 0.15/1e6 + 500 * 0.60/1e6
+			if got, want := costOf(t, status, ""), "0.000450"; got != want {
+				t.Fatalf("Metadata[cost] = %q, want %q", got, want)
+			}
+		})
 	}
-	// gpt-4o-mini cached: 1000 * 0.075/1e6 + 500 * 0.60/1e6 = 0.000075 + 0.0003 = 0.000375
-	want := "0.000375"
-	if costStr != want {
-		t.Fatalf("Metadata[cost] = %q, want %q (expected cached pricing)", costStr, want)
-	}
+
+	t.Run("provider cached tokens", func(t *testing.T) {
+		// 200 * 0.15/1e6 + 800 * 0.075/1e6 + 500 * 0.60/1e6
+		if got, want := costOf(t, "", `{"cached_tokens":800}`), "0.000390"; got != want {
+			t.Fatalf("Metadata[cost] = %q, want %q", got, want)
+		}
+	})
+	t.Run("provider cached tokens with a gateway hit status", func(t *testing.T) {
+		if got, want := costOf(t, "hit", `{"cached_tokens":800}`), "0.000390"; got != want {
+			t.Fatalf("Metadata[cost] = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestProcessResponse_NilModelDB(t *testing.T) {

@@ -27,23 +27,24 @@ type PricingInfo struct {
 
 // CostOptions controls which pricing tier to use.
 type CostOptions struct {
-	Cached bool      // use cached input rate
-	Batch  bool      // use batch rates
-	At     time.Time // when the usage happened, for dated prices; zero means now
+	// CachedTokens is how many of the input tokens the provider read from its
+	// own prompt cache.
+	CachedTokens int
+	Batch        bool      // use batch rates
+	At           time.Time // when the usage happened, for dated prices; zero means now
 
 	// TablePrice prices at the table's own rate, never a dated one: set when the
 	// reseller serving the request has its own entry for the model.
 	TablePrice bool
 }
 
-// Calculate returns the total cost for the given token counts.
+// Calculate returns the total cost for the given token counts. Cached input
+// tokens cost the cached rate, never more than the input rate. A cached count
+// above the input count is not a part of it, so nothing is discounted.
 func (p *PricingInfo) Calculate(inputTokens, outputTokens int, opts CostOptions) float64 {
 	inputRate := p.InputPerToken
 	outputRate := p.OutputPerToken
 
-	if opts.Cached && p.CachedInputPerToken > 0 {
-		inputRate = p.CachedInputPerToken
-	}
 	if opts.Batch {
 		if p.BatchInputPerToken > 0 {
 			inputRate = p.BatchInputPerToken
@@ -53,7 +54,15 @@ func (p *PricingInfo) Calculate(inputTokens, outputTokens int, opts CostOptions)
 		}
 	}
 
-	return float64(inputTokens)*inputRate + float64(outputTokens)*outputRate
+	inputCost := float64(inputTokens) * inputRate
+	if cached := opts.CachedTokens; cached > 0 && cached <= inputTokens {
+		if cachedRate := p.CachedInputPerToken; cachedRate > 0 && cachedRate < inputRate {
+			// Subtracting the saving keeps the cost at or below the full
+			// price after rounding.
+			inputCost -= float64(cached) * (inputRate - cachedRate)
+		}
+	}
+	return inputCost + float64(outputTokens)*outputRate
 }
 
 // InputPerMTok returns the input price per million tokens (for display).

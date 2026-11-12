@@ -361,6 +361,22 @@ type geminiUsageMetadata struct {
 	TotalTokenCount    int `json:"totalTokenCount"`
 }
 
+// toUsage is the chat usage this metadata reports. The cached count is kept
+// as OpenAI reports it, as a part of the prompt.
+func (u *geminiUsageMetadata) toUsage() *models.Usage {
+	usage := &models.Usage{
+		PromptTokens:     u.PromptTokenCount,
+		CompletionTokens: u.CandidatesTokenCount + u.ThoughtsTokenCount,
+		TotalTokens:      u.TotalTokenCount,
+	}
+	if cached := u.CachedContentTokenCount; cached != nil {
+		details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
+		raw := json.RawMessage(details)
+		usage.PromptTokensDetails = &raw
+	}
+	return usage
+}
+
 type geminiErrorResponse struct {
 	Error geminiErrorDetail `json:"error"`
 }
@@ -953,16 +969,7 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 	}
 
 	if resp.UsageMetadata != nil {
-		result.Usage = &models.Usage{
-			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
-			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
-		}
-		if cached := resp.UsageMetadata.CachedContentTokenCount; cached != nil {
-			details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
-			raw := json.RawMessage(details)
-			result.Usage.PromptTokensDetails = &raw
-		}
+		result.Usage = resp.UsageMetadata.toUsage()
 	}
 
 	return result

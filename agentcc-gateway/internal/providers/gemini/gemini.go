@@ -107,6 +107,10 @@ func (p *Provider) PriceTableName() string {
 	return "gemini"
 }
 
+// CachedTokensInPrompt is true: promptTokenCount includes
+// cachedContentTokenCount, on the Gemini API and on Vertex AI.
+func (p *Provider) CachedTokensInPrompt() bool { return true }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.

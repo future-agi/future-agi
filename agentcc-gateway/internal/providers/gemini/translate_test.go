@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -2263,5 +2264,76 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
 	if out.Usage.PromptTokens != 100 || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":75}` {
 		t.Fatal("cached tokens must be retained without subtracting input context")
+	}
+}
+
+func TestParseStreamData_ChunkWithCachedTokens(t *testing.T) {
+	chunkWith := func(cachedField string) *models.Usage {
+		t.Helper()
+		data := `{
+			"candidates": [{"content": {"role": "model", "parts": [{"text": "final"}]}, "finishReason": "STOP"}],
+			"usageMetadata": {
+				"promptTokenCount": 100,` + cachedField + `
+				"candidatesTokenCount": 20,
+				"totalTokenCount": 120
+			}
+		}`
+		chunk, err := newStreamState("gemini-1.5-pro").parseStreamData(data)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if chunk.Usage == nil {
+			t.Fatal("Usage should not be nil")
+		}
+		return chunk.Usage
+	}
+
+	t.Run("cached=75", func(t *testing.T) {
+		usage := chunkWith(`"cachedContentTokenCount": 75,`)
+		if usage.PromptTokens != 100 || usage.CompletionTokens != 20 {
+			t.Errorf("tokens = %d/%d, want 100/20", usage.PromptTokens, usage.CompletionTokens)
+		}
+		if usage.PromptTokensDetails == nil || string(*usage.PromptTokensDetails) != `{"cached_tokens":75}` {
+			t.Errorf("details = %v, want {\"cached_tokens\":75}", usage.PromptTokensDetails)
+		}
+	})
+	t.Run("cached=0", func(t *testing.T) {
+		usage := chunkWith(`"cachedContentTokenCount": 0,`)
+		if usage.PromptTokensDetails == nil || string(*usage.PromptTokensDetails) != `{"cached_tokens":0}` {
+			t.Errorf("details = %v, want {\"cached_tokens\":0}", usage.PromptTokensDetails)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		if usage := chunkWith(``); usage.PromptTokensDetails != nil {
+			t.Errorf("details = %s, want nil", *usage.PromptTokensDetails)
+		}
+	})
+}
+
+func TestStreamAndResponseUsageAgree(t *testing.T) {
+	const metadata = `{
+		"promptTokenCount": 100,
+		"cachedContentTokenCount": 75,
+		"candidatesTokenCount": 20,
+		"thoughtsTokenCount": 5,
+		"totalTokenCount": 125
+	}`
+
+	var resp geminiResponse
+	if err := json.Unmarshal([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":`+metadata+`}`), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	whole := translateResponse(&resp, "gemini-1.5-pro")
+
+	chunk, err := newStreamState("gemini-1.5-pro").parseStreamData(
+		`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":` + metadata + `}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if whole.Usage == nil || chunk.Usage == nil {
+		t.Fatalf("usage missing: response %v, chunk %v", whole.Usage, chunk.Usage)
+	}
+	if !reflect.DeepEqual(*whole.Usage, *chunk.Usage) {
+		t.Errorf("response usage %+v != stream usage %+v", *whole.Usage, *chunk.Usage)
 	}
 }

@@ -271,7 +271,7 @@ func TestModernOpenAIParamsLandInExtra(t *testing.T) {
 // "credit_" missed the keys the credits plugin actually writes.
 func TestIsBlockedMetadataKeyCostFamily(t *testing.T) {
 	blocked := []string{
-		"cost", "cost_source", "cost_SOURCE",
+		"cost", "cost_source", "cost_SOURCE", "cost_cached_tokens",
 		"credits_used", "credits_remaining", "credit_balance",
 		"budget_remaining", "ratelimit_limit", "org_id", "authorization",
 	}
