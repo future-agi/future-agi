@@ -439,6 +439,10 @@ jobs:
           tail -n 200 "$RUNNER_TEMP"/worker-*.log || true
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
+      - name: Stop the workers
+        if: always()
+        run: pkill -f "granian --interface asgi" || true
+
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
     # image ships: every other job syncs --all-extras, so a MODULE-LEVEL
