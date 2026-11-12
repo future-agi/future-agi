@@ -8,9 +8,12 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from django.db import OperationalError, connection
 from django.utils import timezone
+from structlog.testing import capture_logs
 
 import model_hub.tasks  # noqa: F401 - initialize the tasks/eval import cycle
+import model_hub.tasks.user_evaluation as user_evaluation
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.error_localizer_model import (
@@ -31,6 +34,7 @@ from tracer.models.observation_span import (
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.services.eval_tasks.run_entry import run_entry
+from tracer.services.project_deletion import soft_delete_projects
 from tracer.tests._ch_seed import seed_ch_trace
 
 pytestmark = [pytest.mark.integration, pytest.mark.django_db]
@@ -38,6 +42,25 @@ pytestmark = [pytest.mark.integration, pytest.mark.django_db]
 NEW_INPUT = "When does the delivery arrive?"
 NEW_OUTPUT = "It arrives Friday."
 NEW_REASON = "The requested Monday delivery was answered as Friday."
+CONTEXT_MISMATCH = "error_localizer_span_context_mismatch"
+OUT_OF_SCOPE = "error_localizer_span_existing_task_out_of_scope"
+TRIGGER_RETRYING = "error_localizer_span_trigger_retrying"
+TRIGGER_FAILED = "error_localizer_span_trigger_failed"
+DB_UNAVAILABLE = "error_localizer_span_trigger_db_unavailable"
+
+
+def _events(records, event):
+    return [record for record in records if record["event"] == event]
+
+
+def _assert_no_trigger_errors(records):
+    errors = [
+        record
+        for record in records
+        if record["log_level"] == "error"
+        and str(record["event"]).startswith("error_localizer")
+    ]
+    assert not errors, errors
 
 
 @pytest.fixture
@@ -312,7 +335,8 @@ def test_existing_localization_outside_scope_is_not_refreshed(
     old.save()
     original_workspace_id = old.workspace_id
     clear_workspace_context()
-    _trigger(entry, span, config)
+    with capture_logs() as records:
+        _trigger(entry, span, config)
     old.refresh_from_db()
     assert old.status == ErrorLocalizerStatus.COMPLETED
     assert old.input_data == {"output": "obsolete answer"}
@@ -321,6 +345,11 @@ def test_existing_localization_outside_scope_is_not_refreshed(
     assert (
         ErrorLocalizerTask.no_workspace_objects.filter(source_id=entry.id).count() == 1
     )
+    # A deliberate refusal, not a trigger crash an operator must investigate.
+    _assert_no_trigger_errors(records)
+    (refusal,) = _events(records, OUT_OF_SCOPE)
+    assert refusal["log_level"] == "warning"
+    assert refusal["eval_logger_id"] == str(entry.id)
 
 
 @pytest.mark.parametrize("mismatch", ["organization", "workspace"])
@@ -371,10 +400,178 @@ def test_task_target_cannot_be_replaced_by_config_author_project(
         # Legacy entries with no task still belong to the config's project.
         entry.eval_task_id = None
     clear_workspace_context()
-    _trigger(entry, span, config)
+    with capture_logs() as records:
+        _trigger(entry, span, config)
     assert not ErrorLocalizerTask.no_workspace_objects.filter(
         source_id=entry.id
     ).exists()
+    # A gone owning task is refused like any other context mismatch, at
+    # WARNING, rather than surfacing as a trigger crash.
+    _assert_no_trigger_errors(records)
+    (refusal,) = _events(records, CONTEXT_MISMATCH)
+    assert refusal["log_level"] == "warning"
+    assert refusal["reason"] == (
+        "owning_task_missing"
+        if mismatch in ("missing-task", "deleted-task")
+        else "span_context"
+    )
+
+
+def test_owning_project_deleted_mid_run_is_refused_not_crashed(
+    scenario_factory, stub_run_eval, stub_cost_log, monkeypatch
+):
+    # The sibling-authored config keeps the entry live when the target project
+    # is deleted, so the accepted result lands and the trigger sees a gone task.
+    entry, _, _, owner = scenario_factory(borrowed=True, pg_span=False)
+    stub_run_eval(value=False, reason=NEW_REASON)
+    import evaluations.engine.runner as runner_module
+
+    evaluate = runner_module.run_eval
+
+    def delete_target_project_then_evaluate(request):
+        soft_delete_projects(Project.objects.filter(pk=owner.project_id), "observe")
+        return evaluate(request)
+
+    for target in ("evaluations.engine.run_eval", "evaluations.engine.runner.run_eval"):
+        monkeypatch.setattr(target, delete_target_project_then_evaluate, raising=False)
+    clear_workspace_context()
+    with capture_logs() as records:
+        outcome = run_entry(entry)
+    entry.refresh_from_db()
+    assert EvalTask.all_objects.get(pk=owner.pk).deleted
+    assert outcome == EvalEntryStatus.COMPLETED, (outcome, entry.error_message)
+    assert entry.output_bool is False
+    assert not ErrorLocalizerTask.no_workspace_objects.filter(
+        source_id=entry.id
+    ).exists()
+    _assert_no_trigger_errors(records)
+    (refusal,) = _events(records, CONTEXT_MISMATCH)
+    assert refusal["log_level"] == "warning"
+    assert refusal["reason"] == "owning_task_missing"
+
+
+def _fail_trigger_statements(monkeypatch, table, failures):
+    """Fail the trigger's first ``failures`` statements on ``table``.
+
+    Raised at the SQL layer like a statement timeout on a still-usable
+    connection, independent of how the trigger builds the query. ``run_entry``'s
+    own reads run outside the trigger and are unaffected.
+    """
+    real_trigger = user_evaluation.trigger_error_localization_for_span
+    failed = []
+
+    def flaky(execute, sql, params, many, context):
+        if f'"{table}"' in sql and len(failed) < failures:
+            failed.append(sql)
+            raise OperationalError("canceling statement due to statement timeout")
+        return execute(sql, params, many, context)
+
+    def trigger_with_flaky_statements(*args, **kwargs):
+        with connection.execute_wrapper(flaky):
+            return real_trigger(*args, **kwargs)
+
+    monkeypatch.setattr(
+        user_evaluation,
+        "trigger_error_localization_for_span",
+        trigger_with_flaky_statements,
+    )
+    monkeypatch.setattr(
+        user_evaluation,
+        "SPAN_LOCALIZATION_RETRY_DELAY_SECONDS",
+        0,
+        raising=False,
+    )
+    return failed
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["tracer_eval_task", "error_localizer_task"],
+    ids=["owning-task-read", "existing-localization-read"],
+)
+@pytest.mark.parametrize("borrowed", [True, False], ids=["borrowed", "same-project"])
+def test_transient_read_failure_does_not_drop_localization(
+    scenario_factory,
+    workspace,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+    table,
+    borrowed,
+):
+    entry, _, _, owner = scenario_factory(borrowed=borrowed)
+    failed = _fail_trigger_statements(monkeypatch, table, failures=1)
+    clear_workspace_context()
+    with capture_logs() as records:
+        _run_and_require_accepted(entry, stub_run_eval)
+    assert len(failed) == 1, "the trigger never read the table under test"
+    task = ErrorLocalizerTask.no_workspace_objects.get(source_id=entry.id)
+    assert task.status == ErrorLocalizerStatus.PENDING
+    assert task.organization_id == owner.project.organization_id
+    assert task.workspace_id == workspace.id
+    assert task.eval_result is False
+    assert task.eval_explanation == NEW_REASON
+    assert task.input_data == {"input": NEW_INPUT, "output": NEW_OUTPUT}
+    _assert_no_trigger_errors(records)
+    (retry,) = _events(records, TRIGGER_RETRYING)
+    assert retry["log_level"] == "warning"
+    assert retry["error_type"] == "OperationalError"
+
+
+def test_real_statement_timeout_on_owning_task_read_is_retried(
+    scenario_factory, stub_run_eval, stub_cost_log, monkeypatch
+):
+    # PostgreSQL itself cancels the read, which aborts the enclosing
+    # transaction. The retry must still find a usable connection afterwards.
+    entry, _, _, _ = scenario_factory(borrowed=True)
+    real_trigger = user_evaluation.trigger_error_localization_for_span
+    cancelled = []
+
+    def cancel_first_task_read(execute, sql, params, many, context):
+        if '"tracer_eval_task"' in sql and not cancelled:
+            cancelled.append(sql)
+            execute("SET LOCAL statement_timeout = 1", None, False, context)
+            execute("SELECT pg_sleep(1)", None, False, context)
+        return execute(sql, params, many, context)
+
+    def trigger_with_cancel(*args, **kwargs):
+        with connection.execute_wrapper(cancel_first_task_read):
+            return real_trigger(*args, **kwargs)
+
+    monkeypatch.setattr(
+        user_evaluation, "trigger_error_localization_for_span", trigger_with_cancel
+    )
+    monkeypatch.setattr(
+        user_evaluation, "SPAN_LOCALIZATION_RETRY_DELAY_SECONDS", 0, raising=False
+    )
+    clear_workspace_context()
+    with capture_logs() as records:
+        _run_and_require_accepted(entry, stub_run_eval)
+    assert len(cancelled) == 1
+    assert ErrorLocalizerTask.no_workspace_objects.filter(source_id=entry.id).exists()
+    _assert_no_trigger_errors(records)
+    (retry,) = _events(records, TRIGGER_RETRYING)
+    assert retry["error_type"] == "OperationalError"
+
+
+def test_persistent_read_failure_is_reported_as_database_unavailable(
+    scenario_factory, stub_run_eval, stub_cost_log, monkeypatch
+):
+    entry, _, _, _ = scenario_factory(borrowed=True)
+    failed = _fail_trigger_statements(monkeypatch, "tracer_eval_task", 10**6)
+    clear_workspace_context()
+    with capture_logs() as records:
+        # The accepted result stays accepted: localization never errors the entry.
+        _run_and_require_accepted(entry, stub_run_eval)
+    assert not ErrorLocalizerTask.no_workspace_objects.filter(
+        source_id=entry.id
+    ).exists()
+    assert not _events(records, TRIGGER_FAILED)
+    (failure,) = _events(records, DB_UNAVAILABLE)
+    assert failure["log_level"] == "error"
+    assert failure["error_type"] == "OperationalError"
+    assert failure["attempts"] == len(failed) > 1
+    assert len(_events(records, TRIGGER_RETRYING)) == len(failed) - 1
 
 
 @pytest.mark.parametrize("pg_span", [True, False], ids=["pg-and-ch", "ch-only"])
