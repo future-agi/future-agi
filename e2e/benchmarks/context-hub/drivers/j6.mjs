@@ -373,6 +373,9 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(authorPage.getByText('Copied the review link.', { exact: true })).toBeVisible();
         const reviewLink = await authorPage.evaluate(() => navigator.clipboard.readText());
         requireValue(reviewLink === await authorPage.getByRole('textbox', { name: 'Review link' }).inputValue() && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
+        await authorPage.getByRole('textbox', { name: 'Review link' }).scrollIntoViewIfNeeded();
+        // No credential is on this screen (the replacement is issued later), so the link is captured unmasked.
+        await authorPage.screenshot({ path: resolve(output, 'shots', '03-review-link.png') });
         await navigate(admin, ledger, stage, reviewerPage, reviewLink, 'open-review-link');
         await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
         const ack = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
