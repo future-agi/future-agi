@@ -114,9 +114,14 @@ class TestProviderInit:
         p = FutureAGIOAuthProvider(frontend_url="https://dev.futureagi.com")
         assert p.frontend_url == "https://dev.futureagi.com"
 
-    def test_falls_back_to_frontend_url_env(self, monkeypatch):
-        monkeypatch.setenv("FRONTEND_URL", "https://from-env.example.com/")
-        assert FutureAGIOAuthProvider().frontend_url == "https://from-env.example.com"
+    def test_falls_back_to_the_configured_frontend_base_url(self, settings):
+        """Without an explicit frontend_url the provider uses
+        settings.FRONTEND_BASE_URL (resolved once from FRONTEND_URL, else
+        APP_BASE_URL), still stripping a trailing slash."""
+        settings.FRONTEND_BASE_URL = "https://from-settings.example.com/"
+        assert (
+            FutureAGIOAuthProvider().frontend_url == "https://from-settings.example.com"
+        )
 
 
 class TestClientRegistration:
