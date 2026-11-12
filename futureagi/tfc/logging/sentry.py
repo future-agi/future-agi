@@ -45,12 +45,36 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 #
 # NOTE: Sentry's LoggingIntegration patches logging.Logger.callHandlers, so a
 # logger's `propagate=False`/`level` in Django's LOGGING dict does NOT stop it
-# from becoming an event. ignore_logger() (below) and the before_send prefix
-# check are the only reliable levers.
+# from becoming an event. ignore_logger() (below) and the before_send logger
+# checks are the only reliable levers. ignore_logger() also discards the
+# record's breadcrumb, so loggers whose records are still useful context
+# (EXPECTED_OUTCOME_LOGGERS) are dropped in before_send only.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
     "saml2",
     "xmlschema",
+)
+
+# Exact names of third-party loggers that report an outcome our code handles at
+# ERROR. before_send drops every event built from a record of one of these
+# loggers, whatever its message; child and similarly named loggers, and
+# exceptions captured directly, are kept. The record stays a breadcrumb, so it
+# is still context on any genuine event captured later in the same scope.
+EXPECTED_OUTCOME_LOGGERS = frozenset(
+    {
+        # Django answers a request with an invalid Host header with 400 and logs
+        # it here at ERROR. That is scanner/bot traffic, not a fault. The other
+        # django.security.* loggers (SuspiciousOperation, SuspiciousFileOperation,
+        # RequestDataTooBig, csrf, ...) stay captured.
+        "django.security.DisallowedHost",
+        # LiteLLM's own verbose_logger logs a provider or credential failure at
+        # ERROR (for example an undecodable Vertex AI service-account key) and
+        # then raises it to the caller. Our code owns that outcome: model
+        # validation answers 400 and logs a WARNING, and genuine faults are
+        # logged or captured from our own loggers. We register no LiteLLM
+        # callbacks, so none of our code runs under this logger.
+        "LiteLLM",
+    }
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -306,7 +330,8 @@ def _get_before_send() -> Callable:
     Create the before_send hook that runs on every error event.
 
     Responsibilities, in order:
-    1. Drop pure-infrastructure logger noise (OTel exporter, etc.).
+    1. Drop pure-infrastructure logger noise (OTel exporter, etc.) and records
+       of the third-party loggers in EXPECTED_OUTCOME_LOGGERS.
     2. Drop explicitly classified, expected log-only outcomes.
     3. Scrub secrets/PII from whatever remains.
     """
@@ -321,6 +346,14 @@ def _get_before_send() -> Callable:
             logger_name == p or logger_name.startswith(f"{p}.")
             for p in NOISY_LOGGER_PREFIXES
         ):
+            return None
+        # A third-party logger's record of an outcome our code handles, matched
+        # by the record's exact logger name. Dedupe has already remembered the
+        # record's exception; the SDK forgets it again when before_send drops
+        # an exception event, so our own report of that same exception object
+        # (LiteLLM raises it to our code) is still sent.
+        record = hint.get("log_record")
+        if getattr(record, "name", None) in EXPECTED_OUTCOME_LOGGERS:
             return None
 
         # 2. A handled exception is not necessarily harmless. Do not suppress

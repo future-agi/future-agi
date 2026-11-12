@@ -47,16 +47,6 @@ def _log_hint(logger_name, exc=None):
     return hint
 
 
-def _pipeline(event, hint):
-    """Our global event processors (registered on import) and then before_send."""
-    for processor in global_event_processors:
-        if getattr(processor, "__module__", "").startswith("tfc."):
-            event = processor(event, hint)
-            if event is None:
-                return None
-    return before_send(event, hint)
-
-
 # Noise: dropped
 
 
@@ -91,21 +81,21 @@ def test_keeps_disconnects_and_security_failures():
         SuspiciousOperation(),
         DisallowedHost("Invalid HTTP_HOST header"),
     ):
-        assert _pipeline({}, _hint(error)) is not None
+        assert before_send({}, _hint(error)) is not None
 
     # Django logs each security failure on django.security.<ClassName>. Only
     # the invalid Host header (scanner traffic answered with 400) is expected.
     for error in (SuspiciousOperation("tampered"), SuspiciousFileOperation("path")):
         name = f"django.security.{type(error).__name__}"
         event = {"logger": name, "message": str(error)}
-        assert _pipeline(event, _log_hint(name, error)) is not None
+        assert before_send(event, _log_hint(name, error)) is not None
     name = "django.security.DisallowedHost"
     error = DisallowedHost("Invalid HTTP_HOST header: 'scanner.example.invalid'.")
     event = {"logger": name, "message": str(error)}
-    assert _pipeline(event, _log_hint(name, error)) is None
+    assert before_send(event, _log_hint(name, error)) is None
     # A child or similarly named logger is not the expected one.
     for other in ("django.security.DisallowedHost.extra", "django.security"):
-        assert _pipeline({"logger": other}, _log_hint(other, error)) is not None
+        assert before_send({"logger": other}, _log_hint(other, error)) is not None
 
 
 def test_keeps_http_errors_without_explicit_outcome_classification():
@@ -118,7 +108,7 @@ def test_keeps_messages_that_only_resemble_expected_outcomes():
         "trace_payload_not_found_in_redis",
         "Failed to load vertex credentials",
     ):
-        assert _pipeline({"message": message}, {}) is not None
+        assert before_send({"message": message}, {}) is not None
 
 
 def test_drops_litellm_own_logger_events_but_keeps_ours():
@@ -127,13 +117,25 @@ def test_drops_litellm_own_logger_events_but_keeps_ours():
     error = ValueError("Could not deserialize key data.")
     message = f"Failed to load vertex credentials. Error: {error}"
     event = {"logger": "LiteLLM", "message": message}
-    assert _pipeline(event, _log_hint("LiteLLM", error)) is None
+    assert before_send(event, _log_hint("LiteLLM", error)) is None
     # The same failure logged or captured by our own code is still an issue.
     for name in ("model_hub.utils.utils", "LiteLLM Router", "litellm"):
         event = {"logger": name, "message": message}
-        assert _pipeline(event, _log_hint(name, error)) is not None
+        assert before_send(event, _log_hint(name, error)) is not None
     # Only records LiteLLM itself logged qualify, not a direct capture.
-    assert _pipeline({"logger": "LiteLLM"}, _hint(error)) is not None
+    assert before_send({"logger": "LiteLLM"}, _hint(error)) is not None
+
+
+def test_expected_outcome_loggers_are_dropped_by_before_send_alone():
+    """Every client init_sentry creates gets the drop through before_send; no
+    import-time global processor applies it to unrelated (test) clients."""
+    assert not [
+        processor
+        for processor in global_event_processors
+        if getattr(processor, "__module__", "").startswith("tfc.")
+    ]
+    for name in ("django.security.DisallowedHost", "LiteLLM"):
+        assert before_send({"logger": name}, _log_hint(name)) is None
 
 
 # Real errors: kept

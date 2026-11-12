@@ -164,31 +164,38 @@ def test_invalid_host_header_is_not_an_issue_but_other_security_failures_are(
 def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
     transport,
 ):
+    # LiteLLM logs the failure on its own logger and raises that same exception
+    # object to our code, which logs it again. Dedupe remembers the object from
+    # LiteLLM's record before before_send drops it; the SDK must forget it after
+    # the drop, or our own record of the failure would be swallowed as a
+    # duplicate of an event that was never sent.
     try:
         raise ValueError("Could not deserialize key data.")
     except ValueError as error:
         logging.getLogger("LiteLLM").exception(
             "Failed to load vertex credentials. Error: %s", error
         )
-    assert transport.events == []
-
-    # Separate exception objects, so Dedupe cannot merge the two records.
-    try:
-        raise ValueError("Could not deserialize key data.")
-    except ValueError:
+        assert transport.events == []
         logging.getLogger("model_hub.utils.utils").exception("model_check_failed")
-    sentry_sdk.capture_exception(RuntimeError("synthetic genuine fault"))
+        # Dedupe still merges a second report of the object we already sent.
+        sentry_sdk.capture_exception(error)
 
+    [event] = transport.events
+    assert event["logger"] == "model_hub.utils.utils"
+    assert event["exception"]["values"][-1]["value"] == (
+        "Could not deserialize key data."
+    )
+    assert any(
+        crumb.get("category") == "LiteLLM"
+        and "Failed to load vertex credentials" in crumb.get("message", "")
+        for crumb in event["breadcrumbs"]["values"]
+    )
+
+    sentry_sdk.capture_exception(RuntimeError("synthetic genuine fault"))
     assert [event.get("logger") for event in transport.events] == [
         "model_hub.utils.utils",
         None,
     ]
-    crumbs = transport.events[-1]["breadcrumbs"]["values"]
-    assert any(
-        crumb.get("category") == "LiteLLM"
-        and "Failed to load vertex credentials" in crumb.get("message", "")
-        for crumb in crumbs
-    )
 
 
 def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):

@@ -50,11 +50,6 @@ from .sentry import (
     set_user_context,
     start_transaction,
 )
-from .sentry_outcomes import register_expected_outcome_filter
-
-# Every process imports this package before init_sentry, so the expected-outcome
-# logger filter applies to Django, Celery and Temporal alike.
-register_expected_outcome_filter()
 
 __all__ = [
     "configure_structlog",
