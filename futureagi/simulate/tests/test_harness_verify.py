@@ -1,6 +1,7 @@
 """Held-back cases and verify: what a coding agent may read and run, and the counts it
 gets back when it verifies an agent version on the cases it never saw."""
 
+import dataclasses
 import json
 import uuid
 from types import SimpleNamespace
@@ -1094,7 +1095,7 @@ def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
             },
             "reasons": {"start": "The agent did not start in the test sandbox"},
         }
-        return type(plan)(view=view, held=frozenset(keys))
+        return dataclasses.replace(plan, view=view, held=frozenset(keys))
 
     monkeypatch.setattr(harness_readiness, "select_for_run", every_case_held)
 

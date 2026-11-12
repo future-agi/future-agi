@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -798,54 +799,114 @@ class TestPairs:
         run.refresh_from_db()
         assert run.capability_snapshot == snapshot
 
-    def test_snapshot_is_read_after_the_run_commits_from_its_own_bundle(
+    def test_snapshot_is_the_report_the_selection_was_decided_from(
         self, user, workspace, storage, django_capture_on_commit_callbacks
     ):
         environment = _environment(user, workspace, storage, "rd-snapshot-after")
         _certify(environment, storage)
 
-        with patch.object(
-            report_module, "read_evidence", wraps=report_module.read_evidence
-        ) as read:
-            with django_capture_on_commit_callbacks(execute=False) as callbacks:
-                run = _run(environment)
-            # Once, before the environment's lock, for the cases the run holds back.
-            assert read.call_count == 1
-            for callback in callbacks:
-                callback()
+        with (
+            patch.object(
+                report_module, "read_evidence", wraps=report_module.read_evidence
+            ) as read,
+            patch.object(harness_readiness, "store_run_snapshot") as stored,
+        ):
+            run = _committed_run(environment, django_capture_on_commit_callbacks)
 
-        run.refresh_from_db()
-        assert read.call_count == 2
-        assert read.call_args.args[1].id == run.assembled_bundle_id
+        # Read once, before the environment's lock, and never again after the run.
+        assert read.call_count == 1
+        assert stored.call_count == 0
         assert run.capability_snapshot["answer"]["kind"] == "ready"
 
-    def test_snapshot_reads_the_bundle_the_run_is_bound_to(
+    def test_the_snapshot_is_not_read_again_once_the_run_changed_its_inputs(
         self, user, workspace, storage, django_capture_on_commit_callbacks
     ):
         environment = _environment(user, workspace, storage, "rd-snapshot-bundle")
         _certify(environment, storage)
+        decided = {}
+        real = harness_readiness.select_for_run
 
-        with patch.object(harness_readiness, "store_run_snapshot") as stored:
+        def remember(pairing, **kwargs):
+            plan = real(pairing, **kwargs)
+            decided["report"] = plan.report
+            return plan
+
+        with patch.object(harness_readiness, "select_for_run", side_effect=remember):
             run = _committed_run(environment, django_capture_on_commit_callbacks)
 
-        assert stored.call_args.args[0] == run.id
-        assert stored.call_args.kwargs["bundle"].id == run.assembled_bundle_id
+        assert run.capability_snapshot == decided["report"]
 
-    def test_unreadable_evidence_never_fails_the_run(
+    def test_unreadable_evidence_refuses_the_run_and_can_be_retried(
         self, user, workspace, storage, django_capture_on_commit_callbacks
     ):
         environment = _environment(user, workspace, storage, "rd-snapshot-error")
         _certify(environment, storage)
+        runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+        before = runs.count()
 
-        with patch.object(
-            report_module,
-            "read_evidence",
-            side_effect=ConnectionError("storage unreachable"),
+        with (
+            patch.object(
+                report_module,
+                "read_evidence",
+                side_effect=ConnectionError("storage unreachable"),
+            ),
+            pytest.raises(HostedHarnessError) as refused,
         ):
-            run = _committed_run(environment, django_capture_on_commit_callbacks)
+            _committed_run(environment, django_capture_on_commit_callbacks)
 
-        assert run.test_execution_id is not None
-        assert run.capability_snapshot is None
+        assert refused.value.code == "readiness_unavailable"
+        assert (refused.value.status_code, refused.value.retryable) == (503, True)
+        assert runs.count() == before
+
+    def test_an_unreadable_certification_archive_refuses_the_run(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        environment = _environment(user, workspace, storage, "rd-archive-gone")
+        _certify(environment, storage)
+        bundle = _bundle(environment)
+        storage.objects.pop(bundle.object_key, None)
+        cache.clear()
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _committed_run(environment, django_capture_on_commit_callbacks)
+
+        assert refused.value.code == "readiness_unavailable"
+
+    def test_evidence_that_changed_before_the_lock_refuses_the_run(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        environment = _environment(user, workspace, storage, "rd-evidence-moved")
+        _certify(environment, storage)
+        runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+        before = runs.count()
+        real = harness_readiness.select_for_run
+
+        def then_evidence_moves(pairing, **kwargs):
+            plan = real(pairing, **kwargs)
+            bundle = harness_readiness.pair_bundle(pairing)
+            HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+                certificate={
+                    **(bundle.certificate or {}),
+                    "checks": {"start": "failed"},
+                },
+                updated_at=bundle.updated_at + timedelta(seconds=1),
+            )
+            return plan
+
+        with (
+            patch.object(
+                harness_readiness, "select_for_run", side_effect=then_evidence_moves
+            ),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            _committed_run(environment, django_capture_on_commit_callbacks)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "environment_not_ready",
+            409,
+        )
+        assert refused.value.retryable is True
+        assert runs.count() == before
 
 
 def _get(auth_client, environment_id, **params):
@@ -1273,6 +1334,9 @@ class TestReviewFollowUps:
                 harness_readiness.ACTION_CERTIFICATION: json.dumps(
                     {"actions": ACTIONS}
                 ).encode(),
+                evidence.TOOL_ROUTING: json.dumps(
+                    {"tools": [], "unobserved": []}
+                ).encode(),
                 "zz/large.bin": os.urandom(2 * 1024 * 1024),
             }
         )
@@ -1281,7 +1345,12 @@ class TestReviewFollowUps:
 
         files = evidence._certification_files("harness-sealed/stream/a.tar.gz")
 
-        assert files == {"tools": TOOLS, "actions": ACTIONS}
+        assert files == {
+            "tools": TOOLS,
+            "actions": ACTIONS,
+            "routed": [],
+            "unobserved": [],
+        }
 
     def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
         import hashlib
@@ -2627,6 +2696,26 @@ class TestObservedRouting:
         assert routing["reason"] == (
             "Not yet shown reaching the test world: issue_refund (its contract says it"
             " leaves the test world, so it was not asked)"
+        )
+
+    def test_a_tool_with_effects_names_why_it_was_not_called(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "tr-effects")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=NOT_PROBED,
+            routed=["lookup_order"],
+            unobserved=[{"tool": "issue_refund", "reason": "has_effects"}],
+        )
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason"] == (
+            "Not yet shown reaching the test world: issue_refund (its contract says it"
+            " changes something, so the check did not call it)"
         )
 
     def test_a_tool_left_unasked_reads_partial_with_the_reason(

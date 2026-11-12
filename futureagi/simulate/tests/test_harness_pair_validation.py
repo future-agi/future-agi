@@ -1958,19 +1958,18 @@ def _recorded(domain, *, code="spawn_failed", process="tool-proxy", message=None
 
 
 class TestFailureRecord:
-    """ALK's own record of why a check failed decides whose failure it is."""
+    """ALK's record of why a check failed is shown, never trusted to say whose failure
+    it is: the tested agent can write the file it comes from."""
 
-    @pytest.mark.parametrize(
-        ("domain", "expected"),
-        [("world", "spawn_failed"), ("harness", "spawn_failed"), ("agent", None)],
-    )
-    def test_the_record_decides_whatever_the_log_says(self, domain, expected):
-        # The log alone would read the opposite way for each.
-        logged = _AGENT_CRASH if domain != "agent" else WORLD_SEED
-        failure = _failure(logged)
-        failure["details"]["harness_failure"] = _recorded(domain)
+    @pytest.mark.parametrize("domain", ["world", "harness", "agent"])
+    def test_the_record_never_decides_whose_failure_it_is(self, domain):
+        agents = _failure(_AGENT_CRASH)
+        agents["details"]["harness_failure"] = _recorded(domain)
+        ours = _failure(WORLD_SEED)
+        ours["details"]["harness_failure"] = _recorded(domain)
 
-        assert validation.platform_failure(failure) == expected
+        assert validation.platform_failure(agents) is None
+        assert validation.platform_failure(ours) == "seed_failed"
 
     def test_without_a_record_the_log_is_read_as_before(self):
         assert validation.platform_failure(_failure(WORLD_SEED)) == "seed_failed"

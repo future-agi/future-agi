@@ -16,7 +16,7 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
-from simulate.services.harness_versioning import assembly
+from simulate.services.harness_versioning import archives, assembly
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_versioning.run_warnings import (
     preview_run,
@@ -73,7 +73,12 @@ def _runtime(agent_version_id):
 
 
 def _ready(environment, agent_version_id, environment_version, suite_version):
+    from tfc.utils import storage_client
+
     runtime = _runtime(agent_version_id)
+    object_key = f"bundles/{uuid.uuid4().hex}.tar.gz"
+    # A ready bundle's archive is stored; readiness reads it before a run.
+    storage_client._client.objects[object_key] = archives.pack_archive({})
     row, _ = HarnessAssembledBundle._base_manager.update_or_create(
         job_id=environment.id,
         assembly_key=assembly.bundle_key(runtime, environment_version, suite_version),
@@ -83,7 +88,7 @@ def _ready(environment, agent_version_id, environment_version, suite_version):
             "environment_version_id": environment_version.id,
             "suite_version_id": suite_version.id,
             "state": HarnessAssembledBundle.State.READY,
-            "object_key": f"bundles/{uuid.uuid4().hex}.tar.gz",
+            "object_key": object_key,
         },
     )
     return row

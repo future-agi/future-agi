@@ -268,6 +268,30 @@ class TestBuckets:
         ]
         assert (chosen["requested"], chosen["eligible"]) == (1, 1)
 
+    def test_a_run_refuses_a_case_certifying_dropped(self, user, workspace, storage):
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "as-dropped-run",
+            warnings=[{"code": "scenario_dropped", "keys": [LOOKUP_KEYS[0]]}],
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            harness_readiness.select_for_run(
+                _pairing(environment),
+                keys=[LOOKUP_KEYS[0], LOOKUP_KEYS[1]],
+                trials=1,
+            )
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "scenario_dropped",
+            422,
+        )
+        assert refused.value.details == {"keys": [LOOKUP_KEYS[0]]}
+
     def test_reset_needed_by_every_case_of_a_seeded_world_run(
         self, user, workspace, storage
     ):
@@ -604,7 +628,11 @@ class TestHoldBack:
             storage,
             "hb-provider",
             tools=[
-                {"tool": tool, "availability": "runtime_only", "entrypoint_mode": "provider"}
+                {
+                    "tool": tool,
+                    "availability": "runtime_only",
+                    "entrypoint_mode": "provider",
+                }
                 for tool in (LOOKUP, REFUND)
             ],
             actions=NOT_PROBED,
@@ -739,6 +767,24 @@ class TestAgentGapCases:
 
         assert report["selection"]["lists"]["blocked"]["keys"] == REFUND_KEYS
         assert _rows(report)["tool_routing"]["affected"]["count"] == 4
+
+    def test_an_agent_read_with_no_tools_holds_back_the_cases_using_world_tools(
+        self, user, workspace, storage
+    ):
+        environment, pairing = self._a2(user, workspace, storage, "gap-cases-none", ())
+
+        report = _select(environment, pairing=pairing)
+
+        discovery = _rows(report)["tool_discovery"]
+        assert (discovery["status"], discovery["reason_code"]) == (
+            "blocked",
+            "tool_not_in_agent",
+        )
+        assert report["selection"]["blocked"] == 10
+        plan = harness_readiness.select_for_run(
+            pairing, keys=REFUND_KEYS + LOOKUP_KEYS, trials=1
+        )
+        assert plan.view["running"] == 0
 
     def test_an_unread_version_holds_back_no_case(self, user, workspace, storage):
         environment, pairing = self._a2(

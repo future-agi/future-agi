@@ -122,12 +122,8 @@ def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
     anything else, is the agent's."""
     if failed_actions or not failure:
         return None
-    record = (failure.get("details") or {}).get("harness_failure")
-    if isinstance(record, dict) and record.get("domain"):
-        # ALK's own record of the ending; the log is read only from a template without it.
-        if record["domain"] in ("harness", "world"):
-            return str(record.get("code") or record["domain"])
-        return None
+    # ALK's ``harness_failure`` record is never read here: the tested agent can write
+    # the file it comes from, so it is shown as a diagnostic only.
     ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
     if ending is None:
         return None
@@ -229,7 +225,9 @@ class Validation:
             "job_id": (
                 str(self.job.id)
                 if self.job is not None
-                else last.get("job_id") if unavailable else None
+                else last.get("job_id")
+                if unavailable
+                else None
             ),
             "purpose": self.purpose,
             "finished_at": None,
