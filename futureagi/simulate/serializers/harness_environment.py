@@ -867,6 +867,13 @@ class HarnessCapabilityPairingSerializer(serializers.Serializer):
     )
     # Absent from a run's snapshot taken before agent tools were read.
     agent_tools = HarnessCapabilityAgentToolsSerializer(required=False)
+    evidence_unreadable = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "The certification archive could not be read just now, so its rows read as"
+            " unmeasured; a run of this pairing is refused until it can be read."
+        ),
+    )
 
 
 class HarnessCapabilityAnswerSerializer(serializers.Serializer):

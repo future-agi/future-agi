@@ -858,6 +858,31 @@ class TestPairs:
         assert (refused.value.status_code, refused.value.retryable) == (503, True)
         assert runs.count() == before
 
+    def test_a_repeated_request_gets_its_run_even_when_readiness_cannot_be_read(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        """A client retrying an accepted run is answered with that run, not a 503."""
+        environment = _environment(user, workspace, storage, "rd-replay-unreadable")
+        _certify(environment, storage)
+        first = _committed_run(environment, django_capture_on_commit_callbacks)
+
+        from simulate.services.hosted_harness import create_selected_harness_run
+        from simulate.tests.test_harness_versioning_runs import NAMES, _key
+
+        with patch.object(
+            report_module,
+            "read_evidence",
+            side_effect=ConnectionError("storage unreachable"),
+        ):
+            again, created = create_selected_harness_run(
+                environment,
+                scenario_keys=[_key(NAMES[0])],
+                trials=1,
+                idempotency_key="r",
+            )
+
+        assert (again.id, created) == (first.id, False)
+
     def test_an_unreadable_certification_archive_refuses_the_run(
         self, user, workspace, storage, django_capture_on_commit_callbacks
     ):
@@ -871,6 +896,17 @@ class TestPairs:
             _committed_run(environment, django_capture_on_commit_callbacks)
 
         assert refused.value.code == "readiness_unavailable"
+
+    def test_the_report_says_when_the_certification_cannot_be_read(
+        self, user, workspace, storage
+    ):
+        """Unmeasured rows from an unreadable archive are named as such."""
+        environment = _environment(user, workspace, storage, "rd-report-unreadable")
+        _certify(environment, storage)
+        storage.objects.pop(_bundle(environment).object_key, None)
+        cache.clear()
+
+        assert _report(environment)["pairing"]["evidence_unreadable"] is True
 
     def test_evidence_that_changed_before_the_lock_refuses_the_run(
         self, user, workspace, storage, django_capture_on_commit_callbacks
