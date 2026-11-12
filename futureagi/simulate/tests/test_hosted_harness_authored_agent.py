@@ -60,13 +60,13 @@ def test_a_repository_run_stores_the_agent_on_the_version_the_prompt_created(def
 
 
 @pytest.mark.django_db
-def test_a_run_with_no_prompt_gets_one_active_version_with_an_empty_description(definition):
+def test_a_run_with_no_prompt_gets_one_active_version_with_the_documents_prompt(definition):
     hosted_harness._store_authored_agent(_job("github"), definition, _sent())
 
     version = AgentVersion.objects.get(agent_definition=definition)
     assert version.status == "active"
-    assert version.description == ""
-    assert version.configuration_snapshot["description"] == ""
+    assert version.description == "You are the booking assistant for Harbor Hotels."
+    assert version.configuration_snapshot["description"] == "You are the booking assistant for Harbor Hotels."
     assert stored_agent(version.id)["name"] == "harbor_hotels"
 
 

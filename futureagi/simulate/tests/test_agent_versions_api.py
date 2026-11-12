@@ -640,7 +640,7 @@ def test_a_synced_version_keeps_the_repository_id(auth_client, agent, production
     runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
         agent_version_id=body["id"]
     )
-    assert runtime.source["repository_id"] == 7
+    assert runtime.agent_payload["source_access"]["repository_id"] == 7
     assert runtime.source["commit_sha"] == "b" * 40
 
 
@@ -776,16 +776,19 @@ class TestVersionAtHead:
         assert _versions(agent) == 2
 
     def test_a_pending_version_whose_check_never_started_is_queued_again(
-        self, agent, production
+        self, agent, production, django_capture_on_commit_callbacks
     ):
         stalled = _connect(agent, parent=production, commit="b", trigger=Trigger.SYNC)
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version=stalled
         ).update(preflight_status=Status.PENDING, check_started_at=None)
 
-        with patch(
-            "simulate.services.harness_agent_versions._schedule_preflight"
-        ) as scheduled:
+        with (
+            patch(
+                "simulate.services.harness_agent_versions._schedule_preflight"
+            ) as scheduled,
+            django_capture_on_commit_callbacks(execute=True),
+        ):
             version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
 
         assert (version.id, created) == (stalled.id, False)

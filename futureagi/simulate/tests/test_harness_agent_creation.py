@@ -1012,7 +1012,7 @@ class TestConnectedAgentCreationCheck:
 
         _connect(agent)
         elsewhere = Workspace.objects.create(
-            name="Elsewhere", organization=user.organization
+            name="Elsewhere", organization=user.organization, created_by=user
         )
 
         calls = maker(user.organization, str(agent.id), elsewhere)

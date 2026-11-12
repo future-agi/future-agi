@@ -260,7 +260,8 @@ def test_the_page_sees_the_framework_and_folder_but_not_the_contract(version):
         "framework": {"name": "other", "version": None, "label": "Haystack"},
         "source": {"subfolder": "agents/harbor"},
     }
-    assert "harbor_hotels" not in str(shown)
+    assert "contract" not in str(shown)
+    assert "[redacted]" not in str(shown)
 
 
 @pytest.mark.django_db
@@ -697,12 +698,15 @@ def test_store_logs_the_outcome_without_the_document(version):
 
 
 @pytest.mark.django_db
-def test_versions_keep_no_part_of_the_agent(version):
+def test_versions_keep_no_part_of_the_agent_but_a_blank_prompt(version):
     snapshot = copy.deepcopy(AgentVersion.objects.get(id=version.id).configuration_snapshot)
 
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
-    assert AgentVersion.objects.get(id=version.id).configuration_snapshot == snapshot
+    assert AgentVersion.objects.get(id=version.id).configuration_snapshot == {
+        **snapshot,
+        "description": "You are the booking assistant for Harbor Hotels.",
+    }
 
 
 @pytest.fixture
