@@ -153,7 +153,9 @@ the approver App. Skipping such PRs would strand them. The notes only slow
 the sweep: a writer who edits or deletes one changes when the PR is
 dispatched, never what a run checks. A head that is behind `dev` stays
 behind until it changes, so the hourly dispatch and the run that a push
-starts are enough for it. A PR that waits with no note (pending CI, a review
+starts are enough for it. An escalation of a behind head is not checked
+again until the head changes or contains the `dev` tip (item 1 of [Trust
+boundary and merge decision](#trust-boundary-and-merge-decision)). A PR that waits with no note (pending CI, a review
 to retry after the branch changes) is still dispatched on every sweep,
 because nothing tells the sweep when that wait ends. A dispatch on `dev`
 with input `pr_number` re-evaluates a PR at once; it cannot reset the review
@@ -441,8 +443,13 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    run escalates at once and posts no note, because merging `dev` in does
    not lift that escalation. If the read fails, or the history does not
    show this head yet, the run posts nothing; the PR is not parked, so the
-   next sweep reads again. The note says that the autopilot reviews and
-   merges only a head that contains the live `dev` tip, and that the
+   next sweep reads again. A behind run does not read the history again
+   once an escalation names the head, because it cannot tell what that
+   escalation was for. So the escalation stays until the head changes or
+   the branch contains the `dev` tip, even if the owner then adds the
+   pusher to the trusted-author list. The author merges `dev` in and
+   pushes, and the run on that head checks again. The note says that the
+   autopilot reviews and merges only a head that contains the live `dev` tip, and that the
    author (or another trusted author) merges `dev` into the branch locally
    and pushes. It also says that a push or an "Update branch" by anyone
    not on the trusted-author list sends the PR to a person for good. A new

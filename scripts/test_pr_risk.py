@@ -4359,10 +4359,6 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(trigger["branches"], ["dev"])
         needed = {"labeled", "unlabeled", "converted_to_draft", "ready_for_review", "synchronize"}
         self.assertLessEqual(needed, set(trigger["types"]))
-        # A copy without one of them fails the same check.
-        for missing in sorted(needed):
-            with self.subTest(missing=missing):
-                self.assertFalse(needed <= set(trigger["types"]) - {missing})
 
     def test_policy_tests_run_for_every_file_they_read(self):
         # The post-merge coverage test reads every workflow file, so a PR that
