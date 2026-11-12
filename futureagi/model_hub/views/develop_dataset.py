@@ -592,6 +592,25 @@ def _process_other_datasets_impl(
         close_old_connections()
 
 
+def _compare_metadata_matches_request(
+    metadata, dataset_id, dataset_ids, base_column_name
+):
+    """Whether a stored comparison was built for this exact selection.
+
+    Cached pages hold another comparison's cells, so a compare_id may only be
+    reused with the base dataset, compared datasets and base column it was
+    created for.
+    """
+    stored_datasets = metadata.get("comparison_datasets") or []
+    requested_datasets = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
+    return (
+        str(metadata.get("base_dataset_id")) == str(dataset_id)
+        and len(stored_datasets) == len(requested_datasets)
+        and {str(ds_id) for ds_id in stored_datasets} == set(requested_datasets)
+        and metadata.get("base_column_name") == base_column_name
+    )
+
+
 def _prepare_compare_dataset_impl(
     dataset_id,
     common_base_values,
@@ -14347,6 +14366,15 @@ class CompareDatasetsView(APIView):
 
             if os.path.exists(metadata_path):
                 metadata = self.read_metadata_safely(metadata_path)
+                if not _compare_metadata_matches_request(
+                    metadata,
+                    dataset_id,
+                    validated_data["dataset_ids"],
+                    base_column_name,
+                ):
+                    return self._gm.bad_request(
+                        "compare_id does not belong to the requested datasets and base column."
+                    )
                 if metadata.get("total_pages") < num_pages_to_fetch:
                     return self._gm.bad_request(
                         get_error_message("FAILED_TO_COMPARE_DATASETS")
