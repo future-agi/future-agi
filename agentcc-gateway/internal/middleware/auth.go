@@ -62,9 +62,16 @@ func isPublicOrSeparatelyAuthenticatedPath(path string) bool {
 	}
 }
 
+// extractRequestAPIKey reads the gateway key from every place a supported
+// client sends it. Handlers re-authenticate with their own extraction, so a
+// form accepted here never grants access on a route that does not take it.
+// The "Token " scheme and api_key query parameter are the Deepgram and
+// Cartesia SDK forms the speech relays accept.
 func extractRequestAPIKey(r *http.Request) string {
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		return strings.TrimPrefix(authHeader, "Bearer ")
+	} else if key, ok := strings.CutPrefix(authHeader, "Token "); ok {
+		return strings.TrimSpace(key)
 	}
 	if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
 		return apiKey
@@ -72,7 +79,11 @@ func extractRequestAPIKey(r *http.Request) string {
 	if apiKey := r.Header.Get("x-goog-api-key"); apiKey != "" {
 		return apiKey
 	}
-	if apiKey := r.URL.Query().Get("key"); apiKey != "" {
+	query := r.URL.Query()
+	if apiKey := query.Get("key"); apiKey != "" {
+		return apiKey
+	}
+	if apiKey := query.Get("api_key"); apiKey != "" {
 		return apiKey
 	}
 	return ""
