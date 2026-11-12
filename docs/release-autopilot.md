@@ -147,9 +147,13 @@ changes none of them.
   and that no document classifies, `ORG_READ_TOKEN` and `EE_REPO_READ_TOKEN`
   here among them, and three checks: fine-grained Active tokens, the
   organisation's restriction on classic tokens, and each App installation's
-  repositories. Last before the deployment apply, bot approvals on open PRs
-  here are dismissed once, as part of the one-time baseline in those
-  documents.
+  repositories. Last before the deployment apply, the one-time baseline in
+  the `deploy_github.tf` header runs here too, on every unmerged PR, open or
+  closed: bot approvals are dismissed, and each PR whose final head a bot
+  pushed is reviewed in full by a person who did not author, push to or
+  approve it, or closed. On 12 Nov that flagged eleven open PRs into `dev`
+  (fixibot and the release bot) and eight fork heads pushed by `cursor[bot]`
+  or `github-actions[bot]`; the header lists them.
   Hold the key only in environment secrets whose deployment branch policy
   admits only refs that one writer cannot create or merge into alone, and
   delete the organisation secret and the repository copies. "Protected
@@ -183,14 +187,15 @@ changes none of them.
 
   A job that reads the key must run code only from refs that need a
   person's review. It never checks out and runs a ref that a dispatcher
-  chooses. Two jobs run code from another branch, so the custody also
-  depends on that branch:
+  chooses. Three jobs run code from another branch at a fixed ref, so the
+  custody also depends on that branch:
   - `sdk-sync.yml` runs `sdkgen/*.py` from futureagi-sdk `dev`. Its
     `sdk-base` input accepts only `dev`, and the first step checks it before
     any token or checkout. A dispatch runs the workflow file of the ref it
-    names, and `release-bot` admits `main`. So this check must be on `main`
-    before `sdk-sync.yml` names `release-bot` or that environment gets a key
-    copy. The one dispatch so far (run 41805312254, 4 Nov)
+    names, and `release-bot` admits `main`. So this check must reach `main`
+    with or before the change that makes `sdk-sync.yml` name `release-bot`,
+    and before that environment gets a key copy, never after. The one
+    dispatch so far (run 41805312254, 4 Nov)
     used `feat/sdk-docs-reference`; that value now fails the run. To sync a
     feature branch, run `sdkgen/sync_contract.py` and `sdkgen/generate.py` on
     that branch locally. futureagi-sdk `dev` needs one approval from the
@@ -201,6 +206,12 @@ changes none of them.
     `release-please.yml` change described under "Actions approvals off".
   - `refresh-disposable-domains.yml` runs `scripts/generate_disposable_domains.py`
     from this repository's `dev`, which the last-push ruleset above covers.
+  - `bump-deployment` in `release-images.yml` checks out deployment `main`
+    with a minted release-bot token persisted (contents and pull-request
+    write on `future-agi/deployment`), then runs `python3 -m pip` and that
+    branch's `tests/test-release-digest-bump.py`. Deployment `main` needs the
+    same review: Actions approvals off and a last-push ruleset, which its
+    `deploy_github.tf` header already requires.
 
   Other readers are docs `changelog-sync.yml`, agent-learning-kit
   `publish-pypi.yml` (`release-pr`, `deployment-bump`) and futureagi-sdk
@@ -247,9 +258,10 @@ changes none of them.
   date before merging. release-please does not rebuild the release PR for hidden
   commit types (for example `test:`), so the autopilot merges a release PR that
   is behind main once main has been quiet for the cooldown. Live main has
-  `strict: false` today (11 Nov). A strict rule for dev, which the low-risk PR
-  autopilot asks for, must go in a dev-only ruleset, not in the organisation
-  ruleset that also covers main. If main does become strict and GitHub reports
+  `strict: false` today (12 Nov). The low-risk PR autopilot does not need a
+  strict rule on dev either (`docs/pr-autopilot.md`). Any strict rule added
+  for another reason must target dev only, not the organisation ruleset that
+  also covers main. If main does become strict and GitHub reports
   the release PR as `behind`, the check step stops before approving, with the
   reason "main requires an up-to-date branch". GitHub may instead report
   `blocked` until the PR has its approval; then the first run approves and
