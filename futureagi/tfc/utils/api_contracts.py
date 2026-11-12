@@ -51,7 +51,10 @@ def _documented_response_has_schema(response):
 class ManagementAPIAutoSchema(SwaggerAutoSchema):
     """Add a common typed error contract to management API operations."""
 
-    field_inspectors = [EncodedInputDefaultInspector, *SwaggerAutoSchema.field_inspectors]
+    field_inspectors = [
+        EncodedInputDefaultInspector,
+        *SwaggerAutoSchema.field_inspectors,
+    ]
 
     def get_operation(self, operation_keys=None):
         if (
