@@ -1,7 +1,7 @@
 """Tests for MCP OAuth utilities and models."""
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -439,7 +439,7 @@ class TestAuthorizationCodeExchangeRace:
         ):
             mint_access.return_value = (
                 "synthetic-access",
-                datetime.now(timezone.utc) + timedelta(hours=1),
+                datetime.now(UTC) + timedelta(hours=1),
             )
             mint_refresh.return_value = "synthetic-refresh"
             response = _post_code_exchange("race-code-1", "race-1", "s1")
