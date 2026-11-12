@@ -1041,8 +1041,10 @@ class TestApi:
             "suite_version",
             "evidence",
             "agent_tools",
+            "evidence_unreadable",
         }
         assert body["pairing"]["agent_tools"] == {"read": False, "count": 0}
+        assert body["pairing"]["evidence_unreadable"] is False
         assert set(body["validation"]) == {
             "state",
             "job_id",
