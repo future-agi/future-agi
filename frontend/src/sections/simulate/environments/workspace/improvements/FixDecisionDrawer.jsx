@@ -13,6 +13,7 @@ import {
   pct,
   pts,
   describeChecks,
+  oldVerdictLine,
   rejectionChecks,
   winnerOf,
 } from "./fixRunView";
@@ -216,7 +217,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   {checksLine(v.tiers)}
                 </Typography>
               </Box>
-              {describeChecks(v.tiers, fix.request).map((t, i) => (
+              {describeChecks(v.tiers, fix.request, v, fix.plan).map((t, i) => (
                 <Box key={t.name} sx={rowSx(i + 1)}>
                   <CheckRows check={t} />
                 </Box>
@@ -238,15 +239,20 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                     sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
                   >{`Trial ${c.attempt}`}</Typography>
                   {c.verdict.tiers?.length > 0 ? (
-                    rejectionChecks(c.verdict.tiers, fix.request).map((t) => (
+                    rejectionChecks(
+                      c.verdict.tiers,
+                      fix.request,
+                      c.verdict,
+                      fix.plan,
+                    ).map((t) => (
                       <CheckRows key={t.name} check={t} sx={{ mt: 0.25 }} />
                     ))
                   ) : (
-                    // A verdict from before checks were recorded: its reason alone.
+                    // A verdict from before checks were recorded: its numbers in words.
                     <Typography
                       sx={{ typography: "s3", color: "text.secondary" }}
                     >
-                      {c.verdict.reason}
+                      {oldVerdictLine(c.verdict)}
                     </Typography>
                   )}
                 </Box>

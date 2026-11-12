@@ -84,7 +84,9 @@ describe("FixRunPage", () => {
     renderPage("fix-search");
     expect(await screen.findByText("Improvement 13")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Screen · attempt 2")).toBeInTheDocument();
+    // The step in words, never the engine's own stage name.
+    expect(screen.getByText("Searching")).toBeInTheDocument();
+    expect(screen.queryByText("Screen · attempt 2")).toBeNull();
   });
 
   it("goes back to the Improvements tab", async () => {

@@ -76,17 +76,17 @@ const TABS = [
   { id: "cost", label: "Cost" },
 ];
 
-// What the no-safe headline rests on, behind a toggle: each trial's rejecting check as
-// measured, and the engine's own summary word for word.
+// What the no-safe headline rests on, behind a toggle: each trial's rejecting check in
+// plain words.
 function NoSafeNumbers({ fix }) {
   const [open, setOpen] = useState(false);
-  const { trials, engineNote } = noSafeNumbers(fix);
-  if (!trials.length && !engineNote) return null;
+  const { trials } = noSafeNumbers(fix);
+  if (!trials.length) return null;
   const line = { typography: "s3", color: "text.secondary" };
   return (
     <Box sx={{ mt: 0.5 }}>
       <Button size="small" onClick={() => setOpen((o) => !o)} sx={{ px: 0 }}>
-        {open ? "Hide the numbers" : "Show the numbers"}
+        {open ? "Hide each trial's result" : "Show each trial's result"}
       </Button>
       {open && (
         <Stack spacing={0.5} sx={{ mt: 0.5 }} data-testid="no-safe-numbers">
@@ -95,9 +95,6 @@ function NoSafeNumbers({ fix }) {
               {`Trial ${t.attempt} · ${t.label}: ${t.detail}`}
             </Typography>
           ))}
-          {engineNote && (
-            <Typography sx={line}>{`Engine's note: ${engineNote}`}</Typography>
-          )}
         </Stack>
       )}
     </Box>
@@ -175,9 +172,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
   const noSafe = fix.state === "no_improvement";
-  const ending = noSafe
-    ? headline(fix)
-    : fix.failure?.message || fix.report?.summary;
+  const ending = headline(fix);
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");

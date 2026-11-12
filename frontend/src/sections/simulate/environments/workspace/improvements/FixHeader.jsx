@@ -13,7 +13,7 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import FixStatusChip from "./FixStatusChip";
-import { fixName, formatCredits, identityLine } from "./fixRunView";
+import { STEP_LABEL, fixName, formatCredits, identityLine } from "./fixRunView";
 
 const STOPPABLE = new Set(["queued", "running"]);
 
@@ -56,8 +56,8 @@ function StopControl({ fix }) {
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               Stopping ends the search without choosing a trial. Today&apos;s
-              version stays. The trials that ran stay on this page; nothing
-              more is spent.
+              version stays. The trials that ran stay on this page; nothing more
+              is spent.
             </Typography>
           </Stack>
         }
@@ -121,12 +121,12 @@ export default function FixHeader({ fix, envId, actions }) {
             {fixName(fix)}
           </Typography>
           <FixStatusChip state={fix.state} />
-          {fix.stage && STOPPABLE.has(fix.state) && (
+          {STEP_LABEL[fix.step] && STOPPABLE.has(fix.state) && (
             <Typography
               noWrap
               sx={{ typography: "s3", color: "text.tertiary" }}
             >
-              {fix.stage}
+              {STEP_LABEL[fix.step]}
             </Typography>
           )}
         </Stack>

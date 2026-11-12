@@ -71,7 +71,8 @@ describe("ImprovementsPanel", () => {
     expect(row.getByText("Pickup dispatch agent · v8")).toBeInTheDocument();
     expect(row.getByText("Ready for review")).toBeInTheDocument();
     expect(row.getByText("Held back 17% → 83%")).toBeInTheDocument();
-    expect(row.getByText("broke 1 held back")).toBeInTheDocument();
+    // It counts must-pass regressions, so it says so.
+    expect(row.getByText("broke 1 must-pass")).toBeInTheDocument();
     expect(row.getByText("412 credits")).toBeInTheDocument();
   });
 

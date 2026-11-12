@@ -14,12 +14,12 @@ export const STATE_LABEL = {
   out_of_budget: "Stopped at budget",
   stopped: "Stopped",
   failed: "Failed",
-  too_few_cases: "Too few failing cases",
+  too_few_cases: "Too few failing scenarios",
 };
 
 export const OUTCOME_LABEL = {
   winner: "Winner",
-  finalist: "Not kept",
+  finalist: "Passed, not picked",
   rejected: "Rejected",
   pending: "Running",
 };
@@ -51,6 +51,14 @@ const STEPS = [
   { id: "done", label: "Ready for review" },
 ];
 
+// What a running fix is doing, for the header: the step, never the engine's own stage name.
+export const STEP_LABEL = {
+  variations: "Writing variations",
+  reproduce: "Reproducing",
+  search: "Searching",
+  verify: "Verifying",
+};
+
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
 // A rate pools every repeat, so it is not a count of scenarios: Per scenario has those.
@@ -70,9 +78,9 @@ export function formatMinutes(total) {
 // once they finish. The PR body says the same when they could not.
 export function gradingNote(fix) {
   if (fix.eval_grading === "pending")
-    return "The evals are still grading this trial. Ship it once they finish.";
+    return "Platform evals are still scoring this trial. You can ship it once they finish.";
   if (fix.eval_grading === "incomplete")
-    return "The evals could not finish grading this trial; it was not checked by them.";
+    return "Platform evals did not finish on this trial, so their results are missing. You can still ship it.";
   return null;
 }
 
@@ -95,22 +103,69 @@ export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
 
-const brokeText = (n) => (n ? String(n) : "none");
+const brokeText = (n) =>
+  n
+    ? `${n} must-pass ${n === 1 ? "scenario" : "scenarios"} broke.`
+    : "No must-pass scenario broke.";
+
+const triedText = (fix) => {
+  const n = (fix.candidates || []).length;
+  return `${n} ${n === 1 ? "trial" : "trials"}`;
+};
+
+// Failures that are ours, not the agent's: the user can only retry.
+const OUR_FAILURES = new Set([
+  "fix_engine_failed",
+  "fix_engine_died",
+  "fix_watch_failed",
+  "fix_workflow_lost",
+  "fix_dispatch_failed",
+  "fix_variations_failed",
+  "scheduler_unavailable",
+]);
+
+const sentence = (text) =>
+  text
+    ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
+    : "";
+
+// Why a fix that shipped nothing ended, and what the user can do next.
+export function endingText(fix) {
+  const code = fix.failure?.code;
+  if (fix.state === "not_reproduced")
+    return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then start a new fix.";
+  if (fix.state === "out_of_budget")
+    return `Stopped at the budget after ${triedText(fix)}. Nothing changed. Start a new fix with a larger budget.`;
+  if (fix.state === "stopped")
+    return `You stopped this fix after ${triedText(fix)}. Nothing changed.`;
+  if (fix.state === "too_few_cases")
+    return "The run had too few failing scenarios to fix. Pick more failing scenarios, or let the fix write variations of them.";
+  if (fix.state !== "failed") return null;
+  if (code === "fix_deadline")
+    return `This fix ran out of its time limit after ${triedText(fix)}. Nothing changed. Start a new fix with a longer time limit.`;
+  if (code === "fix_queue_timeout")
+    return "Too many fixes were running, so this one could not start. Nothing changed. Retry it in a few minutes.";
+  if (!code || OUR_FAILURES.has(code))
+    return "This fix stopped because of a problem on our side, not your agent. Nothing changed. Retry it.";
+  // The engine writes a user-owned failure for the user: what to change, then start again.
+  return `This fix stopped on something only you can change: ${sentence(fix.failure.message)}`;
+}
 
 export function headline(fix) {
   const winner = winnerOf(fix);
   if (fix.state === "no_improvement") {
-    return noSafeHeadline(fix) || fix.report?.summary || null;
+    return (
+      noSafeHeadline(fix) ||
+      "No safe improvement: no trial passed every check. Nothing changed."
+    );
   }
-  if (fix.state !== "ready" || !winner || !fix.plan) {
-    return fix.failure?.message || fix.report?.summary || null;
-  }
+  if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
   const { verdict } = winner;
   const broke = brokeText(verdict.must_pass_regressions.length);
   if (verdict.held_back_pass_rate) {
-    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}, broke ${broke}.`;
+    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
   }
-  return `Target pass rate ${rateChange(verdict.target_pass_rate)}, broke ${broke}.`;
+  return `Target pass rate ${rateChange(verdict.target_pass_rate)}. ${broke}`;
 }
 
 const rateCard = (id, label, rate, note) => ({
@@ -154,16 +209,16 @@ export function checksLine(tiers = []) {
   const line = `Checks · ${passed} of ${counted.length} passed`;
   const unmeasured = tiers.length - counted.length;
   if (!unmeasured || counted.some((t) => t.status === "failed")) return line;
-  return `${line} · ${unmeasured} couldn't measure`;
+  return `${line} · ${unmeasured} unknown`;
 }
 
 const CHECK_LABELS = {
-  static: "Static checks",
-  target: "Target cases",
-  "held-back": "Held-back set",
-  "must-pass": "Must-pass set",
-  repeats: "Repeat runs",
-  ceilings: "Cost and latency",
+  static: "Change is valid",
+  target: "Target scenarios",
+  "held-back": "Held-back scenarios",
+  "must-pass": "Must-pass scenarios",
+  repeats: "Holds over repeats",
+  ceilings: "Reply time and cost",
 };
 
 // A check's name as the page says it; the engine's ids are never shown. The model
@@ -187,32 +242,140 @@ const UNKNOWN_PARTS = {
   "reply latency": "Reply time unknown",
   "agent cost": "Cost unknown",
 };
-const UNTRACED_COST = "This agent isn't traced, so its cost isn't measured.";
+export const UNTRACED_COST =
+  "this agent's model calls weren't measured. Fix my agent measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.";
 
-// One ceiling of the ceilings tier. A number that could not be measured is said to be
-// unknown, and an agent that isn't traced says so: the fix never fails on it.
+// "3 of 12 finalist conversations …" in the engine's reason: the count the line keeps.
+const conversationsOf = (text, cause) => {
+  const found = new RegExp(
+    `(\\d+) of (\\d+) finalist conversations ${cause}`,
+  ).exec(text);
+  return found
+    ? `${found[1]} of ${found[2]} conversations`
+    : "Some conversations";
+};
+
+// Why a cost or reply time is unknown, from what the engine found, and what would make it known.
+function unknownWhy(part, request) {
+  const text = part.detail || "";
+  if (part.name === "reply latency")
+    return "the conversations recorded no reply times. Run again; if it repeats, check that the agent replies within the turn.";
+  if (!request?.meters_agent_cost) return UNTRACED_COST;
+  if (/sandbox could not measure/.test(text))
+    return `${conversationsOf(text, "have a model call the sandbox")} made a model call that couldn't be measured, such as a call through another SDK or a direct HTTP request. Route that call through the OpenAI or Anthropic SDK, or add traceAI tracing.`;
+  if (/baseline not measured|not verified against the baseline/.test(text))
+    return "the current version's cost wasn't measured, so there is nothing to compare it with. Run the environment again to measure it.";
+  if (/with no cost/.test(text))
+    return "a model the agent called has no price. Add a price for it to measure cost.";
+  return `${conversationsOf(text, "exported no model call")} returned no model-call record. Run again to measure them.`;
+}
+
+// A ceiling's verdict in words: within, over, or unknown with why. The fix never fails on an
+// unknown number. The engine's own text names the cause only for a candidate it failed.
+function partDetail(part, request) {
+  if (part.status === "passed") return "Within the limit.";
+  if (part.status === "failed") {
+    if (/^the change removes|^called /.test(part.detail || ""))
+      return sentence(part.detail);
+    return "Over the limit.";
+  }
+  return unknownWhy(part, request);
+}
+
 function describePart(part, request) {
   const label = PART_LABELS[part.name] || part.name;
-  if (part.status !== "skipped") return { ...part, label };
-  const untraced = part.name === "agent cost" && !request?.meters_agent_cost;
+  if (part.status !== "skipped")
+    return { ...part, label, detail: partDetail(part, request) };
   return {
     ...part,
     label,
-    unknown: UNKNOWN_PARTS[part.name],
-    ...(untraced && { detail: UNTRACED_COST }),
+    unknown: UNKNOWN_PARTS[part.name] || "Unknown",
+    detail: sentence(unknownWhy(part, request)),
   };
+}
+
+const rateLine = (rate, gain, tail = "") =>
+  rate
+    ? `${rateChange(rate)}${tail}, ${gain ? "a clear gain" : "not a clear gain"}.`
+    : gain
+      ? `A clear gain${tail}.`
+      : `Not a clear gain${tail}.`;
+
+// One tier's result in plain words, from the verdict's own numbers. The engine's detail
+// (its statistics) is never shown.
+function tierLine(tier, verdict, plan, request) {
+  const passed = tier.status === "passed";
+  if (tier.status === "pending") return "Runs only if this trial is picked.";
+  switch (tier.name) {
+    case "static":
+      return passed
+        ? "Applies cleanly and edits only allowed files."
+        : "The change did not apply, was too large, or edited a locked file.";
+    case "target":
+      return rateLine(verdict?.target_pass_rate, passed);
+    case "held-back":
+      return rateLine(
+        verdict?.held_back_pass_rate,
+        passed,
+        " on scenarios the fix never saw",
+      );
+    case "must-pass": {
+      const broke = (verdict?.must_pass_regressions || []).length;
+      if (!passed)
+        return broke ? brokeText(broke) : "A must-pass scenario broke.";
+      const kept = plan?.protected
+        ? `, including the ${plan.protected} you protected`
+        : "";
+      return plan?.must_pass
+        ? `None of the ${plan.must_pass} must-pass scenarios broke${kept}.`
+        : "No must-pass scenario broke.";
+    }
+    case "repeats":
+      return passed
+        ? "Held up over the repeat runs."
+        : "Did not hold up over the repeat runs.";
+    case "ceilings":
+      if (passed) return "Within the reply-time and cost limits.";
+      return tier.status === "failed" ? "Over a limit." : "";
+    case "model-lock":
+      if (passed) {
+        const models = request?.allowed_models || [];
+        return models.length
+          ? `Called only ${models.join(", ")}.`
+          : "Called only allowed models.";
+      }
+      if (tier.status === "failed") {
+        if (/removes the agent's tracing/.test(tier.detail || ""))
+          return "The change removes the agent's tracing, so its model calls can't be checked.";
+        if (/names the model|changes the model/.test(tier.detail || ""))
+          return "The change names a different model.";
+        return "Called a model outside the approved list.";
+      }
+      return request?.observes_models
+        ? "Some conversations sent no traces. The change names no new model."
+        : "This agent sends no traces. The change names no new model.";
+    default:
+      return passed ? "Passed." : "Did not pass.";
+  }
 }
 
 // Each check with its label, and `notRun` with the check that stopped it when it was
 // skipped because an earlier one failed. The verdict marks both kinds of skip the same
 // way, so the order tells them apart, as in checksLine.
-export function describeChecks(tiers = [], request = null) {
+export function describeChecks(
+  tiers = [],
+  request = null,
+  verdict = null,
+  plan = null,
+) {
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
     const notRun = t.status === "skipped" && failed >= 0 && i > failed;
     return {
       ...t,
       label: checkLabel(t.name, request),
+      detail: notRun ? "" : tierLine(t, verdict, plan, request),
+      ...(t.status === "skipped" && !notRun && { unknown: "Unknown" }),
       notRun,
       ...(notRun && {
         notRunBecause: checkLabel(tiers[failed].name, request),
@@ -222,9 +385,20 @@ export function describeChecks(tiers = [], request = null) {
   });
 }
 
+// A verdict from before the checks were recorded, in words: its target numbers, never its reason.
+export const oldVerdictLine = (verdict) =>
+  verdict?.target_pass_rate
+    ? `Rejected. Target scenarios ${rateChange(verdict.target_pass_rate)}.`
+    : "Rejected.";
+
 // A rejected trial's checks with the one that rejected it first.
-export function rejectionChecks(tiers = [], request = null) {
-  const described = describeChecks(tiers, request);
+export function rejectionChecks(
+  tiers = [],
+  request = null,
+  verdict = null,
+  plan = null,
+) {
+  const described = describeChecks(tiers, request, verdict, plan);
   const rejecting = described.findIndex((t) => t.status === "failed");
   if (rejecting < 0) return described;
   return [described[rejecting], ...described.filter((_, i) => i !== rejecting)];
@@ -235,11 +409,13 @@ export function rejectionChecks(tiers = [], request = null) {
 const NO_SAFE_WHY = {
   static: { did: "failed the static checks" },
   target: {
-    missed: "improved the target cases",
-    one: "didn't improve the target cases",
+    missed: "improved the target scenarios",
+    one: "didn't improve the target scenarios",
   },
-  "held-back": { did: "improved the target cases but not the held-back set" },
-  "must-pass": { did: "broke a must-pass case" },
+  "held-back": {
+    did: "improved the target scenarios but not the held-back scenarios",
+  },
+  "must-pass": { did: "broke a must-pass scenario" },
   repeats: {
     missed: "held up over repeat runs",
     one: "didn't hold up over repeat runs",
@@ -307,16 +483,18 @@ export function flakyProtectedText(fix) {
     : `${names.length} protected cases are flaky on the current version, so this fix wasn't held to them: ${quoted}.`;
 }
 
-// The numbers behind the no-safe headline: each trial's rejecting check as the engine
-// measured it, and the engine's own summary, word for word.
+// The numbers behind the no-safe headline: each trial's rejecting check in plain words,
+// from its verdict's own numbers.
 export function noSafeNumbers(fix) {
   return {
-    trials: rejectedTrials(fix).map((t) => ({
-      attempt: t.attempt,
-      label: checkLabel(t.check.name, fix.request),
-      detail: t.check.detail || "",
-    })),
-    engineNote: fix.report?.summary || "",
+    trials: rejectedTrials(fix).map((t) => {
+      const candidate = fix.candidates.find((c) => c.attempt === t.attempt);
+      return {
+        attempt: t.attempt,
+        label: checkLabel(t.check.name, fix.request),
+        detail: tierLine(t.check, candidate?.verdict, fix.plan, fix.request),
+      };
+    }),
   };
 }
 
@@ -401,7 +579,9 @@ function stepLines(id, fix) {
       `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios${kept}`,
     ];
   }
-  return ["You choose the trial to keep and ship"];
+  return [
+    "The best trial comes back for review. Nothing changes until you ship it.",
+  ];
 }
 
 export function stepRows(fix) {
@@ -449,7 +629,8 @@ export function heldToRows(fix) {
   return [...rows, ...constraintRows(request)];
 }
 
-const NOT_TRACED = "can't measure: the agent isn't traced";
+const NOT_TRACED =
+  "unknown: this agent's model calls weren't measured. Add traceAI tracing to check them";
 
 // The model lock and the ceilings set at launch. Without the agent's traces the lock and
 // the cost limit cannot be checked, so they say so rather than read as held.
@@ -495,13 +676,13 @@ function verdictResult(fix) {
   if (verdict.held_back_pass_rate) {
     return {
       text: `Held back ${rateChange(verdict.held_back_pass_rate)}`,
-      note: broke ? `broke ${broke} held back` : "broke none held back",
+      note: broke ? `broke ${broke} must-pass` : "none broke",
       broke,
     };
   }
   return {
     text: `Target ${rateChange(verdict.target_pass_rate)}`,
-    note: broke ? `broke ${broke}` : "broke none",
+    note: broke ? `broke ${broke} must-pass` : "none broke",
     broke,
   };
 }

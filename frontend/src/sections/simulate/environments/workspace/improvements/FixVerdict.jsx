@@ -352,7 +352,14 @@ export default function FixVerdict({ fix }) {
         ))}
       </Box>
       {winner.verdict.tiers?.length > 0 && (
-        <Checks tiers={describeChecks(winner.verdict.tiers, fix.request)} />
+        <Checks
+          tiers={describeChecks(
+            winner.verdict.tiers,
+            fix.request,
+            winner.verdict,
+            fix.plan,
+          )}
+        />
       )}
       <MustPassBreaks verdict={winner.verdict} />
       {fix.eval_warnings?.length > 0 && (
