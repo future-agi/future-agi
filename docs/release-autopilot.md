@@ -267,8 +267,10 @@ branch lifetimes since 17 Sep, of 2 to 4 rows each, all created and pushed by
 the release App. Replaying the rule on it allows each of the last 15 release
 PRs at its merged head. A missing or null actor, a row for another ref and a
 malformed response also wait. The read uses the workflow token's Contents read
-permission. That this permission is enough for this
-endpoint is not verified live; a refused read fails the run red.
+permission. GitHub's permission tables for Apps ("Permissions required for
+GitHub Apps", section Contents) list `GET /repos/{owner}/{repo}/activity` as
+read access for installation tokens, and the workflow token is one. No run
+has made this read live yet; a refused read fails the run red.
 
 Paths alone are not approval evidence. The script reads those files **as data**
 at the API-reported immutable base and head commit SHAs, using Git trees and
