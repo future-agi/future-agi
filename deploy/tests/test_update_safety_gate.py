@@ -543,6 +543,115 @@ class ClickHouseRegistryTests(unittest.TestCase):
             self.assertEqual(gate.schema_statements(content), [])
 
 
+class InspectedNonClickHousePinsTests(unittest.TestCase):
+    """Exact inspected blobs, not filename or SQL-dialect exemptions.
+
+    These pins cover the benchmark fixtures and the dev blobs in its CI merge.
+    Their before blobs were also inspected: three additions, and error_codes.py
+    previously contained the same display text. A matching after pin skips the
+    whole change, so a pin must never be added without that before-blob review.
+    """
+
+    pins = {
+        'fi-collector/pkg/ingestbench/bench_test.go':
+            ('2863c35e9934d5fe3cf3f0403fff2fac077a821ca5f94ad40fc43cc63bb445b0', 'DROP TABLE', 51),
+        'fi-collector/pkg/ingestbench/integration_test.go':
+            ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
+        'futureagi/tfc/utils/error_codes.py':
+            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', 353),
+        'futureagi/tracer/services/instant_eval_answers.py':
+            ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
+    }
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix='gate-inspected-pins-')
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.sources = gate.source_registry(gate.document(ROOT / 'deploy/update/clickhouse-sources.json'))
+        self.reviews = {'schema_version': 1, 'changes': []}
+
+    def check(self, path, before, after, sources=None):
+        from unittest import mock
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if after is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_bytes(after)
+        status = 'D' if after is None else 'A' if before is None else 'M'
+        with mock.patch.object(gate, 'base_bytes', return_value=before):
+            return gate.check_clickhouse_changes(
+                self.root, [(status, path)], 'inspected-base',
+                self.sources if sources is None else sources, self.reviews, registry())
+
+    def test_each_exact_pin_is_scoped_to_its_inspected_blob_and_path(self):
+        for path, (digest, keyword, line) in self.pins.items():
+            with self.subTest(path=path):
+                blob = (ROOT / path).read_bytes()
+                entries = [row for row in self.sources['exclusions'] if row['pattern'] == path]
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0]['sha256'], digest)
+                self.assertEqual(gate.content_sha(blob), digest)
+                # The conservative alarm remains intact; only the registry pin applies.
+                self.assertEqual(gate.schema_statements(blob), [{'keyword': keyword, 'line': line}])
+                self.assertTrue(gate.excluded_source(path, self.sources['exclusions'], blob))
+                self.assertEqual(self.check(path, None, blob), [])
+                self.assertEqual(gate.check_source_coverage(self.root, self.sources, [path]), [])
+                other = str(Path(path).with_name('unpinned_' + Path(path).name))
+                self.assertFalse(gate.excluded_source(other, self.sources['exclusions'], blob))
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check(other, None, blob)
+
+    def test_removing_each_pin_restores_the_original_alarm(self):
+        for path in self.pins:
+            with self.subTest(path=path):
+                sources = copy.deepcopy(self.sources)
+                sources['exclusions'] = [row for row in sources['exclusions'] if row['pattern'] != path]
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check(path, None, (ROOT / path).read_bytes(), sources)
+
+    @staticmethod
+    def mutation(path):
+        if path.endswith('.go'):
+            return b'\nfunc unreviewed(client interface{ Exec(string) error }) { _ = client.Exec("DROP TABLE spans") }\n'
+        return b'\nclient.command("DELETE FROM spans WHERE 1")\n'
+
+    def test_comment_and_executable_edits_invalidate_every_pin(self):
+        for path in self.pins:
+            before = (ROOT / path).read_bytes()
+            comment = b'\n// changed fixture\n' if path.endswith('.go') else b'\n# changed fixture\n'
+            for edit in (comment, self.mutation(path)):
+                with self.subTest(path=path, edit=edit):
+                    after = before + edit
+                    self.assertFalse(gate.excluded_source(path, self.sources['exclusions'], after))
+                    with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations') as failure:
+                        self.check(path, before, after)
+                    self.assertIn(gate.content_sha(before), str(failure.exception))
+                    self.assertIn(gate.content_sha(after), str(failure.exception))
+                    self.assertEqual(gate.check_source_coverage(self.root, self.sources, [path]), [path])
+
+    def test_unpinned_old_mutations_cannot_disappear_by_deletion_or_replacement(self):
+        for path in self.pins:
+            before = (ROOT / path).read_bytes() + self.mutation(path)
+            replacement = b'package ingestbench\n' if path.endswith('.go') else b'value = 1\n'
+            for after in (None, replacement):
+                with self.subTest(path=path, deleted=after is None):
+                    with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations') as failure:
+                        self.check(path, before, after)
+                    self.assertIn(gate.content_sha(before), str(failure.exception))
+                    self.assertIn('before_statements', str(failure.exception))
+
+    def test_production_clickhouse_mutations_still_need_review(self):
+        path = 'futureagi/tracer/services/clickhouse/unreviewed.py'
+        for statement in ('DROP TABLE spans', 'ALTER TABLE spans DELETE WHERE 1',
+                          'DELETE FROM spans WHERE 1', 'TRUNCATE TABLE spans'):
+            with self.subTest(statement=statement):
+                blob = ('client.command(' + repr(statement) + ')\n').encode()
+                self.assertFalse(gate.excluded_source(path, self.sources['exclusions'], blob))
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check(path, None, blob)
+
+
 class StaticEntryPointTests(unittest.TestCase):
     def setUp(self):
         import shutil

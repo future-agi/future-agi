@@ -12,6 +12,24 @@ module.exports = {
   ],
   overrides: [
     {
+      files: ["**/*.ts", "**/*.tsx"],
+      parser: "@typescript-eslint/parser",
+      extends: ["plugin:@typescript-eslint/eslint-recommended"],
+      plugins: ["@typescript-eslint"],
+      rules: {
+        "no-unused-vars": "off",
+        "@typescript-eslint/no-unused-vars": [
+          "warn",
+          {
+            argsIgnorePattern: "^_",
+            varsIgnorePattern: "^(_|React$)",
+            ignoreRestSiblings: true,
+          },
+        ],
+        "react/prop-types": "off",
+      },
+    },
+    {
       env: {
         node: true,
       },
