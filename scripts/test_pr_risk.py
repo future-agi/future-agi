@@ -63,6 +63,29 @@ def file(path="docs/guide.md", additions=1, deletions=0, status="modified", **ex
     }
 
 
+def added_lines(line, lines=200, path="docs/guide.md"):
+    """A diff that adds `lines` copies of `line`: LOW up to 200 lines."""
+    return file(path, additions=lines,
+                patch=f"@@ -0,0 +1,{lines} @@\n" + "\n".join(["+" + line] * lines))
+
+
+def largest_accepted(unit, lines=200):
+    """The largest `added_lines` diff whose lines repeat `unit` (cut to any
+    length) that review_patches accepts."""
+    def line(length):
+        return (unit * (length // len(unit) + 1))[:length]
+
+    low, high = 0, POLICY["max_diff_bytes"] // lines + 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        try:
+            risk.review_patches([added_lines(line(middle), lines)], POLICY)
+            low = middle
+        except risk.NeedsPerson:
+            high = middle - 1
+    return added_lines(line(low), lines)
+
+
 def pr():
     return {
         "number": 42,
@@ -982,6 +1005,31 @@ class EvidenceTests(unittest.TestCase):
             risk.review_prompt(
                 [file(patch="+" + "x" * POLICY["max_diff_bytes"])], context, POLICY
             )
+
+    def test_the_byte_limit_measures_the_diff_as_the_review_step_receives_it(self):
+        limit = POLICY["max_diff_bytes"]
+        # Each is LOW and under the limit as plain JSON (the old measure), but
+        # its twice-escaped form, which the action's ALL_INPUTS carries, is not.
+        for name, line in {"CJK prose": "中" * 93, "quotes": '"' * 165,
+                           "backslashes": "\\" * 165, "emoji": "\U0001f600" * 46}.items():
+            with self.subTest(content=name):
+                item = added_lines(line)
+                self.assertEqual(risk.classify([item], POLICY)["tier"], "low")
+                payload = risk.review_payload(
+                    [{"path": item["filename"], "status": item["status"], "patch": item["patch"]}])
+                self.assertLessEqual(len(payload), limit)
+                self.assertGreater(len(json.dumps(payload)), limit)
+                with self.assertRaisesRegex(risk.NeedsPerson, "byte limit"):
+                    risk.review_patches([item], POLICY)
+        # Plain ASCII keeps almost the whole limit: only line breaks and the
+        # JSON's own quotes are escaped again.
+        item = largest_accepted("Plain prose. ")
+        payload = risk.review_payload(risk.review_patches([item], POLICY))
+        self.assertGreater(len(payload), limit - 1000)
+        self.assertLessEqual(len(json.dumps(payload)), limit)
+        self.assertEqual(risk.classify([item], POLICY)["tier"], "low")
+        prompt = risk.review_prompt([item], {"head": HEAD, "base": BASE}, POLICY)
+        self.assertTrue(prompt.endswith("UNTRUSTED_DIFF_JSON:\n" + payload))
 
     def test_post_merge_dispatch_preserves_checks_without_overriding_cdn_hold(self):
         def plan(path, **extra):
@@ -1908,10 +1956,16 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.api.writes("pulls/42/merge"))
 
     def test_unreviewable_diff_tells_the_pr_once_and_clears_on_a_new_diff(self):
-        oversized = "@@ -0,0 +1,200 @@\n" + "\n".join(["+" + "x" * 700] * 200)
+        def adding(line):
+            return "@@ -0,0 +1,200 @@\n" + "\n".join(["+" + line] * 200)
+
         cases = {
             "empty added file": dict(additions=0, status="added", patch=None),
-            "oversized diff": dict(additions=200, patch=oversized),
+            "oversized diff": dict(additions=200, patch=adding("x" * 700)),
+            # Under the limit as plain JSON, over it once ALL_INPUTS escapes
+            # it again: the review step could never start.
+            "CJK diff": dict(additions=200, patch=adding("中" * 93)),
+            "quote-dense diff": dict(additions=200, patch=adding('"' * 165)),
             "patch shorter than its counts": dict(additions=2),
         }
         for name, change in cases.items():
@@ -3927,6 +3981,97 @@ class WorkflowContractTests(unittest.TestCase):
             if inputs.get(name):
                 extra.append(f"{name}: an extra step")
         return extra
+
+    # The pinned action's 39 inputs and their defaults, from action.yml at
+    # 4fa93a88 (read through the GitHub contents API, 12 Nov 2026).
+    # toJson(inputs) lists every declared input, with the step's `with:`
+    # values in place of the defaults.
+    ACTION_INPUT_DEFAULTS = {
+        "trigger_phrase": "@claude", "assignee_trigger": "", "label_trigger": "claude",
+        "base_branch": "", "branch_prefix": "claude/", "branch_name_template": "",
+        "allowed_bots": "", "allowed_non_write_users": "", "include_comments_by_actor": "",
+        "exclude_comments_by_actor": "", "prompt": "", "settings": "", "anthropic_api_key": "",
+        "claude_code_oauth_token": "", "anthropic_federation_rule_id": "",
+        "anthropic_organization_id": "", "anthropic_service_account_id": "",
+        "anthropic_workspace_id": "", "anthropic_oidc_audience": "", "github_token": "",
+        "use_bedrock": "false", "use_vertex": "false", "use_foundry": "false", "claude_args": "",
+        "additional_permissions": "", "use_sticky_comment": "false",
+        "classify_inline_comments": "true", "use_commit_signing": "false", "ssh_signing_key": "",
+        "bot_id": "41898282", "bot_name": "claude[bot]", "track_progress": "false",
+        "include_fix_links": "true", "path_to_claude_code_executable": "",
+        "path_to_bun_executable": "", "display_report": "false", "show_full_output": "false",
+        "plugins": "", "plugin_marketplaces": "",
+    }
+    # Linux refuses to start a process when one "NAME=value" environment
+    # string, with its terminating NUL, is longer than MAX_ARG_STRLEN (32
+    # pages of 4 KiB).
+    MAX_ENV_STRING = 131072
+    # Room for each secret input. Today's API keys and job tokens are far shorter.
+    SECRET_ALLOWANCE = 1024
+
+    @classmethod
+    def review_step_environment(cls, prompt):
+        """PROMPT and ALL_INPUTS as the pinned action's "Run Claude Code
+        Action" step sets them (action.yml lines 291 and 317). The runner's
+        toJson (actions/runner ToJson.cs) writes two-space indented JSON whose
+        strings get Newtonsoft's default escaping; for printable ASCII and line
+        breaks that is exactly what json.dumps writes."""
+        import yaml
+
+        steps = yaml.safe_load(WORKFLOW_TEXT)["jobs"]["ai-review"]["steps"]
+        given = next(step for step in steps if step.get("id") == "claude")["with"]
+        inputs = {**cls.ACTION_INPUT_DEFAULTS, **{key: str(value) for key, value in given.items()}}
+        inputs.update(anthropic_api_key="k" * cls.SECRET_ALLOWANCE,
+                      github_token="t" * cls.SECRET_ALLOWANCE, prompt=prompt)
+        return {"PROMPT": prompt, "ALL_INPUTS": json.dumps(inputs, indent=2)}
+
+    def too_long(self, environment):
+        return [name for name, value in environment.items()
+                if len(f"{name}={value}".encode()) + 1 > self.MAX_ENV_STRING]
+
+    def test_the_largest_accepted_diff_fits_the_review_step(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        steps = yaml.safe_load(WORKFLOW_TEXT)["jobs"]["ai-review"]["steps"]
+        step = next(step for step in steps if step.get("id") == "claude")
+        # The diff can reach the model only through `prompt`: the action has
+        # no other prompt input, and the review has no tools to read a file.
+        self.assertLessEqual(set(step["with"]), set(self.ACTION_INPUT_DEFAULTS))
+        self.assertEqual(step["with"]["prompt"], "${{ needs.prepare.outputs.prompt }}")
+        context = {"head": HEAD, "base": BASE}
+        # Whatever the content, ALL_INPUTS is at most this: everything but the
+        # diff (measured with the empty diff "[]"), plus the diff's escaped
+        # form, which is its twice-encoded size less the two outer quotes.
+        empty = self.review_step_environment(risk.review_prompt([], context, POLICY))["ALL_INPUTS"]
+        bound = len(empty) - len("[]") + POLICY["max_diff_bytes"] - len('""')
+        self.assertLessEqual(len("ALL_INPUTS=") + bound + 1, self.MAX_ENV_STRING)
+        for unit in ("Plain prose. ", "中", '"', "\\", "\U0001f600", '{"key": "value"}, '):
+            with self.subTest(unit=unit):
+                item = largest_accepted(unit)
+                self.assertEqual(risk.classify([item], POLICY)["tier"], "low")
+                prompt = risk.review_prompt([item], context, POLICY)
+                self.assertTrue(all(c == "\n" or " " <= c <= "~" for c in prompt))
+                environment = self.review_step_environment(prompt)
+                self.assertEqual(self.too_long(environment), [])
+                self.assertLessEqual(len(environment["ALL_INPUTS"]), bound)
+
+    def test_the_old_measure_let_a_diff_overflow_the_review_step(self):
+        # The limit applied to the plain JSON of the patches: a CJK docs diff
+        # at that limit made ALL_INPUTS too long, so the step never started.
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        item = added_lines("中" * 99)
+        payload = risk.review_payload(
+            [{"path": item["filename"], "status": item["status"], "patch": item["patch"]}])
+        self.assertLessEqual(len(payload), POLICY["max_diff_bytes"])
+        prompt = risk.review_prompt([], {"head": HEAD, "base": BASE}, POLICY)[: -len("[]")] + payload
+        self.assertEqual(self.too_long(self.review_step_environment(prompt)), ["ALL_INPUTS"])
+        with self.assertRaises(risk.NeedsPerson):
+            risk.review_patches([item], POLICY)
 
     # claude_args flags that take a value, and those passed with none.
     CLAUDE_VALUE_FLAGS = {"model", "max-turns", "disallowedTools", "mcp-config", "json-schema"}

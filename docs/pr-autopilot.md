@@ -653,6 +653,29 @@ Checked in the action's source at that commit, without running it:
   It still fails the step when `--json-schema` was given and no structured
   output came back, and now also when a successful result has `is_error` set.
 
+**Diff size.** The diff reaches the model only through the action's `prompt`
+input. The action has no other prompt input, agent mode writes that input
+to its own prompt file, and the review has no tools to read anything else.
+The action's run step exports the prompt twice: as `PROMPT`, and inside
+`ALL_INPUTS`, which is `toJson(inputs)` (`action.yml` lines 291 and 317). The
+runner's `toJson` (`ToJson.cs` in `actions/runner`, with Newtonsoft's default
+string escaping) escapes every backslash and quote of the diff's JSON a
+second time. Linux refuses to start a process when one environment string
+is longer than 131,072 bytes. The review step would then fail the same way
+on every retry. So the policy's `max_diff_bytes` (120,000) bounds the diff
+in that twice-escaped form. A larger diff goes to a person on the first run,
+with one escalation note. The rest of `ALL_INPUTS` (the instructions, the
+other inputs, and 1,024 bytes allowed for each of the two secrets) is 4,768
+bytes. The longest accepted `ALL_INPUTS` string is therefore 124,776 bytes,
+6,296 under the limit. A contract test rebuilds `ALL_INPUTS` from the
+workflow's inputs and the pinned action's defaults, and fails if the largest
+accepted diff does not fit. Plain ASCII text keeps almost the whole limit: a
+200-line prose diff of 119,679 bytes as JSON is accepted. Quotes,
+backslashes and non-ASCII text are escaped more, so such diffs go to a
+person sooner: a 200-line CJK diff at about 103 KB as JSON, or a diff of
+only quote characters at about 60 KB. No real runner has run a diff at the
+limit.
+
 One flag did not reach the CLI as written, at either pin. The action drops an
 empty quoted value, so `--tools ""` became a bare `--tools`, and the CLI's
 argument parser then took the next flag, `--disable-slash-commands`, as the
@@ -1153,7 +1176,8 @@ merge step, in a job apart from the outcome markers), the stale-approval rule, r
 persistently failing reservation writes and check reads and updates,
 withdrawal of this run's approval when the head moved (and no withdrawal on
 the same head, after a failed re-read or for an earlier approval), the
-not-started marker, unreviewable diffs, a PR blocked after an earlier approval,
+not-started marker, unreviewable diffs (including the byte limit measured as
+the review step receives the diff), a PR blocked after an earlier approval,
 a refused approval, the sweep's order, caps, rotation, pause, throttling stop,
 re-tier of moved heads and hourly dispatch of PRs that wait on a person,
 recovery of a merge whose answer was lost or unconfirmed (record before
