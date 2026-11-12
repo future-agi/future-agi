@@ -91,6 +91,14 @@ export const participantsGraphOf = (p) => {
   const states = {}; // graph node id → end state
   const steps = []; // { at, edge, kind, parallel }
   const control = new Set(); // edge keys that are a control pass
+  /* Answers that came back up: worker → whoever handed it the work, and the
+     coordinator's reply → the caller. Only recorded returns; a worker that
+     timed out, took over the call or left no events returns nothing. */
+  const returns = {}; // "from->to" → count
+  const addReturn = (from, to) => {
+    const k = `${from}->${to}`;
+    returns[k] = (returns[k] || 0) + 1;
+  };
   const nodeOfSpan = {};
   const add = (at, from, to, kind, group) =>
     steps.push({ at: at ?? 0, edge: `${from}->${to}`, kind, group });
@@ -133,6 +141,12 @@ export const participantsGraphOf = (p) => {
     if (st && states[node]?.tone !== "error") states[node] = st;
     if (w.transfer || w.state === "transferred")
       control.add(`${parent}->${node}`);
+    else if (
+      w.endedAt != null &&
+      w.state !== "timeout" &&
+      w.state !== "unobserved"
+    )
+      addReturn(node, parent);
     add(w.delegatedAt, parent, node, "handoff", w.parallelWith ? parent : null);
     const subs = turnWorkers.filter((x) => x.parentId === w.id);
     const id = `t${t.n}:${w.id}`;
@@ -170,6 +184,7 @@ export const participantsGraphOf = (p) => {
     const start = t.at ?? ws[0]?.delegatedAt ?? 0;
     const end = t.replyAt ?? Math.max(start, ...ws.map((w) => w.endedAt || 0));
     if (t.request) add(start, USER_NODE, coord.id, "turn");
+    if (t.reply) addReturn(coord.id, USER_NODE);
     const coordId = `t${t.n}:coord`;
     nodeOfSpan[coordId] = coord.id;
     const own = (t.own || []).map((c) => ({ ...c, own: true }));
@@ -304,6 +319,24 @@ export const participantsGraphOf = (p) => {
       trace_count: 1,
       is_self_loop: false,
       _ghost: true,
+    });
+  });
+
+  const nodeIds = new Set(graph.nodes.map((nd) => nd.id));
+  Object.entries(returns).forEach(([k, count]) => {
+    const [source, target] = k.split("->");
+    if (!nodeIds.has(source) || !nodeIds.has(target)) return;
+    graph.edges.push({
+      source,
+      target,
+      transition_count: count,
+      avg_latency_ms: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      error_count: 0,
+      trace_count: 1,
+      is_self_loop: false,
+      _return: true,
     });
   });
 

@@ -174,8 +174,7 @@ const AgentNode = ({ data }) => {
   // over diff status (a failed node is the headline, not a diff cue).
   const diffStatus = data._diffStatus;
   const endState = data._state || null;
-  const isFailurePoint =
-    !!data._isFailurePoint || endState?.tone === "error";
+  const isFailurePoint = !!data._isFailurePoint || endState?.tone === "error";
   const isGhost =
     diffStatus === DIFF_STATUS.PASS_ONLY_GHOST || !!endState?.ghost;
 
@@ -451,6 +450,37 @@ const AgentNode = ({ data }) => {
           style={handleStyle}
         />
       )}
+      {/* Return edges (edge._return) leave and re-enter on the side, so an
+          answer going back up reads as a loop beside the hand-off. Unused
+          unless an edge names them. */}
+      {isVertical && !isSentinel && (
+        <>
+          <Handle
+            id="ret-out"
+            type="source"
+            position={Position.Right}
+            style={handleStyle}
+          />
+          <Handle
+            id="ret-in"
+            type="target"
+            position={Position.Right}
+            style={handleStyle}
+          />
+          <Handle
+            id="ret-out-l"
+            type="source"
+            position={Position.Left}
+            style={handleStyle}
+          />
+          <Handle
+            id="ret-in-l"
+            type="target"
+            position={Position.Left}
+            style={handleStyle}
+          />
+        </>
+      )}
 
       <CustomTooltip
         show={!isSentinel}
@@ -596,7 +626,7 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
     });
   });
   edges.forEach((edge) => {
-    g.setEdge(edge.source, edge.target);
+    if (!edge.data?._return) g.setEdge(edge.source, edge.target);
   });
 
   Dagre.layout(g);
@@ -770,6 +800,34 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
       };
     }
 
+    // Optional return (simulate's Participants view): an answer going back
+    // up to whoever handed the work. Dotted, on the nodes' side handles, and
+    // left out of the layout so the graph keeps its top-down shape.
+    if (edge._return) {
+      return {
+        id: `e-ret-${idx}`,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: "ret-out",
+        targetHandle: "ret-in",
+        type: "default",
+        data: { _return: true },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: edgeColor,
+          width: 8,
+          height: 8,
+        },
+        style: { stroke: edgeColor, strokeWidth: 1, strokeDasharray: "1 3" },
+        ...(count > 1 && {
+          label: `×${count}`,
+          labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
+          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
+          labelBgPadding: [3, 2],
+        }),
+      };
+    }
+
     // Optional recorded step order (simulate's Participants view): "2, 6"
     // replaces the ×N count; a control pass is dashed, a ghost edge faint.
     const stepLabel = edge._stepLabel;
@@ -809,16 +867,24 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
       // Show transition count on edges with > 1 transition
       ...(!stepLabel &&
         count > 1 && {
-        label: `×${count}`,
-        labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
-        labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
-        labelBgPadding: [3, 2],
-      }),
+          label: `×${count}`,
+          labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
+          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
+          labelBgPadding: [3, 2],
+        }),
     };
   });
 
   const layoutNodes = layoutGraph(flowNodes, flowEdges, direction);
-  return { nodes: layoutNodes, edges: flowEdges };
+  // A return from a node left of its target loops round the left side, so
+  // it doesn't cut across the nodes between them.
+  const xOf = Object.fromEntries(layoutNodes.map((n) => [n.id, n.position.x]));
+  const edges = flowEdges.map((e) =>
+    e.data?._return && xOf[e.source] < xOf[e.target] - 20
+      ? { ...e, sourceHandle: "ret-out-l", targetHandle: "ret-in-l" }
+      : e,
+  );
+  return { nodes: layoutNodes, edges };
 };
 
 // ---------------------------------------------------------------------------

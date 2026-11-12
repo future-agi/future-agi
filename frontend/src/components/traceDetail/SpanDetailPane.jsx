@@ -1725,8 +1725,12 @@ const SpanDetailPane = ({
   onAction,
   onSelectSpan,
   drawerOpen = true,
+  previewOnly = false,
 }) => {
-  const [activeTab, setActiveTab] = useState("preview");
+  const [tab, setActiveTab] = useState("preview");
+  // previewOnly: the host already shows the trace and its evals (simulation's
+  // Participants tab), so only the span's own content shows — no tab bar.
+  const activeTab = previewOnly ? "preview" : tab;
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -1927,39 +1931,42 @@ const SpanDetailPane = ({
       </Box>
 
       {/* ── Tab Bar ────────────────────────────────── */}
-      <Tabs
-        value={activeTab}
-        onChange={(_, v) => setActiveTab(v)}
-        variant="scrollable"
-        scrollButtons="auto"
-        allowScrollButtonsMobile
-        sx={{ boxShadow: "none",
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          "& .MuiTabs-flexContainer": { gap: 0 },
-          "& .MuiTab-root": {
-            minWidth: "unset !important",
-            marginRight: "0 !important",
-            gap: "4px",
-            fontFamily: "'Inter', sans-serif",
-            letterSpacing: 0,
-          },
-          "& .MuiTabs-scrollButtons": {
-            width: 24,
-            "&.Mui-disabled": { opacity: 0.3 },
-          },
-        }}
-      >
-        {TAB_CONFIG.map((t) => (
-          <Tab
-            key={t.key}
-            value={t.key}
-            icon={<Iconify icon={t.icon} width={14} />}
-            iconPosition="start"
-            label={t.label}
-          />
-        ))}
-      </Tabs>
+      {!previewOnly && (
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          sx={{
+            boxShadow: "none",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            "& .MuiTabs-flexContainer": { gap: 0 },
+            "& .MuiTab-root": {
+              minWidth: "unset !important",
+              marginRight: "0 !important",
+              gap: "4px",
+              fontFamily: "'Inter', sans-serif",
+              letterSpacing: 0,
+            },
+            "& .MuiTabs-scrollButtons": {
+              width: 24,
+              "&.Mui-disabled": { opacity: 0.3 },
+            },
+          }}
+        >
+          {TAB_CONFIG.map((t) => (
+            <Tab
+              key={t.key}
+              value={t.key}
+              icon={<Iconify icon={t.icon} width={14} />}
+              iconPosition="start"
+              label={t.label}
+            />
+          ))}
+        </Tabs>
+      )}
 
       {/* ── Tab Content ────────────────────────────── */}
       <Box
@@ -2755,6 +2762,7 @@ SpanDetailPane.propTypes = {
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
   drawerOpen: PropTypes.bool,
+  previewOnly: PropTypes.bool,
 };
 
 export default React.memo(SpanDetailPane);

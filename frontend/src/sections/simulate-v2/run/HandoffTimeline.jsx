@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -205,6 +205,33 @@ function PathLine({ path }) {
 }
 PathLine.propTypes = { path: PropTypes.array.isRequired };
 
+const dashedKey = (edges) => {
+  const control = edges.some((e) => e._control);
+  const ghost = edges.some((e) => e._ghost);
+  if (control && ghost) return "Dashed: took over the call, or never ran";
+  if (control) return "Dashed: took over the call";
+  return ghost && "Dashed: never ran";
+};
+
+/* What each line in the graph means — only the kinds this call has. */
+function EdgeKey({ edges }) {
+  const parts = [
+    edges.some((e) => !e._return && !e._control && !e._ghost) &&
+      "Solid: handed work",
+    edges.some((e) => e._return) && "Dotted: answer came back",
+    dashedKey(edges),
+  ].filter(Boolean);
+  if (parts.length < 2) return null;
+  return (
+    <Typography
+      sx={{ typography: "s3", color: "text.tertiary", px: 2, pt: 0.75 }}
+    >
+      {parts.join(" · ")}
+    </Typography>
+  );
+}
+EdgeKey.propTypes = { edges: PropTypes.array.isRequired };
+
 const findEntry = (entries, id) => {
   for (const e of entries || []) {
     if (e.observation_span?.id === id) return e;
@@ -234,7 +261,27 @@ export default function HandoffTimeline({ agent, task }) {
   const g = useMemo(() => participantsGraphOf(p), [p]);
   const [focusNode, setFocusNode] = useState(null);
   const [spanId, setSpanId] = useState(null);
+  // Tree height: null = fit the tree up to 560px; a drag on the bar below sets it.
+  const [treeH, setTreeH] = useState(null);
+  const treeRef = useRef(null);
   if (!p || !g) return null;
+
+  // Same bar as Observe's trace view (tree above, Agent Graph below).
+  const startTreeDrag = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = treeRef.current?.offsetHeight || 0;
+    const onMove = (m) =>
+      setTreeH(Math.min(1200, Math.max(120, startH + m.clientY - startY)));
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "row-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
 
   const nodeById = Object.fromEntries(g.graph.nodes.map((n) => [n.id, n]));
   const focus = focusNode ? nodeById[focusNode] : null;
@@ -287,6 +334,7 @@ export default function HandoffTimeline({ agent, task }) {
             isRootSpan={spanId === "call"}
             onClose={() => setSpanId(null)}
             onSelectSpan={setSpanId}
+            previewOnly
           />
         </Box>
       </Stack>
@@ -324,8 +372,9 @@ export default function HandoffTimeline({ agent, task }) {
       </Stack>
       <Divider />
       <Box
+        ref={treeRef}
         sx={{
-          maxHeight: 560,
+          ...(treeH ? { height: treeH } : { maxHeight: 560 }),
           overflow: "auto",
           /* Participants reads at 12px; Observe's own tree keeps 13px. */
           "& .trace-tree-span-name": { fontSize: 12 },
@@ -341,8 +390,32 @@ export default function HandoffTimeline({ agent, task }) {
           showMetrics
         />
       </Box>
-      <Divider />
+      <Box
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize the trace tree"
+        onMouseDown={startTreeDrag}
+        sx={{
+          height: 6,
+          cursor: "row-resize",
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          borderTop: "1px solid",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Iconify
+          icon="solar:menu-dots-linear"
+          width={16}
+          color="text.disabled"
+        />
+      </Box>
       {g.path?.length > 1 && <PathLine path={g.path} />}
+      <EdgeKey edges={graph.edges} />
       <Box sx={{ height: 520 }}>
         <AgentGraph
           data={graph}
