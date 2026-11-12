@@ -14,6 +14,11 @@ describe('productionBaseline', () => {
   it('ignores retired and non-runtime bindings', () => {
     expect(productionBaseline([], [runtime({ version: 6 }), runtime({ version: 4 }, { retiredAt: '2026-11-01' }), { kind: 'dev', retiredAt: null, selector: { version: 2 } }])).toBe(6);
   });
+  it('never takes the pinned application-verification target as production', () => {
+    // The pinned verification target is a runtime binding on the recorded version; production is v6.
+    expect(productionBaseline([], [runtime({ version: 4 }, { profile: 'native-application' }), runtime({ version: 6 }, { profile: 'support-app' })])).toBe(6);
+    expect(productionBaseline([], [runtime({ version: 4 }, { profile: 'native-verification' })])).toBeUndefined();
+  });
   it('offers no default when production is ambiguous or absent', () => {
     expect(productionBaseline([], [runtime({ version: 6 }), runtime({ version: 7 })])).toBeUndefined();
     expect(productionBaseline([], [])).toBeUndefined();
