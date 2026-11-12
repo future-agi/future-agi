@@ -3638,6 +3638,50 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("AI_VERDICT: ${{ needs.ai-review.outputs.verdict }}", text)
         self.assertIn("PR Autopilot review", text)
         self.assertIn("persist-credentials: false", text)
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        steps = yaml.safe_load(text)["jobs"]["ai-review"]["steps"]
+        inputs = next(step for step in steps if step.get("id") == "claude")["with"]
+        self.assertEqual(self.key_holding_extra_steps(inputs), [])
+        # Without the input, or with any other value, the post-step runs.
+        for changed in (
+            {k: v for k, v in inputs.items() if k != "classify_inline_comments"},
+            {**inputs, "classify_inline_comments": "true"},
+            {**inputs, "classify_inline_comments": False},
+        ):
+            with self.subTest(classify=changed.get("classify_inline_comments")):
+                self.assertEqual(
+                    self.key_holding_extra_steps(changed), ["Post buffered inline comments"]
+                )
+        self.assertEqual(
+            self.key_holding_extra_steps({**inputs, "allowed_non_write_users": "*"}),
+            ["allowed_non_write_users: apt installs and PATH steps"],
+        )
+        self.assertEqual(
+            self.key_holding_extra_steps({k: v for k, v in inputs.items() if k != "github_token"}),
+            ["github_token unset: the action mints and later revokes an App token"],
+        )
+
+    @staticmethod
+    def key_holding_extra_steps(inputs):
+        """Steps the pinned action adds to this job beyond installing Bun, its
+        locked dependencies and Claude Code and running it, given the claude
+        step's inputs. Conditions read from action.yml at 4fa93a88: "Post
+        buffered inline comments" runs under always() and gets the API key
+        unless classify_inline_comments is the string 'false'."""
+        extra = []
+        if inputs.get("classify_inline_comments") != "false":
+            extra.append("Post buffered inline comments")
+        if inputs.get("allowed_non_write_users"):
+            extra.append("allowed_non_write_users: apt installs and PATH steps")
+        if not inputs.get("github_token"):
+            extra.append("github_token unset: the action mints and later revokes an App token")
+        for name in ("ssh_signing_key", "path_to_bun_executable"):
+            if inputs.get(name):
+                extra.append(f"{name}: an extra step")
+        return extra
 
     # claude_args flags that take a value, and those passed with none.
     CLAUDE_VALUE_FLAGS = {"model", "max-turns", "disallowedTools", "mcp-config", "json-schema"}

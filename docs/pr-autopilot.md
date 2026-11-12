@@ -591,8 +591,9 @@ Checked in the action's source at that commit, without running it:
 
 - `action.yml` still declares every input the workflow sets
   (`anthropic_api_key`, `github_token`, `allowed_bots`, `track_progress`,
-  `include_fix_links`, `display_report`, `show_full_output`, `prompt`,
-  `claude_args`) and the `structured_output` output.
+  `include_fix_links`, `classify_inline_comments`, `display_report`,
+  `show_full_output`, `prompt`, `claude_args`) and the `structured_output`
+  output.
 - An explicit `prompt` on a `workflow_dispatch` run selects agent mode
   (`src/modes/detector.ts`). Agent mode writes the prompt to a file and adds
   no MCP server unless `--allowedTools` names one; it does not check out the
@@ -603,7 +604,17 @@ Checked in the action's source at that commit, without running it:
   action's locked dependencies, then install Claude Code with
   `https://claude.ai/install.sh` and run it. The step that apt-installs
   bubblewrap and socat runs only when `allowed_non_write_users` is set, which
-  this job does not do, at either pin.
+  this job does not do, at either pin. One post-step, "Post buffered inline
+  comments", runs under `always()` at both pins unless
+  `classify_inline_comments` is `'false'`, and it gets the API key and the
+  job token. The workflow sets that input to `'false'`, so the step is
+  skipped. Agent mode buffers no inline comments, so the step would have
+  nothing to post. The input's only other use is an environment variable of
+  the inline-comment server, which agent mode does not start. A contract test
+  fails if the input is missing or has another value. The other optional
+  steps (a custom Bun path, SSH signing cleanup, App token revocation) are
+  off, because the workflow passes `github_token` and sets neither
+  `path_to_bun_executable` nor `ssh_signing_key`.
 - `--model` and `--max-turns` now become Agent SDK options rather than CLI
   arguments; the other flags still pass to the CLI. The runner now also fails
   the step when a run reports success after more turns than `--max-turns`.
@@ -969,8 +980,9 @@ Suggested rollout:
    - first, one billable review with the pinned action (v1.0.271) and a test
      API key: the execution file's init message lists no tools and no slash
      commands (the `--tools=` form), a `structured_output` verdict comes back
-     within three turns, and a forced failure (for example a model name the
-     API rejects) ends as **retryable**;
+     within three turns, a forced failure (for example a model name the
+     API rejects) ends as **retryable**, and the job log shows the action's
+     "Post buffered inline comments" step as skipped;
    - `actions/runs/{id}/attempts/1/jobs` lists the `Review reserved` step and
      the outcome marker step with their rendered names; the run object of a
      dispatch run has `head_branch` `dev` and `head_sha` equal to the

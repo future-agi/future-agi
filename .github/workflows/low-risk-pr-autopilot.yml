@@ -170,7 +170,8 @@ jobs:
       # load its context. Re-read at this commit: src/modes/detector.ts and
       # src/modes/agent/index.ts. It installs Claude Code 2.1.322, which knows
       # claude-opus-5-5. Its apt step runs only with allowed_non_write_users,
-      # which this job does not set.
+      # which this job does not set, and its inline-comment post-step is
+      # turned off below.
       - name: Review the supplied diff as data and return a structured verdict
         id: claude
         # Below the job limit, so a slow review fails this step (a retryable
@@ -186,6 +187,10 @@ jobs:
           allowed_bots: 'github-actions[bot]'
           track_progress: 'false'
           include_fix_links: 'false'
+          # Skips the action's "Post buffered inline comments" post-step, which
+          # otherwise runs under always() with the API key and the job token.
+          # Agent mode buffers no inline comments, so it has nothing to post.
+          classify_inline_comments: 'false'
           display_report: 'false'
           show_full_output: 'false'
           prompt: ${{ needs.prepare.outputs.prompt }}
