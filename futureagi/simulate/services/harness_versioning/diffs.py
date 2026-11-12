@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from simulate.services.harness_versioning.hashing import ACTOR_LIMITS_KEY
+from simulate.services.harness_versioning.hashing import (
+    ACTOR_LIMITS_KEY,
+    ACTOR_OTHER_KEY,
+)
 
 # Contract fields compared item by item below, or never part of a diff.
 _CONTRACT_ITEM_FIELDS = frozenset(
@@ -200,23 +203,28 @@ def _count(noun: str, nouns: str, verb: str, values: object) -> str | None:
     return f"{size} {noun if size == 1 else nouns} {verb}"
 
 
+def _key(one: Any) -> Any:
+    return one.get("id") if isinstance(one, dict) else one
+
+
 def _cast(entries: Any) -> list[Any]:
-    """The actors among a diff's entries, without the actor limits listed beside them."""
+    """The actors among a diff's entries, without the actor limits and other settings listed beside them."""
     return [
         one
         for one in entries or []
-        if (one.get("id") if isinstance(one, dict) else one) != ACTOR_LIMITS_KEY
+        if _key(one) not in (ACTOR_LIMITS_KEY, ACTOR_OTHER_KEY)
     ]
 
 
-def _limits_changed(actors: Mapping[str, Any]) -> bool:
+def _setting_changed(actors: Mapping[str, Any], key: str) -> bool:
     return any(
-        len(_cast(entries)) != len(entries or [])
+        _key(one) == key
         for entries in (
             actors.get("added"),
             actors.get("removed"),
             actors.get("changed"),
         )
+        for one in entries or []
     )
 
 
@@ -248,7 +256,10 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
         _count("actor", "actors", "added", _cast(actors.get("added"))),
         _count("actor", "actors", "removed", _cast(actors.get("removed"))),
         _count("actor", "actors", "changed", _cast(actors.get("changed"))),
-        "actor limits changed" if _limits_changed(actors) else "",
+        "actor limits changed" if _setting_changed(actors, ACTOR_LIMITS_KEY) else "",
+        "other actor settings changed"
+        if _setting_changed(actors, ACTOR_OTHER_KEY)
+        else "",
     ]
     if "modality" in contract:
         modality = contract["modality"]

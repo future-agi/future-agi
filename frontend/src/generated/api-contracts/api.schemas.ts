@@ -19409,26 +19409,76 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
+export type HarnessEnvironmentScenarioActorKnowledgeApiKind =
+  (typeof HarnessEnvironmentScenarioActorKnowledgeApiKind)[keyof typeof HarnessEnvironmentScenarioActorKnowledgeApiKind];
+
+export const HarnessEnvironmentScenarioActorKnowledgeApiKind = {
+  facts: "facts",
+  files: "files",
+  records: "records",
+} as const;
+
+export type HarnessEnvironmentScenarioActorKnowledgeApiWhere = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentScenarioActorKnowledgeApi {
+  kind: HarnessEnvironmentScenarioActorKnowledgeApiKind;
+  text?: string;
+  paths?: string[];
+  store?: string;
+  collection?: string;
+  where?: HarnessEnvironmentScenarioActorKnowledgeApiWhere;
+}
+
+export type HarnessEnvironmentCallActorTriggerApiKind =
+  (typeof HarnessEnvironmentCallActorTriggerApiKind)[keyof typeof HarnessEnvironmentCallActorTriggerApiKind];
+
+export const HarnessEnvironmentCallActorTriggerApiKind = {
+  always: "always",
+  after_seconds: "after_seconds",
+  on_tool: "on_tool",
+  contacted: "contacted",
+  probability: "probability",
+  mid_journey: "mid_journey",
+  on_keyword: "on_keyword",
+  conditional: "conditional",
+} as const;
+
+export type HarnessEnvironmentCallActorTriggerApiWhere = {
+  [key: string]: unknown;
+};
+
 export interface HarnessEnvironmentCallActorTriggerApi {
-  /** @minLength 1 */
-  kind?: string;
+  kind?: HarnessEnvironmentCallActorTriggerApiKind;
+  seconds?: number;
   turn?: number;
   tool?: string;
   on_call?: number;
   words?: string[];
   p?: number;
+  collection?: string;
+  where?: HarnessEnvironmentCallActorTriggerApiWhere;
 }
 
-export type HarnessEnvironmentScenarioCallActorApiActionsItem = {
-  [key: string]: string;
+export type HarnessEnvironmentScenarioActorActionApiArguments = {
+  [key: string]: unknown;
 };
+
+export interface HarnessEnvironmentScenarioActorActionApi {
+  /** @minLength 1 */
+  action: string;
+  arguments?: HarnessEnvironmentScenarioActorActionApiArguments;
+  trigger?: HarnessEnvironmentCallActorTriggerApi;
+}
 
 export interface HarnessEnvironmentScenarioCallActorApi {
   /** @minLength 1 */
   id: string;
-  instruction: string;
-  trigger: HarnessEnvironmentCallActorTriggerApi;
-  actions?: HarnessEnvironmentScenarioCallActorApiActionsItem[];
+  instruction?: string;
+  knowledge?: HarnessEnvironmentScenarioActorKnowledgeApi[];
+  trigger?: HarnessEnvironmentCallActorTriggerApi;
+  actions?: HarnessEnvironmentScenarioActorActionApi[];
 }
 
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };

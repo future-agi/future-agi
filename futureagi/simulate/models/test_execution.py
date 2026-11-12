@@ -753,26 +753,18 @@ class CallTranscript(BaseModel):
         if turns:
             CallTranscriptActor.objects.bulk_create(turns)
 
-    @classmethod
-    def delete_with_actor_turns(cls, transcripts) -> None:
-        """Delete `transcripts` and who spoke their actor turns."""
-        CallTranscriptActor.objects.filter(
-            transcript_id__in=transcripts.values("pk")
-        ).delete()
-        transcripts.delete()
-
 
 class CallTranscriptActor(models.Model):
     """Who spoke an actor's turn in a call transcript.
 
     Kept beside the transcript table rather than as columns on it, so adding actors changes no existing table. No
-    database constraint: deleting transcripts stays a plain delete, and a turn left behind by one is never read.
+    database constraint; Django deletes a turn with its transcript, by whatever path the transcript is deleted.
     """
 
     transcript = models.OneToOneField(
         CallTranscript,
         primary_key=True,
-        on_delete=models.DO_NOTHING,
+        on_delete=models.CASCADE,
         db_constraint=False,
         related_name="actor_turn",
     )
