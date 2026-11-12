@@ -1673,14 +1673,13 @@ def _effective_connector(
 def _webrtc_egress_cidrs(
     payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
 ) -> tuple[str, ...]:
-    if _effective_connector(payload, secrets_map) not in {
-        "livekit",
-        "vapi",
-        "retell",
-        "phone",
-    }:
+    connector = _effective_connector(payload, secrets_map)
+    if connector not in {"livekit", "vapi", "retell", "phone"}:
         return ()
-    return tuple(sorted(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or []))
+    cidrs = set(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or [])
+    if connector == "retell":
+        cidrs.update(getattr(settings, "RETELL_WEBRTC_EGRESS_CIDRS", []) or [])
+    return tuple(sorted(cidrs))
 
 
 def _connector_egress_domains(
@@ -1726,6 +1725,8 @@ def _connector_egress_domains(
                 domains.add(host)
     elif connector in {"retell", "retell_chat"}:
         domains.add("api.retellai.com")
+        if connector == "retell":
+            domains.add("turn.retellai.com")
         api_url = _config_value(
             config, "api_url", "api_base_url", "retell_api_url", "RETELL_API_URL"
         )

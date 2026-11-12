@@ -409,12 +409,40 @@ def test_webrtc_cidrs_apply_only_to_voice_connectors(settings):
         "143.223.88.0/21",
         "216.39.248.0/21",
     ]
+    settings.RETELL_WEBRTC_EGRESS_CIDRS = []
 
     assert _webrtc_egress_cidrs({"agent": {"connector": "retell"}}, {}) == (
         "143.223.88.0/21",
         "216.39.248.0/21",
     )
     assert _webrtc_egress_cidrs({"agent": {"connector": "retell_chat"}}, {}) == ()
+
+
+def test_webrtc_cidrs_add_retell_media_only_for_retell(settings):
+    settings.ALK_HOSTED_WEBRTC_EGRESS_CIDRS = ["198.51.100.10/32"]
+    settings.RETELL_WEBRTC_EGRESS_CIDRS = ["3.42.144.0/23", "153.57.128.0/18"]
+
+    assert _webrtc_egress_cidrs({"agent": {"connector": "retell"}}, {}) == (
+        "153.57.128.0/18",
+        "198.51.100.10/32",
+        "3.42.144.0/23",
+    )
+    assert _webrtc_egress_cidrs(
+        {"agent": {"connector": "auto"}}, {"RETELL_API_KEY": "opaque"}
+    ) == ("153.57.128.0/18", "198.51.100.10/32", "3.42.144.0/23")
+    assert _webrtc_egress_cidrs({"agent": {"connector": "livekit"}}, {}) == (
+        "198.51.100.10/32",
+    )
+    assert _webrtc_egress_cidrs({"agent": {"connector": "vapi"}}, {}) == (
+        "198.51.100.10/32",
+    )
+    assert _webrtc_egress_cidrs({"agent": {"connector": "retell_chat"}}, {}) == ()
+
+
+def test_retell_media_cidrs_default_to_retell_published_ranges():
+    from django.conf import settings as django_settings
+
+    assert "3.42.144.0/23" in django_settings.RETELL_WEBRTC_EGRESS_CIDRS
 
 
 def test_execution_ttl_preserves_authoring_and_call_budget(settings):
@@ -682,6 +710,7 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
     }
 
 
@@ -698,10 +727,21 @@ def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(set
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+        "turn.retellai.com",
         "livekit-eu.futureagi.com",
         "coturn.turn-eu.futureagi.com",
         "turn-eu.futureagi.com",
     }
+
+
+def test_retell_turn_host_is_allowed_only_for_voice_calls(settings):
+    settings.RETELL_LIVEKIT_URL = "wss://retell-ai.example.livekit.cloud"
+
+    voice = _connector_egress_domains({"agent": {"connector": "retell"}}, {})
+    chat = _connector_egress_domains({"agent": {"connector": "retell_chat"}}, {})
+
+    assert "turn.retellai.com" in voice
+    assert "turn.retellai.com" not in chat
 
 
 def test_livekit_job_does_not_spend_egress_slots_on_platform_simulator_livekit(

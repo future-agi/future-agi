@@ -1177,11 +1177,14 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     (for example, missing tool evidence).  When the sealed receipt contains a
     completed call interval, the call row must remain playable/completed and
     the outcome stays in ``harness_outcome_status`` and failure metadata.
+    An errored call that recorded zero turns never connected, so it is failed.
     """
     outcome = body["status"]
     if outcome == "skipped":
         return CallExecution.CallStatus.CANCELLED
     call = body.get("call")
+    if outcome == "errored" and isinstance(call, dict) and call.get("turns") == 0:
+        return CallExecution.CallStatus.FAILED
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
     if outcome in {"passed", "failed"}:

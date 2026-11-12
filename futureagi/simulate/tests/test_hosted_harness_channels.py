@@ -489,6 +489,51 @@ def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
     )
 
 
+def test_errored_call_with_zero_turns_is_failed():
+    assert (
+        _call_lifecycle_status(
+            {
+                "status": "errored",
+                "call": {
+                    "started_at": "2026-11-12T10:00:00Z",
+                    "ended_at": "2026-11-12T10:00:31Z",
+                    "turns": 0,
+                },
+            }
+        )
+        == CallExecution.CallStatus.FAILED
+    )
+
+
+def test_errored_call_with_turns_keeps_completed_lifecycle():
+    assert (
+        _call_lifecycle_status(
+            {
+                "status": "errored",
+                "call": {
+                    "started_at": "2026-11-12T10:00:00Z",
+                    "ended_at": "2026-11-12T10:03:00Z",
+                    "turns": 4,
+                },
+            }
+        )
+        == CallExecution.CallStatus.COMPLETED
+    )
+
+
+def test_passed_and_failed_calls_with_zero_turns_stay_completed():
+    call = {
+        "started_at": "2026-11-12T10:00:00Z",
+        "ended_at": "2026-11-12T10:00:31Z",
+        "turns": 0,
+    }
+    for outcome in ("passed", "failed"):
+        assert (
+            _call_lifecycle_status({"status": outcome, "call": call})
+            == CallExecution.CallStatus.COMPLETED
+        )
+
+
 def test_recovered_media_fills_only_missing_unambiguous_kinds():
     from types import SimpleNamespace
 
