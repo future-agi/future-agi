@@ -70,8 +70,10 @@ export const READY_TO_RUN_COPY = {
   },
   selectAll: "Select every line the builder chat can fix",
   selectLine: (label) => `Fix ${label.toLowerCase()} with the builder chat`,
-  sendSelected: (count) => `Fix ${count} with builder chat`,
-  addSelected: (count) => `Add ${count} to this fix`,
+  sendSelected: (count) =>
+    count ? `Fix ${count} with builder chat` : "Tick lines to send",
+  addSelected: (count) =>
+    count ? `Add ${count} to this fix` : "Tick lines to add",
   fixOne: "Fix just this one",
   addOne: "Add just this one to the fix",
   fixesUnsaved:
