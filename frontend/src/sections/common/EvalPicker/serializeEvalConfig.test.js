@@ -1,10 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
+  getDecisionRunConfigOverrides,
   sanitizeEvalMapping,
   serializeEvalConfig,
 } from "./serializeEvalConfig";
 
 describe("serializeEvalConfig", () => {
+  it("preserves the decision connection and typed mapping through binding serialization", () => {
+    const model = "decision/openrouter/openai/gpt-6-luna-decisions";
+    const jev_mapping = {
+      revision: "jev-map-v1",
+      question_type: "score",
+      score: { levels: ["Incorrect", "Correct"] },
+    };
+    const serialized = serializeEvalConfig({
+      templateId: "eval",
+      model,
+      jev_mapping,
+      config: {
+        jev_mapping,
+        run_config: { output_type: "score", pass_threshold: 0 },
+      },
+    });
+    expect(serialized).toMatchObject({
+      model,
+      config: {
+        jev_mapping,
+        run_config: {
+          model,
+          jev_mapping,
+          output_type: "score",
+          pass_threshold: 0,
+        },
+      },
+    });
+    expect(serialized).not.toHaveProperty("jev_mapping");
+  });
+
   it("emits runtime overrides only inside config.run_config", () => {
     const payload = serializeEvalConfig({
       templateId: "template-1",
@@ -81,6 +113,47 @@ describe("serializeEvalConfig", () => {
         filters,
       }).filters,
     ).toBe(filters);
+  });
+});
+
+describe("getDecisionRunConfigOverrides", () => {
+  it("merges only supported decision fields in template, runtime, editor order", () => {
+    const model = "decision/openrouter/morph/reflex";
+    const jev_mapping = { pass: { criteria_true: "Authored criterion" } };
+    expect(
+      getDecisionRunConfigOverrides({
+        model,
+        jev_mapping,
+        pass_threshold: 0,
+        config: {
+          jev_mapping: { pass: { criteria_true: "Template criterion" } },
+          rule_prompt: "Do not forward arbitrary template settings",
+          eval_type_id: "CustomPromptEvaluator",
+          run_config: {
+            jev_mapping: { pass: { criteria_true: "Saved criterion" } },
+            output_type: "Pass/Fail",
+            pass_threshold: 0.9,
+            internal_only: "excluded",
+          },
+        },
+      }),
+    ).toEqual({
+      model,
+      jev_mapping,
+      pass_threshold: 0,
+      output_type: "Pass/Fail",
+    });
+  });
+
+  it("does not carry stale typed configuration into an ordinary model", () => {
+    expect(
+      getDecisionRunConfigOverrides({
+        model: "ordinary-model",
+        config: {
+          run_config: { jev_mapping: { score: { levels: ["a", "b"] } } },
+        },
+      }),
+    ).toEqual({});
   });
 });
 

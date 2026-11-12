@@ -16,11 +16,12 @@ ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
-# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
-# dedicated exact-aggregation worker. PeerDB is included through the same
+# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus
+# dedicated exact-aggregation and SQL workers. The generic worker deliberately
+# excludes both admission-bound queues. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation
+SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
@@ -64,6 +65,13 @@ wait_ready() {
     "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
     --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
     || { echo "Observed attribute indexes missing"; exit 1; }
+  if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
+    # App health follows migrations; the probes above witness ClickHouse schema.
+    # Reuse the guarded distributed fixture without changing the shipped image.
+    echo "Provisioning read-only SQL fixture account ..."
+    "${COMPOSE[@]}" exec -T -w /app/backend -e FUTURE_AGI_E2E_FIXTURE=sql-workbench \
+      app python - < "$ROOT/e2e/stack/backend/bootstrap_sql.py"
+  fi
   echo "Waiting for frontend ..."
   until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
     ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }

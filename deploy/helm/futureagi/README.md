@@ -521,9 +521,18 @@ means migrating the data yourself (`pg_dump`, `clickhouse-backup`,
 `mc mirror`).
 
 When any datastore is bundled, the bootstrap job runs after the release's
-resources (`post-install`) because it has to reach them; the API answers
-`/health/` meanwhile, the Temporal workers wait until the job's migrations
-are applied, and Helm returns only once the job has finished.
+resources (`post-install`) because it has to reach them. Pod Ready and
+`/health/` mean process health, not installation completion. The Helm API's
+`STARTUP_SCHEMA_GUARD_ENABLED=true` makes Django application requests return a
+retryable HTTP 503 with `Retry-After` until this image's migrations are applied
+on the default database; health probes and OPTIONS preflight remain available.
+The check is read-only and does not cover replica lag or non-Django routes
+(MCP and WebSockets). Database connection errors pass through to existing
+diagnostics, including setup-checks. The guard defaults off outside Helm and,
+with a ready schema, stays ready even when newer-image migrations are present.
+Temporal workers also wait for migrations.
+Installation is complete only when bootstrap finishes, including ClickHouse,
+seeding and first-admin creation; Helm waits for that job to finish.
 
 ### Install-time settings
 
