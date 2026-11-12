@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from clickhouse_driver.errors import NetworkError
 from django.db import OperationalError
 from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
@@ -257,6 +258,26 @@ def test_failure_statuses_are_distinct_and_fail_closed(
     assert "private-" not in str(response.data)
     if failure not in ("revision", "postgres"):
         deps.save.assert_not_called()
+
+
+@pytest.mark.parametrize("span", [False, True])
+@pytest.mark.parametrize(
+    "error",
+    [NetworkError("private-driver-diagnostic"), ValueError("private-config")],
+    ids=["unreachable", "invalid-config"],
+)
+def test_clickhouse_client_unavailable_is_503_not_a_lookup(
+    write_dependencies, monkeypatch, span, error
+):
+    def unavailable():
+        raise error
+
+    monkeypatch.setattr(assignments, "V2AnalyticsQueryService", unavailable)
+    response = invoke(make_request(span=span), span=span)
+    assert response.status_code == 503, response.data
+    assert response.data["code"] == "tag_target_unavailable"
+    assert "private-" not in str(response.data)
+    write_dependencies.save.assert_not_called()
 
 
 def test_trace_rejects_child_and_url_mismatch(write_dependencies):

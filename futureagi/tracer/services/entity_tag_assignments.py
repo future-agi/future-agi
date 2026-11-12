@@ -4,6 +4,7 @@ from functools import partial
 from typing import cast
 
 import structlog
+from clickhouse_driver.errors import Error as ClickHouseError
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -184,7 +185,9 @@ def update_entity_tags(
         )
         try:
             analytics = V2AnalyticsQueryService()
-        except Exception as exc:
+        except (ClickHouseError, OSError, TypeError, ValueError) as exc:
+            # Client construction: an unreachable server or invalid connection
+            # settings. The tag target is unavailable, never "not found".
             logger.warning(
                 "tag_target_client_unavailable", error_type=type(exc).__name__
             )

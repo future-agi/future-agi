@@ -144,7 +144,7 @@ class EntityTagsResponseSerializer(serializers.Serializer):
 
 TAG_UPDATE_RESPONSES = {
     200: EntityTagsResponseSerializer,
-    **{code: ApiErrorResponseSerializer for code in (400, 403, 404, 409, 503)},
+    **dict.fromkeys((400, 403, 404, 409, 503), ApiErrorResponseSerializer),
 }
 
 
