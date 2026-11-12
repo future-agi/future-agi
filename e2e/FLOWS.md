@@ -2517,3 +2517,28 @@
 - simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
 - the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
 - the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+
+### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
+
+**Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
+
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:42`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
+4. fix the line, name the transcript and import it
+5. land on the Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- the first import is answered 400 transcript_unreadable naming transcript 1 and line 2, the dialog shows that message, and no simulate_evidence_import row is made
+- from the fixed import on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind transcript, no project, not declared production, with one pending case transcript-1
+- neither the import's stored redaction nor its case's stored transcript holds the minted email; the stored transcript holds <EMAIL_ADDRESS> and the minted ask
+- the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
+- the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay
