@@ -279,6 +279,30 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
@@ -2415,6 +2439,30 @@
 - The empty workspace has zero live Observe projects in PG; its real project catalog and feed list return successful exact empty results on first visit, reload and revisit.
 - The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
 - After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
+
+### OBS-E2E-061 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
 ## prompts
 
