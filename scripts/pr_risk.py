@@ -41,6 +41,20 @@ MERGED_MARKER = "<!-- pr-autopilot:merged -->"
 # Asks a person to dismiss an approval the autopilot could not withdraw. Not a
 # parking note: the PR's new head is judged as usual.
 NOT_WITHDRAWN_MARKER = "<!-- pr-autopilot:approval-not-withdrawn -->"
+# Tells the author that the PR waits because its head does not contain dev's
+# live tip. dev does not require up-to-date branches and the repository does
+# not offer GitHub's "Update branch" button, so nothing else on the PR says so.
+BEHIND_DEV_MARKER = "<!-- pr-autopilot:behind-dev -->"
+BEHIND_DEV_NOTE = (
+    "This branch does not contain the latest `dev` commit, so the autopilot is "
+    "waiting. It reviews and merges only a head that contains the live `dev` tip, "
+    "and it spends no review round while the branch is behind. To continue, the "
+    "author (or another trusted author) merges `dev` into the branch locally and "
+    "pushes. A push or an \"Update branch\" by anyone not on the trusted-author "
+    "list sends this PR to a person for good. The bot checks again soon after a "
+    "push, and about once an hour until then."
+)
+BEHIND_DEV_CLEARED = "The branch now contains the live `dev` tip."
 # The first line after a note's marker once the bot has marked it superseded.
 NO_LONGER_APPLIES = "\n**No longer applies.**"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -1110,6 +1124,14 @@ def standing_note(comments, marker):
     )
 
 
+def live_note(comments, marker):
+    """The bot's note under `marker`, unless the bot marked it no longer applying."""
+    note = standing_note(comments, marker)
+    if note and not note["body"].startswith(marker + NO_LONGER_APPLIES):
+        return note
+    return None
+
+
 def standing_escalation(comments):
     return standing_note(comments, ESCALATION_MARKER)
 
@@ -1336,11 +1358,14 @@ DISPATCH_PAUSE_SECONDS = 1
 THROTTLED = frozenset({403, 429})
 # The head a tier comment or a bot note names (tier_audit, post_note).
 NOTED_HEAD = re.compile(r"Head: `([0-9a-f]{40})`")
-# A trusted LOW PR that waits for a person or the owner is dispatched on one
-# sweep in this many (about hourly), not on every sweep.
+# A trusted LOW PR that waits for a person, the owner or the author is
+# dispatched on one sweep in this many (about hourly), not on every sweep.
 PARKED_SWEEPS = 4
-# Notes that hand a head to a person or the owner; a new head ends them.
-PARKING_NOTES = (ESCALATION_MARKER, MERGE_BLOCKED_MARKER, APPROVER_UNAVAILABLE_MARKER)
+# Notes that hand a head to a person, the owner or the author; a new head ends
+# them. A head behind dev stays behind until it changes.
+PARKING_NOTES = (
+    ESCALATION_MARKER, MERGE_BLOCKED_MARKER, APPROVER_UNAVAILABLE_MARKER, BEHIND_DEV_MARKER,
+)
 
 
 # Closed PRs into dev, most recently updated first, that one sweep checks for
@@ -1507,17 +1532,18 @@ def audited_head(api, number):
 
 
 def parked(api, pr):
-    """The PR waits on a person or the owner at its current head: a standing
-    escalation, merge-blocked or approver note names that head, or the
-    autopilot's approval of it was dismissed. Its runs would only stop again.
-    Suppression only, never evidence: a run still checks everything. On a read
-    failure the PR is not parked, so missing evidence never delays it."""
+    """The PR waits on a person, the owner or the author at its current head: a
+    standing escalation, merge-blocked, approver or behind-dev note names that
+    head, or the autopilot's approval of it was dismissed. Its runs would only
+    stop again. Suppression only, never evidence: a run still checks
+    everything. On a read failure the PR is not parked, so missing evidence
+    never delays it."""
     number, head = pr["number"], pr["head"]["sha"]
     try:
         comments = api.pages(f"issues/{number}/comments")
         for marker in PARKING_NOTES:
-            note = standing_note(comments, marker)
-            if note and not note["body"].startswith(marker + NO_LONGER_APPLIES):
+            note = live_note(comments, marker)
+            if note:
                 match = NOTED_HEAD.search(note["body"])
                 if match and match[1] == head:
                     return True
@@ -1532,7 +1558,8 @@ def sweep(api, policy, settings):
     all later policy and workflow code comes from dev.
 
     First every trusted LOW PR without a hold, uncapped; one that waits on a
-    person or the owner at its current head (parked) only about hourly. Then,
+    person, the owner or the author at its current head (parked) only about
+    hourly. Then,
     capped and rotated, PRs to classify: those with no tier label yet (the
     one-time backfill) and labelled PRs whose head moved since their last tier
     audit.
@@ -1597,7 +1624,7 @@ def sweep(api, policy, settings):
     recovered = [] if throttled else recover_merges(api, policy, settings)
     summary(
         f"Scheduled dev PR sweep dispatched {sent} run(s). Trusted LOW PRs: {len(act)}, "
-        f"and {waiting} waiting on a person or the owner (dispatched about hourly). "
+        f"and {waiting} waiting on a person, the owner or the author (dispatched about hourly). "
         f"PRs to classify: {len(backfill)} unlabelled, {len(moved)} pushed since their "
         "tier audit. No PR content was executed."
     )
@@ -1662,14 +1689,8 @@ def prepare(api, policy, settings, event, event_name):
     # before checkout, a reservation would cite a run that cannot vouch for it.
     if os.environ.get("GITHUB_SHA") != os.environ["POLICY_SHA"]:
         raise PolicyError("dev advanced; wait for a fresh run")
-    base = current_base(api, pr)
-    if base is None:
-        # Behind dev: the author updates the branch. No review round is spent.
-        summary("Waiting: the branch is behind dev; update it from dev to continue.")
-        return
-    if base != os.environ["POLICY_SHA"]:
-        raise PolicyError("dev advanced after checkout; wait for a fresh run")
-    context = {"pr": number, "head": pr["head"]["sha"], "base": base}
+    # Reads no base, so it is known before the compare below: only a PR that
+    # the autopilot could otherwise take on gets the behind-dev note.
     decision = merge_decision(
         pr,
         risk,
@@ -1679,6 +1700,22 @@ def prepare(api, policy, settings, event, event_name):
         review_passed=True,
         now=now_utc(),
     )
+    base = current_base(api, pr)
+    if base is None:
+        # Behind dev: the author updates the branch. No review round is spent.
+        # The note is the PR's only sign of this wait, and it parks the PR
+        # until the head changes (PARKING_NOTES).
+        if decision["allow"]:
+            post_note(
+                api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, pr["head"]["sha"]
+            )
+        summary("Waiting: the branch is behind dev; update it from dev to continue.")
+        return
+    if live_note(comments, BEHIND_DEV_MARKER):
+        clear_note(api, number, BEHIND_DEV_MARKER, BEHIND_DEV_CLEARED)
+    if base != os.environ["POLICY_SHA"]:
+        raise PolicyError("dev advanced after checkout; wait for a fresh run")
+    context = {"pr": number, "head": pr["head"]["sha"], "base": base}
     if not decision["allow"]:
         summary("Waiting: " + " ".join(decision["reasons"]))
         return

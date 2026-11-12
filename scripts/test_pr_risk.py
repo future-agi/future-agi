@@ -2395,6 +2395,98 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.reservations())
         self.assertEqual(self.outputs["review"], "false")
 
+    def behind_notes(self):
+        return [c["body"] for c in self.api.comments if c["body"].startswith(risk.BEHIND_DEV_MARKER)]
+
+    def fall_behind(self):
+        """dev moved on, and this dispatch run checked out its new tip."""
+        self.api.dev_tip = OTHER
+        os.environ["POLICY_SHA"] = os.environ["GITHUB_SHA"] = OTHER
+
+    def test_a_pr_behind_dev_gets_one_note_per_head(self):
+        # dev is not strict and the repository offers no "Update branch"
+        # button (allow_update_branch false, read 12 Nov), so the note is the
+        # PR's only sign of the wait.
+        self.fall_behind()
+        self.prepare()
+        self.assertFalse(self.reservations())
+        self.assertEqual(self.outputs["review"], "false")
+        [note] = self.behind_notes()
+        self.assertIn(f"Head: `{HEAD}`.", note)
+        for text in ("contains the live `dev` tip", "merges `dev` into the branch locally",
+                     "\"Update branch\" by anyone not on the trusted-author list",
+                     "to a person for good"):
+            self.assertIn(text, note)
+        self.summary.assert_called_with("Waiting: the branch is behind dev; update it from dev to continue.")
+        # The same head again: no second comment and no edit.
+        self.prepare()
+        writes = [w for w in self.api.requests if w[0] in {"POST", "PATCH"} and w[2]
+                  and str(w[2].get("body", "")).startswith(risk.BEHIND_DEV_MARKER)]
+        self.assertEqual([w[:2] for w in writes], [("POST", "issues/42/comments")])
+        # A new head that is still behind: the same comment now names it.
+        self.api.push("1" * 40)
+        self.prepare()
+        [note] = self.behind_notes()
+        self.assertIn(f"Head: `{'1' * 40}`.", note)
+        self.assertEqual(len([c for c in self.api.comments
+                              if c["body"].startswith(risk.BEHIND_DEV_MARKER)]), 1)
+        self.assertFalse(self.reservations())
+
+    def test_the_behind_dev_note_is_only_for_a_pr_the_autopilot_could_take_on(self):
+        cases = {
+            "untrusted author": lambda api: settings(authors="someone-else"),
+            "hold label": lambda api: api.pr["labels"].append({"name": "autopilot-hold"}) or settings(),
+            "not LOW": lambda api: setattr(api, "files", [file("scripts/pr_risk.py")]) or settings(),
+            "no review key": lambda api: settings(key_present=False),
+            "draft": lambda api: api.pr.update(draft=True) or settings(),
+        }
+        for name, arrange in cases.items():
+            with self.subTest(case=name):
+                self.api = FakeGitHub()
+                config = arrange(self.api)
+                self.fall_behind()
+                self.prepare(config)
+                self.assertEqual(self.behind_notes(), [])
+                self.assertFalse(self.reservations())
+                self.summary.assert_called_with(
+                    "Waiting: the branch is behind dev; update it from dev to continue.")
+
+    def test_the_behind_dev_note_no_longer_applies_once_the_branch_contains_the_tip(self):
+        self.fall_behind()
+        self.prepare()
+        self.assertEqual(len(self.behind_notes()), 1)
+        # The author merges dev in and pushes; CI passes on the new head.
+        merged = "1" * 40
+        self.api.push(merged)
+        self.api.pr["base"]["sha"] = OTHER
+        for required in self.api.checks[:3]:
+            required["head_sha"] = merged
+        context = self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual(context["base"], OTHER)
+        [note] = self.behind_notes()
+        self.assertTrue(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES), note)
+        self.assertIn(risk.BEHIND_DEV_CLEARED, note)
+        self.assertNotIn("Head: `", note)
+        # A later run neither edits the cleared note again nor reads for it.
+        with patch.object(risk, "clear_note") as clear:
+            self.prepare()
+        clear.assert_not_called()
+
+    def test_a_run_with_no_behind_dev_note_does_not_look_for_one(self):
+        with patch.object(risk, "clear_note") as clear:
+            self.prepare()
+        clear.assert_not_called()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual(self.behind_notes(), [])
+        # A person's comment that copies the marker is not the bot's note.
+        self.api = FakeGitHub()
+        self.api.comments.append({"id": 7, "user": {"login": "someone", "type": "User"},
+                                  "body": risk.BEHIND_DEV_MARKER + "\ncopied"})
+        with patch.object(risk, "clear_note") as clear:
+            self.prepare()
+        clear.assert_not_called()
+
     def test_recorded_base_equal_to_the_tip_is_not_proof_the_branch_contains_it(self):
         self.api.behind_override = 41
         self.prepare()
@@ -3569,15 +3661,33 @@ class ControllerTests(unittest.TestCase):
         self.api.pr["labels"] = [{"name": "autopilot-low"}]
         self.assertEqual(self.sweeps_dispatching(42), risk.PARKED_SWEEPS)
         refused = risk.ApproverUnavailable("refused", "GitHub refused the approval (HTTP 422).")
+
+        def behind():
+            # A dispatch run that finds the branch behind dev writes the note.
+            self.api.dev_tip = OTHER
+            with patch.dict(os.environ, {"POLICY_SHA": OTHER, "GITHUB_SHA": OTHER}):
+                self.prepare()
+            self.assertEqual(len(self.behind_notes()), 1)
+
+        def contains_the_tip():
+            # The next run on a head that contains the tip clears it.
+            self.api.pr["base"]["sha"] = self.api.dev_tip
+            with patch.dict(os.environ, {"POLICY_SHA": OTHER, "GITHUB_SHA": OTHER}):
+                self.prepare()
+            [note] = self.behind_notes()
+            self.assertTrue(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+
         notes = {
             # The real writers, so the sweep parses what they post.
             "escalation": lambda: risk.escalate(self.api, 42, self.api.comments, HEAD, "A person must review this PR."),
             "merge-blocked": lambda: risk.merge_blocked(self.api, 42, HEAD, "blocked"),
             "approver": lambda: risk.approver_unavailable(self.api, {"pr": 42, "head": HEAD}, refused),
+            "behind-dev": behind,
         }
         clear = {
             "escalation": lambda: risk.resolve_escalation(self.api, self.api.comments, {"head": HEAD, "base": BASE}),
             "approver": lambda: risk.clear_note(self.api, 42, risk.APPROVER_UNAVAILABLE_MARKER, "Approved."),
+            "behind-dev": contains_the_tip,
         }
         for name, write in notes.items():
             with self.subTest(note=name):

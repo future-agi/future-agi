@@ -79,6 +79,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the token step in the `approve-and-merge` job fails. The review outcome is already recorded by then. Nothing is approved or merged, and the bot posts one note per head on the PR |
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
 | `dev` protection / active org and repository branch rules | Read, never changed by this code | No new ruleset is needed for required checks. `dev` does not require up-to-date branches today (classic protection, strict off), and the autopilot does not need it to: it checks itself that the PR head contains the live `dev` tip (item 1 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)). So people's PRs into `dev` keep merging without an "Update branch" and a CI re-run after each merge. Do not add a strict rule for the autopilot's sake. A strict rule covers every PR into `dev`: after each merge, every other open PR would need an update and a new CI run, including the E2E job (66 to 89 minutes on `dev`) for PRs that touch the app. An active `pull_request` rule must dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 12 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one. Merge queues and required-workflow rules on `dev` stop the autopilot |
+| Repository setting "Always suggest updating pull request branches" (`allow_update_branch`) | Off (read-only check, 12 Nov 2026) | An owner choice; leave it off unless the owner decides otherwise. GitHub shows the "Update branch" button only when the base branch requires up-to-date branches or this setting is on. Neither holds today, so PRs into `dev` have no such button: on 12 Nov `viewerCanUpdateBranch` was false, for an admin viewer, on all 40 most recently updated open PRs into `dev`. The autopilot does not need the button. When a LOW PR's head does not contain the live `dev` tip, the bot posts a behind-dev note, and the author merges `dev` into the branch locally and pushes. Turning the setting on changes two things, because it applies to the whole repository. First, release PRs into `main`, which sit behind `main` by design, get the button, and one click by a person hands that release to a person (`docs/release-autopilot.md`, "Who pushed"). Second, every writer sees the button on LOW PRs into `dev`, and one click by anyone not on the trusted-author list sends that PR to a person for good (see below) |
 | Required status checks | Policy minimum: `Backend Tests Pass`, `E2E Tests Pass` and `Python Lint Pass`, unioned with all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
@@ -94,10 +95,10 @@ review, and again before approval and merge, the controller reads the branch's
 push history (`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<branch>`,
 one page of up to 100 rows). Every row must name a trusted author. A push by
 anyone else, including an "Update branch" click by someone not on the list,
-sends the PR to a person for good; the author has to update the branch
-themselves. An empty history, a full page that may hide older pushes, or a
-page whose oldest row is not the branch's `branch_creation` row (so earlier
-pushes are missing) also goes to a person. On 2026-11-11 the oldest row of
+sends the PR to a person for good; the author has to merge `dev` into the
+branch and push it themselves. An empty history, a full page that may hide
+older pushes, or a page whose oldest row is not the branch's
+`branch_creation` row (so earlier pushes are missing) also goes to a person. On 2026-11-11 the oldest row of
 all 19 sampled PR branches in this repository was `branch_creation`. If the
 newest push in the feed is not yet the PR head, the run waits. If the
 endpoint does not answer, the run stops and approves nothing.
@@ -111,11 +112,12 @@ dispatches a run on `dev` for these PRs, in this order:
 
 1. Every trusted author's `autopilot-low` PR without `autopilot-hold`. These
    are not capped, so the backfill never delays a merge. A PR that waits on a
-   person or the owner at its current head is dispatched only on one sweep
-   in four, about once an hour. It waits when the bot's standing escalation,
-   merge-blocked note or approver note names its current head, or when the
-   autopilot's approval of that head was dismissed (item 2 of [Trust boundary
-   and merge decision](#trust-boundary-and-merge-decision)). A push ends
+   person, the owner or the author at its current head is dispatched only
+   on one sweep in four, about once an hour. It waits when the bot's
+   standing escalation, merge-blocked note, approver note or behind-dev note
+   names its current head, or when the autopilot's approval of that head
+   was dismissed (item 2 of [Trust boundary and merge
+   decision](#trust-boundary-and-merge-decision)). A push ends
    the wait at once, because the note then names an older head. So does an
    escalation marked "No longer applies" or an approver note the bot marked
    the same way after a later approval. Parked PRs are staggered by PR
@@ -147,11 +149,13 @@ applying without a new head (for example a run that read as deleted reads
 again), a person can supply what a branch rule needs, and the owner can fix
 the approver App. Skipping such PRs would strand them. The notes only slow
 the sweep: a writer who edits or deletes one changes when the PR is
-dispatched, never what a run checks. A PR that waits with no note (pending
-CI, a branch behind `dev`, a review to retry after the branch changes) is
-still dispatched on every sweep, because nothing tells the sweep when that
-wait ends. A dispatch on `dev` with input `pr_number` re-evaluates a PR at
-once; it cannot reset the review budget.
+dispatched, never what a run checks. A head that is behind `dev` stays
+behind until it changes, so the hourly dispatch and the run that a push
+starts are enough for it. A PR that waits with no note (pending CI, a review
+to retry after the branch changes) is still dispatched on every sweep,
+because nothing tells the sweep when that wait ends. A dispatch on `dev`
+with input `pr_number` re-evaluates a PR at once; it cannot reset the review
+budget.
 
 Branch protection on `dev` and `main` requires "Backend Tests Pass" and
 "E2E Tests Pass" since 12 Nov 2026. `dev` also requires "Python Lint Pass"
@@ -410,8 +414,26 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    checkout (the checkout is not the live `dev` tip). The PR must already contain that tip:
    the controller always asks GitHub's compare API, because a recorded base
    SHA equal to the tip only means the PR was opened after that commit, not
-   that its branch contains it. A PR that is behind `dev` waits quietly and
-   spends no review round. Manual dispatches on other branches are rejected.
+   that its branch contains it. A PR that is behind `dev` spends no review
+   round and waits. If the PR passes every other part of the merge decision
+   (item 2: trusted author, LOW, no hold, review key, hours, mergeability),
+   the bot posts one behind-dev note (marker `pr-autopilot:behind-dev`)
+   that names the head. The note says that the autopilot reviews and merges
+   only a head that contains the live `dev` tip, and that the author (or
+   another trusted author) merges `dev` into the branch locally and pushes.
+   It also says that a push or an "Update branch" by anyone not on the
+   trusted-author list sends the PR to a person for good. A new head that
+   is still behind gets the same comment, edited to name it. The first run
+   that finds the tip contained marks the note "No longer applies". `dev`
+   does not require up-to-date branches and the repository setting
+   "Always suggest updating pull request branches" is off, so GitHub shows
+   no out-of-date notice and no "Update branch" button on these PRs; the
+   note is the only sign of the wait. The note does not suggest
+   `gh pr update-branch`: whether that REST call works with the setting
+   off is not known yet (rollout step 2). The note comes before the
+   push-history check, so a branch that already has a push by someone not
+   on the list still gets it; after the author merges `dev` in, that PR
+   goes to a person. Manual dispatches on other branches are rejected.
    PR-event runs and the schedule both need this workflow on the default
    branch.
 2. The controller classifies and audits the tier. It requires an open,
@@ -553,8 +575,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    `dev` tip and a compare with the head. If the head no longer contains the
    tip, the run stops with "head or dev base changed" and merges nothing.
    The approval stays, because the head did not change. The next run finds
-   the PR behind `dev` and waits until the branch is updated, and the new
-   head is then reviewed again on the new base. Three gaps remain:
+   the PR behind `dev`, posts the behind-dev note (item 1) and waits until
+   the author merges `dev` in and pushes. The new head is then reviewed
+   again on the new base. Three gaps remain:
    - If `dev` moves in the moment between that read and the merge call, the
      PR merges one merge behind `dev`. The post-merge dispatches then run CI
      on the combined `dev` tip.
@@ -564,10 +587,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
      today.
    - A review note cites GitHub's documentation: merging the base branch
      into a PR does not dismiss approvals. Neither that page nor the
-     behaviour was checked here. If it holds, after "Update branch" the
-     App's approval of the older head may still count. If the review of the
-     new head then blocks or does not finish, the PR shows that approval
-     beside the bot's escalation, and a person can merge on it. A maintainer
+     behaviour was checked here. If it holds, after the author merges
+     `dev` into the branch the App's approval of the older head may still
+     count. If the review of the new head then blocks or does not finish,
+     the PR shows that approval beside the bot's escalation, and a person
+     can merge on it. A maintainer
      who wants to stop that dismisses the App's approval.
 
 The review check is **mandatory for the autopilot**, independently of the
@@ -744,10 +768,13 @@ blocked one.
 - A diff whose attempt was **retryable** (stale head or `dev`, a failed AI
   job, or a review that could not start) is reviewed again after the branch
   changes. The same head and base pair
-  is not retried, so an outage cannot spend attempts every 15 minutes; the
-  run waits quietly, and the bot's result comment tells the author to update
-  the branch from `dev` or push a commit. This is the first of the two options
-  the round-two review offered.
+  is not retried, so an outage cannot spend attempts every 15 minutes. Later
+  runs on that pair post nothing new: the bot's result comment already tells
+  the author to update the branch from `dev` (merge it in locally and push)
+  or push a commit. If `dev` has moved on by then, the branch is behind and
+  the behind-dev note (item 1 of [Trust boundary and merge
+  decision](#trust-boundary-and-merge-decision)) says so as well. This is
+  the first of the two options the round-two review offered.
 - Merging dev into the branch without changing the author's own diff gets a
   fresh review on the new base at no cost to the diff budget. This matters
   because the autopilot merges only a branch that contains the live `dev`
@@ -1067,7 +1094,13 @@ Suggested rollout:
      without follow-ups. `GET .../pulls/<n>` must show `merged_by.login`
      `github-actions[bot]` (no such merge exists in the organisation to
      read), and a sweep at least 15 minutes later must post one merged
-     record, dispatch once and add `autopilot-merged`.
+     record, dispatch once and add `autopilot-merged`;
+   - whether `PUT .../pulls/<n>/update-branch` (the call behind
+     `gh pr update-branch`) works while "Always suggest updating pull
+     request branches" is off. Record the HTTP status and whether the
+     branch moved. The behind-dev note does not mention the command until
+     this is known; if it works, the activity feed shows the caller as the
+     pusher, so only a trusted author may use it.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
@@ -1083,7 +1116,10 @@ Suggested rollout:
 4. Provision the review key, set a weekday window and a very small approved trust
    list. Exercise a benign PR, blocking review, stale head/base, hold, missing key,
    pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
-   diff, a push by an account not on the list, a dismissed App approval, a
+   diff, a branch behind `dev` (one behind-dev note naming the head, the
+   sweep dispatching the PR about hourly, and the note marked "No longer
+   applies" after the author merges `dev` in and pushes), a push by an
+   account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
    longer applies), an escalated PR that the sweep then dispatches about
    hourly, and post-merge dispatches.
@@ -1104,7 +1140,9 @@ check plus a deleted comment), forged or misplaced statuses, tampered or
 unreadable records, persistent budgets, HTTP 404/410 versus transient API
 failures and the HTTP code on `GitHub.request` errors, clearing a superseded
 escalation, pusher trust and the `branch_creation` row, dismissed approvals,
-the compare-only behind-dev rule, the sweep's
+the compare-only behind-dev rule, the behind-dev note (one per head, only for
+a PR the merge decision would otherwise allow, cleared once the branch
+contains the tip, and parked by the sweep), the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads, and `dev`
 moving just before the merge call), audit
