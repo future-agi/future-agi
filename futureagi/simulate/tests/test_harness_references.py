@@ -96,3 +96,24 @@ def test_save_refuses_an_accepted_change_that_needs_a_rejected_one(monkeypatch):
     assert refused.value.details["pairs"] == [
         {"change": "scenario:refund-in-window", "needs": "tool:issue_refund"}
     ]
+
+
+def test_removing_a_tool_touches_the_scenarios_that_named_it_before_the_draft():
+    draft = {"s": {"solution": [{"tool": "get_order"}]}}
+    base = {"s": {"solution": [{"tool": "get_order"}, {"tool": "old_tool"}]}}
+    removal = _change("tool", "old_tool", "removed")
+
+    assert affects(removal, draft, base) == ["s"]
+    assert affects(removal, draft) == []
+
+
+def test_removing_a_tool_needs_the_scenario_edit_that_stops_using_it():
+    draft = {"s": {"solution": [{"tool": "get_order"}]}}
+    base = {"s": {"solution": [{"tool": "get_order"}, {"tool": "old_tool"}]}}
+    removal = _change("tool", "old_tool", "removed")
+    edit = _change("scenario", "s")
+    unrelated = _change("scenario", "t")
+
+    assert depends_on(removal, [removal, edit, unrelated], draft, base) == [
+        "scenario:s"
+    ]

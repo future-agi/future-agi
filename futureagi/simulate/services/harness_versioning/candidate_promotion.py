@@ -115,15 +115,25 @@ def promote_candidates(
     (`defaults_moved`; the set reads superseded), drafts that moved (`draft_changed`) and a review that moved
     (`review_stale`). The same key repeats the same Save.
     """
+    if not name.strip():
+        raise version_error("name_required", "Name the new version, then save", 400)
+    request = {
+        "operation": "candidates",
+        **{
+            f"{piece}_version_id": str(candidates.get(f"{piece}_version_id") or "")
+            for piece in DRAFT_PIECES
+        },
+        "name": name.strip(),
+    }
     moved_defaults = False
     with transaction.atomic():
         locked = lock_environment(environment)
+        replayed = replayed_save(locked, idempotency_key, request=request)
+        if replayed is not None:
+            return replayed
         require_not_busy(locked, "environment")
         require_no_rebuild(locked, piece="environment")
         require_chat_idle(locked)
-        replayed = replayed_save(locked, idempotency_key)
-        if replayed is not None:
-            return replayed
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")
@@ -140,7 +150,7 @@ def promote_candidates(
                 locked, entry, expected_review_digest=expected_review_digest, user=user
             )
             name_saved(activated, name=name)
-            remember_save(locked, idempotency_key, activated)
+            remember_save(locked, idempotency_key, activated, request)
             transaction.on_commit(lambda: retire_chat_runtime(locked))
     if moved_defaults:
         raise version_error(
@@ -248,6 +258,14 @@ def discard_expired_candidates(*, now: datetime | None = None) -> int:
             )
             .values_list("job_id", flat=True)
         )
+    # A live set can name only versions that were already active (nothing new to build), so no candidate row finds it.
+    environments |= {
+        environment_id
+        for environment_id, entry in HostedHarnessJob.no_workspace_objects.filter(
+            **{f"payload__metadata__{VALIDATION_KEY}__isnull": False}
+        ).values_list("id", f"payload__metadata__{VALIDATION_KEY}")
+        if isinstance(entry, dict) and str(entry.get("at") or "") < cutoff.isoformat()
+    }
     expired = 0
     for environment_id in environments:
         with transaction.atomic():

@@ -110,35 +110,150 @@ def _listed_items(document: str, body: Any) -> list[Item]:
     ]
 
 
-def _scenario_items(files: Mapping[str, bytes]) -> list[Item]:
+def _unique_keys(entries: Any, keyed: Any) -> bool:
+    """Whether every entry is a list member with its own key."""
+    if entries is None:
+        return True
+    if not isinstance(entries, list):
+        return False
+    keys = [keyed(entry) for entry in entries]
+    return all(keys) and len(set(keys)) == len(keys)
+
+
+def whole_documents(
+    files: Mapping[str, bytes], other: Mapping[str, bytes] | None = None
+) -> set[str]:
+    """The keyed documents that cannot be split into items without losing content: not JSON of the expected shape,
+    an entry without its key, or two entries with one key; with ``other`` (the tree it is compared with), also a
+    listed document whose data next to its entries differs between the two. Such a document is reviewed as one
+    file, so nothing in it can change unseen."""
+    whole = _malformed(files)
+    if other is not None:
+        whole |= _malformed(other)
+        for document, (_, field, _) in LISTED.items():
+            if document not in files or document not in other:
+                continue
+            sides = [read_json(tree[document]) for tree in (files, other)]
+            rest = [
+                {name: one for name, one in side.items() if name != field}
+                if isinstance(side, dict)
+                else {}
+                for side in sides
+            ]
+            if rest[0] != rest[1]:
+                whole.add(document)
+    return whole
+
+
+def _malformed(files: Mapping[str, bytes]) -> set[str]:
+    whole = set()
+    if "contract.json" in files:
+        contract = read_json(files["contract.json"])
+        if not isinstance(contract, dict) or not (
+            _unique_keys(
+                contract.get("tools"),
+                lambda one: (
+                    isinstance(one, dict) and one.get("name") and str(one["name"])
+                ),
+            )
+            and _unique_keys(
+                contract.get("hard_constraints"),
+                lambda one: one is not None and rule_key(str(one)),
+            )
+        ):
+            whole.add("contract.json")
+    for document, (_, field, key) in LISTED.items():
+        if document not in files:
+            continue
+        body = read_json(files[document])
+        entries = body.get(field) if isinstance(body, dict) else body
+        if not _unique_keys(
+            entries,
+            lambda one, key=key: (
+                isinstance(one, dict) and one.get(key) and str(one[key])
+            ),
+        ):
+            whole.add(document)
+    index = read_json(files.get("scenarios.json", b"null"))
+    if "scenarios.json" in files and not _unique_keys(index, index_key):
+        whole.add("scenarios.json")
+    return whole
+
+
+# Where a scenario item keeps its entry in the suite index, which runs read as the scenario.
+INDEX_ENTRY = "_index"
+
+
+def index_key(entry: Any) -> str:
+    """The scenario folder a suite index entry stands for: its name, else its scenario key; empty when neither."""
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("name") or entry.get("scenario_key") or "")
+
+
+def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
     folders: dict[str, dict[str, bytes]] = {}
     for path, data in files.items():
         parts = path.split("/")
         if parts[0] in hashing.SCENARIO_ROOTS and len(parts) >= 3:
             folders.setdefault(parts[1], {})["/".join(parts[2:])] = data
+    index = read_json(files.get("scenarios.json", b"null"))
+    entries = (
+        {}
+        if "scenarios.json" in whole or not isinstance(index, list)
+        else {index_key(one): one for one in index}
+    )
     items = []
-    for key, inside in sorted(folders.items()):
+    for key in sorted(set(folders) | set(entries)):
+        inside = folders.get(key, {})
         document = read_json(inside.get("scenario.json", b"")) or {}
         others = {
             name: archives.sha256_hex(data)
             for name, data in sorted(inside.items())
             if name != "scenario.json"
         }
-        value = {**document, **({"_files": others} if others else {})}
+        value = {
+            **document,
+            **({"_files": others} if others else {}),
+            **({INDEX_ENTRY: entries[key]} if key in entries else {}),
+        }
         items.append(Item("scenario", key, f"scenarios/{key}/scenario.json", value))
     return items
 
 
-def item_index(files: Mapping[str, bytes]) -> dict[str, Item]:
-    """Every reviewable item of an authoring tree, by id."""
-    items = _contract_items(read_json(files.get("contract.json", b"null")))
+def index_mismatch(value: Any) -> list[str]:
+    """The fields where a scenario's suite index entry and its own document disagree, or `_index` when the entry has
+    no scenario folder to agree with."""
+    if not isinstance(value, dict) or INDEX_ENTRY not in value:
+        return []
+    entry = value[INDEX_ENTRY]
+    document = {
+        name: one for name, one in value.items() if name not in (INDEX_ENTRY, "_files")
+    }
+    if not document:
+        return [INDEX_ENTRY]
+    return sorted(
+        name for name in set(entry) & set(document) if entry[name] != document[name]
+    )
+
+
+def item_index(
+    files: Mapping[str, bytes], whole: set[str] | frozenset[str] = frozenset()
+) -> dict[str, Item]:
+    """Every reviewable item of an authoring tree, by id. A document in ``whole`` is one file item."""
+    whole = set(whole) | _malformed(files)
+    items = (
+        []
+        if "contract.json" in whole
+        else _contract_items(read_json(files.get("contract.json", b"null")))
+    )
     for document in LISTED:
-        if document in files:
+        if document in files and document not in whole:
             items += _listed_items(document, read_json(files[document]))
-    items += _scenario_items(files)
+    items += _scenario_items(files, whole)
     for path, data in sorted(files.items()):
         # Sealed bundles, suite indexes and session files are not part of what a version means.
-        if (
+        if path not in whole and (
             path in _ITEM_DOCUMENTS
             or path.split("/")[0] in hashing.SCENARIO_ROOTS
             or hashing.is_environment_unhashed(path)
@@ -204,7 +319,7 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
                         rows = connection.execute(f"select * from {quoted}")
                         columns = [one[0] for one in rows.description]
                         for index, row in enumerate(rows):
-                            record = dict(zip(columns, row))
+                            record = dict(zip(columns, row, strict=True))
                             key = (
                                 "|".join(str(record[k]) for k in keys)
                                 if keys
@@ -295,7 +410,8 @@ def compute_changes(
     default: Mapping[str, bytes], draft: Mapping[str, bytes]
 ) -> list[dict[str, Any]]:
     """The draft's changes against the default, one per item, in review order."""
-    before, after = item_index(default), item_index(draft)
+    whole = whole_documents(default, draft)
+    before, after = item_index(default, whole), item_index(draft, whole)
     changes = []
     for item_id in sorted(set(before) | set(after)):
         old, new = before.get(item_id), after.get(item_id)

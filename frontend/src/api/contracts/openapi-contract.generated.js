@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1143,
+  endpointCount: 1150,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28634,6 +28634,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/actor-limits/": {
+      put: {
+        operationId: "simulate_api_harness-environments_actor_limits",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessActorLimitsWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/actors/": {
+      get: {
+        operationId: "simulate_api_harness-environments_actors",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_harness-environments_create_actor",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessActorWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/actors/{actor_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_actor_view",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          scenario_key: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorView",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      put: {
+        operationId: "simulate_api_harness-environments_replace_actor",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessActorWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "simulate_api_harness-environments_delete_actor",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          expected_revision: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/capabilities/": {
       get: {
         operationId: "simulate_api_harness-environments_capabilities",
@@ -28903,6 +29022,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/drafts/review/": {
+      get: {
+        operationId: "simulate_api_harness-environments_drafts_drafts_review",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/review/decisions/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_drafts_review_drafts_review_decisions",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessReviewDecisions",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/drafts/save/": {
       post: {
         operationId: "simulate_api_harness-environments_drafts_save_drafts",
@@ -28915,6 +29071,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessDraftSaveResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/validate/": {
+      post: {
+        operationId: "simulate_api_harness-environments_drafts_validate_drafts",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDraftValidate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftValidateResponse",
+          },
+          202: {
+            $ref: "#/definitions/HarnessDraftValidateResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29018,6 +29196,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/files/": {
+      post: {
+        operationId: "simulate_api_harness-environments_upload_file",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -56749,6 +56944,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
+        "call_actors",
+        "trial_state",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -57203,6 +57400,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "passed",
             "failed",
             "inconclusive",
+            "no_score",
             "error",
           ],
         },
@@ -57220,6 +57418,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SimulateRunV3FunctionCall",
           },
+        },
+        call_actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallCallActor",
+          },
+        },
+        trial_state: {
+          $ref: "#/definitions/TrialState",
         },
         scoring_status: {
           title: "Scoring status",
@@ -66843,6 +67050,173 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorLimitsWrite: {
+      required: ["limits"],
+      type: "object",
+      properties: {
+        limits: {
+          title: "Limits",
+          description:
+            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+          type: "object",
+          additionalProperties: true,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessActorList: {
+      required: [
+        "actors",
+        "source",
+        "revision",
+        "record_schemas",
+        "actions",
+        "channels",
+        "loudness",
+        "reserved_ids",
+        "knowledge_sources",
+      ],
+      type: "object",
+      properties: {
+        actors: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["draft", "saved"],
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        record_schemas: {
+          title: "Record schemas",
+          type: "object",
+          additionalProperties: true,
+        },
+        actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessWorldAction",
+          },
+        },
+        channels: {
+          title: "Channels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+          },
+        },
+        loudness: {
+          title: "Loudness",
+          type: "object",
+          additionalProperties: true,
+        },
+        reserved_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        knowledge_sources: {
+          $ref: "#/definitions/HarnessActorKnowledgeSources",
+        },
+        limits: {
+          title: "Limits",
+          type: "object",
+          additionalProperties: true,
+        },
+        actor_models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessActorView: {
+      required: [
+        "actor_id",
+        "permitted_actions",
+        "sees",
+        "never_sees",
+        "played_from_view",
+        "unused_reason",
+      ],
+      type: "object",
+      properties: {
+        actor_id: {
+          title: "Actor id",
+          type: "string",
+          minLength: 1,
+        },
+        permitted_actions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        sees: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorSeen",
+          },
+        },
+        never_sees: {
+          $ref: "#/definitions/HarnessActorNeverSees",
+        },
+        played_from_view: {
+          title: "Played from view",
+          type: "boolean",
+        },
+        unused_reason: {
+          title: "Unused reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessActorWrite: {
+      required: ["actor"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "object",
+          additionalProperties: true,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        share_actions: {
+          description:
+            "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+      },
+    },
     HarnessAgentCredentialsResponse: {
       required: ["agent_version"],
       type: "object",
@@ -67670,15 +68044,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessDraftSave: {
-      required: ["drafts", "idempotency_key"],
+    HarnessDraftReview: {
+      required: ["drafts", "changes", "counts", "review_digest", "can_save"],
       type: "object",
       properties: {
         drafts: {
+          title: "Drafts",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/HarnessReviewDraft",
+          },
+        },
+        changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReviewChange",
+          },
+        },
+        counts: {
+          $ref: "#/definitions/HarnessReviewCounts",
+        },
+        review_digest: {
+          title: "Review digest",
+          description: "Send back on Save; a review that moved is refused.",
+          type: "string",
+          minLength: 1,
+        },
+        can_save: {
+          title: "Can save",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessDraftSave: {
+      required: ["idempotency_key"],
+      type: "object",
+      properties: {
+        drafts: {
+          description: "Save the drafts as they are.",
           type: "array",
           items: {
             $ref: "#/definitions/HarnessDraftSaveItem",
           },
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
+        },
+        expected_review_digest: {
+          title: "Expected review digest",
+          description:
+            "The review digest the person saw; Save refuses a review that moved since.",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description: "A name for the new version; never an identity.",
+          type: "string",
+          maxLength: 80,
         },
         idempotency_key: {
           title: "Idempotency key",
@@ -67707,8 +68130,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDraftValidate: {
+      required: ["expected_revisions"],
+      type: "object",
+      properties: {
+        expected_revisions: {
+          title: "Expected revisions",
+          description: "Per piece, the draft revision the person reviewed.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+        expected_review_digest: {
+          title: "Expected review digest",
+          description:
+            "The review digest the person saw; required once any change is decided.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDraftValidateResponse: {
+      required: ["validation", "candidates"],
+      type: "object",
+      properties: {
+        validation: {
+          $ref: "#/definitions/HarnessDraftValidation",
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
+        },
+      },
+    },
     HarnessDrafts: {
-      required: ["environment", "suite", "set_aside"],
+      required: [
+        "environment",
+        "suite",
+        "set_aside",
+        "validation",
+        "candidates",
+      ],
       type: "object",
       properties: {
         environment: {
@@ -67722,6 +68184,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessDraftItem",
           },
+        },
+        validation: {
+          $ref: "#/definitions/HarnessDraftValidation",
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
         },
       },
     },
@@ -68737,11 +69205,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         failure: {
           $ref: "#/definitions/HarnessFailure",
         },
+        reason: {
+          title: "Reason",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
         digest: {
           title: "Digest",
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessReviewDecisions: {
+      required: ["expected_revisions", "decisions"],
+      type: "object",
+      properties: {
+        expected_revisions: {
+          title: "Expected revisions",
+          description: "Per piece, the draft revision the person reviewed.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReviewDecision",
+          },
         },
       },
     },
@@ -92848,8 +93342,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "actor",
+            "task",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
         },
         content: {
           title: "Content",
@@ -94934,7 +95435,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version",
         "outcome_passed",
         "outcome_failed",
+        "outcome_errored",
         "outcome_skipped",
+        "outcome_no_score",
         "started_at",
         "completed_at",
       ],
@@ -94985,8 +95488,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           "x-nullable": true,
         },
+        outcome_errored: {
+          title: "Outcome errored",
+          type: "integer",
+          "x-nullable": true,
+        },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_no_score: {
+          title: "Outcome no score",
           type: "integer",
           "x-nullable": true,
         },
@@ -96291,6 +96804,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallCallActor: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "The actor's id in the environment.",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          description: "The name the transcript shows.",
+          type: "string",
+        },
+        role: {
+          title: "Role",
+          description: "Who they are to the caller.",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          description: "The channel id they joined the call on.",
+          type: "string",
+        },
+        delivery: {
+          title: "Delivery",
+          description:
+            "How far they got in the call; absent on a call stored without a summary.",
+          type: "string",
+          enum: ["delivered", "dropped", "not_triggered", "not_drawn"],
+        },
+      },
+    },
     CostBreakdown: {
       required: ["stt", "llm", "tts", "storage", "customer"],
       type: "object",
@@ -96442,6 +96987,66 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Start time ms",
           type: "integer",
         },
+        ok: {
+          title: "Ok",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        refused: {
+          title: "Refused",
+          type: "boolean",
+        },
+        at: {
+          title: "At",
+          type: "number",
+        },
+        action_id: {
+          title: "Action id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        actor_id: {
+          title: "Actor id",
+          type: "string",
+          minLength: 1,
+        },
+        actor_name: {
+          title: "Actor name",
+          type: "string",
+          minLength: 1,
+        },
+        actor_role: {
+          title: "Actor role",
+          type: "string",
+        },
+        refusal_code: {
+          title: "Refusal code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_event_id: {
+          title: "Parent event id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        on_behalf_of: {
+          title: "On behalf of",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
       },
     },
     SubGoalResult: {
@@ -96458,7 +97063,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           "x-nullable": true,
         },
+        result: {
+          title: "Result",
+          type: "string",
+          enum: ["not_applicable", "inconclusive", "unmeasured"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        evidence: {
+          description:
+            "What the check was decided from: world_state, tool_calls, transcript, recording.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
+    },
+    TrialState: {
+      type: "object",
+      properties: {
+        state_changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialStateChange",
+          },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ActorDecision",
+          },
+        },
+        approvals: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalLine",
+          },
+        },
+        usage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ActorUsage",
+          },
+        },
+        limits: {
+          title: "Limits",
+          description:
+            "The actor limits this trial ran with; null is no limit.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        notices: {
+          description:
+            "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/TrialNotice",
+          },
+        },
+      },
+      "x-nullable": true,
     },
     CallTranscript: {
       required: ["content"],
@@ -96480,8 +97151,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "actor",
+            "task",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
+        },
+        actor_id: {
+          title: "Actor id",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
         },
         content: {
           title: "Content",
@@ -102379,10 +103063,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorKnowledgeSources: {
+      required: ["files", "records"],
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        records: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessActorRecordSource",
+          },
+        },
+      },
+    },
+    HarnessWorldAction: {
+      required: ["action", "tool", "description"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+      },
+    },
+    HarnessActorNeverSees: {
+      required: ["scenario_fields", "files", "other_actors"],
+      type: "object",
+      properties: {
+        scenario_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        other_actors: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessActorSeen: {
+      required: ["input", "value", "source"],
+      type: "object",
+      properties: {
+        input: {
+          title: "Input",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "object",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["actor", "scenario", "caller"],
+        },
+      },
+    },
     HarnessVersion: {
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -102405,6 +103175,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requested_here",
         "pickable",
         "discardable",
+        "candidate_state",
       ],
       type: "object",
       properties: {
@@ -102419,10 +103190,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         status: {
           title: "Status",
           type: "string",
-          enum: ["draft", "active", "discarded"],
+          enum: ["draft", "candidate", "active", "discarded"],
         },
         is_default: {
           title: "Is default",
@@ -102558,6 +103336,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         release_checks: {
           $ref: "#/definitions/HarnessReleaseChecks",
         },
+        candidate_state: {
+          title: "Candidate state",
+          description:
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ],
+          "x-nullable": true,
+        },
       },
     },
     HarnessAgentPayloadChange: {
@@ -102629,7 +103423,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         purpose: {
           title: "Purpose",
           type: "string",
-          enum: ["agent_move", "recheck"],
+          enum: ["agent_move", "recheck", "save"],
           "x-nullable": true,
         },
         finished_at: {
@@ -103425,7 +104219,225 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessReviewChange: {
+      required: [
+        "id",
+        "piece",
+        "kind",
+        "key",
+        "document",
+        "action",
+        "fields",
+        "patch",
+        "base_digest",
+        "draft_digest",
+        "summary",
+        "decision",
+        "affects",
+        "sources",
+        "depends_on",
+        "graded",
+        "revalidate",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+          ],
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        document: {
+          title: "Document",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["added", "removed", "changed"],
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        patch: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        base_digest: {
+          title: "Base digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+          minLength: 1,
+        },
+        decision: {
+          title: "Decision",
+          type: "string",
+          enum: ["accepted", "rejected"],
+          "x-nullable": true,
+        },
+        affects: {
+          title: "Affects",
+          description: "The scenario keys this change touches, or `all`.",
+          type: "object",
+        },
+        sources: {
+          description:
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        depends_on: {
+          description:
+            "Changes this one needs; accepting it means accepting them.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        graded: {
+          title: "Graded",
+          description: "The change alters what trials are graded on.",
+          type: "boolean",
+        },
+        revalidate: {
+          description:
+            "The scenarios to prove again once this change is saved.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        rows: {
+          description:
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessReviewCounts: {
+      required: ["total", "accepted", "rejected", "undecided"],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        accepted: {
+          title: "Accepted",
+          type: "integer",
+        },
+        rejected: {
+          title: "Rejected",
+          type: "integer",
+        },
+        undecided: {
+          title: "Undecided",
+          type: "integer",
+        },
+      },
+    },
+    HarnessReviewDraft: {
+      required: ["id", "revision", "parent_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+        },
+      },
+    },
+    HarnessCandidates: {
+      description:
+        "The versions Validate built; send them to Save once validation is ready.",
+      required: ["environment_version_id", "suite_version_id"],
+      type: "object",
+      properties: {
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessDraftSaveItem: {
+      description: "Save the drafts as they are.",
       required: ["piece", "expected_parent_id"],
       type: "object",
       properties: {
@@ -103449,10 +104461,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDraftValidation: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          description:
+            "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "unavailable",
+          ],
+        },
+        job_id: {
+          title: "Job id",
+          description: "The validation job, while one runs.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          $ref: "#/definitions/HarnessValidationError",
+        },
+        affected_scenarios: {
+          description: "Scenarios that need a failed action on every path.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        dropped_scenarios: {
+          description: "Scenarios certifying left out of the suite.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessDraftItem: {
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -103475,6 +104536,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requested_here",
         "pickable",
         "discardable",
+        "candidate_state",
         "stale",
         "revision",
         "last_edited_by",
@@ -103496,10 +104558,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         status: {
           title: "Status",
           type: "string",
-          enum: ["draft", "active", "discarded"],
+          enum: ["draft", "candidate", "active", "discarded"],
         },
         is_default: {
           title: "Is default",
@@ -103635,6 +104704,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         release_checks: {
           $ref: "#/definitions/HarnessReleaseChecks",
         },
+        candidate_state: {
+          title: "Candidate state",
+          description:
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ],
+          "x-nullable": true,
+        },
         stale: {
           title: "Stale",
           description:
@@ -103671,7 +104756,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         changes: {
           title: "Changes",
           description:
-            "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+            "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
           type: "object",
           additionalProperties: {
             type: "integer",
@@ -103750,7 +104835,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentContract: {
-      required: ["amendments", "sub_goals", "end_conditions", "provenance"],
+      required: [
+        "amendments",
+        "sub_goals",
+        "call_actors",
+        "end_conditions",
+        "provenance",
+      ],
       type: "object",
       properties: {
         agent: {
@@ -103855,6 +104946,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessEnvironmentCatalogueSubGoal",
+          },
+        },
+        call_actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentCallActor",
           },
         },
         end_conditions: {
@@ -104032,6 +105129,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "fixture",
         "steps",
         "sub_goals",
+        "actors",
         "persona",
         "situation",
         "outcome",
@@ -104094,6 +105192,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessEnvironmentSubGoal",
+          },
+        },
+        actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentScenarioCallActor",
           },
         },
         persona: {
@@ -105447,6 +106551,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: [
+            "pass",
+            "fail",
+            "not_applicable",
+            "inconclusive",
+            "unmeasured",
+          ],
+        },
+        evidence: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 16,
+        },
+      },
+    },
+    HarnessReviewDecision: {
+      required: ["decision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "One change; omit with `kind` or `remaining`.",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+          ],
+        },
+        remaining: {
+          title: "Remaining",
+          description: "Every change not yet decided.",
+          type: "boolean",
+        },
+        decision: {
+          title: "Decision",
+          type: "string",
+          enum: ["accepted", "rejected"],
         },
       },
     },
@@ -111627,6 +112788,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
         "scenario",
         "scenario_key",
         "runs",
@@ -111659,6 +112821,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
         scenario: {
@@ -112524,6 +113690,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
         "turn_count",
       ],
       type: "object",
@@ -112550,6 +113717,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
         turn_count: {
@@ -112587,6 +113758,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
       ],
       type: "object",
       properties: {
@@ -112612,6 +113784,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
       },
@@ -112738,8 +113914,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "passed",
             "failed",
             "inconclusive",
+            "no_score",
             "error",
           ],
+        },
+        outcome_reason: {
+          title: "Outcome reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
         execution_status: {
           title: "Execution status",
@@ -113004,6 +114187,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/FacetValue",
+          },
+        },
+        actor: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallActorFacetValue",
           },
         },
         status: {
@@ -113398,8 +114587,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        outcome_errored: {
+          title: "Outcome errored",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_no_score: {
+          title: "Outcome no score",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -119341,6 +120542,258 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ActorDecision: {
+      required: ["actor", "play"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description:
+            "The actor's name, so a pre-run writer who changed nothing in the trial is named, not shown by id.",
+          type: "string",
+          minLength: 1,
+        },
+        play: {
+          title: "Play",
+          type: "string",
+          enum: [
+            "mocked",
+            "live",
+            "history",
+            "waiting",
+            "timeout",
+            "problem",
+            "not_triggered",
+          ],
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        arguments: {
+          title: "Arguments",
+          description:
+            "What it sent: for a pre-run message (`history`), the message itself.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        channel: {
+          title: "Channel",
+          description: "`voice` when decided on the call by a speaking actor.",
+          type: "string",
+          minLength: 1,
+        },
+        problem: {
+          title: "Problem",
+          description:
+            "For `problem`: no_world_door or not_listed: the scenario's problem, never the agent's.",
+          type: "string",
+          minLength: 1,
+        },
+        why: {
+          title: "Why",
+          type: "string",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "integer",
+          "x-nullable": true,
+        },
+        timeout_seconds: {
+          title: "Timeout seconds",
+          type: "number",
+        },
+        fallback: {
+          title: "Fallback",
+          description:
+            "silent, decline, one of the actor's own actions, or the id of the actor who answers instead",
+          type: "string",
+          minLength: 1,
+        },
+        outcome: {
+          title: "Outcome",
+          description:
+            "For a timeout: timed_out, declined, fallback_action, answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    ActorUsage: {
+      required: ["actor", "model", "tokens_in", "tokens_out", "cost_usd"],
+      type: "object",
+      properties: {
+        actor: {
+          title: "Actor",
+          type: "string",
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+        },
+        tokens_in: {
+          title: "Tokens in",
+          type: "integer",
+        },
+        tokens_out: {
+          title: "Tokens out",
+          type: "integer",
+        },
+        cost_usd: {
+          title: "Cost usd",
+          type: "number",
+        },
+      },
+    },
+    ApprovalLine: {
+      required: [
+        "request",
+        "decision",
+        "before_decision",
+        "after_decision",
+        "acted_before_decision",
+      ],
+      type: "object",
+      properties: {
+        request: {
+          title: "Request",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        decision: {
+          title: "Decision",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        before_decision: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalWrite",
+          },
+        },
+        after_decision: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ApprovalWrite",
+          },
+        },
+        acted_before_decision: {
+          title: "Acted before decision",
+          type: "boolean",
+        },
+      },
+    },
+    TrialNotice: {
+      description:
+        "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          description: "fault_not_applied or fault_not_triggered",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          description: "Plain words for the person reading the run.",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          "x-nullable": true,
+        },
+        on_call: {
+          title: "On call",
+          type: "integer",
+          "x-nullable": true,
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    TrialStateChange: {
+      required: [
+        "who",
+        "name",
+        "attempted",
+        "committed",
+        "refused",
+        "faulted",
+        "duplicate",
+        "committed_actions",
+      ],
+      type: "object",
+      properties: {
+        who: {
+          title: "Who",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        committed: {
+          title: "Committed",
+          type: "integer",
+        },
+        refused: {
+          title: "Refused",
+          type: "integer",
+        },
+        faulted: {
+          title: "Faulted",
+          type: "integer",
+        },
+        duplicate: {
+          title: "Duplicate",
+          type: "integer",
+        },
+        committed_actions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        no_change: {
+          title: "No change",
+          description:
+            "True when this participant committed nothing: a result shown as 'no change', never left out.",
+          type: "boolean",
+        },
+      },
+    },
     InvestigationEvidenceWindow: {
       required: ["start", "end"],
       type: "object",
@@ -123373,6 +124826,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessActorRecordSource: {
+      required: ["store", "collection"],
+      type: "object",
+      properties: {
+        store: {
+          title: "Store",
+          type: "string",
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessReleaseChecks: {
       description:
         "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
@@ -123710,6 +125178,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    HarnessValidationError: {
+      required: ["code", "message", "failed_actions"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        failed_actions: {
+          description: "Each action whose check failed, with the reason.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentEvalInput: {
       required: ["key", "source", "label"],
       type: "object",
@@ -123743,6 +125237,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Note",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessEnvironmentCallActor: {
+      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          minLength: 1,
+        },
+        persona: {
+          $ref: "#/definitions/HarnessEnvironmentCallActorPersona",
+        },
+        loudness_ratio: {
+          title: "Loudness ratio",
+          type: "number",
+        },
+        scenarios_count: {
+          title: "Scenarios count",
+          type: "integer",
         },
       },
     },
@@ -124038,6 +125568,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentScenarioCallActor: {
+      required: ["id", "instruction", "trigger"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        instruction: {
+          title: "Instruction",
+          type: "string",
+        },
+        trigger: {
+          $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
+        },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },
@@ -128099,6 +129657,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
       ],
       type: "object",
       properties: {
@@ -128129,6 +129688,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
       },
@@ -128479,6 +130042,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
+        },
+      },
+    },
+    CallActorFacetValue: {
+      required: [
+        "value",
+        "count",
+        "label",
+        "delivered",
+        "dropped",
+        "not_triggered",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        delivered: {
+          title: "Delivered",
+          description:
+            "Calls where at least one of the actor's lines reached the agent.",
+          type: "integer",
+        },
+        dropped: {
+          title: "Dropped",
+          description:
+            "Calls where the actor was triggered but none of its lines reached the agent.",
+          type: "integer",
+        },
+        not_triggered: {
+          title: "Not triggered",
+          description:
+            "Calls the actor was planned for but never triggered in.",
+          type: "integer",
         },
       },
     },
@@ -131692,6 +133300,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ApprovalWrite: {
+      required: ["action", "outcome"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     InvestigationMemoryEntry: {
       required: ["id", "text"],
       type: "object",
@@ -132690,6 +134316,87 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    HarnessEnvironmentCallActorPersona: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        gender: {
+          title: "Gender",
+          type: "string",
+        },
+        age_group: {
+          title: "Age group",
+          type: "string",
+        },
+        occupation: {
+          title: "Occupation",
+          type: "string",
+        },
+        location: {
+          title: "Location",
+          type: "string",
+        },
+        personality: {
+          title: "Personality",
+          type: "string",
+        },
+        communication_style: {
+          title: "Communication style",
+          type: "string",
+        },
+        initial_message: {
+          title: "Initial message",
+          type: "string",
+        },
+        languages: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        accent: {
+          title: "Accent",
+          type: "string",
+        },
+      },
+    },
+    HarnessEnvironmentCallActorTrigger: {
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        turn: {
+          title: "Turn",
+          type: "integer",
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        on_call: {
+          title: "On call",
+          type: "integer",
+        },
+        words: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        p: {
+          title: "P",
+          type: "number",
+        },
+      },
     },
     HarnessEnvironmentCredentialFile: {
       required: ["environment_name"],

@@ -60719,11 +60719,11 @@ export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseError =
   simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
@@ -60766,11 +60766,11 @@ export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsRespo
 
 export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseError =
   simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse =
@@ -60873,11 +60873,11 @@ export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseSuccess =
     | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse200
     | simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse202
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseError =
   simulateApiHarnessEnvironmentsDraftsValidateDraftsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =

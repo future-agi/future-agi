@@ -43,17 +43,23 @@ def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
 
 
 def affects(
-    change: Mapping[str, Any], scenarios: Mapping[str, Mapping[str, Any]]
+    change: Mapping[str, Any],
+    scenarios: Mapping[str, Mapping[str, Any]],
+    base: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str] | str:
-    """The scenario keys a change touches, or `all` when nothing says which ones."""
+    """The scenario keys a change touches, or `all` when nothing says which ones. A scenario that names the item in
+    the saved suite (``base``) or in the draft is touched."""
     kind, key = change["kind"], change["key"]
     if kind == "scenario":
         return [key]
     if kind in ("tool", "sub_goal", "actor"):
         return sorted(
-            name
-            for name, scenario in scenarios.items()
-            if key in scenario_uses(scenario)[kind]
+            {
+                name
+                for side in (scenarios, base or {})
+                for name, scenario in side.items()
+                if key in scenario_uses(scenario)[kind]
+            }
         )
     return ALL
 
@@ -62,9 +68,22 @@ def depends_on(
     change: Mapping[str, Any],
     changes: list[Mapping[str, Any]],
     scenarios: Mapping[str, Mapping[str, Any]],
+    base: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str]:
-    """The other changes an added or changed scenario needs: the tools, sub-goals and actors it names that only the
-    draft adds."""
+    """The other changes this one needs. An added or changed scenario needs the tools, sub-goals and actors it names
+    that only the draft adds. Removing a tool, sub-goal or actor needs the scenario edits and removals that stop the
+    saved scenarios naming it."""
+    if (
+        change["kind"] in ("tool", "sub_goal", "actor")
+        and change["action"] == "removed"
+    ):
+        return sorted(
+            other["id"]
+            for other in changes
+            if other["kind"] == "scenario"
+            and change["key"]
+            in scenario_uses((base or {}).get(other["key"]) or {})[change["kind"]]
+        )
     if change["kind"] != "scenario" or change["action"] == "removed":
         return []
     uses = scenario_uses(scenarios.get(change["key"]) or {})

@@ -121,7 +121,7 @@ def test_every_kind_of_item_is_found_added_removed_or_changed_in_review_order():
     ]
 
 
-def test_suite_indexes_sealed_bundles_and_session_files_are_never_review_items():
+def test_sealed_bundles_and_session_files_are_never_review_items_and_an_index_entry_is_its_scenarios():
     tree = _tree(
         {},
         **{
@@ -130,7 +130,9 @@ def test_suite_indexes_sealed_bundles_and_session_files_are_never_review_items()
             "runtime-validation.json": {},
         },
     )
-    assert set(item_index(tree)) == set()
+    items = item_index(tree)
+    assert set(items) == {"scenario:dup"}
+    assert items["scenario:dup"].value == {"_index": {"scenario_key": "dup"}}
 
 
 def _pair():
@@ -346,8 +348,9 @@ def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_cha
             "users": [{"id": "a"}],
         }
     )
-    default["store.json"], draft["store.json"] = default.pop("store/json"), draft.pop(
-        "store/json"
+    default["store.json"], draft["store.json"] = (
+        default.pop("store/json"),
+        draft.pop("store/json"),
     )
 
     [change] = compute_changes(default, draft)
@@ -533,3 +536,176 @@ def test_the_suite_index_follows_the_accepted_scenario_changes_and_keeps_the_rej
     assert index["edited"]["sub_goals"] == ["a", "b"]
     assert index["declined"]["sub_goals"] == ["a"]
     assert "scenarios/gone/scenario.json" not in composed
+
+
+def test_an_unrecognized_amendment_line_is_dropped_when_a_contract_change_was_rejected():
+    default, draft, changes = _rule_and_tool()
+    contract = json.loads(draft["contract.json"])
+    contract["amendments"].append("issue_refund narrowed after review")
+    draft["contract.json"] = json.dumps(contract).encode()
+    changes = compute_changes(default, draft)
+    rule = next(one["id"] for one in changes if one["kind"] == "rule")
+
+    rejected = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
+        )["contract.json"]
+    )
+    assert "issue_refund narrowed after review" not in rejected["amendments"]
+    accepted = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "accepted", "tool:issue_refund": "accepted"}
+        )["contract.json"]
+    )
+    assert "issue_refund narrowed after review" in accepted["amendments"]
+
+
+def test_a_suite_index_entry_is_part_of_its_scenario_and_a_change_to_it_alone_is_reviewed():
+    folder = {"name": "s", "sub_goals": ["a"]}
+    default = _tree(**{"scenarios/s/scenario.json": folder, "scenarios.json": [folder]})
+    draft = _tree(
+        **{
+            "scenarios/s/scenario.json": folder,
+            "scenarios.json": [{**folder, "max_turns": 99}],
+        }
+    )
+
+    [change] = compute_changes(default, draft)
+    assert (change["id"], change["action"], change["fields"]) == (
+        "scenario:s",
+        "changed",
+        ["_index"],
+    )
+    # Rejected, the saved suite keeps the reviewed index entry, not the draft's.
+    kept = compose_accepted(default, draft, [change], {"scenario:s": "rejected"})
+    assert json.loads(kept["scenarios.json"]) == [folder]
+    taken = compose_accepted(default, draft, [change], {"scenario:s": "accepted"})
+    assert json.loads(taken["scenarios.json"]) == [{**folder, "max_turns": 99}]
+
+
+def test_an_index_entry_that_disagrees_with_its_scenario_or_has_no_folder_is_flagged():
+    from simulate.services.harness_versioning.review_items import index_mismatch
+
+    items = item_index(
+        _tree(
+            **{
+                "scenarios/s/scenario.json": {"name": "s", "sub_goals": ["a"]},
+                "scenarios.json": [
+                    {"name": "s", "sub_goals": ["b"]},
+                    {"name": "orphan", "sub_goals": ["a"]},
+                ],
+            }
+        )
+    )
+    assert index_mismatch(items["scenario:s"].value) == ["sub_goals"]
+    assert index_mismatch(items["scenario:orphan"].value) == ["_index"]
+
+
+@pytest.mark.parametrize(
+    "document,body",
+    [
+        (
+            "actors.json",
+            {"actors": [{"id": "a", "role": "x"}, {"id": "a", "role": "y"}]},
+        ),
+        ("actors.json", {"actors": [{"id": "a"}, {"role": "no id"}]}),
+        ("sub_goals.json", {"sub_goals": [{"name": "g"}, {"name": "g", "check": "x"}]}),
+        ("scenarios.json", [{"name": "s"}, {"name": "s", "max_turns": 3}]),
+    ],
+)
+def test_a_document_with_duplicate_or_keyless_entries_is_reviewed_whole(document, body):
+    default = _tree(**{document: {"actors": []} if document == "actors.json" else []})
+    draft = _tree(**{document: body})
+
+    changes = compute_changes(default, draft)
+    assert [(one["id"], one["action"]) for one in changes] == [
+        (f"file:{document}", "changed")
+    ]
+    composed = compose_accepted(
+        default, draft, changes, {f"file:{document}": "accepted"}
+    )
+    assert json.loads(composed[document]) == body
+
+
+def test_duplicate_tools_in_the_contract_review_the_contract_whole():
+    default = _tree({"tools": TOOLS})
+    draft = _tree({"tools": [*TOOLS, {**TOOLS[0], "description": "shadow"}]})
+
+    assert [one["id"] for one in compute_changes(default, draft)] == [
+        "file:contract.json"
+    ]
+
+
+def test_data_beside_a_listed_documents_entries_is_reviewed():
+    actors = [{"id": "a"}]
+    default = _tree(**{"actors.json": {"actors": actors, "limits": {"max": 1}}})
+    draft = _tree(**{"actors.json": {"actors": actors, "limits": {"max": 9}}})
+
+    assert [one["id"] for one in compute_changes(default, draft)] == [
+        "file:actors.json"
+    ]
+
+
+def test_accepting_a_removal_while_rejecting_the_scenario_edit_it_needs_is_refused():
+    from simulate.services.harness_versioning.references import depends_on
+    from simulate.services.harness_versioning.review import check_review
+
+    base = {"s": {"solution": [{"tool": "old_tool"}]}}
+    draft = {"s": {"solution": [{"tool": "get_order"}]}}
+    removal = {
+        "id": "tool:old_tool",
+        "kind": "tool",
+        "key": "old_tool",
+        "action": "removed",
+    }
+    edit = {"id": "scenario:s", "kind": "scenario", "key": "s", "action": "changed"}
+    changes = [removal, edit]
+    for one in changes:
+        one["depends_on"] = depends_on(one, changes, draft, base)
+    removal["decision"], edit["decision"] = "accepted", "rejected"
+
+    with pytest.raises(Exception) as refused:
+        check_review(
+            {"changes": changes, "review_digest": "d"}, "d", digest_required=True
+        )
+    assert getattr(refused.value, "code", None) == "change_depends_on_rejected"
+
+
+def test_a_scenario_saved_with_a_suite_entry_its_document_disagrees_with_is_refused(
+    monkeypatch,
+):
+    from simulate.services.harness_versioning import review
+
+    files = _tree(
+        **{
+            "scenarios/s/scenario.json": {"name": "s", "sub_goals": ["a"]},
+            "scenarios.json": [{"name": "s", "sub_goals": ["b"]}],
+        }
+    )
+    monkeypatch.setattr(review, "open_draft", lambda environment, piece: object())
+    monkeypatch.setattr(
+        review, "piece_files", lambda environment, piece, version: files
+    )
+    change = {
+        "id": "scenario:s",
+        "kind": "scenario",
+        "action": "changed",
+        "decision": "accepted",
+        "depends_on": [],
+    }
+
+    with pytest.raises(Exception) as refused:
+        review.check_review(
+            {"changes": [change], "review_digest": "d"},
+            "d",
+            digest_required=True,
+            environment=object(),
+        )
+    assert getattr(refused.value, "code", None) == "scenario_index_mismatch"
+    change["decision"] = "rejected"
+    review.check_review(
+        {"changes": [change], "review_digest": "d"},
+        "d",
+        digest_required=True,
+        environment=object(),
+    )

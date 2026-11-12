@@ -1138,15 +1138,20 @@ def saved_body(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str, 
 
 
 def replayed_save(
-    locked: HostedHarnessJob, idempotency_key: str, pieces: set[str] | None = None
+    locked: HostedHarnessJob,
+    idempotency_key: str,
+    pieces: set[str] | None = None,
+    request: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """The answer of the Save this key already made, or ``None`` for a new key; a key used for other ``pieces``
-    is refused."""
+    """The answer of the Save this key already made, or ``None`` for a new key; a key used for other ``pieces``, or
+    for another ``request`` (the operation and what it named), is refused."""
     metadata = (locked.payload or {}).get("metadata") or {}
     earlier = (metadata.get("draft_saves") or {}).get(idempotency_key)
     if not isinstance(earlier, dict):
         return None
-    if pieces is not None and set(earlier.get("pieces") or {}) != pieces:
+    if (pieces is not None and set(earlier.get("pieces") or {}) != pieces) or (
+        earlier.get("request") or None
+    ) != (dict(request) if request else None):
         raise HostedHarnessError(
             "idempotency_key_reused",
             "This request key was already used for another save; save again",
@@ -1159,6 +1164,7 @@ def remember_save(
     locked: HostedHarnessJob,
     idempotency_key: str,
     activated: Mapping[str, tuple[Any, bool]],
+    request: Mapping[str, Any] | None = None,
 ) -> None:
     """Keep what a Save made under its key, so a repeat answers the same; only the newest are kept."""
     payload = dict(locked.payload or {})
@@ -1171,6 +1177,7 @@ def remember_save(
     saves[idempotency_key] = {
         "pieces": {piece: str(version.id) for piece, (version, _) in activated.items()},
         "at": timezone.now().isoformat(),
+        **({"request": dict(request)} if request else {}),
     }
     newest = sorted(saves.items(), key=lambda item: str(item[1].get("at") or ""))
     metadata["draft_saves"] = dict(newest[-DRAFT_SAVES_KEPT:])
@@ -1194,13 +1201,13 @@ def save_drafts(
     pieces = set(requests)
     with transaction.atomic():
         locked = lock_environment(environment)
+        replayed = replayed_save(locked, idempotency_key, pieces)
+        if replayed is not None:
+            return replayed
         first = next(piece for piece in DRAFT_PIECES if piece in pieces)
         require_not_busy(locked, first)
         require_no_rebuild(locked, piece=first)
         require_chat_idle(locked)
-        replayed = replayed_save(locked, idempotency_key, pieces)
-        if replayed is not None:
-            return replayed
         expected_review_digest = next(
             (
                 one.expected_review_digest
