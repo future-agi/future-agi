@@ -78,9 +78,7 @@ def test_existing_idn_url_rewrites_to_internal_endpoint(
 
 @pytest.mark.parametrize("port", ["", ":9443"])
 @pytest.mark.parametrize("public_host", [*PUBLIC_HOSTS, "straße.example"])
-def test_generated_url_is_recognised_as_own_storage(
-    own_idn_storage, public_host, port
-):
+def test_generated_url_is_recognised_as_own_storage(own_idn_storage, public_host, port):
     own_idn_storage.configure(f"https://{public_host}{port}")
     url = own_idn_storage.client.get_object_url("uploads", "images/synthetic.png")
 
@@ -161,9 +159,7 @@ def test_audio_from_own_generated_url_reads_through_storage_client(
 
 
 @pytest.mark.django_db
-def test_dataset_image_conversion_links_own_generated_url(
-    own_idn_storage, monkeypatch
-):
+def test_dataset_image_conversion_links_own_generated_url(own_idn_storage, monkeypatch):
     own_idn_storage.configure("https://münchen.example:9443")
     develop_dataset = importlib.import_module("model_hub.views.develop_dataset")
     converter_cls = develop_dataset.DatatypeConverter
