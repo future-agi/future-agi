@@ -154,7 +154,19 @@ changes none of them.
   pushed is reviewed in full by a person who did not author, push to or
   approve it, or closed. On 12 Nov that flagged eleven open PRs into `dev`
   (fixibot and the release bot) and eight fork heads pushed by `cursor[bot]`
-  or `github-actions[bot]`; the header lists them.
+  or `github-actions[bot]`; the header lists them. Two of the header's
+  baseline checks run earlier, inside the key custody. The tag sweep runs
+  once the `v*` tag ruleset below is active and before any environment that
+  admits tags gets a key copy: it deletes each `v*` tag whose commit is not
+  on `main`, or cuts it again under a name that no key environment admits.
+  On 12 Nov that was `v1.1.4-dev`, `v1.1.5-dev`,
+  `v1.31.1-pr2381-ci.0419d696f` and `v1.31.1-pr2400.4feedeacf5`. Then,
+  before the newly generated key reaches any environment, a person who
+  authored, pushed or approved none of the commits that touched them reads
+  the key jobs' workflow files and scripts once, in full, at each branch
+  the jobs run from and at each `v*` tag that stays. The header lists the
+  files and the listing check for modules that could shadow the ones these
+  scripts import.
   Hold the key only in environment secrets whose deployment branch policy
   admits only refs that one writer cannot create or merge into alone, and
   delete the organisation secret and the repository copies. "Protected
@@ -270,13 +282,18 @@ changes none of them.
   of `future-agi/omega-error-feed-worker` and dispatches that repository's
   image build, and the deployment bump pins the resulting digest. So whoever
   can change the variable chooses the code of the next Error Feed worker
-  image. Who can edit repository variables here was not checked. Set the same
-  variable, with value `main`, on the `production-auto` environment, which
-  `release-worker` names: an environment variable takes precedence over a
-  repository variable of the same name, and changing an environment needs
-  admin access. The worker repository's `release-image.yml` builds whatever
-  commit it is sent; a check there that the commit is on its `main` is a
-  change in that repository.
+  image. Any member with the Write role can change repository variables
+  (GitHub's documentation, not tested; the `deploy_github.tf` header in
+  `future-agi/deployment`). Set the same variable, with value `main`, on the
+  `production-auto` environment, which `release-worker` names: an
+  environment variable takes precedence over a repository variable of the
+  same name. GitHub's pages disagree on whether a Write-role member can edit
+  an environment variable; the scratch-repository test in that header records
+  it. If a writer can, the environment copy does not help, and only a code
+  change closes the gap: read the ref from a fixed value instead of a
+  variable, or have the worker repository's `release-image.yml` refuse a
+  commit that is not on its `main`. That workflow builds whatever commit it
+  is sent today.
 - The workflow token gets Contents, Checks, Statuses, Actions and Pull requests
   read in the `check` job, and Pull requests and Issues write in the `merge`
   job, for comments and labels. GitHub supplies this token; no PAT is needed.
@@ -308,7 +325,15 @@ changes none of them.
 - Add a tag ruleset on `v*` (which also covers beta and rc tags). Only
   administrators and the release App (bypass list) can create, update or
   delete `v*` tags. Beta and rc tags are then cut by an administrator or by the
-  App. future-agi had no beta or rc tag on 11 Nov (read-only tag list). In
+  App, and only at a commit on `main`, never from `dev`. A run on a tag uses
+  the tag's own workflow files, and `production-auto` and `release-bot` admit
+  `v*` tags with the key, so a beta tag at a `dev` commit would run `dev`'s
+  workflow files with the key. Step 1 of "Image publication environment"
+  below still accepts a prerelease tag that `dev` reaches; the ruleset and
+  this rule are the control, not that check. A preview tag at a PR head uses
+  a name that no key environment admits. A ruleset does not remove tags that
+  exist already, so the tag sweep above runs after it is active.
+  future-agi had no beta or rc tag on 11 Nov (read-only tag list). In
   all 63 push runs of `release-images.yml` (28 Jul to 3 Nov), people pushed
   two stable tags (`v1.29.0` and `v1.38.1`) and the release App pushed the
   rest; whether those people are administrators was not checked. Also protect
@@ -367,7 +392,10 @@ Rows before that creation belong to the previous release PR and do not count.
 The branch name is reused for every release, and the person who merged the
 previous PR shows up as the one who deleted the branch. A person's push,
 including **Update branch**, makes the autopilot leave that release to a
-person. This holds even after release-please force-pushes over it, because a
+person. GitHub shows the **Update branch** button on a release PR only when
+main requires up-to-date branches or the repository setting "Always suggest
+updating pull request branches" is on. Both were off on 12 Nov (read-only
+check); keep the setting off (`docs/pr-autopilot.md`, settings table). This holds even after release-please force-pushes over it, because a
 force-push does not start a new branch lifetime. The endpoint pages by cursor
 and ignores page numbers, so the script reads one page. A lifetime longer
 than 100 rows also waits for a person. On 11 Nov the live feed held 29
@@ -697,8 +725,13 @@ Once both PRs are on `main` and the pipeline is on, it runs
 `python manage.py migrate --check --noinput` before any upgrade, from the
 candidate backend image with the backend's environment (read from the branch's
 code, not run). It sees every installed Django app, ee's included, and stops
-the first region at `migration-check-failed`. A third-party app's migrations
-from a dependency bump are in the same position. What that check will not
+the first region at `migration-check-failed` (pending migrations exit 1, so
+the line reads `migration-check-failed; exit 1`). A check that never ran or
+did not finish (`migration-check-did-not-run`, `migration-check-did-not-finish`
+or `migration-check-timeout`) is an infrastructure failure, not a sign of
+migrations; a person re-runs the failed job without the migrate procedure
+(`docs/auto-deploy.md`, "Applying migrations after a failed check"). A
+third-party app's migrations from a dependency bump are in the same position. What that check will not
 cover:
 
 - It will not stop the bump PR from merging without a person. After such a
@@ -735,14 +768,16 @@ bump could compare between the pinned and the new backend digest.
   administrators and the release App (bypass list) can create, update or
   delete `v*` tags (see the prerequisites), and set the `production-auto`
   environment to "Selected branches and tags" with `main` and `v*` tags (see
-  the prerequisites for why `main`). The
+  the prerequisites for why `main`). Check again that every `v*` tag points
+  at a commit on main, as the tag sweep left it. The
   in-code actor check is defence in
   depth; the ruleset is the control that matters. Also complete the approver
   App, environment, Actions-approval and release-branch settings above, so
   that no writer can approve a change into main without a person.
-- Do not cut beta/rc tags from dev until this change has reached main: the policy
-  runs from main, and both release-images steps stop with a clear error if the
-  script is missing there. Keep the script's arguments and outputs backward
+- Cut beta and rc tags only at a commit on main, never from dev (see the tag
+  ruleset under the prerequisites), and only after this change has reached
+  main: the policy runs from main, and both release-images steps stop with a
+  clear error if the script is missing there. Keep the script's arguments and outputs backward
   compatible until a change reaches main.
 - The merge also requires the `migrations-callout` workflow to have passed on the
   release head (identified by its workflow file, because its job is named
@@ -772,9 +807,12 @@ bump could compare between the pinned and the new backend digest.
 ## Python calls in key-holding jobs
 
 `release-images.yml`, `release-autopilot.yml` and `sdk-sync.yml` hold the
-release-bot key, the approver App key or a contents-write token. Every Python
-call in their `run` steps uses `python3 -I` (or `python -I`), which is
-isolated mode. It ignores `PYTHON*` variables and the user site directory, and
+release-bot key, the approver App key or a contents-write token. The
+`deploy_github.tf` header in `future-agi/deployment` requires isolated mode
+in every job that holds the deploy identity, the release-bot key, a token
+minted from that key or an approver App's token. This change goes further
+and covers every Python call in the `run` steps of these three workflows:
+each uses `python3 -I` (or `python -I`), which is isolated mode. It ignores `PYTHON*` variables and the user site directory, and
 it puts neither the current directory nor the script's directory on
 `sys.path`. Without it, `python3 -m pip` imports a `pip.py` file or a `pip/`
 folder from the current directory, and `python3 scripts/x.py` imports a
@@ -813,7 +851,8 @@ Python calls left without `-I`, and why:
 - `refresh-disposable-domains.yml` reads the release-bot key and runs
   `python3 scripts/generate_disposable_domains.py`. The script imports only
   the standard library, so `-I` alone is enough. That workflow is outside this
-  change.
+  change, but the header's rule covers it, so it needs its own reviewed
+  change before the deployment apply.
 - `build-image-multiarch.yml` runs `python3 scripts/image_size_budget.py` from
   the release checkout in its `build` job, and `python3 -c` in its `publish`
   job. Both jobs hold Docker Hub credentials, and `build` also has a
