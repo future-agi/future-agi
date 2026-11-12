@@ -337,8 +337,15 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    a tool, App keys and deploy keys. The deployment documents name eight
    unclassified secrets and three checks (fine-grained Active tokens, the
    organisation's classic-token restriction, and each App installation's
-   repositories), and a one-time baseline that dismisses bot approvals on
-   open PRs here before the deployment apply. Once
+   repositories), and a one-time baseline before the deployment apply. It
+   covers every unmerged PR here, open or closed: it dismisses bot approvals
+   and sends each PR whose final head a bot pushed to a full review by a
+   person who did not author, push to or approve it, or closes the PR. A job
+   that reads the key runs code only from refs that need a person's review.
+   `docs/release-autopilot.md` names the jobs here that run another branch's
+   code, and the order for the `sdk-sync.yml` check: on `main` with or
+   before the change that names `release-bot`, and before that environment
+   gets a key copy. Once
    every such job names an environment, delete the organisation secrets,
    generate a new private key for the release-bot App and delete the old one,
    because any branch workflow could read the old key. Step 6 waits for this.
