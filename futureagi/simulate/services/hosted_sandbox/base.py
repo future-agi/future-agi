@@ -26,6 +26,8 @@ class SandboxCommandRequest:
     env: dict[str, str] | None = None
     run_async: bool = False
     suppress_input_echo: bool = False
+    # Run each customer process as its own OS user, where the provider and its image can.
+    isolate_processes: bool = False
 
 
 @dataclass(frozen=True)

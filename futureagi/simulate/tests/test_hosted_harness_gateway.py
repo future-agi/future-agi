@@ -1903,6 +1903,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # The entrypoint, and only the entrypoint, asks for each customer process its own user.
+    assert client.sandbox.process.session_request.isolate_processes is True
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
