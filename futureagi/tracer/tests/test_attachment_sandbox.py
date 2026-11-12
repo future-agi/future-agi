@@ -14,14 +14,17 @@ The last tests run the real sandbox. They skip where bubblewrap cannot run
 which turns the skip into a failure for the environments that must prove it.
 """
 
+import json
 import os
 import stat
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from django.utils import timezone
 
 from tracer.models.attachment import (
     AttachmentBlob,
@@ -163,6 +166,155 @@ def test_probe_rejection_still_settles_rejected(setup, monkeypatch):
         validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
     assert UploadReservation.objects.get(upload_id=upload.id).settled_at is not None
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        pytest.param({"mime_type": "text/html"}, id="unvalidated-type"),
+        pytest.param({"mime_type": "image/svg+xml"}, id="active-image-type"),
+        pytest.param({"sample_rate": -1}, id="negative-fact"),
+        pytest.param({"channels": "1"}, id="non-integer-fact"),
+        pytest.param({"extra": 1}, id="extra-key"),
+    ],
+)
+def test_sandbox_output_outside_the_allowlist_is_unavailable(
+    monkeypatch, tmp_path, facts
+):
+    """probe.py output is trusted only for validated types and integer facts.
+
+    A sandbox that prints anything else has failed (503), it has not accepted
+    the bytes, and nothing it printed reaches a blob.
+    """
+    output = {**json.loads(OGG_FACTS), **facts}
+    monkeypatch.setattr(
+        validation.subprocess, "run", fake_run(0, json.dumps(output).encode())
+    )
+    with pytest.raises(AttachmentError) as exc:
+        validation.sandbox_probe(tmp_path / "input")
+    assert (exc.value.code, exc.value.status) == ("validation_unavailable", 503)
+
+
+# --- the outbox validate consumer ------------------------------------------
+
+
+def _validate_event(upload):
+    return AttachmentOutbox.objects.get(upload_id=upload.id, event="validate")
+
+
+def _make_due(upload):
+    AttachmentOutbox.objects.filter(upload_id=upload.id, event="validate").update(
+        available_at=timezone.now()
+    )
+
+
+def _unavailable(monkeypatch):
+    calls = []
+    monkeypatch.setattr(validation.subprocess, "run", fake_run(1, b"", calls=calls))
+    return calls
+
+
+@pytest.mark.django_db
+def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
+    upload, store = _validating(setup)
+    jobs = _validation_jobs()
+    calls = _unavailable(monkeypatch)
+    for attempt in range(1, validation.MAX_VALIDATION_ATTEMPTS):
+        before = timezone.now()
+        assert not validation.consume_validation(
+            _validate_event(upload).pk, storage=store
+        )
+        after = timezone.now()
+        event = _validate_event(upload)
+        assert event.attempts == attempt and event.processed_at is None
+        # Backed off exponentially: not due again until later.
+        delay = timedelta(
+            seconds=min(
+                validation.VALIDATION_BACKOFF_SECONDS * 2 ** (attempt - 1),
+                validation.VALIDATION_MAX_BACKOFF_SECONDS,
+            )
+        )
+        assert before + delay <= event.available_at <= after + delay
+        assert not validation.consume_validation(event.pk, storage=store)
+        assert _validate_event(upload).attempts == attempt
+        assert (
+            AttachmentUpload.objects.get(pk=upload.id).state
+            == AttachmentState.VALIDATING
+        )
+        assert UploadReservation.objects.get(upload_id=upload.id).settled_at is None
+        assert not AttachmentOutbox.objects.filter(
+            upload_id=upload.id, event="erase"
+        ).exists()
+        _make_due(upload)
+    assert len(calls) == validation.MAX_VALIDATION_ATTEMPTS - 1
+
+    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
+    event = _validate_event(upload)
+    assert event.attempts == validation.MAX_VALIDATION_ATTEMPTS
+    assert event.processed_at is not None
+    assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.FAILED
+    assert UploadReservation.objects.get(upload_id=upload.id).settled_at is not None
+    assert _validation_jobs() == [(key, jobs_ - 1) for key, jobs_ in jobs]
+    assert AttachmentOutbox.objects.filter(upload_id=upload.id, event="erase").exists()
+    assert store.promotions == [] and not AttachmentBlob.objects.exists()
+
+    # A finished job is never run again.
+    _make_due(upload)
+    assert not validation.consume_validation(event.pk, storage=store)
+    assert len(calls) == validation.MAX_VALIDATION_ATTEMPTS
+
+
+@pytest.mark.django_db
+def test_attempts_of_dead_workers_count(setup, monkeypatch):
+    """Claims that never reported back still use up attempts."""
+    upload, store = _validating(setup)
+    event = _validate_event(upload)
+    for _ in range(validation.MAX_VALIDATION_ATTEMPTS):
+        claimed, exhausted = validation._claim(event.pk)
+        assert claimed is not None and not exhausted
+        _make_due(upload)
+    calls = _unavailable(monkeypatch)
+    assert validation.consume_validation(event.pk, storage=store)
+    assert calls == []
+    assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.FAILED
+    assert _validate_event(upload).processed_at is not None
+
+
+@pytest.mark.django_db
+def test_consumer_publishes_and_finishes(setup, monkeypatch):
+    upload, store = _validating(setup)
+    _unavailable(monkeypatch)
+    assert not validation.consume_validation(_validate_event(upload).pk, storage=store)
+    _make_due(upload)
+    monkeypatch.setattr(validation, "sandbox_probe", probe)
+    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
+    assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.READY
+    event = _validate_event(upload)
+    assert event.processed_at is not None and event.attempts == 2
+
+
+@pytest.mark.django_db
+def test_consumer_finishes_rejected_bytes(setup, monkeypatch):
+    upload, store = _validating(setup)
+    monkeypatch.setattr(validation.subprocess, "run", fake_run(REJECTED_EXIT, b""))
+    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
+    assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
+    assert _validate_event(upload).processed_at is not None
+
+
+@pytest.mark.django_db
+def test_drain_takes_only_due_jobs(setup, monkeypatch):
+    upload, store = _validating(setup)
+    AttachmentOutbox.objects.filter(upload_id=upload.id, event="validate").update(
+        available_at=timezone.now() + timedelta(minutes=5)
+    )
+    calls = _unavailable(monkeypatch)
+    assert validation.drain_validations(storage=store) == 0
+    assert calls == [] and _validate_event(upload).attempts == 0
+    _make_due(upload)
+    monkeypatch.setattr(validation, "sandbox_probe", probe)
+    assert validation.drain_validations(storage=store) == 1
+    assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.READY
 
 
 # --- the real sandbox -------------------------------------------------------
