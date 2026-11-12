@@ -316,3 +316,184 @@ async def test_sdk_token_rejects_oversized_body():
         )
     assert response.status_code == 413
     assert response.json()["error"] == "invalid_request"
+
+
+def _count_client_lookups(monkeypatch):
+    """Count the SDK's client lookups; each one precedes a client_secret check."""
+    real_get_client = FutureAGIOAuthProvider.get_client
+    lookups = []
+
+    async def counting_get_client(self, cid):
+        lookups.append(cid)
+        return await real_get_client(self, cid)
+
+    monkeypatch.setattr(FutureAGIOAuthProvider, "get_client", counting_get_client)
+    return lookups
+
+
+def _assert_invalid_request(response):
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_request"
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+@pytest.mark.parametrize("path", ["/token", "/revoke"])
+async def test_sdk_duplicate_client_id_cannot_dodge_the_victims_lockout(
+    monkeypatch, path
+):
+    # The SDK authenticates the LAST client_id in the body. If the throttle
+    # keyed on a decoy placed first, every guess at the victim's secret would
+    # land in a fresh lockout bucket and the victim would never lock.
+    victim_id, victim_secret = await _register()
+    lookups = _count_client_lookups(monkeypatch)
+    addr = "203.0.113.120"
+    for i in range(6):
+        form = {
+            **_code_form(victim_id, "wrong-secret"),
+            "client_id": [f"decoy-{i}", victim_id],
+            "token": "t",
+        }
+        _assert_invalid_request(await _post(path, form, addr))
+    # No request reached the SDK's client authentication.
+    assert lookups == []
+
+    # Authorized-user control: the victim is unaffected from that address.
+    monkeypatch.undo()
+    await _valid_flow_succeeds(victim_id, victim_secret, addr)
+
+
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE": "2/min"}
+)
+@pytest.mark.parametrize("path", ["/token", "/revoke"])
+async def test_sdk_multipart_body_cannot_skip_the_per_client_window(monkeypatch, path):
+    # The SDK parses multipart/form-data bodies and checks the secret in them.
+    # A throttle that read client_id only from url-encoded bodies applied no
+    # per-client window to them.
+    client_id, _secret = await _register()
+    lookups = _count_client_lookups(monkeypatch)
+    fields = {**_code_form(client_id, "wrong-secret"), "token": "t"}
+    for i in range(6):
+        async with _client(f"203.0.113.{130 + i}") as http:
+            response = await http.post(
+                path, files={k: (None, v) for k, v in fields.items()}
+            )
+        _assert_invalid_request(response)
+    assert lookups == []
+
+
+@override_settings(
+    **{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE": "2/min"}
+)
+async def test_sdk_mixed_case_urlencoded_body_counts_in_the_per_client_window(
+    monkeypatch,
+):
+    # Starlette (and so the SDK) parses "Application/X-WWW-Form-Urlencoded"
+    # without parameters as a form and checks the secret in it. A throttle
+    # that matched only the lowercase type skipped the per-client window.
+    client_id, _secret = await _register()
+    lookups = _count_client_lookups(monkeypatch)
+    body = "&".join(
+        f"{key}={value}" for key, value in _code_form(client_id, "wrong").items()
+    )
+    statuses = []
+    for i in range(3):
+        async with _client(f"203.0.113.{150 + i}") as http:
+            response = await http.post(
+                "/token",
+                content=body,
+                headers={"Content-Type": "Application/X-WWW-Form-Urlencoded"},
+            )
+        statuses.append(response.status_code)
+    assert statuses == [401, 401, 429]
+    _assert_throttled(response, "Too many token requests")
+    assert lookups == [client_id, client_id]
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        # Starlette lowercases the media type only when it has no
+        # parameters, so it reads this body as an empty form.
+        "Application/X-WWW-Form-Urlencoded; charset=UTF-8",
+        "application/json",
+        "text/plain",
+        None,
+    ],
+)
+async def test_sdk_token_refuses_bodies_that_are_not_urlencoded_forms(
+    monkeypatch, content_type
+):
+    client_id, _secret = await _register()
+    lookups = _count_client_lookups(monkeypatch)
+    headers = {"Content-Type": content_type} if content_type else {}
+    async with _client("203.0.113.140") as http:
+        response = await http.post(
+            "/token",
+            content=f"grant_type=authorization_code&client_id={client_id}"
+            "&client_secret=wrong-secret&code=c&code_verifier=" + "v" * 43,
+            headers=headers,
+        )
+    _assert_invalid_request(response)
+    assert lookups == []
+
+
+@override_settings(**LOCKOUT_SETTINGS)
+async def test_sdk_token_accepts_urlencoded_with_charset_parameter():
+    client_id, secret = await _register()
+    code, verifier = _seed_code(client_id)
+    async with _client("203.0.113.141") as http:
+        response = await http.post(
+            "/token",
+            data=_code_form(client_id, secret, code, verifier),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            },
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["access_token"]
+
+
+@override_settings(**{**LOCKOUT_SETTINGS, "MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK": False})
+async def test_sdk_register_outage_message_names_registration(monkeypatch):
+    def failing_script(**kwargs):
+        raise RedisError("redis unavailable")
+
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
+    async with _client("203.0.113.142") as http:
+        response = await http.post(
+            "/register",
+            json={"redirect_uris": [REDIRECT_URI], "client_name": "Synthetic"},
+        )
+    _assert_throttled(
+        response, "Client registration throttling temporarily unavailable"
+    )
+
+
+@override_settings(**{**LOCKOUT_SETTINGS, "MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK": False})
+async def test_sdk_token_outage_releases_reservation_off_the_event_loop(monkeypatch):
+    from mcp_server import oauth_sdk_throttle
+
+    def failing_script(**kwargs):
+        raise RedisError("redis unavailable")
+
+    calls = []
+    real_release = oauth_sdk_throttle.release_token_attempt_reservation
+
+    def recording_release(request):
+        try:
+            asyncio.get_running_loop()
+            calls.append("event-loop")
+        except RuntimeError:
+            calls.append("worker-thread")
+        return real_release(request)
+
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
+    monkeypatch.setattr(
+        oauth_sdk_throttle, "release_token_attempt_reservation", recording_release
+    )
+    response = await _post("/token", _code_form("any-client", "x"), "203.0.113.143")
+    _assert_throttled(response, "Token throttling temporarily unavailable")
+    assert calls and "event-loop" not in calls
