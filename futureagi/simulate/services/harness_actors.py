@@ -1030,7 +1030,7 @@ def _written(
             raise
         raise HostedHarnessError(
             "draft_changed",
-            "the actors were edited elsewhere since you read them; read them again",
+            "the actors or scenarios were edited elsewhere since you read them; read them again",
             status_code=409,
         ) from exc
     if written is None:
