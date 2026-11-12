@@ -68,6 +68,7 @@ type Server struct {
 	videoExporter    otel.SpanExporter
 	videoInitErr     error
 	shadowFlusher    *routing.ShadowFlusher
+	router           *Router
 	ready            atomic.Bool
 }
 
@@ -929,6 +930,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
+
+	s.router = router
 
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
