@@ -68,15 +68,12 @@ export default function NavList({ data, depth, slotProps }) {
         className={active ? "active" : ""}
         sx={{
           mb: `${slotProps?.gap}px`,
-          bgcolor: active
-            ? alpha(theme.palette.primary.main, 0.1)
-            : "transparent",
-          borderRadius: "8px",
-          color: active ? "primary.main" : "text.secondary",
+          /* Design system: the current item is grey (bg.selected), never purple. */
+          bgcolor: active ? "action.selected" : "transparent",
+          borderRadius: "6px",
+          color: active ? "text.primary" : "text.secondary",
           "&:hover": {
-            bgcolor: active
-              ? alpha(theme.palette.primary.main, 0.1)
-              : "background.neutral",
+            bgcolor: active ? "action.selected" : "action.hover",
           },
           ...(depth === 1 ? slotProps?.rootItem : slotProps?.subItem),
         }}

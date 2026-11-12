@@ -157,7 +157,7 @@ export default function AllEvaluationsDrawer({
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ p: 3, pb: 1 }}>
           <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold", pr: 4 }}
+            sx={{ typography: "m2", fontWeight: 500, pr: 4 }}
           >
             All Evaluations
           </Typography>
@@ -191,7 +191,7 @@ export default function AllEvaluationsDrawer({
                 disabled={!access.canEdit}
                 onClick={() => onAddEvaluations?.()}
               >
-                Add Evaluations
+                Add evaluations
               </Button>
             </ViewerLock>
           </Stack>

@@ -56,3 +56,14 @@ describe("Sessions-view getDateLabel", () => {
     ).toBe("Past 7D");
   });
 });
+
+it("labels the last included local day for a half-open custom range", () => {
+  const start = new Date(2026, 10, 1);
+  const end = new Date(2026, 10, 2);
+  expect(
+    getDateLabel({
+      dateOption: "Custom",
+      dateFilter: [start.toISOString(), end.toISOString()],
+    }),
+  ).toBe(`${start.toLocaleDateString()} - ${start.toLocaleDateString()}`);
+});

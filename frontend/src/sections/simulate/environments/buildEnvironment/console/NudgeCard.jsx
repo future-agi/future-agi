@@ -79,7 +79,7 @@ const heading = (nudge) => {
 
 const Line = ({ children, color = "text.secondary", mono }) => (
   <Typography
-    sx={{ typography: "s3", color, ...(mono && { fontFamily: MONO }) }}
+    sx={{ typography: "s1", color, ...(mono && { fontFamily: MONO }) }}
   >
     {children}
   </Typography>
@@ -203,7 +203,6 @@ export function NudgeActions({
                 answering ? undefined : COPY.rebuildFor(rebuildText, subject)
               }
               aria-describedby={blocked ? reasonId : undefined}
-              sx={{ textTransform: "none" }}
             >
               {rebuildText}
             </Button>
@@ -218,7 +217,6 @@ export function NudgeActions({
               disabled={!canEdit || answering || !onSkipNudge}
               onClick={onSkipNudge}
               aria-label={answering ? undefined : COPY.skipFor(subject)}
-              sx={{ textTransform: "none" }}
             >
               {answering && !rebuilding ? COPY.skipping : COPY.skip}
             </Button>
@@ -233,7 +231,6 @@ export function NudgeActions({
               disabled={!canEdit || stopping || !onStopNudge}
               onClick={onStopNudge}
               aria-label={stopping ? undefined : COPY.stopFor(subject)}
-              sx={{ textTransform: "none" }}
             >
               {stopping ? COPY.stopping : COPY.stop}
             </Button>
@@ -243,13 +240,13 @@ export function NudgeActions({
       {blocked && (
         <Typography
           id={reasonId}
-          sx={{ typography: "s3", color: "text.secondary" }}
+          sx={{ typography: "s1", color: "text.secondary" }}
         >
           {blocked}
         </Typography>
       )}
       {error && (
-        <Typography role="alert" sx={{ typography: "s3", color: "error.main" }}>
+        <Typography role="alert" sx={{ typography: "s1", color: "status.danger.fg" }}>
           {answerErrorText(error, errorFallback)}
         </Typography>
       )}
@@ -293,7 +290,7 @@ function Bucket({ title, children }) {
     <Box component="details" sx={{ "& > summary": { cursor: "pointer" } }}>
       <Box
         component="summary"
-        sx={{ typography: "s3", fontWeight: "fontWeightBold" }}
+        sx={{ typography: "s1", fontWeight: 500 }}
       >
         {title}
       </Box>
@@ -343,7 +340,7 @@ function NudgeOutcome({ nudge }) {
         <Line key={line}>{line}</Line>
       ))}
       {(summary.warnings || []).map((warning) => (
-        <Line key={warning} color="warning.main">
+        <Line key={warning} color="status.warning.fg">
           {warning}
         </Line>
       ))}
@@ -395,7 +392,7 @@ function NudgeOutcome({ nudge }) {
                 {problem.inYourUnsavedEdits && (
                   <Box
                     component="span"
-                    sx={{ ml: 0.75, color: "warning.main", fontWeight: 600 }}
+                    sx={{ ml: 1, color: "status.warning.fg", fontWeight: 500 }}
                   >
                     ({COPY.inYourEdits})
                   </Box>
@@ -433,7 +430,7 @@ export function NudgeStateLine({ focus = false, onFocused, sx, children }) {
       ref={ref}
       role="status"
       tabIndex={-1}
-      sx={{ typography: "s2", color: "text.secondary", ...sx }}
+      sx={{ typography: "s1", color: "text.secondary", ...sx }}
     >
       {children}
     </Typography>
@@ -470,7 +467,7 @@ export default function NudgeCard({ turn }) {
   const { nudge } = turn;
   if (!nudge) {
     return (
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {turn.text}
       </Typography>
     );
@@ -499,13 +496,13 @@ export default function NudgeCard({ turn }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 1.5,
       }}
     >
       <Stack spacing={1}>
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             {title}
           </Typography>
           {pending &&
@@ -517,7 +514,7 @@ export default function NudgeCard({ turn }) {
         <NudgeFacts nudge={nudge} />
         {pending ? (
           <>
-            <Typography sx={{ typography: "s2" }}>
+            <Typography sx={{ typography: "s1" }}>
               {COPY.question[nudge.target] || COPY.question.environment}
             </Typography>
             <DraftNotice draft={turn.draft} />

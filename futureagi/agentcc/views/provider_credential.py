@@ -33,6 +33,10 @@ _GATEWAY_SYNC_WARNING = (
 
 _DEFAULT_API_PATH_PREFIX = "/v1"
 
+# The api_format of a structured-decision provider (TypeSafe, Perplexity
+# Decider, a custom System One endpoint), and the gateway's alias for it.
+_SYSTEM_ONE_API_FORMATS = ("systemone", "typesafe")
+
 
 def _join_api_endpoint(base_url, api_path_prefix, path):
     """Mirror of the gateway's ``config.JoinEndpoint``.
@@ -149,7 +153,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+            serializer = AgentccProviderCredentialUpdateSerializer(
+                instance, data=request.data
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             try:
@@ -252,6 +258,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         api_format = None
         api_path_prefix = None
         saved_base_url = None
+        saved_models = []
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -282,6 +289,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 saved_base_url = base_url
                 api_format = cred.api_format
                 api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
+                saved_models = list(cred.models_list or [])
 
         # The saved key only ever goes where it was saved for: a caller who can
         # use the credential but not read it must not be able to redirect it.
@@ -319,6 +327,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 else "api_key is required"
             )
             return self._gm.bad_request(msg)
+
+        # A decision provider is never probed: a listing call is not free on
+        # every decision vendor, and its models come from the preset or the
+        # user. What was saved is the list.
+        if api_format in _SYSTEM_ONE_API_FORMATS:
+            return self._gm.success_response({"models": saved_models})
 
         try:
             models = self._fetch_models_from_provider(

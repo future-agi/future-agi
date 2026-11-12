@@ -88,13 +88,13 @@ export default function DuplicateTaskDialog({
           <Typography
             variant="m3"
             color="text.primary"
-            fontWeight="fontWeightBold"
+            fontWeight="fontWeightSemiBold"
           >
             Duplicate Task
           </Typography>
           <IconButton onClick={onClose} disabled={isSubmitting}>
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={24}
               height={24}
               color="text.primary"

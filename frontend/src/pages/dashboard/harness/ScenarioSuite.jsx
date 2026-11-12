@@ -25,6 +25,7 @@ import { useSnackbar } from "notistack";
 import { DataTablePagination } from "src/components/data-table";
 import FilterPanel from "src/components/filter-panel/FilterPanel";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
 import {
   useAmendScenarios,
   useHarnessScenarioCoverage,
@@ -396,7 +397,6 @@ export default function ScenarioSuite({
           onChange={(event) => setTyped(event.target.value)}
           placeholder="Search scenarios by name, task or use case"
           InputProps={{
-            sx: { typography: "s2" },
             startAdornment: (
               <Box
                 sx={{
@@ -497,10 +497,8 @@ export default function ScenarioSuite({
                     align={isActions ? "right" : "left"}
                     padding={isSelect ? "checkbox" : "normal"}
                     sx={{
-                      typography: "s3",
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: 0.4,
+                      typography: "s1",
+                      fontWeight: 500,
                       color: "text.subtitle",
                       bgcolor: "background.neutral",
                       borderBottom: "1px solid",
@@ -517,11 +515,8 @@ export default function ScenarioSuite({
                         zIndex: 2,
                         width: 96,
                         minWidth: 96,
-                        boxShadow: (theme) =>
-                          `-8px 0 12px -6px ${alpha(
-                            theme.palette.common.black,
-                            theme.palette.mode === "dark" ? 0.45 : 0.08,
-                          )}`,
+                        borderLeft: "1px solid",
+                        borderLeftColor: "divider",
                       }),
                     }}
                   >
@@ -550,7 +545,7 @@ export default function ScenarioSuite({
                   sx={{ py: 4, textAlign: "center" }}
                 >
                   <Typography
-                    sx={{ typography: "s2", color: "text.secondary" }}
+                    sx={{ typography: "s1", color: "text.secondary" }}
                   >
                     No scenario matches that.
                   </Typography>
@@ -589,15 +584,11 @@ export default function ScenarioSuite({
                     <TableCell
                       colSpan={COLUMNS.length}
                       sx={{
-                        bgcolor: (theme) =>
-                          alpha(
-                            theme.palette.text.primary,
-                            theme.palette.mode === "dark" ? 0.08 : 0.05,
-                          ),
+                        bgcolor: "background.neutral",
                         py: 1,
                       }}
                     >
-                      <Stack direction="row" spacing={1.25} alignItems="center">
+                      <Stack direction="row" spacing={1.5} alignItems="center">
                         <Checkbox
                           size="small"
                           checked={allOn}
@@ -608,8 +599,8 @@ export default function ScenarioSuite({
                         />
                         <Typography
                           sx={{
-                            typography: "s2",
-                            fontWeight: 700,
+                            typography: "s1",
+                            fontWeight: 500,
                             flex: 1,
                             minWidth: 0,
                           }}
@@ -619,7 +610,7 @@ export default function ScenarioSuite({
                         <Typography
                           sx={{
                             typography: "s3",
-                            fontWeight: 700,
+                            fontWeight: 500,
                             color: "text.subtitle",
                             fontVariantNumeric: "tabular-nums",
                           }}
@@ -682,7 +673,7 @@ export default function ScenarioSuite({
                       <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
                         <Typography
                           noWrap
-                          sx={{ typography: "s2", fontWeight: 600 }}
+                          sx={{ typography: "s1", fontWeight: 500 }}
                         >
                           {readable(scenario.name)}
                         </Typography>
@@ -696,7 +687,7 @@ export default function ScenarioSuite({
                         </Tooltip>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
-                        <Typography noWrap sx={{ typography: "s2" }}>
+                        <Typography noWrap sx={{ typography: "s1" }}>
                           {persona.name}
                         </Typography>
                         <Typography
@@ -737,11 +728,8 @@ export default function ScenarioSuite({
                           // under it, which loses the row hover tint. Painting the same overlay
                           // back on keeps the pinned column part of the row rather than a patch.
                           bgcolor: "background.paper",
-                          boxShadow: (theme) =>
-                            `-8px 0 12px -6px ${alpha(
-                              theme.palette.common.black,
-                              theme.palette.mode === "dark" ? 0.45 : 0.08,
-                            )}`,
+                          borderLeft: "1px solid",
+                          borderLeftColor: "divider",
                           transition: "background-image 120ms ease",
                           ".MuiTableRow-hover:hover &": {
                             backgroundImage: (theme) =>
@@ -888,13 +876,8 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
               <Chip
                 size="small"
                 label={`${one.label || axisName(one.axis)} ${one.levels}`}
-                sx={{
-                  height: 22,
-                  typography: "s3",
-                  // One level is not variation, so it reads as a gap rather than as coverage.
-                  bgcolor: one.levels > 1 ? "action.hover" : "warning.lighter",
-                  color: one.levels > 1 ? "text.secondary" : "warning.darker",
-                }}
+                // One level is not variation, so it reads as a gap rather than as coverage.
+                color={one.levels > 1 ? "default" : "warning"}
               />
             </Tooltip>
           ))}
@@ -978,7 +961,7 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
                           bgcolor: (theme) =>
                             count
                               ? alpha(
-                                  theme.palette.primary.main,
+                                  statusColors(theme, "success").solid,
                                   Math.min(0.08 + count * 0.04, 0.32),
                                 )
                               : "transparent",
@@ -1066,13 +1049,7 @@ function Levers({ scenario, persona, levelLabels = {} }) {
           <Chip
             size="small"
             label={chip.label}
-            sx={{
-              height: 20,
-              typography: "s3",
-              ...(chip.tone === "adversarial"
-                ? { bgcolor: "warning.lighter", color: "warning.darker" }
-                : { bgcolor: "action.hover", color: "text.secondary" }),
-            }}
+            color={chip.tone === "adversarial" ? "warning" : "default"}
           />
         </Tooltip>
       ))}
@@ -1100,7 +1077,7 @@ function SubGoals({ names }) {
     .join("\n");
   return (
     <Tooltip title={all}>
-      <Stack spacing={0.375}>
+      <Stack spacing={0.5}>
         {list.slice(0, 3).map((name, index) => (
           <Stack
             key={name}
@@ -1129,7 +1106,7 @@ function SubGoals({ names }) {
         ))}
         {list.length > 3 && (
           <Typography
-            sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}
+            sx={{ typography: "s3", color: "text.subtitle", pl: 2 }}
           >
             + {list.length - 3} more
           </Typography>
@@ -1149,7 +1126,7 @@ function Clamped({ text }) {
     <Tooltip title={value}>
       <Typography
         sx={{
-          typography: "s2",
+          typography: "s1",
           color: "text.secondary",
           lineHeight: 1.45,
           display: "-webkit-box",

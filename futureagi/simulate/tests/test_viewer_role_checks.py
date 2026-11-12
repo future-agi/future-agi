@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from django.urls import URLPattern, URLResolver, get_resolver
@@ -124,6 +125,31 @@ def test_an_unlabelled_write_still_gets_the_viewer_message(organization, workspa
         "Viewers can't make changes in this workspace. "
         "Ask a workspace admin for the Member role."
     )
+
+
+def test_a_write_outside_simulation_keeps_its_original_refusal():
+    from accounts.authentication import ViewerReadOnly, workspace_write_denied
+
+    refusal = workspace_write_denied(SimpleNamespace(path="/model-hub/datasets/"))
+
+    assert not isinstance(refusal, ViewerReadOnly)
+    assert refusal.detail == "Write access denied to this workspace"
+    assert refusal.detail.code == "permission_denied"
+
+
+def test_every_labelled_simulation_write_declares_the_viewer_refusal():
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    undeclared = [
+        f"{method.upper()} {route}"
+        for route, method, _view_cls, handler in _simulation_write_handlers()
+        if getattr(handler, "_viewer_denied_action", None)
+        and "responses" in getattr(handler, "_swagger_auto_schema", {})
+        and handler._swagger_auto_schema["responses"].get(403)
+        is not ViewerReadOnlyErrorSerializer
+    ]
+
+    assert undeclared == []
 
 
 def test_no_simulation_write_skips_the_viewer_check():

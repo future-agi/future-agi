@@ -118,7 +118,7 @@ function AgentVersionRow({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 1.5,
       }}
     >
@@ -128,7 +128,7 @@ function AgentVersionRow({
           <PreflightReport report={version.preflightReport} />
           {activation && (
             <Typography
-              sx={{ typography: "s3", color: "warning.main", mt: 0.5 }}
+              sx={{ typography: "s3", color: "status.warning.fg", mt: 0.5 }}
             >
               {activation}
             </Typography>
@@ -147,7 +147,6 @@ function AgentVersionRow({
                 disabled={!canEdit || busy}
                 onClick={onRetry}
                 aria-label={retrying ? undefined : COPY.retry.actionFor(label)}
-                sx={{ textTransform: "none" }}
               >
                 {retrying ? COPY.retry.pending : COPY.retry.action}
               </Button>
@@ -165,7 +164,6 @@ function AgentVersionRow({
                 disabled={!canEdit || busy}
                 onClick={onDiscard}
                 aria-label={COPY.discard.actionFor(label)}
-                sx={{ textTransform: "none" }}
               >
                 {COPY.discard.action}
               </Button>
@@ -183,7 +181,6 @@ function AgentVersionRow({
                 disabled={!canEdit || busy}
                 onClick={onMakeDefault}
                 aria-label={VERSIONS_COPY.makeDefault.actionFor(label)}
-                sx={{ textTransform: "none" }}
               >
                 {VERSIONS_COPY.makeDefault.action}
               </Button>
@@ -324,7 +321,7 @@ export default function AgentVersionsPanel({ env }) {
       />
       <Box>
         <Typography
-          sx={{ typography: "s1", fontWeight: "fontWeightBold", mb: 1 }}
+          sx={{ typography: "s1", fontWeight: 500, mb: 1 }}
         >
           {COPY.title}
         </Typography>

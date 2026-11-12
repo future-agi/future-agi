@@ -11,7 +11,7 @@ export default function VerticalResizeHandle({ className = "", id }) {
       id={id}
     >
       <div className={styles.ResizeHandleInner}>
-        {/* <Iconify icon="radix-icons:divider-vertical" /> */}
+        {/* <Iconify icon="solar:separator-vertical-linear" /> */}
       </div>
     </PanelResizeHandle>
   );

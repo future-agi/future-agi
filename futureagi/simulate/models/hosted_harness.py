@@ -121,6 +121,33 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Set on a Run that a "Fix my agent" run started to check a candidate; such Runs are
+    # kept out of the environment's run history.
+    fix_run = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="check_runs",
+    )
+    # The name the engine gave a check run ("baseline", "c2-target"); empty on other Runs.
+    fix_label = models.CharField(max_length=64, blank=True, default="")
+    # Set on a Run that verifies one agent version on its environment's held-back cases;
+    # such Runs are kept out of every user-facing read, like a fix's check runs. A
+    # nullable link, not a flag, so the read filter holds across outer joins.
+    verify_of = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="verify_runs",
+        db_index=False,
+    )
+    # What a fix's check run billed, in US dollars, set once its usage is sealed; until
+    # then the fix holds a worst case for it.
+    fix_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True
+    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
@@ -134,6 +161,14 @@ class HostedHarnessJob(BaseModel):
                     scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB
                 ),
                 name="harness_job_scenario_count_1_5000",
+            ),
+            # One live or completed verify per agent version: a second one would be a
+            # second look. One that failed or was canceled may be followed by another.
+            models.UniqueConstraint(
+                fields=["verify_of", "agent_version"],
+                condition=models.Q(verify_of__isnull=False)
+                & ~models.Q(state__in=["failed", "canceled"]),
+                name="uniq_harness_verify_agent_version",
             ),
         ]
         indexes = [

@@ -33,16 +33,28 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
   requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
-  requireSafe(same(Object.keys(cfg.providers ?? {}), ['openai']), 'provider set is not mock-only');
-  const provider = cfg.providers.openai;
-  requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
-    'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
-  requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
-    provider.api_format === 'openai', 'upstream route or key is not the deterministic mock');
-  const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'];
-  const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
-  requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
-    (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'perplexity', 'typesafe']),
+    'provider set is not mock-only');
+  for (const [name, provider] of Object.entries(cfg.providers) as [string, any][]) {
+    requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
+      'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
+    requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
+      provider.api_format === (name === 'openai' ? 'openai' : 'systemone'),
+    'upstream route or key is not the deterministic mock');
+    const pinned: Record<string, string[]> = {
+      openrouter: ['openai/gpt-6-luna-decisions', 'typesafe/jev-1.13', 'typesafe/jev-1.14', '~typesafe/jev-latest'],
+      perplexity: ['pplx-decider-flash-v1.2', 'pplx-decider-v1.2'],
+      typesafe: ['jev-1.13.0', 'jev-1.14.0', 'jev-latest'],
+    };
+    const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
+    if (name !== 'openai') {
+      requireSafe(same(routes, pinned[name]), 'unexpected decision model routes');
+      continue;
+    }
+    const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-6-luna', 'o1', 'o1-mini'];
+    requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
+      (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  }
   requireSafe(Object.keys(cfg.server).every(k => ['port', 'host', 'read_timeout', 'write_timeout',
     'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout',
     'max_request_timeout'].includes(k)) &&
@@ -178,6 +190,27 @@ export function validateBackgroundMockMounts(service: string, mounts: Container[
     'gateway credential suppression must be an exact read-only /dev/null bind');
   }
 }
+/** The public report is the only application bind allowed in Distributed E2E.
+ * Missing integration keeps the old mount-free contract. Never infer the expected
+ * source from inspect output; bin/e2e exports the independently chosen host slot.
+ */
+export function validateApplicationMounts(service: string, mounts: Container['Mounts'],
+  expectedDirectory = process.env.E2E_HOST_UPDATE_STATUS_DIR): void {
+  requireSafe(['backend', 'worker'].includes(service), 'unsupported application mount service');
+  if (mounts.length === 0) return;
+  requireSafe(service === 'backend' && mounts.length === 1 && expectedDirectory,
+    `${service} has application mounts`);
+  const mount = mounts[0];
+  requireSafe(mount.Type === 'bind' && mount.RW === false && mount.Destination === '/run/futureagi-host-update',
+    'unexpected backend status mount');
+  let matches = false;
+  try {
+    matches = statSync(expectedDirectory!).isDirectory() &&
+      realpathSync(mount.Source) === realpathSync(expectedDirectory!);
+  } catch { /* Missing/unreadable paths fail closed without exposing host paths. */ }
+  requireSafe(matches, 'backend status mount source mismatch');
+}
+
 export interface MockReceipt {
   context: string; project: string; networkId: string; gatewaySha: string; mockSha: string;
   services: { service: string; id: string; image: string; startedAt: string }[];
@@ -326,6 +359,7 @@ function distributedMockStack(evalBackground: boolean): MockStack {
         const env = environments[service] = containerEnvironment(selected[service]);
         validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
       }
+      for (const service of ['backend', 'worker']) validateApplicationMounts(service, selected[service].Mounts);
       if (!evalBackground) return undefined;
       // No tag resolution against a registry: local image inspect only. Main must
       // supply the same version pins used to recreate the managed application.
@@ -354,7 +388,6 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
         [service, selected[service].NetworkSettings.Networks[network].IPAddress]));
       const processes = ['backend', 'worker'].map(service => {
-        requireSafe(selected[service].Mounts.length === 0, `${service} has application mounts`);
         // Read-only process/source/constructor/GET-health and Describe RPCs only;
         // no Django setup, completion/embed call, registration or task submission.
         return JSON.parse(run('docker', ['--context', context, 'exec', '-i', '-e', 'PYTHONDONTWRITEBYTECODE=1',

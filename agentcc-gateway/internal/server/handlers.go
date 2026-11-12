@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // maxSessionIDLen is the maximum allowed byte length for a session ID.
@@ -72,6 +73,12 @@ type Handlers struct {
 	// Key store for early org_id peek (before auth plugin runs).
 	keyStore *authpkg.KeyStore
 
+	// Decision calls by internal callers: the upstream for each dialect taken
+	// from config.yaml (its base_url only), and the providers built for the
+	// keys those callers bring.
+	decisionBaseURLs       map[string]string
+	keyedDecisionProviders keyedDecisionProviders
+
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
@@ -83,7 +90,10 @@ type Handlers struct {
 	fileStore *files.Store
 
 	// Video generation store.
-	videoStore video.Store
+	videoIPACL    config.IPACLConfig
+	videoStore    video.Store
+	videoService  *lifecycle.Service
+	videoSyncWait time.Duration
 
 	// Phase 12A: Advanced routing components.
 	complexityAnalyzer   *routing.ComplexityAnalyzer
@@ -117,6 +127,9 @@ func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
 
 func cloneRequestHeaders(r *http.Request) http.Header {
 	headers := r.Header.Clone()
+	// A caller's own provider key is for one decision call. Whatever route it
+	// was sent to, the copy kept for logs, spans and plugins never carries it.
+	headers.Del(models.ProviderKeyHeader)
 	if headers.Get("Authorization") == "" {
 		if apiKey := headers.Get("x-api-key"); apiKey != "" {
 			headers.Set("Authorization", "Bearer "+apiKey)
@@ -1287,7 +1300,24 @@ func orgProviderError(model, providerID string, err error) *models.APIError {
 // providers: any key but an internal one, unless a license authorized the
 // request.
 func (h *Handlers) orgProvidersOnly(ctx context.Context, rc *models.RequestContext) bool {
-	return h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx)
+	return h.orgProvidersOnlyForKeyType(ctx, rc.Metadata["key_type"])
+}
+
+// orgProvidersOnlyForKeyType is the rule behind orgProvidersOnly for callers
+// that have a key type but no request context, such as the model listings.
+func (h *Handlers) orgProvidersOnlyForKeyType(ctx context.Context, keyType string) bool {
+	return h.keyStore != nil && keyType != "internal" && !middleware.IsLicenseAuthorized(ctx)
+}
+
+// globalModelsVisible reports whether r may see the global provider catalog.
+// It mirrors the call-time guard in resolveProvider: a key that cannot call a
+// global model must not be told the model exists.
+func (h *Handlers) globalModelsVisible(r *http.Request) bool {
+	keyType := ""
+	if ki := h.lookupHeaderKey(r); ki != nil {
+		keyType = ki.KeyType
+	}
+	return !h.orgProvidersOnlyForKeyType(r.Context(), keyType)
 }
 
 // resolveProvider resolves the provider for a model and the model name to send
@@ -2333,7 +2363,10 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
-	allModels := h.registry.ListAllModels()
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	db := h.ModelDB()
 
 	if scopedModels, ok := h.orgScopedModels(r); ok {
@@ -2388,9 +2421,10 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
-	if h.tenantStore == nil || h.keyStore == nil {
-		return nil, false
+// lookupHeaderKey returns the API key presented in r's headers, or nil.
+func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
+	if h.keyStore == nil {
+		return nil
 	}
 	rawKey := ""
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
@@ -2399,9 +2433,16 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 		rawKey = apiKey
 	}
 	if rawKey == "" {
+		return nil
+	}
+	return h.keyStore.Lookup(rawKey)
+}
+
+func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
+	if h.tenantStore == nil {
 		return nil, false
 	}
-	ki := h.keyStore.Lookup(rawKey)
+	ki := h.lookupHeaderKey(r)
 	if ki == nil {
 		return nil, false
 	}
@@ -2457,8 +2498,11 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check global registry for non-tenant deployments.
-	allModels := h.registry.ListAllModels()
+	// The global catalog is visible only to keys that can call it.
+	var allModels []models.ModelObject
+	if h.globalModelsVisible(r) {
+		allModels = h.registry.ListAllModels()
+	}
 	for _, m := range allModels {
 		if m.ID == modelID {
 			w.Header().Set("Content-Type", "application/json")

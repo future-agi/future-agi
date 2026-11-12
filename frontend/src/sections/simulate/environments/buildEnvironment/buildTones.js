@@ -1,7 +1,8 @@
-// Designer literals (prototype f9201bb4d). Kept as hex on purpose: dark-mode
-// primary is monochrome (theme/palette.js:428) and the accent tokens are
-// lifted in dark, so tokens would change pixels. This is the ONLY build module
-// allowed to hold hex colour literals — every other module imports from here.
+// RETIRING. This was the build area's own hex palette. The build flow files now
+// use the theme (status.<role>.*, primary.main, palette.data[i]) and no longer
+// import it; the workspace files still do. Delete this module once the last
+// importer is moved to a token, and remove the disable below with it.
+/* eslint-disable no-restricted-syntax -- legacy palette, kept only until the remaining importers are migrated */
 export const BUILD_TONES = {
   accent: "#7857FC",
   accentHover: "#6B4EE6",
@@ -27,17 +28,4 @@ export const BUILD_TONES = {
   amberBright: "#D97706",
   ash: "#9AA0A6",
   indigo: "#4F46E5",
-};
-
-// DerivingAnimation file-header traffic dots (red / amber / green).
-export const TRAFFIC_LIGHTS = ["#EF4444", "#F59E0B", "#10B981"];
-
-// DerivingAnimation stage surfaces — the mock IDE panel that plays behind the
-// deriving copy. Dark/light split; sandboxDark is the inner code frame.
-export const SURFACE_INK = {
-  dark: "#0B0B0B",
-  light: "#FAFAFA",
-  panelDark: "#131313",
-  panelLight: "#FFFFFF",
-  sandboxDark: "#111111",
 };

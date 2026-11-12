@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
   IconButton, Tooltip, Checkbox,
@@ -9,7 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
   ClampCell,
   SubTasksCell,
@@ -31,14 +30,12 @@ import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // Body cells pinned to an edge need an opaque base (rows scroll under them)
-// and the row's hover tint layered on top. Only the actions column on the
-// right casts a shadow; the checkbox column sits flat beside the row.
+// and the row's hover tint layered on top. The actions column on the right is
+// set off by a hairline; the checkbox column sits flat beside the row.
 const pinnedBodyCellSx = (side) => ({
   position: "sticky", [side]: 0, zIndex: 1,
   bgcolor: "background.paper",
-  ...(side === "right" && {
-    boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
-  }),
+  ...(side === "right" && { borderLeft: "1px solid", borderLeftColor: "divider" }),
   transition: "background-image 120ms ease",
   ".MuiTableRow-hover:hover &": {
     backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
@@ -48,7 +45,7 @@ const pinnedSelectCellSx = { ...pinnedBodyCellSx("left"), pl: 1.5, verticalAlign
 
 // Height of the sticky column-header row, set on its cells. The group headers
 // pin at this offset so they rest just under it, not on top.
-const HEAD_OFFSET = 36;
+const HEAD_OFFSET = TABLE_HEADER_HEIGHT.default;
 
 const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };
@@ -73,14 +70,8 @@ function readWidths() {
   );
 }
 
-// Neutral white-on-selected checkbox — no primary colour, keeps the table's
-// monochrome treatment.
-const selectableCheckboxSx = {
-  p: 0,
-  color: "text.disabled",
-  "&.Mui-checked": { color: "text.primary" },
-  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
-};
+// The theme's checkbox, without its padding.
+const selectableCheckboxSx = { p: 0 };
 
 // Stop a click inside a cell (checkbox, row actions) from also opening the row.
 const stopRowClick = (e) => e.stopPropagation();
@@ -203,9 +194,8 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                   align={isActions ? "right" : "left"}
                   padding={isSelect ? "checkbox" : "normal"}
                   sx={{
-                    typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle",
-                    textTransform: "uppercase", letterSpacing: 0.4,
-                    bgcolor: "background.neutral",
+                    typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
+                    bgcolor: "background.paper",
                     borderBottom: "1px solid", borderColor: "divider",
                     whiteSpace: "nowrap", height: HEAD_OFFSET,
                     // Sticky column header — pins to the top of the scroll box so
@@ -223,7 +213,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       // The top-right corner: sticky on both axes, above all.
                       right: 0, zIndex: 4,
                       width: 96, minWidth: 96,
-                      boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
+                      borderLeft: "1px solid", borderLeftColor: "divider",
                     }),
                   }}
                 >
@@ -269,19 +259,16 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       // under it too.
                       position: "sticky", top: HEAD_OFFSET, zIndex: 2,
                       bgcolor: "background.paper",
-                      backgroundImage: (t) => {
-                        const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
-                        return `linear-gradient(${tint}, ${tint})`;
-                      },
+                      backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
                       borderTop: "1px solid", borderBottom: "1px solid", borderColor: "divider",
-                      py: 1.125, px: 2,
+                      height: ROW_HEIGHT.default, py: 0, px: 1.5,
                     }}
                   >
                     <Stack direction="row" alignItems="center" spacing={1.25}>
-                      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", flex: 1, minWidth: 0 }}>
+                      <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary", flex: 1, minWidth: 0 }}>
                         {section.label}
                       </Typography>
-                      <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                      <Typography sx={{ typography: "s3", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
                         {/* Under paging the header shows the whole-match count
                             (from the backend's groupCounts) even though only a
                             slice of the group is on this page. */}
@@ -328,10 +315,13 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       onOpen(row);
                     } : undefined}
                     aria-label={onOpen ? SCENARIOS_COPY.openRow(row.name || row.title) : undefined}
-                    sx={onOpen ? {
-                      cursor: "pointer",
-                      "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 },
-                    } : undefined}
+                    sx={{
+                      height: ROW_HEIGHT.twoLine,
+                      ...(onOpen && {
+                        cursor: "pointer",
+                        "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: -2 },
+                      }),
+                    }}
                   >
                     {!locked && (
                       // Pinned to the left edge so the selection stays in reach
@@ -346,19 +336,19 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                         />
                       </TableCell>
                     )}
-                    <TableCell sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
+                    <TableCell sx={{ typography: "s1", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
                       {idx}
                     </TableCell>
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <Stack direction="row" alignItems="center" spacing={0.75}>
                         <TruncTooltip title={row.name || row.title}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{row.name || row.title}</Typography>
+                          <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>{row.name || row.title}</Typography>
                         </TruncTooltip>
                         {row.critical && (
                           <Tooltip arrow title={SCENARIOS_COPY.critical}>
                             <Box sx={{ display: "flex" }}>
-                              <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: BUILD_TONES.red }} />
+                              <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: "status.danger.solid" }} />
                             </Box>
                           </Tooltip>
                         )}
@@ -371,7 +361,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <TruncTooltip title={p?.name || ""}>
-                        <Typography noWrap sx={{ typography: "s2" }}>{p?.name}</Typography>
+                        <Typography noWrap sx={{ typography: "s1" }}>{p?.name}</Typography>
                       </TruncTooltip>
                       {personaLine && (
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{personaLine}</Typography>

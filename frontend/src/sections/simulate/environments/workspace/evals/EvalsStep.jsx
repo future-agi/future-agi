@@ -212,14 +212,14 @@ export default function EvalsStep({
           px: 2,
           py: 1.5,
           mb: 3,
-          borderRadius: 1,
+          borderRadius: "8px",
           border: "1px solid",
           borderColor: "divider",
         }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+            sx={{ typography: "s1", fontWeight: 500 }}
           >
             {EVALS_COPY.toolCall.title}
           </Typography>
@@ -319,7 +319,6 @@ export default function EvalsStep({
                   startIcon={
                     <Iconify icon="solar:add-circle-linear" width={15} />
                   }
-                  sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
                 >
                   {EVALS_COPY.add}
                 </Button>
@@ -396,7 +395,6 @@ export default function EvalsStep({
                         <Iconify icon="solar:arrow-right-linear" width={15} />
                       ) : null
                     }
-                    sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
                   >
                     {needsScenarios ? EVALS_COPY.addScenarios : EVALS_COPY.add}
                   </Button>

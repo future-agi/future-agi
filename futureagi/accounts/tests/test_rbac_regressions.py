@@ -108,7 +108,7 @@ def test_reader_mutating_routes_still_denied(reader_auth, method, path):
         "action": "list_traces_of_session",
         "_read_query_post": True,
     }
-    with pytest.raises(PermissionDenied, match="Viewers can't"):
+    with pytest.raises(PermissionDenied, match="Write access denied"):
         auth.authenticate(request)
     assert get_current_workspace() is None
 
@@ -183,7 +183,7 @@ def test_read_post_exemption_is_exact_action_and_method(reader_auth, case, expec
         assert auth.authenticate(request) == (user, "fixture-token")
         assert request.workspace is workspace
     else:
-        with pytest.raises(PermissionDenied, match="Viewers can't"):
+        with pytest.raises(PermissionDenied, match="Write access denied"):
             auth.authenticate(request)
 
 
@@ -280,7 +280,7 @@ EVAL_WRITE_ENDPOINTS = (
     "/model-hub/eval-templates/create-v2/",
     "/model-hub/eval-templates/bulk-delete/",
 )
-WORKSPACE_WRITE_DENIED = "Viewers can't"
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
 
 
 def _make_workspace_user(
