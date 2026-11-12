@@ -1,3 +1,7 @@
+import {
+  GREENPT_ADD_PROVIDER_PRESET,
+  GREENPT_SETTINGS_PROVIDER_OPTION,
+} from "./providerPresetData";
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
@@ -98,6 +102,25 @@ describe("parseTimeoutSeconds", () => {
   });
 });
 
+describe("provider presets", () => {
+  it("exposes GreenPT through the OpenAI-compatible API", () => {
+    expect(GREENPT_ADD_PROVIDER_PRESET).toEqual({
+      label: "GreenPT",
+      baseUrl: "https://api.greenpt.ai/v1",
+      apiFormat: "openai",
+      keyPlaceholder: "Enter your GreenPT API key",
+      supportedFormats: ["openai"],
+    });
+  });
+
+  it("exposes GreenPT in gateway settings", () => {
+    expect(GREENPT_SETTINGS_PROVIDER_OPTION).toEqual({
+      value: "greenpt",
+      label: "GreenPT",
+      baseUrl: "https://api.greenpt.ai",
+    });
+  });
+});
 describe("AddProviderDialog validation", () => {
   beforeEach(() => {
     updateMutate.mockReset();
@@ -110,6 +133,58 @@ describe("AddProviderDialog validation", () => {
       deferred((_vars, opts) =>
         opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
       ),
+    );
+  });
+
+  it("selects GreenPT, discovers models and saves the OpenAI-compatible preset", async () => {
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: ["synthetic-chat", "synthetic-embedding"],
+        }),
+      ),
+    );
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "GreenPT" }));
+    expect(screen.getByLabelText("Base URL").value).toBe(
+      "https://api.greenpt.ai/v1",
+    );
+    expect(screen.getByLabelText("API Path Prefix").value).toBe("/v1");
+    fireEvent.change(screen.getByLabelText(/API Key/i), {
+      target: { value: "synthetic-greenpt-key" },
+    });
+    await waitFor(() =>
+      expect(fetchMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: "https://api.greenpt.ai/v1",
+          apiKey: "synthetic-greenpt-key",
+          apiFormat: "openai",
+          apiPathPrefix: "/v1",
+        }),
+        expect.any(Object),
+      ),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Select All" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "greenpt",
+        config: expect.objectContaining({
+          base_url: "https://api.greenpt.ai/v1",
+          api_format: "openai",
+          api_path_prefix: "/v1",
+          models: ["synthetic-chat", "synthetic-embedding"],
+        }),
+      }),
+      expect.any(Object),
     );
   });
 

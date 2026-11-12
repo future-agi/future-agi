@@ -1369,6 +1369,27 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
+### GW-E2E-021 — GreenPT preserves its preset and an explicit model list
+
+**Goal:** Configure GreenPT with an explicit model list when discovery is unavailable and reopen the saved provider
+
+**Spec:** `flows/gateway/greenpt-provider.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway provider configuration and select GreenPT
+2. check the preset URL and API path prefix
+3. make discovery unavailable in the browser and enter a synthetic key and unique model ID
+4. save through the real provider endpoint
+5. reload and reopen the saved GreenPT provider
+
+**Backend state verified:**
+
+- the gateway config API retains GreenPT with its preset URL, openai format, /v1 prefix and exact explicit model list
+- the reopened provider dialog retains the saved URL, prefix and unique model ID
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state

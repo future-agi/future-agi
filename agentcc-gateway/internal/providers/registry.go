@@ -403,11 +403,26 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	if cfg.APIKey != "" {
+		// Discovery credentials belong to this endpoint, not a redirect target.
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
 	// Built the same way the provider builds its own URLs, or a provider that
 	// serves no /v1 would be probed at a path it does not have.
 	modelsURL := config.JoinEndpoint(baseURL, cfg.EffectiveAPIPathPrefix(), "/v1/models")
-	resp, err := client.Get(modelsURL)
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
+	if err != nil {
+		slog.Warn("auto-discover: failed to create models request",
+			"provider", name, "url", modelsURL, "error", err)
+		return nil
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("auto-discover: failed to reach provider",
 			"provider", name, "url", modelsURL, "error", err)

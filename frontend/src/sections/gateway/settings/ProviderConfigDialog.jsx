@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import { GREENPT_SETTINGS_PROVIDER_OPTION } from "../providers/providerPresetData";
 
 const PROVIDER_OPTIONS = [
   { value: "openai", label: "OpenAI", baseUrl: "https://api.openai.com" },
@@ -30,6 +31,7 @@ const PROVIDER_OPTIONS = [
   { value: "bedrock", label: "AWS Bedrock", baseUrl: "" },
   { value: "vertex", label: "Google Vertex", baseUrl: "" },
   { value: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai" },
+  GREENPT_SETTINGS_PROVIDER_OPTION,
   { value: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai" },
   {
     value: "together",

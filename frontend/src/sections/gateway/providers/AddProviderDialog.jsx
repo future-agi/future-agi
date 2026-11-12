@@ -32,6 +32,7 @@ import {
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
+import { GREENPT_ADD_PROVIDER_PRESET } from "./providerPresetData";
 import {
   DEFAULT_API_PATH_PREFIX,
   SYSTEMONE_API_FORMAT,
@@ -112,6 +113,7 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "gsk_...",
     supportedFormats: ["openai"],
   },
+  greenpt: GREENPT_ADD_PROVIDER_PRESET,
   together: {
     label: "Together AI",
     baseUrl: "https://api.together.xyz/v1",

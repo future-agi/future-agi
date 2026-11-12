@@ -19,6 +19,7 @@ type ProviderPreset struct {
 // omitted entry would read as "" and silently strip the version segment from a
 // provider that needs one.
 var KnownProviders = map[string]ProviderPreset{
+	"greenpt":     {BaseURL: "https://api.greenpt.ai", APIFormat: "openai", PathPrefix: "/v1"},
 	"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai", PathPrefix: "/v1"},
 	"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai", PathPrefix: "/v1"},
 	"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai", PathPrefix: "/v1"},
