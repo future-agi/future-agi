@@ -5,6 +5,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from functools import wraps
+from typing import Any
 
 try:
     import orjson
@@ -3748,7 +3749,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         # Build: {session_id: {label_id: aggregated_value}}
-        result = defaultdict(dict)
+        result: defaultdict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         for score in scores:
             sid = str(score.trace_session_id)
             lid = str(score.label_id)
@@ -3858,7 +3859,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
             .distinct()
         )
-        label_annotators_map = {}
+        label_annotators_map: dict[str, dict[str, dict[str, Any]]] = {}
         for row in annotator_rows:
             lid = str(row["label_id"])
             uid = str(row["annotator_id"])

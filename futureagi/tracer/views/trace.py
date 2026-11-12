@@ -867,7 +867,7 @@ def _build_agent_graph_pg(project_id, filters, builder):
             )
 
     node_map = {}
-    edge_map = {}
+    edge_map: dict[tuple[Any, Any, Any, Any], dict[str, Any]] = {}
     all_span_by_id = {str(row["id"]): row for row in span_rows}
 
     def node_id(name, node_type):
@@ -1591,7 +1591,7 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
             uid = str(u["id"])
             user_name_map[uid] = u["name"] or u["email"] or "Unknown"
 
-    annotation_map = {}
+    annotation_map: dict[str, dict[str, dict[str, Any]]] = {}
     for row in result.data:
         tid = row["trace_id"]
         lid = row["label_id"]
@@ -1753,7 +1753,7 @@ def _build_annotation_map_from_scores_pg(
     )
     candidate_trace_identity_set = set(candidate_trace_identities)
     span_ids = list(span_trace_map.keys())
-    annotation_map = {}
+    annotation_map: dict[Any, dict[str, dict[str, Any]]] = {}
     # Trace- or span-linked scores by column id (no dropped-table JOIN).
     if org_scoped:
         trace_ids_by_project: dict[str, list[str]] = {}
@@ -2296,7 +2296,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             # Observation spans are served by the detail endpoint — skip
             # serialization here (~2.8 MB per row).
-            observation_span = []
+            observation_span: list[dict[str, Any]] = []
 
             # Use the stored call.duration from eval_attributes as the single
             # source of truth so the API response always matches the metric.
@@ -3189,7 +3189,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Group traces by input
-            input_grouped_traces = {}
+            input_grouped_traces: dict[str, dict[str, Any]] = {}
             for trace in traces:
                 if str(trace.input) not in input_grouped_traces:
                     input_grouped_traces[str(trace.input)] = {}
@@ -3943,7 +3943,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _compute_voice_system_metrics(self, spans) -> dict:
         """Aggregate child span latencies into system metrics by observation type."""
-        metrics = {}
+        metrics: dict[str, int] = {}
         for span in spans:
             metric_key = self._SPAN_TYPE_TO_METRIC.get(span.observation_type)
             if metric_key and span.latency_ms:
@@ -3954,7 +3954,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _compute_voice_system_metrics_from_ch(self, child_rows: list) -> dict:
         """Aggregate child span latencies from ClickHouse rows."""
-        metrics = {}
+        metrics: dict[str, int] = {}
         for child in child_rows:
             metric_key = self._SPAN_TYPE_TO_METRIC.get(child.get("observation_type"))
             latency = child.get("latency_ms")
@@ -5147,6 +5147,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         bounded_user_resolver = getattr(
             builder, "resolve_user_ids_for_trace_identities", None
         )
+        user_params: dict[str, Any]
         if callable(bounded_user_resolver):
             user_query, user_params = "", {}
         else:
@@ -5537,7 +5538,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "input.value",
             "output.value",
         )
-        aggregated_attrs = {}  # (project_id, trace_id) -> {attr_key -> values}
+        # (project_id, trace_id) -> {attr_key -> values}
+        aggregated_attrs: dict[tuple[str, str], dict[str, list[Any]]] = {}
         for task_name in attribute_task_names:
             task_result = enrichment_results.get(task_name)
             task_rows = task_result.data if task_result is not None else []
@@ -5632,7 +5634,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Format response matching PG format. Keep the typed sidecar separate
         # from arbitrary attributes/eval columns, which may use the same names.
-        trace_capture_coverage = {}
+        trace_capture_coverage: dict[str | None, dict[str, Any]] = {}
         table_data = []
         for row in result.data:
             trace_id = str(row.get("trace_id", ""))
@@ -6988,6 +6990,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         eval_query, eval_params = builder.build_eval_query(trace_ids)
+        user_params: dict[str, Any]
         if callable(bounded_user_resolver):
             user_query, user_params = "", {}
         else:

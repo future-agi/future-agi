@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import structlog
 from django.contrib.auth import get_user_model
@@ -435,7 +436,7 @@ class TraceAnnotationView(ModelViewSet):
     @staticmethod
     def _get_notes_from_pg(request, observation_span_id):
         """Fetch span notes from PostgreSQL."""
-        notes_details = []
+        notes_details: list[dict[str, Any]] = []
         if not observation_span_id:
             return notes_details
 
@@ -659,8 +660,8 @@ class BulkAnnotationView(APIView):
         annotations_to_update = []
         errors = []
         warnings = []
-        seen_keys = set()
-        note_seen = set()
+        seen_keys: set[tuple[str, str, str]] = set()
+        note_seen: set[tuple[str, str, Any]] = set()
 
         caller_org = getattr(request.user, "organization", None)
 
