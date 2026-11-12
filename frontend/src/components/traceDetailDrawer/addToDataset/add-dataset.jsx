@@ -14,9 +14,11 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "../../iconify";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import AddExistingDataset from "./AddExistingDataset";
 import AddNewDataset from "./AddNewDataset";
+import { getObservationFieldsQueryKey } from "./observationFieldsQueryKey";
 import { defaultSpanFields } from "../common";
 
 const EMPTY_ARRAY = [];
@@ -39,6 +41,7 @@ const AddDataset = ({
     useState("existing");
 
   const theme = useTheme();
+  const { observeId, projectId } = useParams();
 
   const { data: availableDatasets = [] } = useQuery({
     queryKey: ["datasets"],
@@ -51,7 +54,7 @@ const AddDataset = ({
   });
 
   const { data: observationFields = EMPTY_ARRAY } = useQuery({
-    queryKey: ["observationFields"],
+    queryKey: getObservationFieldsQueryKey({ observeId, projectId }),
     queryFn: () =>
       axios
         .get(endpoints.project.getObservationSpanField)
