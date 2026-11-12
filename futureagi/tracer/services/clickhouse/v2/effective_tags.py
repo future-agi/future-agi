@@ -226,6 +226,86 @@ def effective_match_sql(prefix: str, names_predicate: str) -> str:
     )
 
 
+def row_source_names_sql() -> str:
+    """Source names of the current physical ``spans`` row.
+
+    The same projected tag sources as :func:`live_tag_source_sql`, read from
+    the row itself rather than from a replayed aggregate state.
+    """
+    return source_names_sql(
+        ("tags", "attrs_string['tag.tags']"),
+        (
+            "JSONExtractRaw(attributes_extra, 'tag.tags')",
+            "JSONExtractRaw(attributes_extra, 'tag', 'tags')",
+        ),
+    )
+
+
+def graph_row_tag_sql(prefix: str, names_predicate: str, *, root_only: bool) -> str:
+    """One physical span row's effective tag membership, with no spans read.
+
+    Exact graphs evaluate this on every physical version and keep the latest
+    version's flag, so liveness and the trace-level any-sibling semantics come
+    from the graph's own replay. As in :func:`effective_match_sql`, roots carry
+    the trace assignment (or the unsuppressed curated tags) and children carry
+    only their own physical assignment. ``root_only`` is the trace-mode
+    ``tags`` leaf: only the root's own names count.
+    """
+    p = prefix
+    root = "(parent_span_id IS NULL OR parent_span_id = '')"
+    source = names_predicate.format(names=row_source_names_sql())
+    trace = trace_overlay_sql(p, names_predicate)
+    if root_only:
+        return f"({root} AND ({source} OR {trace}))"
+    span = (
+        "(toString(project_id), trace_id, id, "
+        "toInt64(toUnixTimestamp(toStartOfHour(start_time))), "
+        "toString(observation_type), toString(service_name)) "
+        f"IN %({p}_span_keys)s"
+    )
+    return f"({source} OR ({root} AND {trace}) OR (NOT {root} AND {span}))"
+
+
+def graph_tag_overlay_params(
+    prefix: str,
+    *,
+    project_ids: tuple[str, ...],
+    values: tuple[str, ...] | None,
+    deadline: ReadDeadline,
+) -> tuple[dict[str, Any], int]:
+    """Bind one graph leaf's UI overlay now, with its rendered byte size.
+
+    Graph statements also run on executors without a preparation hook (the
+    background exact-aggregation worker), so they carry concrete parameters,
+    never an :class:`EffectiveTagRelation`. The scope is a window scan: the
+    graph's own replay decides liveness and the window.
+    """
+    if not project_ids:
+        raise TagReadUnavailable("tag_scope_required")
+    overlay = read_tag_overlay(
+        project_ids=project_ids,
+        trace_ids=None,
+        values=values,
+        deadline=deadline,
+    )
+    trace_keys, span_keys, assigned = overlay.keys(values)
+    params = {
+        f"{prefix}_projects": project_ids,
+        f"{prefix}_scoped": 0,
+        f"{prefix}_traces": (_UNSCOPED_TRACE,),
+        f"{prefix}_trace_keys": trace_keys,
+        f"{prefix}_span_keys": span_keys,
+        f"{prefix}_assigned_keys": assigned,
+    }
+    rendered = (
+        _literal_bytes(trace_keys)
+        + _literal_bytes(span_keys)
+        + _literal_bytes(assigned)
+        + _literal_bytes(project_ids)
+    )
+    return params, rendered
+
+
 def canonical_root_sql(prefix: str) -> str:
     """The list's canonical root per trace (latest start, then identity)."""
     p = prefix

@@ -37,6 +37,8 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     is_internal_trace_root_filter,
     simulator_call_root_predicate,
 )
+from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.entity_tags import TagReadUnavailable
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
 _OUTER_SOURCE_SENTINEL = "graph_outer_span_rows"
@@ -46,6 +48,8 @@ _SPANS_SOURCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+# One PostgreSQL read of the UI tag overlay per compiled graph statement.
+GRAPH_TAG_OVERLAY_READ_MS = 5_000
 
 
 @dataclass(frozen=True)
@@ -540,6 +544,89 @@ def _compile_has_eval_filter(
     return predicate, required, params
 
 
+_TAG_MEMBERSHIP_OPERATIONS = frozenset(
+    {
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+        "is_null",
+        "is_not_null",
+    }
+)
+_TAG_ABSENCE_OPERATIONS = frozenset({"not_equals", "not_in", "not_contains", "is_null"})
+
+
+def _compile_effective_tag_filter(
+    *,
+    column_id: str,
+    config: dict[str, Any],
+    project_id: str,
+    observe_type: str,
+    filter_index: int,
+    deadline: Any,
+) -> tuple[tuple[str, bool, dict[str, Any]], int]:
+    """Compile an effective ``tag``/``tags`` leaf to a current-row predicate.
+
+    The list readers match SDK tags, UI assignments and curated trace tags
+    (:mod:`tracer.services.clickhouse.v2.effective_tags`). A graph must apply
+    the same membership, so the row predicate evaluates the source names on
+    the physical row and binds the UI overlay as key literals. Absence
+    operators keep the positive witness and require that no sibling has it,
+    exactly as the lists' ``NOT IN``. Returns the requirement and the rendered
+    size of its bound overlay.
+    """
+
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        _normalize_json_array_values,
+    )
+    from tracer.services.clickhouse.v2.effective_tags import (
+        graph_row_tag_sql,
+        graph_tag_overlay_params,
+    )
+
+    operation = normalize_filter_op(
+        str(config.get("filter_op") or config.get("filterOp") or "")
+    )
+    if operation not in _TAG_MEMBERSHIP_OPERATIONS:
+        raise UnsupportedFilterShapeError(
+            f"graph filter {column_id!r} supports tag membership operators only"
+        )
+    prefix = f"etag_graph_{filter_index}"
+    params: dict[str, Any] = {}
+    if operation in {"is_null", "is_not_null"}:
+        values = None
+        names_predicate = "notEmpty({names})"
+    else:
+        raw_value = config.get("filter_value", config.get("filterValue"))
+        items = raw_value if isinstance(raw_value, list) else [raw_value]
+        if not items or any(not isinstance(item, str) or not item for item in items):
+            raise UnsupportedFilterShapeError(
+                f"graph filter {column_id!r} requires non-empty tag names"
+            )
+        # The list compiler's public limits, so both surfaces accept one shape.
+        _normalize_json_array_values({"filter_op": "contains", "filter_value": items})
+        values = tuple(dict.fromkeys(items))
+        params[f"{prefix}_names"] = list(values)
+        names_predicate = "hasAny({names}, %(" + prefix + "_names)s)"
+    overlay_params, rendered = graph_tag_overlay_params(
+        prefix,
+        project_ids=(str(project_id),),
+        values=values,
+        deadline=deadline,
+    )
+    params.update(overlay_params)
+    predicate = graph_row_tag_sql(
+        prefix,
+        names_predicate,
+        root_only=column_id == "tags" and observe_type == "trace",
+    )
+    required = operation not in _TAG_ABSENCE_OPERATIONS
+    return (predicate, required, params), rendered
+
+
 def _compile_end_user_filter(
     *,
     column_id: str,
@@ -652,6 +739,8 @@ def compile_exact_graph_row_predicates(
     contribution_predicates: list[str] = []
     root_contribution = False
     bound_params: dict[str, Any] = {}
+    tag_overlay_deadline: ReadDeadline | None = None
+    tag_overlay_bytes = 0
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
@@ -709,6 +798,40 @@ def compile_exact_graph_row_predicates(
                 project_id=project_id,
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
+        elif column_id in {"tag", "tags"} and normalized_col_type in {
+            "",
+            "NORMAL",
+            "SYSTEM_METRIC",
+        }:
+            # The same routing as ClickHouseFilterBuilderV2._build_condition:
+            # the effective tag leaf, never a raw ``spans.tags`` attribute.
+            if tag_overlay_deadline is None:
+                tag_overlay_deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
+            try:
+                requirement, rendered = _compile_effective_tag_filter(
+                    column_id=column_id,
+                    config=config,
+                    project_id=project_id,
+                    observe_type=normalized_observe_type,
+                    filter_index=filter_index,
+                    deadline=tag_overlay_deadline,
+                )
+                from tracer.services.clickhouse.v2.effective_tags import (
+                    MAX_TAG_OVERLAY_BYTES,
+                )
+
+                tag_overlay_bytes += rendered
+                if tag_overlay_bytes > MAX_TAG_OVERLAY_BYTES:
+                    raise TagReadUnavailable("tag_overlay_budget_exceeded")
+            except TagReadUnavailable as exc:
+                # Unavailable or over-budget assignments are a retryable 503,
+                # never an empty or source-only graph.
+                from tracer.services.clickhouse.bounded_graph_reads import (
+                    BoundedGraphReadError,
+                )
+
+                raise BoundedGraphReadError("query_failed", retryable=True) from exc
+            relation_requirements = [requirement]
 
         if relation_requirements is not None:
             requirement_predicate_indexes: list[int] = []
