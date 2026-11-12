@@ -724,32 +724,21 @@ def _prepare_compare_dataset_impl(
 
                 last_index_processed = index
 
-        leftover_compare_json = None
-        if last_index_processed and last_index_processed != index:
-            leftover_compare_json = {
-                "column_config": column_config,
-                "table": table[last_index_processed:],
-            }
+        # The loop writes table[index - 10:index] whenever index is a non-zero
+        # multiple of ten, so the row at last_index_processed and everything
+        # after it are still unwritten. Write exactly those rows as the final
+        # page, including when the last row itself sits on a multiple of ten.
+        leftover_start = last_index_processed or 0
+        leftover_table = table[leftover_start:]
+        if leftover_table:
+            leftover_page = f"page_{leftover_start // 10 + 1}"
             rowid_in_file.update(
-                {
-                    str(table["row_id"]): f"page_{index // 10 + 1}"
-                    for table in leftover_compare_json["table"]
-                }
+                {str(row["row_id"]): leftover_page for row in leftover_table}
             )
-        else:
-            leftover_compare_json = {"column_config": column_config, "table": table}
-            rowid_in_file.update(
-                {
-                    str(table["row_id"]): f"page_{index // 10 + 1}"
-                    for table in leftover_compare_json["table"]
-                }
-            )
-
-        if leftover_compare_json:
             upload_compare_json_to_s3(
                 compare_id=compare_id,
-                compare_json=leftover_compare_json,
-                page_name=f"page_{(index // 10) + 1}.json",
+                compare_json={"column_config": column_config, "table": leftover_table},
+                page_name=f"{leftover_page}.json",
             )
 
         with open(metadata_path, "r+") as f:
