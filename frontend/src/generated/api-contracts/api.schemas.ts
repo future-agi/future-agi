@@ -2653,6 +2653,8 @@ export interface GatewaySummaryResultApi {
   base_url: string;
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe, including unreachable results. */
+  last_health_check: string;
   provider_count?: number;
   model_count?: number;
 }
@@ -2834,6 +2836,8 @@ export type GatewayHealthResultApiHealth = { [key: string]: unknown };
 export interface GatewayHealthResultApi {
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe. */
+  last_health_check: string;
   health?: GatewayHealthResultApiHealth;
   providers: GatewayConfiguredProvidersApi;
   provider_count: number;
@@ -2843,6 +2847,58 @@ export interface GatewayHealthResultApi {
 export interface GatewayHealthResponseApi {
   status: boolean;
   result: GatewayHealthResultApi;
+}
+
+export type GatewayHealthErrorResponseApiType =
+  (typeof GatewayHealthErrorResponseApiType)[keyof typeof GatewayHealthErrorResponseApiType];
+
+export const GatewayHealthErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GatewayHealthErrorResponseApiDetails = { [key: string]: string[] };
+
+export type GatewayHealthErrorResultApiStatus =
+  (typeof GatewayHealthErrorResultApiStatus)[keyof typeof GatewayHealthErrorResultApiStatus];
+
+export const GatewayHealthErrorResultApiStatus = {
+  unreachable: "unreachable",
+} as const;
+
+export type GatewayHealthErrorResultApi =
+  | string
+  | {
+      status: GatewayHealthErrorResultApiStatus;
+      error: string;
+      /** Completion time of this request's failed live health probe. */
+      last_health_check: string;
+    };
+
+/**
+ * Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.
+ */
+export interface GatewayHealthErrorResponseApi {
+  status?: boolean;
+  type?: GatewayHealthErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  result: GatewayHealthErrorResultApi;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GatewayHealthErrorResponseApiDetails;
 }
 
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };
@@ -8588,15 +8644,90 @@ export interface LiteLLMModelVoicesResponseApi {
   result: LiteLLMModelVoicesResultApi;
 }
 
-export type ModelHubPaginatedResponseApiResultsItem = {
-  [key: string]: unknown;
-};
+export interface DecisionConnectionApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  label: string;
+  is_available: boolean;
+}
 
-export interface ModelHubPaginatedResponseApi {
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiBestFor = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiUseCase = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiCutoff = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiRateLimits = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiLatency = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiPricing = JsonValueApi;
+
+export interface ModelListEntryApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  label?: string;
+  /** @minLength 1 */
+  author?: string;
+  /** @minLength 1 */
+  version?: string;
+  question_types?: string[];
+  /** @minimum 1 */
+  min_choices?: number;
+  /** @minimum 1 */
+  max_choices?: number;
+  /** @minimum 1 */
+  max_state_bytes?: number;
+  notice?: string;
+  /** @minLength 1 */
+  unavailable_reason?: string | null;
+  connections?: DecisionConnectionApi[];
+  /** @minLength 1 */
+  type: string;
+  providers?: string;
+  is_available?: boolean;
+  logo_url?: string | null;
+  /** Any valid JSON value. */
+  best_for?: ModelListEntryApiBestFor;
+  /** Any valid JSON value. */
+  use_case?: ModelListEntryApiUseCase;
+  /** Any valid JSON value. */
+  cutoff?: ModelListEntryApiCutoff;
+  /** Any valid JSON value. */
+  rate_limits?: ModelListEntryApiRateLimits;
+  /** Any valid JSON value. */
+  latency?: ModelListEntryApiLatency;
+  /** Any valid JSON value. */
+  pricing?: ModelListEntryApiPricing;
+}
+
+export interface ModelListResponseApi {
   count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
+  next?: string | null;
+  previous?: string | null;
+  results: ModelListEntryApi[];
 }
 
 export type CellErrorLocalizerResultApiErrorAnalysis = {
@@ -8826,6 +8957,17 @@ export interface CustomMetricTestResponseApi {
   /** @minLength 1 */
   status: string;
   prompts?: CustomMetricTestResponseApiPrompts;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface CustomAIModelApi {
@@ -9979,45 +10121,45 @@ export interface PromptConfigApi {
    * @minimum 0
    * @maximum 2
    */
-  temperature?: number;
+  temperature?: number | null;
   /**
    * Penalty for word repetition. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  frequency_penalty?: number;
+  frequency_penalty?: number | null;
   /**
    * Penalty for new word usage. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  presence_penalty?: number;
+  presence_penalty?: number | null;
   /**
    * Maximum number of tokens to generate. Null = use provider default.
    * @minimum 1
    * @maximum 65536
    */
-  max_tokens?: number;
+  max_tokens?: number | null;
   /**
    * Controls diversity via nucleus sampling. Value between 0 and 1.
    * @minimum 0
    * @maximum 1
    */
-  top_p?: number;
+  top_p?: number | null;
   /** String or JSON object. */
-  response_format?: PromptConfigApiResponseFormat;
+  response_format?: PromptConfigApiResponseFormat | null;
   /** Tool selection mode: 'auto' or 'required'. */
-  tool_choice?: PromptConfigApiToolChoice;
+  tool_choice?: PromptConfigApiToolChoice | null;
   /** List of tools with tool properties if available. */
-  tools?: PromptConfigApiToolsItem[];
+  tools?: PromptConfigApiToolsItem[] | null;
   /** Output format type. */
-  output_format?: PromptConfigApiOutputFormat;
+  output_format?: PromptConfigApiOutputFormat | null;
   /**
    * Number of concurrent operations allowed. Maximum 10.
    * @minimum 1
    * @maximum 10
    */
-  concurrency?: number;
+  concurrency?: number | null;
 }
 
 export interface AddRunPromptApi {
@@ -15563,7 +15705,7 @@ export type TestEvalTemplateApiInputDataTypes = { [key: string]: unknown };
 /**
  * Any valid JSON value.
  */
-export type TestEvalTemplateApiVariableKeys = { [key: string]: unknown };
+export type TestEvalTemplateApiVariableKeys = JsonValueApi;
 
 export type TestEvalTemplateApiMapping = { [key: string]: unknown };
 
@@ -31828,7 +31970,7 @@ export const CostCoverageApiStatus = {
   unknown: "unknown",
 } as const;
 
-export interface CostCoverageApi {
+export type CostCoverageApi = {
   status: CostCoverageApiStatus;
   /**
    * Sum in USD of known observed contributions, never an average.
@@ -31845,7 +31987,7 @@ export interface CostCoverageApi {
    * @minimum 0
    */
   unknown_fact_count: number;
-}
+};
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -33456,7 +33598,7 @@ export const CaptureCoverageApiScope = {
   observed_requests: "observed_requests",
 } as const;
 
-export interface CaptureCoverageApi {
+export type CaptureCoverageApi = {
   scope: CaptureCoverageApiScope;
   source_summary_present: boolean;
   /**
@@ -33466,7 +33608,7 @@ export interface CaptureCoverageApi {
   request_count: number;
   /** Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness. */
   coverage_unknown: boolean;
-}
+};
 
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
@@ -37109,24 +37251,6 @@ export type AgentPlaygroundGraphsVersionsRead200 = {
   results: GraphListApi[];
 };
 
-export type AgentPlaygroundGraphsVersionsReadParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
-};
-
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {
   /**
    * A page number within the paginated result set.
@@ -38129,6 +38253,13 @@ export type ModelHubApiKeysListParams = {
   limit?: number;
 };
 
+export type ModelHubApiModelsListListParams = {
+  name?: string;
+  search?: string;
+  model_type?: string;
+  exclude_providers?: string[];
+};
+
 export type ModelHubDatasetOptimizationListParams = {
   dataset_id?: string;
   column_id?: string;
@@ -38421,24 +38552,6 @@ export type ModelHubExperimentsReadParams = {
   search?: string;
 };
 
-export type ModelHubExperimentsReadParams = {
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  page_size?: number;
-  /**
-   * @minimum 0
-   */
-  current_page_index?: number;
-  column_config_only?: boolean;
-  get_diff?: boolean;
-  /**
-   * @maxLength 512
-   */
-  search?: string;
-};
-
 export type ModelHubFeedbackListParams = {
   /**
    * A page number within the paginated result set.
@@ -38543,21 +38656,6 @@ export type ModelHubGetEvalMetricsListParams = {
 };
 
 export type ModelHubKbListParams = {
-  /**
-   * A search term.
-   */
-  search?: string;
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type ModelHubKbSupportedEmbeddingModelsParams = {
   /**
    * A search term.
    */
@@ -38716,7 +38814,7 @@ export type ModelHubOrganizationsUsersList200 = {
 export type ModelHubPerformanceTagDistributionCreate200Result = {
   good?: string[][];
   bad?: string[][];
-  [key: string]: string[][];
+  [key: string]: string[][] | undefined;
 };
 
 export type ModelHubPerformanceTagDistributionCreate200 = {

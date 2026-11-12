@@ -51,6 +51,14 @@ FLOOR_ONLY = (
 def keywords(node): return {k.arg:k.value for k in node.keywords}
 
 
+class CharField(SimpleNamespace):
+    """AST-only built-in-field double; constructor equality is not SQL proof."""
+    non_db_attrs = ('choices',)
+
+    def deconstruct(self):
+        return None, 'django.db.models.CharField', self.arguments, dict(self.options)
+
+
 def field(node):
     assert isinstance(node,ast.Call)
     options=keywords(node)
@@ -64,10 +72,14 @@ def field(node):
             target='accounts.user'
         else: target=ast.literal_eval(target)
         remote=SimpleNamespace(model=target,through=ast.literal_eval(options['through']) if 'through' in options else None)
-    return SimpleNamespace(remote_field=remote,many_to_many=kind=='ManyToManyField',
+    cls=CharField if kind=='CharField' else SimpleNamespace
+    return cls(remote_field=remote,many_to_many=kind=='ManyToManyField',
         primary_key=ast.literal_eval(options['primary_key']) if 'primary_key' in options else False,
         unique=ast.literal_eval(options['unique']) if 'unique' in options else kind=='OneToOneField',
-        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None)
+        db_index=ast.literal_eval(options['db_index']) if 'db_index' in options else False,
+        db_table=ast.literal_eval(options['db_table']) if 'db_table' in options else None,
+        arguments=[ast.dump(arg) for arg in node.args],
+        options={key:ast.dump(value) for key,value in options.items()})
 
 
 def model(node):
@@ -120,7 +132,8 @@ def scope_environment(state):
         if '.' in remote:
             app,remote=remote.split('.',1)
         return app,remote.lower()
-    env=dict(ast=ast,re=re,migrations=operation_types(),schemas={'postgres':'public','clickhouse':'default'},
+    env=dict(ast=ast,re=re,migrations=operation_types(),models=SimpleNamespace(CharField=CharField),
+        schemas={'postgres':'public','clickhouse':'default'},
         resolve_relation=resolve,strip_quotes=lambda s:s.replace('"',''),truncate_name=lambda s,length:s[:length])
     # Use the actual resolver's functions/constants, with imports and final
     # loader invocation left to the native test. Opaque declarations are AST data.
@@ -225,7 +238,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
                     elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
-                    elif row['name']=='0130_observationspan_internal_type': expected_row={'tracer_observation_span'}
+                    elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()
                     self.assertEqual(names,expected_row,(row['app_label'],row['name']))
@@ -240,4 +253,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # source and target keep them; do not "fix" production by changing this.
         state.models[('usage','apicalltype')].fields['name'].unique=False
         op.field.unique=False
+        # Retain a real column alteration: without one this becomes choices-only,
+        # which now correctly has no physical-table scope at all.
+        op.field.options['max_length']=ast.dump(ast.Constant(51))
         self.assertEqual(env['touched'](op,migration,state),{('postgres','public.usage_apicalltype')})
