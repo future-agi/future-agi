@@ -51,6 +51,7 @@ PRIVATE_UNCONNECTED = {
     "visibility": "private",
     "installation_id": "4242",
 }
+AVAILABILITY = "/simulate/agents/connect/availability/"
 
 
 @pytest.fixture
@@ -119,6 +120,23 @@ class TestReadingSwitch:
 
         assert refused.value.code == "reading_unavailable"
         assert AgentDefinition.objects.count() == before
+
+    def test_availability_says_reading_is_off(self, auth_client):
+        response = auth_client.get(AVAILABILITY)
+
+        assert response.status_code == 200
+        assert response.json()["reading_enabled"] is False
+
+    def test_availability_says_reading_is_on(self, auth_client, settings):
+        settings.HARNESS_AGENT_READING_ENABLED = True
+
+        response = auth_client.get(AVAILABILITY)
+
+        assert response.status_code == 200
+        assert response.json()["reading_enabled"] is True
+
+    def test_availability_needs_a_signed_in_user(self, api_client):
+        assert api_client.get(AVAILABILITY).status_code in (401, 403)
 
 
 def _connect(organization, workspace, user, source):

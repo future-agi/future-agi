@@ -1640,6 +1640,7 @@ export const endpoints = {
     scanDetail: (id) =>
       apiPath("/simulate/agents/scan/{scan_id}/", { scan_id: id }),
     connect: apiPath("/simulate/agents/connect/"),
+    connectAvailability: apiPath("/simulate/agents/connect/availability/"),
     codeTree: (id, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",

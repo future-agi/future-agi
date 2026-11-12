@@ -13,6 +13,7 @@ from simulate.serializers.requests.agent_connect import (
     AgentSourceRequestSerializer,
 )
 from simulate.serializers.response.agent_connect import (
+    AgentConnectAvailabilityResponseSerializer,
     AgentConnectResponseSerializer,
     AgentFoundCheckResponseSerializer,
     AgentScanResponseSerializer,
@@ -20,6 +21,7 @@ from simulate.serializers.response.agent_connect import (
 )
 from simulate.services import agent_connect
 from simulate.services.agent_reading_sandbox import expire_stale_scan
+from simulate.services.agent_version_steps import reading_enabled
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope, error_details
@@ -165,6 +167,18 @@ class AgentConnectView(_ConnectView):
         return Response(
             AgentConnectResponseSerializer(body).data,
             status=status.HTTP_201_CREATED if connected.created else status.HTTP_200_OK,
+        )
+
+
+class AgentConnectAvailabilityView(_ConnectView):
+    @validated_request(
+        responses={200: AgentConnectAvailabilityResponseSerializer},
+    )
+    def get(self, request, *args, **kwargs):
+        return Response(
+            AgentConnectAvailabilityResponseSerializer(
+                {"reading_enabled": reading_enabled()}
+            ).data
         )
 
 

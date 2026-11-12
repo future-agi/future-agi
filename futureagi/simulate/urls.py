@@ -102,6 +102,7 @@ from .views.agent_code import (
     AgentCodeTreeView,
 )
 from .views.agent_connect import (
+    AgentConnectAvailabilityView,
     AgentConnectView,
     AgentFoundCheckView,
     AgentScanDetailView,
@@ -384,6 +385,11 @@ urlpatterns = [
         name="agents-scan-detail",
     ),
     path("agents/connect/", AgentConnectView.as_view(), name="agents-connect"),
+    path(
+        "agents/connect/availability/",
+        AgentConnectAvailabilityView.as_view(),
+        name="agents-connect-availability",
+    ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/tree/",
         AgentCodeTreeView.as_view(),

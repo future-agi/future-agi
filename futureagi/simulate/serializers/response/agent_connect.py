@@ -66,5 +66,9 @@ class AgentConnectResponseSerializer(serializers.Serializer):
     exists = serializers.BooleanField(read_only=True)
 
 
+class AgentConnectAvailabilityResponseSerializer(serializers.Serializer):
+    reading_enabled = serializers.BooleanField(read_only=True)
+
+
 class AgentFoundCheckResponseSerializer(serializers.Serializer):
     found_checked_at = serializers.DateTimeField(read_only=True)

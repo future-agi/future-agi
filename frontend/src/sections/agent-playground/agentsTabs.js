@@ -10,6 +10,11 @@ export const PLAYGROUND_AGENTS_PATH = agentsTabPath("playground");
 
 export const CONNECT_AGENT_PATH = `${paths.dashboard.agents}/connect`;
 
+export const BUILD_ENVIRONMENT_PATH = `${paths.dashboard.simulate.environments.root}?tab=build`;
+
+export const connectAgentPath = (readingEnabled) =>
+  readingEnabled ? CONNECT_AGENT_PATH : BUILD_ENVIRONMENT_PATH;
+
 export const resolveAgentsTab = (raw) =>
   AGENTS_TABS.includes(raw) ? raw : "connected";
 

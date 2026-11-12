@@ -60,6 +60,18 @@ export function useAgentScan(scanId) {
   });
 }
 
+export function useConnectAvailability() {
+  return useQuery({
+    queryKey: ["agents", "connect", "availability"],
+    queryFn: async () =>
+      unwrap(
+        (await axios.get(endpoints.agentDefinitions.connectAvailability)).data,
+      ),
+    select: (raw) => ({ readingEnabled: raw?.reading_enabled === true }),
+    staleTime: Infinity,
+  });
+}
+
 export function useConnectAgent() {
   const queryClient = useQueryClient();
   return useMutation({
