@@ -194,11 +194,9 @@ def annotate(result: Comparison) -> None:
     workspace = Path(os.environ.get("GITHUB_WORKSPACE") or Path.cwd()).resolve()
     for entry, found in result.new.items():
         allowed = result.baseline[entry]
-        title = (
-            "New mypy error"
-            if allowed == 0
-            else f"mypy error above its baseline count ({len(found)} now, baseline {allowed})"
-        )
+        title = "New mypy error"
+        if allowed:
+            title = f"mypy error over baseline count ({len(found)}, baseline {allowed})"
         for error in found:
             path = os.path.relpath(Path.cwd() / error.path, workspace)
             line = f",line={error.line}" if error.line else ""
@@ -222,7 +220,12 @@ def write_step_summary(result: Comparison) -> None:
         f"- Fixed but still in the baseline: {result.fixed_count}",
     ]
     if result.new:
-        lines += ["", "New errors (every occurrence of each entry over its count):", "", "```"]
+        lines += [
+            "",
+            "New errors (every occurrence of each entry over its count):",
+            "",
+            "```",
+        ]
         lines += [e.raw for found in result.new.values() for e in found][:SHOW]
         lines += ["```"]
     with open(summary, "a", encoding="utf-8") as out:

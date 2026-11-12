@@ -32,7 +32,9 @@ mb = importlib.util.module_from_spec(spec)
 sys.modules["mypy_baseline"] = mb
 spec.loader.exec_module(mb)
 
-MYPY_BIN = os.path.abspath(os.environ["MYPY_BIN"]) if os.environ.get("MYPY_BIN") else None
+MYPY_BIN = (
+    os.path.abspath(os.environ["MYPY_BIN"]) if os.environ.get("MYPY_BIN") else None
+)
 REQUIRE_MYPY = bool(os.environ.get("CI"))
 
 
@@ -95,7 +97,7 @@ class NormalizationTests(unittest.TestCase):
         return [e.entry for e in mb.parse_output(output(*lines))]
 
     def test_line_and_column_become_zero(self):
-        expected = "app/a.py:0: error: Name \"x\" is not defined  [name-defined]"
+        expected = 'app/a.py:0: error: Name "x" is not defined  [name-defined]'
         for line in (
             'app/a.py:12: error: Name "x" is not defined  [name-defined]',
             'app/a.py:12:5: error: Name "x" is not defined  [name-defined]',
@@ -113,7 +115,9 @@ class NormalizationTests(unittest.TestCase):
 
     def test_on_line_n_inside_the_message_is_normalized(self):
         self.assertEqual(
-            self.entries('app/a.py:466: error: Name "wrapper" already defined on line 454  [no-redef]'),
+            self.entries(
+                'app/a.py:466: error: Name "wrapper" already defined on line 454  [no-redef]'
+            ),
             ['app/a.py:0: error: Name "wrapper" already defined on line 0  [no-redef]'],
         )
 
@@ -123,7 +127,9 @@ class NormalizationTests(unittest.TestCase):
 
     def test_notes_are_ignored(self):
         self.assertEqual(
-            self.entries(A1, NOTE, "app/a.py:10: note: See https://mypy.readthedocs.io/x"),
+            self.entries(
+                A1, NOTE, "app/a.py:10: note: See https://mypy.readthedocs.io/x"
+            ),
             [mb.entry_for("app/a.py", A1.split(": error: ")[1])],
         )
 
@@ -143,7 +149,7 @@ class CompletenessTests(unittest.TestCase):
 
     def test_an_abort_is_incomplete(self):
         self.assert_incomplete(
-            "app/utils/graph.py: error: Duplicate module named \"graph\"\n"
+            'app/utils/graph.py: error: Duplicate module named "graph"\n'
             "app/utils/graph.py: note: See https://mypy.readthedocs.io/x\n"
             "Found 1 error in 1 file (errors prevented further checking)\n",
             match="stopped before checking everything",
@@ -163,19 +169,32 @@ class CompletenessTests(unittest.TestCase):
             output(A1, summary="Found 2 errors in 1 file (checked 9 source files)"),
             match="summary says 2",
         )
-        self.assert_incomplete(output(A1, summary="Success: no issues found in 9 source files"))
+        self.assert_incomplete(
+            output(A1, summary="Success: no issues found in 9 source files")
+        )
 
     def test_lines_after_the_summary_are_incomplete(self):
         self.assert_incomplete(output(A1) + A2 + "\n", match="follows mypy's summary")
 
     def test_an_unknown_line_is_incomplete(self):
-        self.assert_incomplete(output("Traceback (most recent call last):", A1), match="not a mypy diagnostic")
-        self.assert_incomplete(output("app/a.py:1: warning: odd"), match="not a mypy diagnostic")
+        self.assert_incomplete(
+            output("Traceback (most recent call last):", A1),
+            match="not a mypy diagnostic",
+        )
+        self.assert_incomplete(
+            output("app/a.py:1: warning: odd"), match="not a mypy diagnostic"
+        )
 
     def test_the_exit_code_must_match_the_summary(self):
         self.assertEqual(len(mb.parse_output(output(A1), 1)), 1)
         self.assertEqual(mb.parse_output(output(), 0), [])
-        for text, code in ((output(A1), 0), (output(A1), 2), (output(), 1), (output(), 2), (output(A1), -9)):
+        for text, code in (
+            (output(A1), 0),
+            (output(A1), 2),
+            (output(), 1),
+            (output(), 2),
+            (output(A1), -9),
+        ):
             with self.subTest(code=code, text=text):
                 self.assert_incomplete(text, code, match="mypy exited")
 
@@ -241,7 +260,9 @@ class FilterTests(TempDirTestCase):
 
     def test_an_abort_fails_even_with_no_errors_listed(self):
         self.write_baseline()
-        code, _, err = self.filter("Found 1 error in 1 file (errors prevented further checking)\n")
+        code, _, err = self.filter(
+            "Found 1 error in 1 file (errors prevented further checking)\n"
+        )
         self.assertEqual(code, 2)
         self.assertIn("stopped before checking everything", err)
 
@@ -262,7 +283,9 @@ class FilterTests(TempDirTestCase):
         self.assertEqual(code, 2)
         self.assertIn("no baseline", err)
         entry = mb.parse_output(output(A1))[0].entry
-        self.baseline.write_text(f"<<<<<<< HEAD\n{entry}\n=======\n>>>>>>> x\n", encoding="utf-8")
+        self.baseline.write_text(
+            f"<<<<<<< HEAD\n{entry}\n=======\n>>>>>>> x\n", encoding="utf-8"
+        )
         code, _, err = self.filter(output(A1))
         self.assertEqual(code, 2)
         self.assertIn("not a baseline entry", err)
@@ -300,7 +323,9 @@ class FilterTests(TempDirTestCase):
         finally:
             os.chdir(cwd)
         self.assertEqual(code, 1, out)
-        self.assertIn("::error file=futureagi/app/a.py,line=10,title=New mypy error::", out)
+        self.assertIn(
+            "::error file=futureagi/app/a.py,line=10,title=New mypy error::", out
+        )
         self.assertIn("New errors: 1", summary.read_text(encoding="utf-8"))
 
     def test_the_command_line_entry_point(self):
@@ -309,7 +334,15 @@ class FilterTests(TempDirTestCase):
         for text, expected in ((output(), 0), (output(A1), 1), (f"{A1}\n", 2)):
             with self.subTest(expected=expected):
                 proc = subprocess.run(
-                    [sys.executable, "-I", str(SCRIPT), "filter", "--baseline", str(self.baseline)],
+                    [
+                        sys.executable,
+                        "-I",
+                        str(SCRIPT),
+                        "filter",
+                        "--baseline",
+                        str(self.baseline),
+                    ],
+                    check=False,
                     input=text,
                     capture_output=True,
                     text=True,
@@ -366,7 +399,9 @@ class SyncTests(TempDirTestCase):
 
     def test_sync_rebuilds_a_conflicted_baseline(self):
         entry = mb.parse_output(output(A1))[0].entry
-        self.baseline.write_text(f"<<<<<<< HEAD\n{entry}\n=======\n>>>>>>> x\n", encoding="utf-8")
+        self.baseline.write_text(
+            f"<<<<<<< HEAD\n{entry}\n=======\n>>>>>>> x\n", encoding="utf-8"
+        )
         self.assertEqual(self.sync(output(A1))[0], 0)
         self.assertEqual(self.baseline.read_text(encoding="utf-8"), f"{entry}\n")
 
@@ -399,7 +434,9 @@ def job_block(text, job_id):
 
 def step_block(job, name):
     """One step of a job, from its `- name:` line to the next step."""
-    found = re.search(rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - |\Z)", job)
+    found = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - |\Z)", job
+    )
     if not found:
         raise AssertionError(f"no step {name!r}")
     return found.group(1)
@@ -436,20 +473,27 @@ class WorkflowTests(unittest.TestCase):
     def test_the_workflow_has_no_paths_or_branches_filter(self):
         on = top_level_block(self.text, "on")
         self.assertRegex(on, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$")
+        self.assertRegex(
+            on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$"
+        )
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
         self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
 
     def test_the_header_says_it_is_advisory_and_names_the_summary(self):
         header = self.text.split("\non:", 1)[0]
         self.assertIn("name: Python types (advisory)", header)
-        self.assertIn('Advisory for now: "Python Types Pass" is not a required check.', header)
+        self.assertIn(
+            'Advisory for now: "Python Types Pass" is not a required check.', header
+        )
 
     def test_a_changes_job_decides_from_the_type_paths(self):
         changes = job_block(self.text, "changes")
         self.assertIn("uses: dorny/paths-filter@v3", changes)
         self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
-        self.assertRegex(changes, r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$")
+        self.assertRegex(
+            changes,
+            r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$",
+        )
         self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
         filters = changes.split("            python:\n", 1)[1]
         listed = re.findall(r"(?m)^              - '([^']+)'\s*$", filters)
@@ -459,21 +503,27 @@ class WorkflowTests(unittest.TestCase):
         job = job_block(self.text, "mypy-baseline")
         self.assertRegex(job, r"(?m)^    name: Mypy \(baseline\)\s*$")
         self.assertRegex(job, r"(?m)^    needs: changes\s*$")
-        self.assertRegex(job, r"(?m)^    if: needs\.changes\.outputs\.python == 'true'\s*$")
+        self.assertRegex(
+            job, r"(?m)^    if: needs\.changes\.outputs\.python == 'true'\s*$"
+        )
 
     def test_mypy_runs_on_the_whole_repo_and_its_status_reaches_the_filter(self):
         job = job_block(self.text, "mypy-baseline")
         self.assertIn("run: uv sync --frozen --no-dev --extra dev", job)
-        self.assertIn('python3 -I scripts/test_mypy_baseline.py', job)
+        self.assertIn("python3 -I scripts/test_mypy_baseline.py", job)
         script = run_script(step_block(job, "Run mypy and compare with the baseline"))
-        self.assertIn('.venv/bin/mypy . > "$RUNNER_TEMP/mypy-output.txt" || status=$?', script)
+        self.assertIn(
+            '.venv/bin/mypy . > "$RUNNER_TEMP/mypy-output.txt" || status=$?', script
+        )
         self.assertRegex(
             script,
             r"python3 -I \.\./scripts/mypy_baseline\.py filter \\\n\s+"
             r'--mypy-exit-code "\$status" --input "\$RUNNER_TEMP/mypy-output\.txt"\n',
         )
         # The filter is the step's last command, so its exit status is the step's.
-        self.assertTrue(script.rstrip().endswith('--input "$RUNNER_TEMP/mypy-output.txt"'))
+        self.assertTrue(
+            script.rstrip().endswith('--input "$RUNNER_TEMP/mypy-output.txt"')
+        )
 
     def test_the_self_test_runs_before_mypy_with_the_real_mypy(self):
         job = job_block(self.text, "mypy-baseline")
@@ -488,7 +538,9 @@ class WorkflowTests(unittest.TestCase):
             names.index("Run mypy and compare with the baseline"),
         )
         self_test = step_block(job, "Self-test the baseline script")
-        self.assertRegex(self_test, r"(?m)^          MYPY_BIN: futureagi/\.venv/bin/mypy\s*$")
+        self.assertRegex(
+            self_test, r"(?m)^          MYPY_BIN: futureagi/\.venv/bin/mypy\s*$"
+        )
 
     def test_no_mypy_cache_is_restored(self):
         # Every run is cold; a stale cache must never hide an error.
@@ -502,16 +554,28 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(pinned, locked)
 
     def test_the_summary_job_always_runs_after_both_jobs(self):
-        names = re.findall(r"(?m)^    name: Python Types Pass\s*$", top_level_block(self.text, "jobs"))
-        self.assertEqual(len(names), 1, "exactly one job may carry the summary check's name")
+        names = re.findall(
+            r"(?m)^    name: Python Types Pass\s*$", top_level_block(self.text, "jobs")
+        )
+        self.assertEqual(
+            len(names), 1, "exactly one job may carry the summary check's name"
+        )
         summary = job_block(self.text, "python-types-pass")
         self.assertRegex(summary, r"(?m)^    name: Python Types Pass\s*$")
         self.assertRegex(summary, r"(?m)^    needs: \[changes, mypy-baseline\]\s*$")
         # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
         self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
-        self.assertRegex(summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$")
-        self.assertRegex(summary, r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$")
-        self.assertRegex(summary, r"(?m)^          MYPY: \$\{\{ needs\.mypy-baseline\.result \}\}\s*$")
+        self.assertRegex(
+            summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$"
+        )
+        self.assertRegex(
+            summary,
+            r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$",
+        )
+        self.assertRegex(
+            summary,
+            r"(?m)^          MYPY: \$\{\{ needs\.mypy-baseline\.result \}\}\s*$",
+        )
 
     def test_nothing_turns_a_failure_into_a_pass(self):
         self.assertNotIn("continue-on-error", self.text)
@@ -543,12 +607,20 @@ class WorkflowTests(unittest.TestCase):
             for changes, python, mypy, passes in cases:
                 proc = subprocess.run(
                     ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
+                    check=False,
                     capture_output=True,
                     text=True,
-                    env={"PATH": os.environ["PATH"], "CHANGES": changes, "PYTHON_CHANGED": python, "MYPY": mypy},
+                    env={
+                        "PATH": os.environ["PATH"],
+                        "CHANGES": changes,
+                        "PYTHON_CHANGED": python,
+                        "MYPY": mypy,
+                    },
                 )
                 with self.subTest(changes=changes, python=python, mypy=mypy):
-                    self.assertEqual(proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr)
+                    self.assertEqual(
+                        proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr
+                    )
                     if not passes:
                         self.assertIn("::error::", proc.stdout)
 
@@ -558,17 +630,27 @@ class LocalToolingTests(unittest.TestCase):
         makefile = (ROOT / "futureagi" / "Makefile").read_text(encoding="utf-8")
         for target, command in (("mypy", "filter"), ("mypy-baseline-sync", "sync")):
             with self.subTest(target=target):
-                recipe = re.search(rf"(?ms)^{re.escape(target)}:\n((?:\t.*\n)+)", makefile).group(1)
-                self.assertIn(f"../scripts/mypy_baseline.py {command} --mypy-exit-code", recipe)
+                recipe = re.search(
+                    rf"(?ms)^{re.escape(target)}:\n((?:\t.*\n)+)", makefile
+                ).group(1)
+                self.assertIn(
+                    f"../scripts/mypy_baseline.py {command} --mypy-exit-code", recipe
+                )
                 self.assertIn("mypy . >", recipe)
         self.assertNotIn("check_mypy.sh", makefile)
         self.assertNotIn("generate_mypy_baseline.sh", makefile)
         self.assertNotIn("mypy-update-baseline", makefile)
 
     def test_the_pre_commit_config_does_not_run_whole_repo_mypy(self):
-        config = (ROOT / "futureagi" / ".pre-commit-config.yaml").read_text(encoding="utf-8")
-        hooks = [line for line in config.splitlines() if not line.lstrip().startswith("#")]
-        self.assertFalse([line for line in hooks if "mypy" in line], "no hook may run mypy")
+        config = (ROOT / "futureagi" / ".pre-commit-config.yaml").read_text(
+            encoding="utf-8"
+        )
+        hooks = [
+            line for line in config.splitlines() if not line.lstrip().startswith("#")
+        ]
+        self.assertFalse(
+            [line for line in hooks if "mypy" in line], "no hook may run mypy"
+        )
 
     def test_the_old_tools_are_gone(self):
         for path in (
@@ -580,7 +662,9 @@ class LocalToolingTests(unittest.TestCase):
             self.assertFalse((ROOT / path).exists(), path)
 
 
-@unittest.skipUnless(MYPY_BIN or REQUIRE_MYPY, "set MYPY_BIN to run the real-mypy tests")
+@unittest.skipUnless(
+    MYPY_BIN or REQUIRE_MYPY, "set MYPY_BIN to run the real-mypy tests"
+)
 class RealMypyTests(TempDirTestCase):
     """The real mypy's output parses: errors, notes, the summary and an abort."""
 
@@ -593,7 +677,16 @@ class RealMypyTests(TempDirTestCase):
             (project / name).write_text(textwrap.dedent(text), encoding="utf-8")
         (project / "mypy.ini").write_text("[mypy]\n", encoding="utf-8")
         proc = subprocess.run(
-            [MYPY_BIN, "--config-file", "mypy.ini", "--no-incremental", "--cache-dir", os.devnull, "."],
+            [
+                MYPY_BIN,
+                "--config-file",
+                "mypy.ini",
+                "--no-incremental",
+                "--cache-dir",
+                os.devnull,
+                ".",
+            ],
+            check=False,
             cwd=project,
             capture_output=True,
             text=True,
@@ -647,7 +740,7 @@ class RealMypyTests(TempDirTestCase):
         status, report, _ = self.filter(out, "--mypy-exit-code", str(code))
         self.assertEqual(status, 1, report)
         self.assertIn("3 now, baseline allows 2", report)
-        self.assertIn('a.py:8: error: Incompatible types in assignment', report)
+        self.assertIn("a.py:8: error: Incompatible types in assignment", report)
 
     def test_a_clean_run(self):
         code, out = self.mypy({"a.py": "x: int = 1\n"})
