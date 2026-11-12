@@ -63542,8 +63542,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         project_id: {
           title: "Project id",
+          description:
+            "The Observe project; null for evidence from outside Observe.",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
         },
         agent_version_id: {
           title: "Agent version id",
@@ -130668,8 +130671,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trace_id: {
           title: "Trace id",
+          description: "Blank for a turn no trace recorded.",
           type: "string",
-          minLength: 1,
         },
         at: {
           title: "At",

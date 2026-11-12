@@ -20039,7 +20039,7 @@ export interface EvidenceTurnApi {
   role: EvidenceTurnApiRole;
   text: string;
   truncated: boolean;
-  /** @minLength 1 */
+  /** Blank for a turn no trace recorded. */
   trace_id: string;
   at: string;
 }
@@ -20233,6 +20233,7 @@ export interface EvidenceRedactionApi {
 export interface EvidenceImportApi {
   id: string;
   environment_id: string;
+  /** The Observe project; null for evidence from outside Observe. */
   project_id: string;
   agent_version_id: string;
   source_kind: EvidenceImportApiSourceKind;

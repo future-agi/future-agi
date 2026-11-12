@@ -35,7 +35,9 @@ class EvidenceTurnSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=("user", "agent"))
     text = serializers.CharField(allow_blank=True)
     truncated = serializers.BooleanField()
-    trace_id = serializers.CharField()
+    trace_id = serializers.CharField(
+        allow_blank=True, help_text="Blank for a turn no trace recorded."
+    )
     at = serializers.DateTimeField(allow_null=True)
 
 
@@ -148,7 +150,10 @@ class EvidenceRedactionSerializer(serializers.Serializer):
 class EvidenceImportSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     environment_id = serializers.UUIDField()
-    project_id = serializers.UUIDField()
+    project_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="The Observe project; null for evidence from outside Observe.",
+    )
     agent_version_id = serializers.UUIDField(allow_null=True)
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     created_at = serializers.DateTimeField()

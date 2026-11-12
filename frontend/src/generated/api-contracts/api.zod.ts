@@ -40236,7 +40236,10 @@ export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionTotalM
 export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   id: zod.string().uuid(),
   environment_id: zod.string().uuid(),
-  project_id: zod.string().uuid(),
+  project_id: zod
+    .string()
+    .uuid()
+    .describe("The Observe project; null for evidence from outside Observe."),
   agent_version_id: zod.string().uuid(),
   source_kind: zod.enum(["session", "call"]),
   created_at: zod.string().datetime({ offset: true }),
@@ -40304,7 +40307,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             role: zod.enum(["user", "agent"]),
             text: zod.string(),
             truncated: zod.boolean(),
-            trace_id: zod.string().min(1),
+            trace_id: zod
+              .string()
+              .describe("Blank for a turn no trace recorded."),
             at: zod.string().datetime({ offset: true }),
           }),
         ),
@@ -40510,7 +40515,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
     evidence_import: zod.object({
       id: zod.string().uuid(),
       environment_id: zod.string().uuid(),
-      project_id: zod.string().uuid(),
+      project_id: zod
+        .string()
+        .uuid()
+        .describe(
+          "The Observe project; null for evidence from outside Observe.",
+        ),
       agent_version_id: zod.string().uuid(),
       source_kind: zod.enum(["session", "call"]),
       created_at: zod.string().datetime({ offset: true }),
@@ -40578,7 +40588,9 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 role: zod.enum(["user", "agent"]),
                 text: zod.string(),
                 truncated: zod.boolean(),
-                trace_id: zod.string().min(1),
+                trace_id: zod
+                  .string()
+                  .describe("Blank for a turn no trace recorded."),
                 at: zod.string().datetime({ offset: true }),
               }),
             ),

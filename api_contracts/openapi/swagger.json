@@ -142035,8 +142035,8 @@
                 },
                 "trace_id": {
                     "title": "Trace id",
-                    "type": "string",
-                    "minLength": 1
+                    "description": "Blank for a turn no trace recorded.",
+                    "type": "string"
                 },
                 "at": {
                     "title": "At",
@@ -142508,8 +142508,10 @@
                 },
                 "project_id": {
                     "title": "Project id",
+                    "description": "The Observe project; null for evidence from outside Observe.",
                     "type": "string",
-                    "format": "uuid"
+                    "format": "uuid",
+                    "x-nullable": true
                 },
                 "agent_version_id": {
                     "title": "Agent version id",
