@@ -63,3 +63,34 @@ def test_server_error_is_unavailable(sandbox):
 
     with pytest.raises(HarnessSandboxUnavailable, match="returned 500: boom"):
         client.list_jobs()
+
+
+def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
+    def fake_request(method, url, *, headers, timeout, **kwargs):
+        assert "Authorization" not in headers
+        return SimpleNamespace(status_code=401, json=lambda: {}, text="")
+
+    monkeypatch.setattr(harness_sandbox.requests, "request", fake_request)
+    client = HarnessSandboxClient(base_url="http://sandbox.test", token="")
+
+    with pytest.raises(
+        HarnessSandboxUnavailable, match="ALK_HARNESS_SANDBOX_TOKEN is not set"
+    ):
+        client.list_jobs()
+
+
+@pytest.mark.parametrize(
+    "token",
+    [f"{TOKEN}\n", f"{TOKEN}\r\nX-Injected: 1", f"{TOKEN}☃"],
+    ids=["trailing-newline", "embedded-crlf", "non-latin-1"],
+)
+def test_a_malformed_token_is_unavailable_without_the_token(token):
+    # The real HTTP stack raises here, with the header in its message, before any request.
+    client = HarnessSandboxClient(base_url="http://127.0.0.1:9", token=token)
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.list_jobs()
+
+    assert TOKEN not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
