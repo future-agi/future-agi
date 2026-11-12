@@ -1,4 +1,4 @@
-"""Complete 29/34-pending-migration A9 intersection regression, without Django.
+"""Complete 39/44-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -50,6 +50,16 @@ LATEST = (
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
+    ('integrations','0006_github_integration'),
+    ('simulate','0100_code_archive'),
+    ('simulate','0101_agent_production_project'),
+    ('simulate','0102_agent_version_connect_triggers'),
+    ('simulate','0103_agentversionsetup_contract_object_key'),
+    ('simulate','0104_merge_20261103_1030'),
+    ('simulate','0105_alter_harnessagentversionruntime_trigger'),
+    ('simulate','0106_agent_reading'),
+    ('simulate','0107_merge_20261104_1400'),
+    ('simulate','0108_merge_20261111_1830'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -59,7 +69,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 29), (REVISIONS[0], LATEST + FLOOR_ONLY, 34))
+BASELINES = ((REVISIONS[1], LATEST, 39), (REVISIONS[0], LATEST + FLOOR_ONLY, 44))
 
 
 def added_migration_identities(revision):
@@ -136,12 +146,12 @@ class Operation:
         else:
             # All remaining operations in these COMPLETE plans affect catalog
             # indexes/constraints or carry declarations; no state table rename.
-            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint')
+            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint','RemoveConstraint')
 
 
 def operation_types():
     kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
-        'AddIndexConcurrently','RemoveIndex','AddConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
+        'AddIndexConcurrently','RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
     result['RunPython'].noop=object(); result['RunSQL'].noop=''
     return SimpleNamespace(**result)
