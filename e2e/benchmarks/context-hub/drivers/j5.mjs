@@ -812,9 +812,9 @@ class CampaignJourney {
   }
 
   /**
-   * One recovery decision on the surfaced conflict: keep a copy of the local
-   * edit, restore the managed bytes, and the product re-plans exactly that
-   * target in the same draft campaign (replanResolved). The oracle first checks
+   * One recovery decision on the surfaced conflict (keep a copy of the local
+   * edit, restore the managed bytes), then one counted re-plan command for
+   * exactly that target in the same draft campaign (replanResolved). The oracle first checks
    * the refusal changed nothing and that only this repository was held.
    */
   async resolveReverseConflict() {
@@ -826,13 +826,15 @@ class CampaignJourney {
     assert.equal(await readFile(managedPath, 'utf8'), dirtyBytes, 'dirty_local_work_lost');
     assert.deepEqual(await readFile(lockPath), lockBytes, 'dirty_check_mutated_lock');
     assert.ok(![...review.patches.values()].some((patch) => patch.repository_id === repo.id), 'conflicted_target_planned');
-    const replanned = await this.action('recovery_decision', async () => {
+    await this.action('recovery_decision', async () => {
       // Export the conflicting bytes before the scripted operator chooses the
       // previous managed content. The export survives scratch-tree teardown.
       await this.save('retained-dirty-local-work', { repository_id: repo.id, path: managed.destination, content: dirtyBytes, sha256: hash(dirtyBytes) });
       await writeFile(managedPath, original);
-      return this.rollout.replanResolved({ campaignId: this.campaign.id, review, repositoryIds: [repo.id], request: this.startRequest('reverse', true) });
     }, { repos: [repo] });
+    // The operator then invokes the re-plan (replan-resolved): its own counted command.
+    const replanned = await this.action('command', () => this.rollout.replanResolved({ campaignId: this.campaign.id, review,
+      repositoryIds: [repo.id], request: this.startRequest('reverse', true) }), { repos: [repo] });
     this.campaign.review = replanned.review; this.campaign.packet = replanned.packet;
     this.ledger.fault('dirty-managed-segment', 'reverse-plan-holds-local-conflict');
     return { dirty: 'local_modifications', held_until_resolved: true, lock_unchanged: true, local_work_exported: true };
