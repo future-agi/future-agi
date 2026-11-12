@@ -49,6 +49,9 @@ var prompts = []string{
 }
 
 func main() {
+	scenario := flag.String("scenario", "chat", "Scenario: chat or video (local fake provider and TEST_REDIS_ADDR)")
+	videoJobs := flag.Int("video-jobs", 1000, "Unique jobs in the video scenario (plus eight 200 MB copies)")
+	videoTimeout := flag.Duration("video-timeout", 10*time.Minute, "Video scenario deadline")
 	baseURL := flag.String("url", "http://localhost:8080", "Gateway base URL")
 	concurrency := flag.Int("c", 10, "Concurrent workers")
 	totalRequests := flag.Int("n", 50, "Total requests")
@@ -56,6 +59,17 @@ func main() {
 	stream := flag.Bool("stream", false, "Use streaming requests")
 	warmup := flag.Int("warmup", 2, "Warmup requests (not counted)")
 	flag.Parse()
+	if *scenario == "video" {
+		if err := runVideoLoad(*videoJobs, *concurrency, *videoTimeout); err != nil {
+			fmt.Fprintf(os.Stderr, "Video load test FAILED: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *scenario != "chat" {
+		fmt.Fprintf(os.Stderr, "Unknown scenario: %s\n", *scenario)
+		os.Exit(1)
+	}
 
 	modelList := strings.Split(*models, ",")
 	for i := range modelList {
