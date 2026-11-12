@@ -2901,7 +2901,7 @@ class TestPullRequestEvals:
         )
         candidate.refresh_from_db()
         with patch.object(agent_fix_github, "eval_review", return_value=review):
-            return agent_fix_github._description(candidate)[1]
+            return agent_fix_github._description(candidate, b"")[1]
 
     def test_the_body_names_each_eval_the_winner_does_worse_on(self, source_run):
         warning = EvalWarning(
@@ -2940,6 +2940,208 @@ class TestPullRequestEvals:
             (EvalReview(grading=EvalGrading.NONE), Outcome.FINALIST),
         ):
             assert "Platform evals" not in self._body(source_run, review, outcome)
+
+
+def _diff(*files: tuple[str, int, int]) -> bytes:
+    """A unified diff changing each (path, added, removed) file."""
+    lines = []
+    for path, added, removed in files:
+        lines += [
+            f"diff --git a/{path} b/{path}",
+            f"--- a/{path}",
+            f"+++ b/{path}",
+            f"@@ -1,{removed} +1,{added} @@",
+            # A removed line that itself starts with dashes is still a removed line.
+            *(f"--- old line {n}" for n in range(removed)),
+            *(f"+new line {n}" for n in range(added)),
+        ]
+    return ("\n".join(lines) + "\n").encode()
+
+
+_TIERS = [
+    {"name": "static", "status": "passed", "detail": "Lint and types pass."},
+    {"name": "target", "status": "passed", "detail": "0/8 → 5/8 | 2 repeats"},
+    {"name": "held-back", "status": "passed", "detail": "1/4 → 3/4"},
+    {"name": "must-pass", "status": "passed", "detail": "All 6 held."},
+    {"name": "repeats", "status": "passed", "detail": "3 of 3 repeats agree."},
+    {"name": "ceilings", "status": "passed", "detail": "Within the limits."},
+]
+_CAUSES = [
+    "The agent books the date the caller first said, not the one they corrected to.",
+    "It never reads the booking back before it confirms.",
+]
+_PATCH = _diff(
+    ("concierge/agents.py", 12, 3), ("prompts/booking.md", 4, 1), ("config.yaml", 1, 1)
+)
+
+
+class TestPullRequestDescription:
+    """The pull request's title says what the whole change does, and its body lays out
+    the verdict, the files, why, what could still go wrong, and where it came from."""
+
+    @pytest.fixture(autouse=True)
+    def _frontend(self, settings):
+        settings.FRONTEND_BASE_URL = "https://app.example"
+
+    def _described(
+        self,
+        source_run,
+        *,
+        held_back=4,
+        diagnosis=None,
+        verdict=None,
+        outcome=Outcome.WINNER,
+        override_reason="",
+        report=None,
+        plan=None,
+        evidence=None,
+        patch_body=_PATCH,
+    ):
+        from simulate.services import agent_fix_github
+
+        fix_run = _fix_run(source_run, diagnosis=diagnosis, report=report, plan=plan)
+        request = {
+            **fix_run.request,
+            "held_back_scenario_keys": [f"held-{n}" for n in range(held_back)],
+        }
+        if evidence is not None:
+            request["evidence"] = evidence
+        candidate = _candidate(fix_run)
+        # A pull request comes from a finished fix.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            state=State.READY, request=request
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome,
+            verdict=verdict
+            or {
+                "accepted": True,
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0.25, 0.75],
+                "tiers": _TIERS,
+            },
+            override_reason=override_reason,
+            summary="Changed only prompts (booking.md).",
+        )
+        candidate = AgentFixCandidate.no_workspace_objects.select_related(
+            "fix_run"
+        ).get(id=candidate.id)
+        none_graded = EvalReview(grading=EvalGrading.NONE)
+        with patch.object(agent_fix_github, "eval_review", return_value=none_graded):
+            return candidate, *agent_fix_github._description(candidate, patch_body)
+
+    def test_a_verified_fix_is_titled_by_the_cause_it_fixes_across_its_whole_diff(
+        self, source_run
+    ):
+        candidate, title, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}
+        )
+
+        # The last revision's summary ("only prompts") is not what the change does.
+        assert title == (
+            "Fix my agent: The agent books the date the caller first said, not the one"
+            " they corrected to (+1 more) · 3 files"
+        )
+        assert (
+            "Proven by Fix my agent: held-back cases 25% → 75%, target cases 0% → 63%;"
+            " passed every tier" in body
+        )
+        assert "### Verdict: Verified" in body
+        assert "| target | passed | 0/8 → 5/8 \\| 2 repeats |" in body
+        assert "### What changed" in body
+        assert "| `concierge/agents.py` | +12 | −3 |" in body
+        assert "| `prompts/booking.md` | +4 | −1 |" in body
+        assert "### Why" in body and f"- {_CAUSES[1]}" in body
+        assert "### What could still go wrong\n\nNothing the checks flagged." in body
+        assert "### Evidence" not in body
+        assert "Notes from Fix my agent, on its last revision" in body
+        run = candidate.fix_run
+        assert (
+            "[Open this fix on Future AGI](https://app.example/dashboard/simulate/"
+            f"environments/{run.environment_id}/improvements/{run.id})" in body
+        )
+        assert len(title) <= 120
+
+    def test_a_limited_fix_without_a_diagnosis_is_titled_by_the_files_it_changes(
+        self, source_run
+    ):
+        flaky = {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3}
+        _, title, body = self._described(
+            source_run, held_back=0, report={"flaky_protected": [flaky]}
+        )
+
+        assert title == (
+            "Fix my agent (limited validation): change code, prompts and config in"
+            " 3 files"
+        )
+        assert body.startswith("**Limited validation.**")
+        assert "Checked by Fix my agent" in body and "Proven by" not in body
+        assert "### Verdict: Limited validation" in body
+        assert "### Why" not in body
+        assert (
+            "- Protected case `case-2` (refunded) is not held: the current version"
+            " passes it 2 of 3 times." in body
+        )
+
+    def test_an_overridden_fix_names_its_regression_and_the_users_reason(
+        self, source_run
+    ):
+        tiers = [
+            {**tier, "status": "failed"} if tier["name"] == "must-pass" else tier
+            for tier in _TIERS
+        ]
+        _, title, body = self._described(
+            source_run,
+            diagnosis={"causes": _CAUSES[:1]},
+            outcome=Outcome.REJECTED,
+            override_reason="The regression is a test we are retiring.",
+            plan={"held_back": 4},
+            verdict={
+                "accepted": False,
+                "reason": "a must-pass check regressed",
+                "target_pass_rate": [0, 0.625],
+                "must_pass_regressions": ["case-1: refunded"],
+                "must_pass_within_noise": ["case-3: polite"],
+                "tiers": tiers,
+            },
+        )
+
+        assert title == (
+            "Fix my agent (known regression): The agent books the date the caller"
+            " first said, not the one they corrected to · 3 files"
+        )
+        assert body.startswith("**Known regression.**")
+        assert "- `case-1: refunded`" in body
+        assert "> The regression is a test we are retiring." in body
+        assert "### Verdict: Known regression" in body
+        assert "| must-pass | failed | All 6 held. |" in body
+        assert (
+            "- Must-pass check `case-3: polite` dropped, within the current version's"
+            " own noise." in body
+        )
+
+    def test_a_fix_from_evidence_names_each_import_by_kind_and_id_only(
+        self, source_run
+    ):
+        evidence = [
+            {
+                "import_id": "6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11",
+                "source_kind": "session",
+                "source_ids": ["session-with-a-customer-name"],
+                "scenario_keys": ["evidence-0a1b2c3d4e5f", "evidence-0a1b2c3d4e60"],
+            }
+        ]
+        _, _, body = self._described(
+            source_run, diagnosis={"causes": _CAUSES}, evidence=evidence
+        )
+
+        assert (
+            "### Evidence\n\nThis fix started from evidence imported into the suite:"
+            "\n\n- session import `6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11`: 2 cases"
+        ) in body
+        # Only the kind and the id: never the sources themselves.
+        assert "session-with-a-customer-name" not in body
 
 
 class TestCheckRunReceipts:

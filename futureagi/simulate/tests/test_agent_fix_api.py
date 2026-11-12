@@ -1643,8 +1643,8 @@ class TestUserApi:
             "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
             "passed every tier" in sent["json"]["body"]
         )
-        title = sent["json"]["title"]
-        assert len(title) <= 120 and title.endswith("r asked for…")
+        # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
+        assert sent["json"]["title"] == "Fix my agent: change agent.py"
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
