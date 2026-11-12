@@ -329,7 +329,8 @@ def _webp(data):
             h = 1 + int.from_bytes(frame[9:12], "little")
             _require(x + w <= canvas_w and y + h <= canvas_h)
             inner = [
-                (k, b) for k, b in _riff_chunks(frame, 16, len(frame))
+                (k, b)
+                for k, b in _riff_chunks(frame, 16, len(frame))
                 if k in (b"VP8 ", b"VP8L")
             ]
             _require(len(inner) == 1)
@@ -408,7 +409,11 @@ MP3_BITRATES = {
     3: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
     2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
 }
-MP3_RATES = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+MP3_RATES = {
+    3: (44100, 48000, 32000),
+    2: (22050, 24000, 16000),
+    0: (11025, 12000, 8000),
+}
 
 
 def _mp3_header(data, pos):
@@ -509,7 +514,10 @@ def _flac_frame_header(data, pos):
         return None
     length = 4 + coded
     length += {6: 1, 7: 2}.get(block, 0) + {12: 1, 13: 2, 14: 2}.get(rate, 0)
-    if pos + length + 1 > len(data) or _crc8(data[pos : pos + length]) != data[pos + length]:
+    if (
+        pos + length + 1 > len(data)
+        or _crc8(data[pos : pos + length]) != data[pos + length]
+    ):
         return None
     return length + 1
 
@@ -751,8 +759,20 @@ def _webm(data):
 # MP4 / ISO BMFF ----------------------------------------------------------------
 
 MP4_BRANDS = {
-    b"isom", b"iso2", b"iso3", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42",
-    b"avc1", b"M4A ", b"M4V ", b"dash", b"msnv", b"av01",
+    b"isom",
+    b"iso2",
+    b"iso3",
+    b"iso4",
+    b"iso5",
+    b"iso6",
+    b"mp41",
+    b"mp42",
+    b"avc1",
+    b"M4A ",
+    b"M4V ",
+    b"dash",
+    b"msnv",
+    b"av01",
 }
 MP4_VIDEO = {b"avc1", b"avc3", b"hvc1", b"hev1", b"av01", b"vp09"}
 MP4_AUDIO = {b"mp4a", b"Opus", b"fLaC"}

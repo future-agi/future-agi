@@ -32,7 +32,6 @@ from tracer.services.attachments.probe import REJECTED_EXIT
 from tracer.services.attachments.storage import ObjectIdentity
 from tracer.services.attachments.uploads import settle
 
-
 VALIDATED_MIME_TYPES = frozenset(
     mime for types in SERVER_MODALITIES.values() for mime in types
 )

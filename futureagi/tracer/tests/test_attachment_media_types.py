@@ -28,6 +28,7 @@ from tracer.services.attachments import (
     uploads,
     validation,
 )
+from tracer.services.attachments import probe as probe_module
 from tracer.services.attachments.contract import (
     SERVER_MODALITIES,
     AttachmentError,
@@ -35,7 +36,6 @@ from tracer.services.attachments.contract import (
     admit_audio,
     policy_document,
 )
-from tracer.services.attachments import probe as probe_module
 from tracer.services.attachments.probe import probe
 from tracer.tests import test_attachment_core as core
 from tracer.tests.test_attachment_core import ImmutableStore, initialized, wav_bytes
@@ -173,7 +173,15 @@ VALID = [
         1,
         (0.2, 0.4),
     ),
-    ("flac", lambda: fixture("tone.flac"), "audio/flac", "audio", 16000, 1, (0.19, 0.21)),
+    (
+        "flac",
+        lambda: fixture("tone.flac"),
+        "audio/flac",
+        "audio",
+        16000,
+        1,
+        (0.19, 0.21),
+    ),
     (
         "webm-audio",
         lambda: fixture("tone.webm"),
@@ -216,7 +224,15 @@ VALID = [
         1,
         (0.95, 1.1),
     ),
-    ("mp4-fragmented", lambda: fixture("clip-frag.mp4"), "video/mp4", "video", 0, 0, None),
+    (
+        "mp4-fragmented",
+        lambda: fixture("clip-frag.mp4"),
+        "video/mp4",
+        "video",
+        0,
+        0,
+        None,
+    ),
     ("webm-video", lambda: fixture("clip.webm"), "video/webm", "video", 0, 0, None),
     ("pdf", pdf_bytes, "application/pdf", "document", 0, 0, None),
 ]
@@ -318,27 +334,25 @@ def _mp3_frame_44100():
         pytest.param(
             lambda: gray_png(64, 64, extra=[(b"acTL", b"\x00" * 8)]), id="apng"
         ),
-        pytest.param(
-            lambda: _jpeg_dims(picture("JPEG"), 60000, 60000), id="jpeg-dims"
-        ),
+        pytest.param(lambda: _jpeg_dims(picture("JPEG"), 60000, 60000), id="jpeg-dims"),
         # Under the pixel cap but over the per-side cap.
         pytest.param(lambda: _jpeg_dims(picture("JPEG"), 20000, 1), id="jpeg-wide"),
         pytest.param(lambda: _jpeg_dims(picture("JPEG"), 1, 20000), id="jpeg-tall"),
         # Both end in EOI, but the first EOI is not the last two bytes.
-        pytest.param(
-            lambda: picture("JPEG") + picture("JPEG"), id="jpeg-concatenated"
-        ),
+        pytest.param(lambda: picture("JPEG") + picture("JPEG"), id="jpeg-concatenated"),
         pytest.param(
             lambda: picture("JPEG") + POLYGLOT_TAIL + b"\xff\xd9",
             id="jpeg-eoi-then-tail",
         ),
         pytest.param(
-            lambda: b"RIFF"
-            + struct.pack("<I", 22)
-            + b"WEBPVP8X"
-            + struct.pack("<I", 10)
-            + b"\x00" * 4
-            + (16383).to_bytes(3, "little") * 2,
+            lambda: (
+                b"RIFF"
+                + struct.pack("<I", 22)
+                + b"WEBPVP8X"
+                + struct.pack("<I", 10)
+                + b"\x00" * 4
+                + (16383).to_bytes(3, "little") * 2
+            ),
             id="webp-canvas",
         ),
         # External or embedded resources, chained streams, concatenations.
@@ -349,8 +363,9 @@ def _mp3_frame_44100():
             id="mp4-external-dref",
         ),
         pytest.param(
-            lambda: unknown_size(fixture("tone.webm"), SEGMENT_ID)
-            + b"\x19\x41\xa4\x69\x80",
+            lambda: (
+                unknown_size(fixture("tone.webm"), SEGMENT_ID) + b"\x19\x41\xa4\x69\x80"
+            ),
             id="webm-attachments",
         ),
         pytest.param(lambda: fixture("tone.ogg") * 2, id="ogg-chained"),
@@ -515,7 +530,9 @@ def _stored(setup, payload, mime, modality):
         pytest.param(SVG, "image/png", id="svg-declared-png"),
     ],
 )
-def test_type_mismatch_is_rejected_not_relabelled(setup, monkeypatch, payload, declared):
+def test_type_mismatch_is_rejected_not_relabelled(
+    setup, monkeypatch, payload, declared
+):
     modality = {"image": "image", "audio": "audio", "video": "video"}[
         declared.split("/")[0]
     ]
@@ -617,7 +634,11 @@ def _readable(setup, user, monkeypatch, payload, mime, modality, representation)
     )
     retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
     viewer = occurrences.Viewer(
-        user.id, uuid.uuid4(), scope.organization_id, scope.workspace_id, scope.project_id
+        user.id,
+        uuid.uuid4(),
+        scope.organization_id,
+        scope.workspace_id,
+        scope.project_id,
     )
     authority = AuthorityDouble(viewer, state)
     _, cookie = playback.exchange(viewer, authority)
@@ -658,17 +679,83 @@ def _get(r, **headers):
 
 
 SERVED_ROWS = [
-    ("png", lambda: picture("PNG"), "image/png", "image", 'inline; filename="image.png"'),
-    ("jpeg", lambda: picture("JPEG"), "image/jpeg", "image", 'inline; filename="image.jpg"'),
-    ("webp", lambda: picture("WEBP"), "image/webp", "image", 'inline; filename="image.webp"'),
-    ("ogg", lambda: fixture("tone.ogg"), "audio/ogg", "audio", 'inline; filename="audio.ogg"'),
-    ("mp3", lambda: fixture("tone.mp3"), "audio/mpeg", "audio", 'inline; filename="audio.mp3"'),
-    ("flac", lambda: fixture("tone.flac"), "audio/flac", "audio", 'inline; filename="audio.flac"'),
-    ("webm-audio", lambda: fixture("tone.webm"), "audio/webm", "audio", 'inline; filename="audio.webm"'),
-    ("m4a", lambda: fixture("tone.m4a"), "audio/mp4", "audio", 'inline; filename="audio.m4a"'),
-    ("mp4", lambda: fixture("clip.mp4"), "video/mp4", "video", 'inline; filename="video.mp4"'),
-    ("webm-video", lambda: fixture("clip.webm"), "video/webm", "video", 'inline; filename="video.webm"'),
-    ("pdf", pdf_bytes, "application/pdf", "document", 'attachment; filename="document.pdf"'),
+    (
+        "png",
+        lambda: picture("PNG"),
+        "image/png",
+        "image",
+        'inline; filename="image.png"',
+    ),
+    (
+        "jpeg",
+        lambda: picture("JPEG"),
+        "image/jpeg",
+        "image",
+        'inline; filename="image.jpg"',
+    ),
+    (
+        "webp",
+        lambda: picture("WEBP"),
+        "image/webp",
+        "image",
+        'inline; filename="image.webp"',
+    ),
+    (
+        "ogg",
+        lambda: fixture("tone.ogg"),
+        "audio/ogg",
+        "audio",
+        'inline; filename="audio.ogg"',
+    ),
+    (
+        "mp3",
+        lambda: fixture("tone.mp3"),
+        "audio/mpeg",
+        "audio",
+        'inline; filename="audio.mp3"',
+    ),
+    (
+        "flac",
+        lambda: fixture("tone.flac"),
+        "audio/flac",
+        "audio",
+        'inline; filename="audio.flac"',
+    ),
+    (
+        "webm-audio",
+        lambda: fixture("tone.webm"),
+        "audio/webm",
+        "audio",
+        'inline; filename="audio.webm"',
+    ),
+    (
+        "m4a",
+        lambda: fixture("tone.m4a"),
+        "audio/mp4",
+        "audio",
+        'inline; filename="audio.m4a"',
+    ),
+    (
+        "mp4",
+        lambda: fixture("clip.mp4"),
+        "video/mp4",
+        "video",
+        'inline; filename="video.mp4"',
+    ),
+    (
+        "webm-video",
+        lambda: fixture("clip.webm"),
+        "video/webm",
+        "video",
+        'inline; filename="video.webm"',
+    ),
+    (
+        "pdf",
+        pdf_bytes,
+        "application/pdf",
+        "document",
+        'attachment; filename="document.pdf"',
+    ),
 ]
 
 
