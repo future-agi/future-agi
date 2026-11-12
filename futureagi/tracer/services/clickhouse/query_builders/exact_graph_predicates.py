@@ -627,6 +627,62 @@ def _compile_effective_tag_filter(
     return (predicate, required, params), rendered
 
 
+def is_effective_tag_leaf(column_id: object, col_type: object) -> bool:
+    """The routing of ClickHouseFilterBuilderV2._build_condition for tags.
+
+    ``tag``/``tags`` with a native (or absent) column type is the effective
+    tag leaf; an explicit SPAN_ATTRIBUTE ``tags`` stays a raw attribute.
+    """
+    return column_id in {"tag", "tags"} and str(col_type or "").strip().upper() in {
+        "",
+        "NORMAL",
+        "SYSTEM_METRIC",
+    }
+
+
+class EffectiveTagGraphCompiler:
+    """Compile the effective tag leaves of one graph statement.
+
+    Every leaf of the statement shares one overlay read deadline and one
+    rendered byte budget. Unavailable or over-budget assignments are a
+    retryable graph read error (503), never an empty or source-only graph.
+    """
+
+    def __init__(self, *, project_id: str, observe_type: str) -> None:
+        self.project_id = str(project_id)
+        self.observe_type = observe_type
+        self._deadline: ReadDeadline | None = None
+        self._rendered = 0
+
+    def requirement(
+        self, *, column_id: str, config: dict[str, Any], filter_index: int
+    ) -> tuple[str, bool, dict[str, Any]]:
+        from tracer.services.clickhouse.bounded_graph_reads import (
+            BoundedGraphReadError,
+        )
+        from tracer.services.clickhouse.v2.effective_tags import (
+            MAX_TAG_OVERLAY_BYTES,
+        )
+
+        if self._deadline is None:
+            self._deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
+        try:
+            requirement, rendered = _compile_effective_tag_filter(
+                column_id=column_id,
+                config=config,
+                project_id=self.project_id,
+                observe_type=self.observe_type,
+                filter_index=filter_index,
+                deadline=self._deadline,
+            )
+            self._rendered += rendered
+            if self._rendered > MAX_TAG_OVERLAY_BYTES:
+                raise TagReadUnavailable("tag_overlay_budget_exceeded")
+        except TagReadUnavailable as exc:
+            raise BoundedGraphReadError("query_failed", retryable=True) from exc
+        return requirement
+
+
 def _compile_end_user_filter(
     *,
     column_id: str,
@@ -739,8 +795,9 @@ def compile_exact_graph_row_predicates(
     contribution_predicates: list[str] = []
     root_contribution = False
     bound_params: dict[str, Any] = {}
-    tag_overlay_deadline: ReadDeadline | None = None
-    tag_overlay_bytes = 0
+    tag_compiler = EffectiveTagGraphCompiler(
+        project_id=project_id, observe_type=normalized_observe_type
+    )
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
@@ -798,40 +855,12 @@ def compile_exact_graph_row_predicates(
                 project_id=project_id,
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
-        elif column_id in {"tag", "tags"} and normalized_col_type in {
-            "",
-            "NORMAL",
-            "SYSTEM_METRIC",
-        }:
-            # The same routing as ClickHouseFilterBuilderV2._build_condition:
-            # the effective tag leaf, never a raw ``spans.tags`` attribute.
-            if tag_overlay_deadline is None:
-                tag_overlay_deadline = ReadDeadline.start(GRAPH_TAG_OVERLAY_READ_MS)
-            try:
-                requirement, rendered = _compile_effective_tag_filter(
-                    column_id=column_id,
-                    config=config,
-                    project_id=project_id,
-                    observe_type=normalized_observe_type,
-                    filter_index=filter_index,
-                    deadline=tag_overlay_deadline,
+        elif is_effective_tag_leaf(column_id, normalized_col_type):
+            relation_requirements = [
+                tag_compiler.requirement(
+                    column_id=column_id, config=config, filter_index=filter_index
                 )
-                from tracer.services.clickhouse.v2.effective_tags import (
-                    MAX_TAG_OVERLAY_BYTES,
-                )
-
-                tag_overlay_bytes += rendered
-                if tag_overlay_bytes > MAX_TAG_OVERLAY_BYTES:
-                    raise TagReadUnavailable("tag_overlay_budget_exceeded")
-            except TagReadUnavailable as exc:
-                # Unavailable or over-budget assignments are a retryable 503,
-                # never an empty or source-only graph.
-                from tracer.services.clickhouse.bounded_graph_reads import (
-                    BoundedGraphReadError,
-                )
-
-                raise BoundedGraphReadError("query_failed", retryable=True) from exc
-            relation_requirements = [requirement]
+            ]
 
         if relation_requirements is not None:
             requirement_predicate_indexes: list[int] = []
@@ -1019,4 +1048,9 @@ def compile_exact_graph_row_predicates(
     )
 
 
-__all__ = ["ExactGraphRowPredicatePlan", "compile_exact_graph_row_predicates"]
+__all__ = [
+    "EffectiveTagGraphCompiler",
+    "ExactGraphRowPredicatePlan",
+    "compile_exact_graph_row_predicates",
+    "is_effective_tag_leaf",
+]

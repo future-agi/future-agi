@@ -5,6 +5,7 @@ Native/omitted-family controls deliberately retain the legacy alias contract.
 """
 
 import json
+import re
 import socket
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -489,35 +490,51 @@ def test_native_trace_tags_preserves_tenant_identity_and_tombstone_replay(
 
 
 def test_multiple_native_tags_and_raw_tag_bind_independently():
-    sql, params = compile_exact_graph_filter_predicates(
-        public(
-            [
-                leaf("tags", "array", "contains", ["first-tag"], "SYSTEM_METRIC"),
-                leaf("tags", "array", "not_contains", ["second-tag"], "SYSTEM_METRIC"),
-                leaf("tag", "text", "equals", "raw-singular-tag"),
-                leaf("tags", "array", "contains", ["raw-array-tag"]),
-            ]
-        ),
-        project_id=PROJECT,
-        observe_type="span",
-    )
+    # Exact graphs bind the UI overlay at compile time (graph statements also
+    # run on executors without a preparation hook). This offline test pins
+    # the routing and binding, with the PostgreSQL overlay read stubbed.
+    with patch(
+        "tracer.services.clickhouse.v2.effective_tags._read_assignments",
+        return_value=[],
+    ) as overlay:
+        sql, params = compile_exact_graph_filter_predicates(
+            public(
+                [
+                    leaf("tags", "array", "contains", ["first-tag"], "SYSTEM_METRIC"),
+                    leaf(
+                        "tags", "array", "not_contains", ["second-tag"], "SYSTEM_METRIC"
+                    ),
+                    leaf("tag", "text", "equals", "raw-singular-tag"),
+                    leaf("tags", "array", "contains", ["raw-array-tag"]),
+                ]
+            ),
+            project_id=PROJECT,
+            observe_type="span",
+        )
+    # One overlay read per native leaf. The explicit SPAN_ATTRIBUTE "tag" and
+    # "tags" stay raw attributes and read no overlay.
+    assert overlay.call_count == 2
     assert ["first-tag"] in params.values()
     assert ["second-tag"] in params.values()
-    assert ("raw-array-tag",) in params.values()
     assert "raw-singular-tag" in params.values()
-    prepared = assert_effective_tag_source(sql, params, count=2)
-    assert sql.count("hasAny(src,") == 2
-    assert "attrs_string" in sql and "attributes_extra" in sql
-    # The raw singular key is bound, not inlined; native leaves consume their
-    # own relation/name parameters, so suffix numbering is no longer fixed.
+    assert ("raw-array-tag",) in params.values()
+    assert not any(isinstance(v, EffectiveTagRelation) for v in params.values())
+    assert set(re.findall(r"%\((\w+)\)s", sql)) <= set(params) | {"project_id"}
+    # The raw singular key is bound, not inlined.
     keys = [key for key, value in params.items() if value == "tag"]
     assert len(keys) == 1
     assert f"%({keys[0]})s" in sql
+    # Row witnesses only: source names of the current row, never another read.
+    assert sql.count("hasAny(arrayDistinct(") == 2
+    assert "FROM spans" not in sql
+    assert "attrs_string['tag.tags']" in sql
+    assert "JSONExtractRaw(attributes_extra, 'tag.tags')" in sql
+    # Absence keeps the positive witness and negates it on the span row.
+    assert sql.count("NOT (") >= 1
     # The only inlined 'tag' is the projected nested SDK source path.
     nested_source = "JSONExtractRaw(attributes_extra, 'tag', 'tags')"
     assert sql.count("'tag'") == sql.count(nested_source) > 0
-    bound = {key: value for key, value in prepared.items() if key not in _CALLER_SCOPE}
-    assert rendered(sql, bound).count("'tag'") > sql.count("'tag'")
+    assert "start_date" not in sql and "end_date" not in sql
 
 
 @pytest.mark.parametrize("operation", ["is_null", "is_not_null"])

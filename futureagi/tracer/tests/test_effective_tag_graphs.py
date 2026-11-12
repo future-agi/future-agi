@@ -23,6 +23,7 @@ from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
+    compile_exact_graph_filter_predicates,
 )
 from tracer.services.clickhouse.query_builders.time_series import TimeSeriesQueryBuilder
 from tracer.services.clickhouse.read_budget import ReadDeadline
@@ -227,6 +228,55 @@ def test_span_graph_counts_each_tagged_span(stores, column, operation, value, ex
         operation, "is_null"
     )
     assert counted(stores, "span", leaf(column, value, negated)) == every - expected
+
+
+def membership_rows(stores, observe_type, item):
+    """The eval/annotation graph membership statement (EvalMetricsQueryBuilderV2)."""
+    clause, params = compile_exact_graph_filter_predicates(
+        [item], project_id=PROJECT, observe_type=observe_type
+    )
+    assert not any(isinstance(v, EffectiveTagRelation) for v in params.values())
+    selected = "trace_id, id" if observe_type == "span" else "DISTINCT trace_id"
+    sql = (
+        f"SELECT {selected} FROM spans FINAL "
+        "WHERE project_id = toUUID(%(project_id)s) AND is_deleted = 0 "
+        "AND start_time >= %(snapshot_start_date)s "
+        "AND start_time < %(snapshot_end_date)s AND " + clause
+    )
+    params = {
+        **params,
+        "project_id": PROJECT,
+        "snapshot_start_date": BEGIN,
+        "snapshot_end_date": END,
+    }
+    assert set(re.findall(r"%\((\w+)\)s", sql)) <= set(params)
+    return stores.execute(sql, params)
+
+
+@pytest.mark.parametrize(
+    "column,operation,value,expected",
+    TRACE_CASES,
+    ids=[f"{c}-{o}-{v}" for c, o, v, _ in TRACE_CASES],
+)
+def test_eval_graph_trace_membership_matches_the_trace_list(
+    stores, column, operation, value, expected
+):
+    tagged_project(stores)
+    rows = membership_rows(stores, "trace", leaf(column, value, operation))
+    assert {row["trace_id"] for row in rows} == expected
+
+
+@pytest.mark.parametrize(
+    "column,operation,value,expected",
+    SPAN_CASES,
+    ids=[f"{c}-{o}" for c, o, _, _ in SPAN_CASES],
+)
+def test_eval_graph_span_membership_selects_each_tagged_span(
+    stores, column, operation, value, expected
+):
+    tagged_project(stores)
+    rows = membership_rows(stores, "span", leaf(column, value, operation))
+    assert {f"{row['trace_id']}/{row['id']}" for row in rows} == expected
 
 
 @pytest.mark.parametrize("observe_type", ["trace", "span"])

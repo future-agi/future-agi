@@ -14,6 +14,7 @@ from tracer.serializers.trace import UsersQuerySerializer
 from tracer.services.clickhouse import exact_graph_reads as graph
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
+from tracer.services.clickhouse.v2.effective_tags import TagOverlay
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
 )
@@ -166,6 +167,13 @@ def test_catalog_key_reaches_typed_membership_or_explicit_boundary_rejection(
         monkeypatch.setattr(
             "tracer.services.clickhouse.query_builders.filters.resolve_eval_filter_metadata",
             lambda eval_id, project_ids: EvalFilterMetadata((eval_id,), "SCORE"),
+        )
+    if name in {"tag", "tags"} and col_type == "SYSTEM_METRIC":
+        # Catalog routing coverage only, as for EVAL above: the UI tag
+        # assignment overlay is a PostgreSQL read, an integration gap here.
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.effective_tags.read_tag_overlay",
+            lambda **kwargs: TagOverlay(),
         )
     if name == "start_time" and col_type == "SYSTEM_METRIC":
         # Membership compilers deliberately omit root date predicates; their
