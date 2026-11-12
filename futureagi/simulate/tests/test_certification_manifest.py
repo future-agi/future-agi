@@ -119,6 +119,7 @@ def test_production_suite_validates_and_is_all_placeholders():
     ]
 
 
+
 def test_quick_tier_materializes_an_outbound_voice_case():
     doc = load_suite("production_agents_v1")
     case = next(
