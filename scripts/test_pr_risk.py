@@ -4401,12 +4401,12 @@ class IsolationTests(unittest.TestCase):
                 self.assertEqual((result.returncode, planted), (0, []), result.stderr)
                 self.assertEqual(json.loads(result.stdout)["tier"], "low")
                 # From the checkout root, -I -c and -I -m do not see the plants.
-                result, planted = self.run_in(root, [
-                    sys.executable, "-I", "-c",
+                code = (
                     "import argparse, json, typing, uuid, importlib.util\n"
                     "spec = importlib.util.find_spec('pip')\n"
-                    "print(spec.origin if spec else '')",
-                ], log)
+                    "print(spec.origin if spec else '')"
+                )
+                result, planted = self.run_in(root, [sys.executable, "-I", "-c", code], log)
                 self.assertEqual((result.returncode, planted), (0, []), result.stderr)
                 self.assertFalse(result.stdout.strip().startswith(str(root)), result.stdout)
                 result, planted = self.run_in(root, [sys.executable, "-I", "-m", "pip", "--version"], log)
