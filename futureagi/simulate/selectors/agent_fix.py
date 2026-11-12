@@ -43,7 +43,6 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessScenario,
-    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
@@ -81,6 +80,10 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
+from simulate.services.harness_evals import (
+    runnable_eval_config_ids,
+    runnable_eval_configs,
+)
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import (
@@ -729,16 +732,6 @@ _SETTLED_RUN_STATUSES = (
 )
 
 
-def _billed_evals(run_test_id: Any) -> QuerySet[SimulateEvalConfig]:
-    """The run test's evals the platform runs itself, so bills: a config with no mapping is a
-    result column the harness fills (``runnable_eval_config_ids``)."""
-    return (
-        SimulateEvalConfig.objects.filter(run_test_id=run_test_id, deleted=False)
-        .exclude(mapping={})
-        .exclude(mapping__isnull=True)
-    )
-
-
 def _worst_case(evals: Any) -> Any:
     """What one execution of a check run may cost: its simulation, and each billed eval a
     winner's grading may run on it. ``evals`` is a count or an expression of one."""
@@ -756,7 +749,9 @@ def is_graded_label(label: str) -> bool:
 def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decimal:
     """What a check run reserves of the fix's budget for each execution: its simulation,
     and each billed eval only when a winner's grading reads the run."""
-    evals = _billed_evals(fix_run.environment.run_test_id).count() if graded else 0
+    evals = (
+        len(runnable_eval_config_ids(fix_run.environment.run_test_id)) if graded else 0
+    )
     return _worst_case(evals)
 
 
@@ -774,7 +769,7 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
     evals = Coalesce(
         Subquery(
-            _billed_evals(OuterRef("environment__run_test_id"))
+            runnable_eval_configs(OuterRef("environment__run_test_id"))
             .values("run_test_id")
             .annotate(total=Count("id"))
             .values("total")
@@ -1113,9 +1108,7 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
         return EvalReview(grading=EvalGrading.NONE)
     run_test_id = fix_run.environment.run_test_id
     base, final = graded_check_runs(fix_run, winner)
-    billed = {
-        str(one) for one in _billed_evals(run_test_id).values_list("id", flat=True)
-    }
+    billed = set(runnable_eval_config_ids(run_test_id))
     graded = HostedHarnessExecution.no_workspace_objects.filter(
         job_id__in=[run.id for run in (*base, *final)],
         call_execution__status=CallExecution.CallStatus.COMPLETED,

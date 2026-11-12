@@ -25,7 +25,6 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     HostedHarnessJob,
-    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.pydantic_schemas.agent_fix import (
@@ -46,7 +45,7 @@ from simulate.selectors.agent_fix import (
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
-from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_evals import runnable_eval_configs
 from simulate.services.harness_run_evals import queue_eval_for_finished_calls
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
@@ -416,11 +415,7 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
     """Queue the platform's evals of the baseline and the winner's final check, the runs its
     warnings compare. A fix's check runs are graded only now, so a fix with no winner pays
     for none. Called inside the report's transaction: the jobs start once it commits."""
-    configs = list(
-        SimulateEvalConfig.objects.filter(
-            id__in=runnable_eval_config_ids(fix_run.environment.run_test_id)
-        )
-    )
+    configs = list(runnable_eval_configs(fix_run.environment.run_test_id))
     if not configs:
         return
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)

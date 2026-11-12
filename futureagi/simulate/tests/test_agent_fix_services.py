@@ -91,7 +91,11 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
-from simulate.utils.test_execution_utils import accrue_check_run_eval_cost, eval_source
+from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
+    eval_source,
+    is_fix_check_run,
+)
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
 from tracer.services.clickhouse.client import CHError
@@ -2791,6 +2795,22 @@ class TestCheckRunEvalCost:
         source_run.refresh_from_db()
         assert run.fix_eval_cost_usd == Decimal("2.6250")
         assert source_run.fix_eval_cost_usd == 0
+
+    def test_a_deleted_check_run_stays_its_fix_s_and_its_eval_bill_is_counted(
+        self, source_run
+    ):
+        fix_run = _fix_run(source_run)
+        run = _check(fix_run)
+        HostedHarnessJob.all_objects.filter(id=run.id).update(
+            deleted=True, deleted_at=timezone.now()
+        )
+
+        assert is_fix_check_run(run.test_execution_id)
+        assert eval_source(run.test_execution_id) == FIX_CHECK_RUN_EVAL_SOURCE
+        accrue_check_run_eval_cost(run.test_execution_id, 40)
+        assert HostedHarnessJob.all_objects.get(id=run.id).fix_eval_cost_usd == Decimal(
+            "0.4000"
+        )
 
     def test_a_graded_run_s_reserve_covers_each_eval_a_winner_s_grading_may_run(
         self, source_run, settings, temporal

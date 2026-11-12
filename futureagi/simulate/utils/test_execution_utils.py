@@ -28,8 +28,9 @@ logger = structlog.get_logger(__name__)
 
 def is_fix_check_run(test_execution_id: uuid.UUID) -> bool:
     """Whether a fix started this run to check one of its versions. A check run is graded
-    only once its fix has a winner, and never by the error localizer."""
-    return HostedHarnessJob.no_workspace_objects.filter(
+    only once its fix has a winner, and never by the error localizer. A deleted job is still
+    its fix's check run, as accrue_check_run_eval_cost counts it."""
+    return HostedHarnessJob.all_objects.filter(
         test_execution_id=test_execution_id, fix_run__isnull=False
     ).exists()
 
