@@ -143,7 +143,8 @@ def _evidence(verdict: dict) -> str:
 
 # The FE says the same where the user ships.
 _EVALS_INCOMPLETE = (
-    "The evals could not finish grading this candidate; it was not checked by them."
+    "**Platform evals did not finish on this candidate,** so their results are missing."
+    " Review it closely before you merge."
 )
 
 
