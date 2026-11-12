@@ -35,7 +35,7 @@ from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.eval_tasks.recovery import recover_stranded_tasks
-from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import delete_ch_spans_for_project, seed_ch_spans
 
 _REAL_START = workflow_client.start_eval_task_workflow_sync
 
@@ -309,7 +309,7 @@ async def test_conversion_recovery_excludes_pre_activation_arrivals(
                         pass
     finally:
         await env.shutdown()
-        await sync_to_async(truncate_ch_spans)()
+        await sync_to_async(delete_ch_spans_for_project)(project.id)
         await sync_to_async(close_old_connections)()
 
 
@@ -456,5 +456,5 @@ async def test_pre_deploy_rows_recover_from_their_last_acceptance(
                         pass
     finally:
         await env.shutdown()
-        await sync_to_async(truncate_ch_spans)()
+        await sync_to_async(delete_ch_spans_for_project)(project.id)
         await sync_to_async(close_old_connections)()
