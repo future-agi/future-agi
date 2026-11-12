@@ -113,8 +113,9 @@ dispatches a run on `dev` for these PRs, in this order:
    are not capped, so the backfill never delays a merge. A PR that waits on a
    person or the owner at its current head is dispatched only on one sweep
    in four, about once an hour. It waits when the bot's standing escalation,
-   merge-blocked note or approver note names its current head, or when a
-   maintainer dismissed the autopilot's approval of that head. A push ends
+   merge-blocked note or approver note names its current head, or when the
+   autopilot's approval of that head was dismissed (item 2 of [Trust boundary
+   and merge decision](#trust-boundary-and-merge-decision)). A push ends
    the wait at once, because the note then names an older head. So does an
    escalation marked "No longer applies" or an approver note the bot marked
    the same way after a later approval. Parked PRs are staggered by PR
@@ -191,7 +192,9 @@ How the workflow uses the App:
   step has `continue-on-error`, so a missing variable, secret or installation
   does not skip the merge step. Only the merge step gets the token
   (`APPROVER_TOKEN`) and the App's login, `<slug>[bot]` (`APPROVER_LOGIN`).
-  The token is used for one request: the approval. Comments, labels, the
+  The token is used only to post the approval and, when the PR's head moved
+  while it was posted, to withdraw it (item 6 of [Trust boundary and merge
+  decision](#trust-boundary-and-merge-decision)). Comments, labels, the
   merge and dispatches use the workflow token.
 - If the token or login is missing, or the login is `github-actions[bot]`,
   the controller adds no label or audit comment and approves nothing. It
@@ -318,6 +321,22 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    approved PR stops at `blocked` and the autopilot tells the PR so (see item
    7 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)).
 
+   On a scratch repository with `dev`'s rules, also check an approval that
+   names an older head. Push a commit that changes the diff, then approve as
+   the App with `commit_id` set to the previous head. Record the HTTP status
+   of that request and `reviewDecision`. If it shows `APPROVED`, only the
+   controller's withdrawal (item 6 of [Trust boundary and merge
+   decision](#trust-boundary-and-merge-decision)) stops one person from
+   merging the new commits on that approval. Then confirm that the same
+   token can dismiss it (`PUT .../pulls/<n>/reviews/<id>/dismissals`, HTTP
+   200) and that a second dismissal answers 422. A rule that limits who can
+   dismiss reviews must allow the App.
+8. **Keep "Allow auto-merge" off** for this repository. It is off today
+   (read-only check, 12 Nov 2026). With it on, a writer could enable
+   auto-merge on a LOW PR, and GitHub would merge it the moment the App
+   approves: before the final recheck, with the author's merge method, and
+   without the `autopilot-merged` label or the post-merge dispatches.
+
 ## Trust boundary and merge decision
 
 1. A `pull_request_target` run for a PR into `dev` only classifies the PR,
@@ -344,8 +363,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    non-draft, non-fork PR from an explicitly trusted author, a LOW classification,
    a present review key, no hold label, an allowed time and known mergeability.
    Every push to the PR's branch must also come from a trusted author (see
-   above), and an autopilot approval of this head that a maintainer dismissed
-   counts as a hold.
+   above), and a dismissed autopilot approval of this head counts as a hold.
+   Usually a maintainer dismissed it. GitHub's stale-approval rule and the
+   autopilot's own withdrawal (item 6) also leave one when the branch moves
+   away from that head and is later pushed back to it. That is on purpose:
+   pushing a reviewed head back does not buy another attempt.
 3. It reads classic check contexts through GraphQL `Ref.refUpdateRule`, the
    non-admin protection view, and applicable active rules through
    `GET /repos/{owner}/{repo}/rules/branches/dev`. Required checks are the union
@@ -356,7 +378,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    From the same rules call, an active `pull_request` rule must have
    `dismiss_stale_reviews_on_push`. The bot's approval names one head, but
    GitHub counts it for the PR, so only that setting stops a later push from
-   being merged on it. Classic-only protection or inaccessible evidence stops
+   being merged on it. It acts only on a push after the approval. For a push
+   that lands while the approval is being posted, the controller withdraws
+   its own approval (item 6). Classic-only protection or inaccessible evidence stops
    automation. Check
    runs and legacy commit statuses are read with their separate permissions
    (`checks` and `statuses`). The newest result for each
@@ -370,6 +394,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    patches as data, not PR title/body/comments or executable files. Built-in
    tools, MCP tools and skills are disabled. No PR checkout, dependency install,
    shell interpolation of the diff, write token or patch execution is allowed.
+   Commit messages and the PR title therefore reach `dev`'s history unreviewed,
+   as they do after a person's approval. release-please reads commit messages
+   on `main`.
 5. A trusted follow-up job validates the structured output and publishes the
    separate **`PR Autopilot review`** Check Run on the **PR head SHA**. The
    publish step decides one outcome and exits 0 whenever it published:
@@ -381,7 +408,11 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
      or `dev` base moved (or could not be confirmed) during the review, or an
      AI job that was skipped, cancelled, failed or timed out. The Claude step
      has a 12-minute step timeout under the job's 15, so a slow review fails
-     the step instead of timing out the job.
+     the step instead of timing out the job. A model that returns no
+     structured output also lands here, not under **blocked**: the pinned
+     action then fails the step (`base-action/src/run-claude-sdk.ts`). A diff
+     that leads the model not to answer is therefore sampled again after each
+     branch change, up to the cap of nine attempts.
    - **passed** (conclusion `success`): everything else.
 
    The publish step reads the pending check first, retried on no answer, 5xx
@@ -423,6 +454,20 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    App's installation and permission. It posts no second audit comment, and
    one note per head tells the PR (see [Approver App and owner
    settings](#approver-app-and-owner-settings)).
+
+   The approval names the reviewed head, and a push can land between the last
+   read and the approval. If the recheck after the approval, or the merge
+   call, then fails, the controller re-reads the PR. When the head is no
+   longer the reviewed head, it dismisses the approval this run posted, as the
+   App, with a fixed message. An answer of 422 or 404 means GitHub's
+   stale-approval rule already dismissed it, because the push came after the
+   approval. Any other failure posts one note asking a person to dismiss the
+   App's approval, and the run still fails with its original error. A failed
+   re-read, or the same head, keeps the approval, so the next run reuses it.
+   An approval from an earlier run is never withdrawn: it was posted while its
+   head was current, so the stale-approval rule covers later pushes. This
+   matches the bot autopilot in `future-agi/deployment` (#438), which also
+   withdraws its approval when the head moved.
 7. It waits for GitHub's mergeability/protection state to be `clean` or
    `unstable` (`unstable` means a check that is not required is failing or still
    running; the required checks were already verified above), then calls
@@ -498,6 +543,10 @@ reserving. The budget counts **different diffs**, not commits: the digest
 covers the exact patches the model reviews (hunk line numbers ignored).
 
 Each of the three writes is tried up to three times on no answer, 5xx or 429.
+A 403 is not retried. GitHub's secondary rate limit often answers 403, but the
+controller does not read response headers, so it cannot tell that from a
+refusal, and a retry within seconds would not outlast the limit. Such an
+attempt ends as **retryable** (below), and the PR waits for a branch change.
 A lost response can only repeat a comment or status, which the controller
 folds into one attempt by run ID. Before it posts the check again, it looks for
 this record's check on the head, so a lost response does not leave a second
@@ -732,6 +781,8 @@ already recorded remains visible; a maintainer can dismiss it if it must not
 count toward a later manual merge. Dismissing the App's approval also stops
 automation for that head, like `autopilot-hold`: the bot does not approve it
 again, and only a new revision (or a person merging by hand) moves the PR on.
+The same holds for an approval that GitHub's stale-approval rule or the
+autopilot itself dismissed, if the branch is later pushed back to that head.
 A merged change must be reverted through the usual reviewed process.
 
 Suggested rollout:
@@ -785,7 +836,9 @@ Suggested rollout:
    - the `approve-and-merge` job runs in the `pr-autopilot` environment
      without waiting, also for a reused pass (when `ai-review` is skipped);
      the token step mints a token whose approval satisfies `dev`'s rules (the
-     live check in owner setting 7); a copy of the workflow dispatched on
+     live check in owner setting 7), and that can dismiss an approval that
+     names an older head (the scratch check in the same setting); a copy of
+     the workflow dispatched on
      another branch cannot read the environment's key; with the key
      removed, the merge step still runs and the PR gets the approver note;
      and a sweep run, a PR-event run and a dispatch run that only waits show
@@ -833,7 +886,9 @@ ordering and dispatch selection. It also covers approvals only by the approver
 App (a missing or unsafe identity, a refusal or another login approves
 nothing and posts one note per head; the workflow gives the key only to the
 merge step, in a job apart from the outcome markers), the stale-approval rule, retried and
-persistently failing reservation writes and check reads and updates, the
+persistently failing reservation writes and check reads and updates,
+withdrawal of this run's approval when the head moved (and no withdrawal on
+the same head, after a failed re-read or for an earlier approval), the
 not-started marker, unreviewable diffs, a PR blocked after an earlier approval,
 a refused approval, the sweep's order, caps, rotation, pause, throttling stop,
 re-tier of moved heads and hourly dispatch of PRs that wait on a person,

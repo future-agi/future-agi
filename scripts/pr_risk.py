@@ -34,6 +34,9 @@ ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
 APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
 MERGE_BLOCKED_MARKER = "<!-- pr-autopilot:merge-blocked -->"
 APPROVER_UNAVAILABLE_MARKER = "<!-- pr-autopilot:approver-unavailable -->"
+# Asks a person to dismiss an approval the autopilot could not withdraw. Not a
+# parking note: the PR's new head is judged as usual.
+NOT_WITHDRAWN_MARKER = "<!-- pr-autopilot:approval-not-withdrawn -->"
 # The first line after a note's marker once the bot has marked it superseded.
 NO_LONGER_APPLIES = "\n**No longer applies.**"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -1367,8 +1370,8 @@ def audited_head(api, number):
 
 def parked(api, pr):
     """The PR waits on a person or the owner at its current head: a standing
-    escalation, merge-blocked or approver note names that head, or a maintainer
-    dismissed the autopilot's approval of it. Its runs would only stop again.
+    escalation, merge-blocked or approver note names that head, or the
+    autopilot's approval of it was dismissed. Its runs would only stop again.
     Suppression only, never evidence: a run still checks everything. On a read
     failure the PR is not parked, so missing evidence never delays it."""
     number, head = pr["number"], pr["head"]["sha"]
@@ -1541,8 +1544,10 @@ def prepare(api, policy, settings, event, event_name):
     # App's login. The merge step rechecks with the exact login.
     if bot_approval_dismissed(api.pages(f"pulls/{number}/reviews"), context["head"], None):
         summary(
-            "Waiting: a maintainer dismissed the automated approval for this head, "
-            "which counts as autopilot-hold. Push a new revision or merge by hand."
+            "Waiting: the automated approval for this head was dismissed (by a "
+            "maintainer, or by GitHub or the autopilot after the branch moved away "
+            "from this head), which counts as autopilot-hold. Push a new revision "
+            "or merge by hand."
         )
         return
     try:
@@ -1785,7 +1790,12 @@ def no_requested_changes(reviews):
 
 
 def bot_approval_dismissed(reviews, head, login):
-    """A maintainer withdrew the autopilot's approval of this head: a hold."""
+    """The autopilot's approval of this head was dismissed: a hold.
+
+    Usually a maintainer did it. GitHub's stale-approval rule and the
+    autopilot's own withdrawal (withdraw_if_moved) also leave one, once the
+    branch moves away from this head and is pushed back to it. That is a hold
+    on purpose: it also ends free retries of the same head."""
     return any(approval_review(review, head, "DISMISSED", login) for review in reviews)
 
 
@@ -1805,8 +1815,9 @@ def validate_live(api, policy, settings, context):
         raise PolicyError("an outstanding human change request blocks automation")
     if bot_approval_dismissed(reviews, context["head"], approver_identity(settings)):
         raise PolicyError(
-            "a maintainer dismissed the automated approval for this head, which "
-            "counts as autopilot-hold; push a new revision or merge by hand"
+            "the automated approval for this head was dismissed (by a maintainer, or "
+            "by GitHub or the autopilot after the branch moved away from this head), "
+            "which counts as autopilot-hold; push a new revision or merge by hand"
         )
     # Labels/draft/trust can change while checks are fetched. Read mutable PR
     # metadata last, immediately before the approval or SHA-locked merge call.
@@ -1828,7 +1839,8 @@ def validate_live(api, policy, settings, context):
 
 
 def approve(approver, login, number, head, body):
-    """Post the approval as the approver App and confirm GitHub recorded it so."""
+    """Post the approval as the approver App and confirm GitHub recorded it so.
+    Returns the review's ID, so this run can withdraw that approval."""
     try:
         review = approver.request(
             "POST",
@@ -1852,6 +1864,69 @@ def approve(approver, login, number, head, body):
             "approver-identity: GitHub recorded the approval under another login",
             "GitHub recorded the approval under another login than the App's.",
         )
+    return review.get("id")
+
+
+WITHDRAWAL_MESSAGE = (
+    "PR autopilot withdrew this approval: the PR's head changed while the "
+    "autopilot was approving it, so the approval names an older head."
+)
+
+
+def withdraw_if_moved(api, approver, context, review_id):
+    """After a failure that follows this run's approval: withdraw that approval
+    if the PR's head is no longer the reviewed head.
+
+    The approval names the reviewed head, but GitHub counts an approval for the
+    PR, and the stale-approval rule acts only on a push after the approval. A
+    push that landed before GitHub recorded it would otherwise leave a counting
+    approval on commits no review has seen. Only on another head: a dismissed
+    App approval of the current head is a hold. Never raises, so the caller's
+    original error stands."""
+    number, head = context["pr"], context["head"]
+    try:
+        moved = get_pr(api, number)["head"]["sha"] != head
+    except (PolicyError, AttributeError, KeyError, TypeError, ValueError):
+        # Without a fresh head there is no proof it moved; keep the approval.
+        summary("The PR could not be re-read; the approval was not withdrawn.")
+        return
+    if not moved:
+        return
+    try:
+        if type(review_id) is not int:
+            raise PolicyError("GitHub returned no ID for the approval")
+        # A repeated dismissal is harmless: GitHub answers 422 to the second.
+        retrying(lambda: approver.request(
+            "PUT",
+            f"pulls/{number}/reviews/{review_id}/dismissals",
+            {"message": WITHDRAWAL_MESSAGE, "event": "DISMISS"},
+        ))
+        summary(f"The head moved after review; the App's approval of `{head}` was withdrawn.")
+        return
+    except ApiError as exc:
+        if exc.status in (404, 422):
+            # Usually the push came after the approval, and GitHub's
+            # stale-approval rule has already dismissed it.
+            summary("The App's approval was already dismissed; nothing to withdraw.")
+            return
+    except PolicyError:
+        pass
+    summary(f"The App's approval of `{head}` could not be withdrawn; a person must dismiss it.")
+    try:
+        post_note(
+            api,
+            number,
+            api.pages(f"issues/{number}/comments"),
+            NOT_WITHDRAWN_MARKER,
+            "The approver App approved the head below, but the PR's head changed while "
+            "the autopilot was approving it, and the autopilot could not withdraw it. "
+            "GitHub may count it for the new commits, which no review has seen. A person "
+            "with write access should dismiss the App's approval of this head. Nothing "
+            "was merged.",
+            head,
+        )
+    except (PolicyError, AttributeError, KeyError, TypeError, ValueError):
+        summary("The note asking a person to dismiss the approval was not posted.")
 
 
 def merge(api, policy, settings, context, approver):
@@ -1880,6 +1955,9 @@ def merge(api, policy, settings, context, approver):
     add_label(api, number, policy["labels"]["approved"])
     reviews = api.pages(f"pulls/{number}/reviews")
     already = any(approval_review(r, context["head"], "APPROVED", login) for r in reviews)
+    # Only an approval this run posted is ever withdrawn. An earlier one was
+    # posted while its head was current, so the stale-approval rule covers it.
+    posted, review_id = False, None
     if not already:
         # One audit comment per head, even when every approval is refused. This
         # only suppresses a repeat; approval evidence is the review itself.
@@ -1894,7 +1972,10 @@ def merge(api, policy, settings, context, approver):
         # change request. Refresh every gate after them, immediately before APPROVE.
         validate_live(api, policy, settings, context)
         try:
-            approve(approver, login, number, context["head"], APPROVAL_MARKER + "\n" + audit)
+            review_id = approve(
+                approver, login, number, context["head"], APPROVAL_MARKER + "\n" + audit
+            )
+            posted = True
         except ApproverUnavailable as exc:
             approver_unavailable(api, context, exc)
             raise
@@ -1911,31 +1992,40 @@ def merge(api, policy, settings, context, approver):
     except PolicyError:
         summary("The approver note could not be marked as no longer applying.")
     summary(audit)
-    # Re-read AFTER approval. GitHub can take a moment to update protection; a
-    # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
-    pr, _ = validate_live(api, policy, settings, context)
-    # "unstable" means only non-required checks are failing or pending (E2E is
-    # advisory); validate_live just re-verified every required check and the
-    # review on this head. blocked, behind, dirty and unknown still wait.
-    state = pr.get("mergeable_state")
-    if state not in {"clean", "unstable"}:
-        if already and state == "blocked":
-            # The approval was there before this run, so this is not GitHub
-            # catching up: a rule needs something the bot cannot give.
-            merge_blocked(api, number, context["head"], state)
-            return
-        raise PolicyError(
-            "GitHub protection is not clean after approval; wait for a fresh run"
+    try:
+        # Re-read AFTER approval. GitHub can take a moment to update protection; a
+        # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
+        pr, _ = validate_live(api, policy, settings, context)
+        # "unstable" means only non-required checks are failing or pending (E2E is
+        # advisory); validate_live just re-verified every required check and the
+        # review on this head. blocked, behind, dirty and unknown still wait.
+        state = pr.get("mergeable_state")
+        if state not in {"clean", "unstable"}:
+            if already and state == "blocked":
+                # The approval was there before this run, so this is not GitHub
+                # catching up: a rule needs something the bot cannot give.
+                merge_blocked(api, number, context["head"], state)
+                return
+            raise PolicyError(
+                "GitHub protection is not clean after approval; wait for a fresh run"
+            )
+        # Plan the follow-ups before merging, so an API error afterwards cannot lose them.
+        plan_files = api.pages(f"pulls/{number}/files")
+        # The merge is refused (409) if the branch moved, even while the PR
+        # object still shows the old head.
+        response = api.request(
+            "PUT",
+            f"pulls/{number}/merge",
+            {"sha": context["head"], "merge_method": policy["merge_method"]},
         )
-    # Plan the follow-ups before merging, so an API error afterwards cannot lose them.
-    plan_files = api.pages(f"pulls/{number}/files")
-    response = api.request(
-        "PUT",
-        f"pulls/{number}/merge",
-        {"sha": context["head"], "merge_method": policy["merge_method"]},
-    )
-    if response.get("merged") is not True:
-        raise PolicyError("GitHub did not confirm a merge")
+        if response.get("merged") is not True:
+            raise PolicyError("GitHub did not confirm a merge")
+    except PolicyError:
+        # Any failure on the same head keeps the approval: the next run reuses
+        # it. Only a moved head withdraws it.
+        if posted:
+            withdraw_if_moved(api, approver, context, review_id)
+        raise
     # GITHUB_TOKEN merges start no push workflows, so the dev verification
     # dispatches matter most. Each follow-up gets its own attempt.
     missed = []

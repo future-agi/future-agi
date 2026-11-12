@@ -122,7 +122,7 @@ def verdict(**overrides):
 
 
 class FakeApprover:
-    """The approver App's client: it may only post reviews."""
+    """The approver App's client: it may only post reviews and dismiss them."""
 
     repository = REPO
 
@@ -131,8 +131,28 @@ class FakeApprover:
         self.login = login
         self.calls = []
 
+    def dismissals(self):
+        return [call for call in self.calls if call[0] == "PUT"]
+
     def request(self, method, route, data=None, *, graphql=False):
         self.calls.append((method, route, copy.deepcopy(data)))
+        dismissal = re.fullmatch(r"pulls/42/reviews/(\d+)/dismissals", route)
+        if (method, bool(dismissal), graphql) == ("PUT", True, False):
+            # GitHub requires a message; DISMISS is the only event it accepts.
+            assert data["event"] == "DISMISS" and data["message"], data
+            self.github.requests.append((method, route, copy.deepcopy(data)))
+            status = self.github.refuse_dismissal
+            if status == "no answer":
+                raise risk.ApiError("GitHub API response unavailable or invalid")
+            review = next((r for r in self.github.reviews if r["id"] == int(dismissal[1])), None)
+            if status is None and review is None:
+                status = 404
+            elif status is None and review["state"] != "APPROVED":
+                status = 422  # already dismissed, for example by the stale-approval rule
+            if status is not None:
+                raise risk.ApiError(f"GitHub API denied or failed a request (HTTP {status})", status)
+            review["state"] = "DISMISSED"
+            return copy.deepcopy(review)
         assert (method, route, graphql) == ("POST", "pulls/42/reviews", False), route
         if self.github.refuse_approval is not None:
             raise risk.ApiError(
@@ -215,6 +235,8 @@ class FakeGitHub:
         self.behind = 1
         self.behind_override = None
         self.refuse_approval = None
+        # HTTP status (or "no answer") the App's dismissal of its own approval fails with.
+        self.refuse_dismissal = None
         self.approver = FakeApprover(self)
 
     @staticmethod
@@ -2456,20 +2478,160 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
 
     def test_hold_head_base_and_required_check_races_after_approval(self):
-        changes = [
-            lambda api: api.pr["labels"].append({"name": "autopilot-hold"}),
-            lambda api: api.pr["head"].update(sha=OTHER),
-            lambda api: api.pr["base"].update(sha=OTHER),
-            lambda api: api.checks.append(check(id=99, conclusion="failure")),
-            lambda api: api.pr.update(mergeable_state="blocked"),
-        ]
-        for change in changes:
-            self.api = FakeGitHub()
-            context = self.passing_review()
-            self.api.after_approval = change
-            with self.assertRaises(risk.PolicyError):
-                risk.merge(self.api, POLICY, settings(), context, self.api.approver)
-            self.assertFalse(self.api.writes("pulls/42/merge"))
+        changes = {
+            "hold": lambda api: api.pr["labels"].append({"name": "autopilot-hold"}),
+            "head": lambda api: api.pr["head"].update(sha=OTHER),
+            "base": lambda api: api.pr["base"].update(sha=OTHER),
+            "check": lambda api: api.checks.append(check(id=99, conclusion="failure")),
+            "blocked": lambda api: api.pr.update(mergeable_state="blocked"),
+        }
+        for name, change in changes.items():
+            with self.subTest(change=name):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.after_approval = change
+                with self.assertRaises(risk.PolicyError):
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertFalse(self.api.writes("pulls/42/merge"))
+                [review] = self.api.reviews
+                if name == "head":
+                    # The App's approval names a head that is no longer the
+                    # PR's: it is withdrawn by its own ID, as the App.
+                    [(_, route, data)] = self.api.approver.dismissals()
+                    self.assertEqual(route, f"pulls/42/reviews/{review['id']}/dismissals")
+                    self.assertEqual(data, {"message": risk.WITHDRAWAL_MESSAGE, "event": "DISMISS"})
+                    self.assertEqual(review["state"], "DISMISSED")
+                else:
+                    # Same head: the approval stays, and the next run reuses it.
+                    self.assertFalse(self.api.approver.dismissals())
+                    self.assertEqual(review["state"], "APPROVED")
+                self.assertFalse(self.not_withdrawn_notes())
+
+    def not_withdrawn_notes(self):
+        return [c["body"] for c in self.api.comments if c["body"].startswith(risk.NOT_WITHDRAWN_MARKER)]
+
+    def test_a_merge_refused_because_the_branch_moved_withdraws_this_runs_approval(self):
+        # The PR object can show the old head for a moment after a push, so the
+        # recheck passes and the SHA-locked merge is refused instead.
+        for status, moved in ((409, True), (409, False), (None, False)):
+            with self.subTest(status=status, moved=moved):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                original = self.api.request
+
+                def refuse(method, route, data=None, **kwargs):
+                    if method == "PUT" and route == "pulls/42/merge":
+                        if moved:
+                            self.api.pr["head"]["sha"] = OTHER
+                        raise risk.ApiError(f"GitHub API denied or failed a request (HTTP {status})", status)
+                    return original(method, route, data, **kwargs)
+
+                self.api.request = refuse
+                with self.assertRaises(risk.ApiError) as caught:
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertEqual(caught.exception.status, status)
+                self.assertEqual(len(self.api.approver.dismissals()), 1 if moved else 0)
+                self.assertEqual(self.api.reviews[0]["state"], "DISMISSED" if moved else "APPROVED")
+
+    def test_an_earlier_approval_is_not_withdrawn_by_a_later_run(self):
+        # Posted while its head was current, so a later push is the
+        # stale-approval rule's to handle; this run posted nothing to withdraw.
+        context = self.passing_review()
+        self.api.pr["mergeable_state"] = "blocked"
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.api.pr["mergeable_state"] = "clean"
+        original = self.api.request
+
+        def move_during_merge(method, route, data=None, **kwargs):
+            if method == "PUT" and route == "pulls/42/merge":
+                self.api.pr["head"]["sha"] = OTHER
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 409)", 409)
+            return original(method, route, data, **kwargs)
+
+        self.api.request = move_during_merge
+        with self.assertRaises(risk.ApiError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(len(self.api.approver.calls), 1)
+        self.assertFalse(self.api.approver.dismissals())
+
+    def test_withdrawal_needs_a_fresh_read_showing_another_head(self):
+        # A failed re-read is no proof the head moved: nothing is dismissed,
+        # because a withdrawn approval of the current head parks the PR.
+        context = self.passing_review()
+        original = self.api.request
+        reads = []
+
+        def unreadable_after_move(method, route, data=None, **kwargs):
+            if method == "GET" and route == "pulls/42" and self.api.pr["head"]["sha"] == OTHER:
+                reads.append(route)
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 502)", 502)
+            return original(method, route, data, **kwargs)
+
+        self.api.request = unreadable_after_move
+        self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
+        with self.assertRaises(risk.ApiError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(len(reads), 2)  # the recheck, then the withdrawal's re-read
+        self.assertFalse(self.api.approver.dismissals())
+        self.assertFalse(self.not_withdrawn_notes())
+
+    def test_an_already_dismissed_approval_counts_as_withdrawn(self):
+        # The push came after the approval, so GitHub's stale-approval rule
+        # dismissed it first and refuses a second dismissal.
+        for status in (422, 404):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.refuse_dismissal = status
+                self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
+                with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertEqual(len(self.api.approver.dismissals()), 1)
+                self.assertFalse(self.not_withdrawn_notes())
+
+    def test_a_failed_withdrawal_keeps_the_original_error_and_asks_a_person(self):
+        for status in (403, 502, "no answer"):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.api.refuse_dismissal = status
+                self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
+                with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                # A refusal is tried once; no answer or a server error three times.
+                self.assertEqual(len(self.api.approver.dismissals()), 1 if status == 403 else 3)
+                self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
+                [note] = self.not_withdrawn_notes()
+                self.assertIn(f"Head: `{HEAD}`.", note)
+                self.assertIn("should dismiss", note)
+                # Not a parking note: the PR's new head is judged as usual.
+                self.assertNotIn(risk.NOT_WITHDRAWN_MARKER, risk.PARKING_NOTES)
+        # A note that cannot be posted does not hide the original error either.
+        self.api = FakeGitHub()
+        context = self.passing_review()
+        self.api.refuse_dismissal = 403
+        self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
+        self.failing(lambda m, r, d: m == "POST" and r == "issues/42/comments"
+                     and d["body"].startswith(risk.NOT_WITHDRAWN_MARKER), 1)
+        with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertFalse(self.not_withdrawn_notes())
+
+    def test_a_branch_pushed_back_to_a_withdrawn_head_waits_as_a_hold(self):
+        # Chosen on purpose: the withdrawal leaves a dismissed App approval of
+        # the reviewed head, so pushing that head back does not buy a retry.
+        context = self.passing_review()
+        self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
+        with self.assertRaises(risk.PolicyError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.api.after_approval = None
+        self.api.pr["head"]["sha"] = HEAD
+        with self.assertRaisesRegex(risk.PolicyError, "dismissed"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(self.prepare(), "")
+        self.assertEqual(len(self.api.approver.calls), 2)  # one approval, one withdrawal
+        self.assertFalse(self.api.writes("pulls/42/merge"))
 
     def test_existing_change_request_cannot_be_overridden(self):
         context = self.passing_review()
