@@ -437,16 +437,20 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    It also says that a push or an "Update branch" by anyone not on the
    trusted-author list sends the PR to a person for good. A new head that
    is still behind gets the same comment, edited to name it. The first run
-   that finds the tip contained marks the note "No longer applies". `dev`
+   that finds the tip contained marks the note "No longer applies". If the
+   PR falls behind again later, the bot edits that comment back. GitHub
+   sends no notification for an edited comment, so only the first behind
+   episode notifies the author. `dev`
    does not require up-to-date branches and the repository setting
    "Always suggest updating pull request branches" is off, so GitHub shows
    no out-of-date notice and no "Update branch" button on these PRs; the
    note is the only sign of the wait. The note does not suggest
    `gh pr update-branch`: whether that REST call works with the setting
    off is not known yet (rollout step 2). The note comes before the
-   push-history check, so a branch that already has a push by someone not
-   on the list still gets it; after the author merges `dev` in, that PR
-   goes to a person. Manual dispatches on other branches are rejected.
+   push-history check. So a branch with a push by someone not on the list
+   still gets it while no escalation names its head, for example when the
+   branch was already behind on the first run after that push. After the
+   author merges `dev` in, that PR goes to a person. Manual dispatches on other branches are rejected.
    PR-event runs and the schedule both need this workflow on the default
    branch.
 2. The controller classifies and audits the tier. It requires an open,

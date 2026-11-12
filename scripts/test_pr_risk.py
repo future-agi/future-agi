@@ -4248,11 +4248,15 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn("github.event_name == 'workflow_dispatch'", condition)
             self.assertIn("github.ref == 'refs/heads/dev'", condition)
 
-    @staticmethod
-    def python_calls(workflow):
+    # python, python3 or python3.12, by name or by path.
+    PYTHON = r"(?:^|[\s;&|(/])python(?:3(?:\.\d+)?)?"
+
+    @classmethod
+    def python_calls(cls, workflow):
         """(job, holds credentials, command) for every python call in a run
-        step. A job holds credentials when it has any write permission, names
-        an environment or reads a secret."""
+        step, and for every step whose shell is Python (its `shell` line). A
+        job holds credentials when it has any write permission, names an
+        environment or reads a secret."""
         calls = []
         for name, job in workflow["jobs"].items():
             credentials = (
@@ -4261,8 +4265,11 @@ class WorkflowContractTests(unittest.TestCase):
                 or "secrets." in json.dumps(job)
             )
             for step in job.get("steps", []):
+                shell = str(step.get("shell", ""))
+                if re.match(cls.PYTHON + r"(?:\s|$)", shell):
+                    calls.append((name, credentials, shell.strip()))
                 for line in str(step.get("run", "")).splitlines():
-                    if re.search(r"(?:^|[\s;&|(])python3?(?:\s|$)", line):
+                    if re.search(cls.PYTHON + r"(?:\s|$)", line):
                         calls.append((name, credentials, line.strip()))
         return calls
 
@@ -4271,8 +4278,12 @@ class WorkflowContractTests(unittest.TestCase):
         """Python calls in credential-holding jobs that run without -I, which
         would put the script's directory or the current directory first on
         sys.path and honour PYTHON* variables."""
+        def isolated(command):
+            starts = [match.end() for match in re.finditer(cls.PYTHON + r"(?=\s|$)", command)]
+            return all(re.match(r" -I(?:\s|$)", command[start:]) for start in starts)
+
         return [command for _, credentials, command in cls.python_calls(workflow)
-                if credentials and not re.search(r"(?:^|\s)python3? -I(?:\s|$)", command)]
+                if credentials and not isolated(command)]
 
     def test_every_python_call_in_a_credential_job_is_isolated(self):
         try:
@@ -4297,14 +4308,22 @@ class WorkflowContractTests(unittest.TestCase):
         changed = yaml.safe_load(WORKFLOW_TEXT.replace(
             "python3 -I scripts/pr_risk.py merge", "python3 scripts/pr_risk.py merge"))
         policy = next(s for s in changed["jobs"]["prepare"]["steps"] if s.get("id") == "policy")
-        policy["run"] += "python3 -m pip install x\n"
+        policy["run"] += "python3 -m pip install x\n/usr/bin/python3.12 y.py && python -I z.py\n"
+        changed["jobs"]["review-gate-and-merge"]["steps"].append(
+            {"shell": "python {0}", "run": "print(1)"})
         changed["jobs"]["policy-tests"]["permissions"]["pull-requests"] = "write"
         self.assertEqual(self.unisolated(changed), [
             "python3 -m pip install --disable-pip-version-check -q PyYAML==6.0.3",
             "python3 scripts/test_pr_risk.py",
             "python3 -m pip install x",
+            "/usr/bin/python3.12 y.py && python -I z.py",
+            "python {0}",
             "python3 scripts/pr_risk.py merge",
         ])
+        # The isolated forms pass.
+        policy["run"] = "python3 -I a.py\n/usr/bin/python3.12 -I b.py\n"
+        self.assertNotIn("python3 -I a.py", self.unisolated(changed))
+        self.assertNotIn("/usr/bin/python3.12 -I b.py", self.unisolated(changed))
 
     def test_multiline_output_has_collision_safe_delimiter(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -4358,6 +4377,8 @@ class IsolationTests(unittest.TestCase):
     def run_in(self, root, argv, log):
         environment = {
             "PATH": os.environ.get("PATH", ""),
+            # setup-python's interpreter on Linux may need its shared library.
+            **{key: os.environ[key] for key in ("LD_LIBRARY_PATH",) if key in os.environ},
             "PLANTED_LOG": str(log),
             # Ignored under -I; honoured by the plain runs below.
             "PYTHONPATH": os.pathsep.join([str(root), str(root / "scripts")]),
