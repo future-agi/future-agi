@@ -141,6 +141,12 @@ _CHAT_RUNTIME_PATH = (
     "/usr/sbin:/usr/bin:/sbin:/bin"
 )
 _CHAT_POLICY_PATH = "/run/futureagi/chat-capabilities.yaml"
+# Where the builder chat keeps its spend ledger (ALK reads ALK_SPEND_JOURNAL); a build runs
+# as a chat turn, so its spend is here. Outside /work/authoring: a chat beside a CLI build
+# would otherwise overwrite that build's cost.json, and checkpoints of that directory would
+# carry one sandbox's ledger into the next.
+_BUILDER_SPEND_PATH = "/work/builder-cost.json"
+_AUTHORING_SPEND_PATH = "/work/authoring/cost.json"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
@@ -3037,6 +3043,7 @@ class HostedHarnessGateway:
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+        chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
         if overlay is not None:
             chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
         command = sandbox.process.execute_session_command(
@@ -3429,6 +3436,7 @@ class HostedHarnessGateway:
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+            chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
             if overlay is not None:
                 chat_exports["PYTHONPATH"] = "/work/alk-src"
             command = sandbox.process.execute_session_command(
@@ -3862,7 +3870,9 @@ class HostedHarnessGateway:
         # documents above and only once a store has actually been built.
         build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
-        spend = _json("/work/authoring/cost.json")
+        spend = _combined_spend(
+            _json(_AUTHORING_SPEND_PATH), _json(_BUILDER_SPEND_PATH)
+        )
         coverage = _json("/work/authoring/coverage.json")
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
@@ -5333,16 +5343,57 @@ def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
 
 
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
-    """Record the guest's ledger from a sandbox that is about to go away.
+    """Record the guest's ledgers from a sandbox that is about to go away.
 
-    Silent on failure: a leaked sandbox costs more than the figure it was holding.
+    Never raises: a leaked sandbox costs more than the figure it was holding.
     """
-    try:
-        body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
+    ledgers = []
+    for path in (_AUTHORING_SPEND_PATH, _BUILDER_SPEND_PATH):
+        try:
+            ledgers.append(json.loads(sandbox.fs.download_file(path).decode("utf-8")))
+        except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
+            ledgers.append(None)
+    spend = _combined_spend(*ledgers)
+    if spend is None:
         logger.debug("no harness ledger to read attempt=%s", attempt.id)
+        return
+    try:
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        _record_harness_spend(job, spend, attempt.attempt_number)
+    except Exception:  # noqa: BLE001 - see above
+        logger.exception("harness ledger could not be recorded attempt=%s", attempt.id)
+
+
+def _combined_spend(cli: Any, builder: Any) -> dict[str, Any] | None:
+    """One attempt's spend from the build CLI's ledger and the builder chat's.
+
+    A stage both ledgers name keeps the chat's under a ``chat:`` prefix: billing prices each
+    stage once by name and refuses an attempt whose stages share one.
+    """
+    if not isinstance(builder, dict):
+        return cli if isinstance(cli, dict) else None
+    if not isinstance(cli, dict):
+        return builder
+    try:
+        taken = {stage.get("stage") for stage in cli.get("stages") or []}
+        return {
+            "total_usd": float(cli.get("total_usd") or 0.0)
+            + float(builder.get("total_usd") or 0.0),
+            "unpriced_turns": int(cli.get("unpriced_turns") or 0)
+            + int(builder.get("unpriced_turns") or 0),
+            "stages": [
+                *(cli.get("stages") or []),
+                *(
+                    {**stage, "stage": f"chat:{stage.get('stage')}"}
+                    if stage.get("stage") in taken
+                    else stage
+                    for stage in builder.get("stages") or []
+                ),
+            ],
+        }
+    except (AttributeError, TypeError, ValueError):
+        logger.exception("harness ledgers could not be combined")
+        return cli
 
 
 def _record_harness_spend(

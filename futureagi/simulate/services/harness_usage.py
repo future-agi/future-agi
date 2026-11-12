@@ -12,7 +12,11 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
@@ -385,6 +389,13 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         if (record := _authoring_stage_record(item)) is not None
     ]
     if not records:
+        if float(spend.get("total_usd") or 0.0) > 0:
+            # Spent but not priceable (no stage reported tokens): billing nothing must not be quiet.
+            logger.error(
+                "authoring spend has no billable stage attempt=%s total_usd=%s",
+                attempt.id,
+                spend.get("total_usd"),
+            )
         return
     stages = [item["stage"] for item in records]
     if len(stages) != len(set(stages)):
@@ -487,6 +498,66 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         current.id,
                     )
     price_fix_check_run(current.job_id)
+
+
+# Where a builder chat turn run outside any attempt is metered on its job, and what is kept
+# of the usage its turn event reports.
+BUILDER_TURN_USAGE_KEY = "builder_turn_usage"
+_TURN_USAGE_FIELDS = (
+    "tokens_in",
+    "tokens_out",
+    "tokens_cached",
+    "usd",
+    "unpriced_turns",
+    "models",
+)
+
+
+def meter_builder_turn(conversation_id: str, payload: dict) -> None:
+    """Meter a builder chat turn's reported usage on its job, keyed by its command message.
+
+    Metered, never billed: no usage event is emitted. A rebuild's turn is metered on its
+    nudge, a turn whose event reports no usage records nothing, and a turn already metered
+    is not metered again.
+    """
+    try:
+        usage = payload.get("usage")
+        command_id = payload.get("command_message_id")
+        if not isinstance(usage, dict) or not command_id:
+            return
+        command = (
+            HostedHarnessConversationMessage.no_workspace_objects.select_related(
+                "conversation"
+            )
+            .filter(id=command_id, conversation_id=conversation_id)
+            .first()
+        )
+        if command is None or (command.payload or {}).get("nudge_id"):
+            return
+        entry = {field: usage[field] for field in _TURN_USAGE_FIELDS if field in usage}
+        if not entry:
+            return
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=command.conversation.job_id
+            )
+            document = dict(job.payload or {})
+            metadata = dict(document.get("metadata") or {})
+            metered = dict(metadata.get(BUILDER_TURN_USAGE_KEY) or {})
+            if str(command.id) in metered:
+                return
+            metered[str(command.id)] = {
+                **entry,
+                "metered_at": timezone.now().isoformat(),
+            }
+            metadata[BUILDER_TURN_USAGE_KEY] = metered
+            document["metadata"] = metadata
+            job.payload = document
+            job.save(update_fields=["payload", "updated_at"])
+    except Exception:  # noqa: BLE001 - metering must never fail the guest's event delivery
+        logger.exception(
+            "builder turn usage could not be metered conversation=%s", conversation_id
+        )
 
 
 def billed_ai_usd(usd: Decimal) -> Decimal:
