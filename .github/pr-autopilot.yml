@@ -12,8 +12,8 @@
   "max_review_rounds": 3,
   "max_diff_bytes": 120000,
   "review_check": "PR Autopilot review",
-  "required_checks": ["Backend Tests Pass", "E2E Tests Pass"],
-  "_checks_reason": "This is a minimum, not an override of branch protection: union non-admin refUpdateRule classic contexts with all active branch rules. dev's up-to-date setting is not read and not required: the controller proves with the compare API that the PR head contains the live dev tip, as the last read before the merge call. Require successful checks on the exact PR head, with a GitHub Actions app identity; no skipped, neutral, stale, or absent checks. Branch protection on dev and main requires E2E Tests Pass since 12 Nov 2026, so it is part of the minimum; its aggregate concludes success when the stack jobs are path-filtered out.",
+  "required_checks": ["Backend Tests Pass", "E2E Tests Pass", "Python Lint Pass"],
+  "_checks_reason": "This is a minimum, not an override of branch protection: union non-admin refUpdateRule classic contexts with all active branch rules. dev's up-to-date setting is not read and not required: the controller proves with the compare API that the PR head contains the live dev tip, as the last read before the merge call. Require successful checks on the exact PR head, with a GitHub Actions app identity; no skipped, neutral, stale, or absent checks. Branch protection on dev and main requires E2E Tests Pass since 12 Nov 2026, and dev also requires Python Lint Pass (python-lint.yml) since the same day, so both are part of the minimum. Each always reports: E2E's aggregate concludes success when the stack jobs are path-filtered out, and the lint summary passes when no Python lint path changed. A PR whose last lint run predates python-lint.yml has no such check and waits until a push or a title or body edit runs it.",
   "high_globs": [
     ".github/**", "**/.github/**", "CODEOWNERS", "**/CODEOWNERS",
     "ee/**", "**/ee/**", "deploy/**", "**/deploy/**",

@@ -186,8 +186,9 @@ class FakeGitHub:
         )
         self.pr = pr()
         self.files = [file()]
-        # Both are required on dev since 12 Nov 2026.
-        self.checks = [check(), check("E2E Tests Pass", id=60)]
+        # All three are required on dev since 12 Nov 2026. Their IDs stay
+        # clear of the check runs the controller creates (len(checks) + 1).
+        self.checks = [check(), check("E2E Tests Pass", id=60), check("Python Lint Pass", id=80)]
         self.comments = []
         self.reviews = []
         self.labels = []
@@ -210,7 +211,7 @@ class FakeGitHub:
             },
         ]
         self.classic_present = True
-        self.classic_checks = ["Backend Tests Pass", "E2E Tests Pass"]
+        self.classic_checks = ["Backend Tests Pass", "E2E Tests Pass", "Python Lint Pass"]
         self.requests = []
         self.after_approval = None
         # Workflow runs by ID, and the jobs of each (run ID, attempt).
@@ -836,7 +837,7 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(strict=strict):
                 self.assertEqual(
                     risk.protection(api, POLICY),
-                    {"Backend Tests Pass": None, "E2E Tests Pass": None, "extra-classic": None, "extra-org": 77},
+                    {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None, "extra-classic": None, "extra-org": 77},
                 )
         api.rules = []
         with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
@@ -852,11 +853,11 @@ class EvidenceTests(unittest.TestCase):
         api = FakeGitHub()
         api.classic_checks = []
         self.assertEqual(
-            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None}
         )
         api.classic_present = False
         self.assertEqual(
-            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None}
         )
 
     def test_unknown_protection_or_api_access_never_passes(self):
@@ -884,7 +885,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_dev_rules_must_dismiss_stale_approvals_on_push(self):
         # The same rules call: an active pull_request rule with the setting.
-        self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
+        self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None})
         for change in (
             lambda rules: rules[0]["parameters"].update(dismiss_stale_reviews_on_push=False),
             lambda rules: rules[0]["parameters"].pop("dismiss_stale_reviews_on_push"),
@@ -898,14 +899,14 @@ class EvidenceTests(unittest.TestCase):
         api = FakeGitHub()
         api.rules[0]["parameters"]["dismiss_stale_reviews_on_push"] = False
         api.rules.append({"type": "pull_request", "parameters": {"dismiss_stale_reviews_on_push": True}})
-        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
+        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None})
 
     def test_todays_non_strict_classic_protection_is_enough(self):
         # dev today: classic contexts, strict false, and only the organisation
         # pull_request rule. No ruleset with strict required checks is needed.
         api = FakeGitHub()
         self.assertEqual(
-            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None, "Python Lint Pass": None}
         )
         self.assertFalse(any(rule["type"] == "required_status_checks" for rule in api.rules))
         # Classic contexts without the stale-approval rule still stop it.
@@ -1251,7 +1252,7 @@ class ControllerTests(unittest.TestCase):
     def new_head(self, sha, text=None, force=False):
         """A pushed revision: new head SHA, CI green on it, optionally a new diff."""
         self.api.push(sha, force=force)
-        for required in self.api.checks[:2]:
+        for required in self.api.checks[:3]:
             required["head_sha"] = sha
         if text is not None:
             self.api.files[0]["patch"] = "@@ -1 +1 @@\n+" + text
@@ -2390,7 +2391,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_untrusted_push_on_a_trusted_authors_pr_goes_to_a_person(self):
         self.api.push("1" * 40, actor="someone-else")
-        for required in self.api.checks[:2]:
+        for required in self.api.checks[:3]:
             required["head_sha"] = "1" * 40
         self.prepare()
         self.assertFalse(self.reservations())
@@ -2544,6 +2545,26 @@ class ControllerTests(unittest.TestCase):
             [route.split("/")[0] for _, route in routes[last_files + 1 : put]],
             ["git", "compare"],
         )
+
+    def test_python_lint_pass_is_part_of_the_minimum(self):
+        # Required even if dev's protection stops listing it.
+        self.api.classic_checks = ["Backend Tests Pass", "E2E Tests Pass"]
+        self.assertIn("Python Lint Pass", risk.protection(self.api, POLICY))
+        waiting = "Waiting for successful required checks on the current head SHA."
+        # A head whose last run predates python-lint.yml has no such check.
+        self.api.checks = [c for c in self.api.checks if c["name"] != "Python Lint Pass"]
+        self.assertEqual(self.prepare(), "")
+        self.summary.assert_called_with(waiting)
+        # The real shape on one head (PR 3780, 12 Nov): a run cancelled by the
+        # workflow's concurrency group reports failure, a newer run success.
+        self.api.checks.append(check("Python Lint Pass", id=81, conclusion="failure"))
+        self.assertEqual(self.prepare(), "")
+        self.summary.assert_called_with(waiting)
+        self.assertFalse(self.reservations())
+        self.api.checks.append(check("Python Lint Pass", id=82))
+        self.prepare()
+        self.assertEqual(self.outputs["review"], "true")
+        self.assertEqual(len(self.reservations()), 1)
 
     def test_dev_moving_after_the_last_recheck_stops_the_merge(self):
         context = self.passing_review()

@@ -79,7 +79,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the token step in the `approve-and-merge` job fails. The review outcome is already recorded by then. Nothing is approved or merged, and the bot posts one note per head on the PR |
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
 | `dev` protection / active org and repository branch rules | Read, never changed by this code | No new ruleset is needed for required checks. `dev` does not require up-to-date branches today (classic protection, strict off), and the autopilot does not need it to: it checks itself that the PR head contains the live `dev` tip (item 1 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)). So people's PRs into `dev` keep merging without an "Update branch" and a CI re-run after each merge. Do not add a strict rule for the autopilot's sake. A strict rule covers every PR into `dev`: after each merge, every other open PR would need an update and a new CI run, including the E2E job (66 to 89 minutes on `dev`) for PRs that touch the app. An active `pull_request` rule must dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 12 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one. Merge queues and required-workflow rules on `dev` stop the autopilot |
-| Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
+| Required status checks | Policy minimum: `Backend Tests Pass`, `E2E Tests Pass` and `Python Lint Pass`, unioned with all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
 
@@ -150,14 +150,29 @@ still dispatched on every sweep, because nothing tells the sweep when that
 wait ends. A dispatch on `dev` with input `pr_number` re-evaluates a PR at
 once; it cannot reset the review budget.
 
-Branch protection on `dev` and `main` requires both "Backend Tests Pass" and
-"E2E Tests Pass" since 12 Nov 2026, so both are in the policy's minimum
-required checks. The controller also unions the branch's own required checks,
-so a check an administrator adds later is respected too. "E2E Tests Pass" runs
-with `if: always()` and concludes success when the path filter skips the stack
-jobs, so a PR that does not touch the app does not wait on the suite. The label instructions describe the medium/high human
-policy; this workflow does not replace repository rules that enforce the
-number of human approvals.
+Branch protection on `dev` and `main` requires "Backend Tests Pass" and
+"E2E Tests Pass" since 12 Nov 2026. `dev` also requires "Python Lint Pass"
+since the same day (read-only check, 12 Nov, 08:15 UTC; all three from the
+GitHub Actions app, strict off). All three are in the policy's minimum
+required checks, so the autopilot keeps requiring them even if a branch rule
+is later relaxed. The controller also unions the branch's own required
+checks, so a check an administrator adds later is respected too.
+
+- "E2E Tests Pass" runs with `if: always()` and concludes success when the
+  path filter skips the stack jobs, so a PR that does not touch the app does
+  not wait on the suite.
+- "Python Lint Pass" comes from `python-lint.yml`, which runs on every PR
+  (opened, synchronize, reopened, edited) and passes when no Python lint path
+  changed. A PR whose last run predates that workflow has no such check, so
+  the autopilot waits until a push or a title or body edit runs it. The
+  workflow has no push trigger, so a merge needs no dispatch of it.
+- When a head carries several runs of one check, the newest wins. On PR 3780
+  on 12 Nov a lint run cancelled by its concurrency group reported failure
+  and a newer run reported success; the autopilot counts the success.
+
+The label instructions describe the medium/high human policy; this workflow
+does not replace repository rules that enforce the number of human
+approvals.
 
 ## Approver App and owner settings
 
