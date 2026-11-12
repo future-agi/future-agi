@@ -28,7 +28,7 @@ PR = {
     "user": {"login": policy.AUTHOR, "type": "Bot"},
     "head": {"ref": policy.BRANCH, "sha": SHA, "repo": {"full_name": policy.REPOSITORY}},
     "base": {"ref": "main", "sha": BASE, "repo": {"full_name": policy.REPOSITORY}},
-    "title": "chore(main): release 1.2.3", "labels": [], "changed_files": 4,
+    "title": "chore(main): release 1.2.3", "labels": [], "changed_files": 4, "commits": 1,
     "updated_at": "2026-11-10T09:00:00Z", "mergeable": True,
 }
 FILES = [{"filename": path, "status": "modified"} for path in sorted(policy.RELEASE_FILES)]
@@ -148,6 +148,14 @@ class MergePolicyTests(unittest.TestCase):
         self.assertFalse(self.decide(files=[FILES[0]] * len(FILES)))
         for status in ("removed", "renamed", None):
             self.assertFalse(self.decide(files=[*FILES[:-1], {**FILES[-1], "status": status}]))
+
+    def test_only_a_single_release_please_commit_is_allowed(self):
+        # Each of the 15 release PRs merged from 4 Oct to 3 Nov had one commit.
+        self.assertTrue(self.decide(pr={**PR, "commits": 1}))
+        for commits in (0, 2, None, "1", True, 1.0):
+            with self.subTest(commits=commits):
+                self.assertFalse(self.decide(pr={**PR, "commits": commits}))
+        self.assertFalse(self.decide(pr={key: value for key, value in PR.items() if key != "commits"}))
 
     def test_age_boundary_configuration_unknown_and_future(self):
         self.assertTrue(self.decide(pr={**PR, "updated_at": "2026-11-10T09:30:00Z"}))
@@ -1164,16 +1172,89 @@ class ExecutionTests(unittest.TestCase):
                 api.assert_not_called()
 
 
+def activity_row(kind, after, login=policy.AUTHOR, user_type="Bot", before="0" * 40, **fields):
+    """One row of GET /repos/{repo}/activity, shaped like the live release-branch feed."""
+    return {"id": 1, "node_id": "synthetic", "before": before, "after": after,
+            "ref": f"refs/heads/{policy.BRANCH}", "timestamp": "2026-11-03T14:12:20Z",
+            "activity_type": kind, "actor": {"login": login, "type": user_type}, **fields}
+
+
+# Newest first, as GitHub returns it: this release's creation and pushes by the
+# release App, then the previous release's branch, deleted by the person who merged it.
+ACTIVITY = [activity_row("force_push", SHA, before="e" * 40), activity_row("push", "e" * 40, before="f" * 40),
+            activity_row("branch_creation", "f" * 40),
+            activity_row("branch_deletion", "0" * 40, login="a-person", user_type="User", before="9" * 40),
+            activity_row("push", "9" * 40, before="8" * 40), activity_row("branch_creation", "8" * 40)]
+ACTIVITY_PATH = "activity?ref=refs%2Fheads%2Frelease-please--branches--main&direction=desc&per_page=100"
+
+
+class ReleaseBranchPushTests(unittest.TestCase):
+    def test_a_branch_only_the_release_app_created_and_pushed_is_allowed(self):
+        self.assertTrue(policy.release_branch_pushes(ACTIVITY, SHA)[0])
+        # The common case: one push right after the creation.
+        self.assertTrue(policy.release_branch_pushes(ACTIVITY[1:], "e" * 40)[0])
+        # A person's rows from an earlier lifetime of the reused branch name do not count.
+        older = [activity_row("push", "7" * 40, login="a-person", user_type="User")]
+        self.assertTrue(policy.release_branch_pushes(ACTIVITY + older, SHA)[0])
+
+    def test_a_persons_push_waits_for_a_person_even_after_a_bot_rebuild(self):
+        person = activity_row("push", SHA, login="a-writer", user_type="User", before="e" * 40)
+        allowed, reason = policy.release_branch_pushes([person] + ACTIVITY[1:], SHA)
+        self.assertFalse(allowed)
+        self.assertIn("a person merges this release", reason)
+        # release-please force-pushes over it, but the branch keeps the same
+        # lifetime, so the person's row still counts.
+        rebuilt = [activity_row("force_push", SHA, before="d" * 40),
+                   activity_row("push", "d" * 40, login="a-writer", user_type="User", before="e" * 40)] + ACTIVITY[1:]
+        self.assertFalse(policy.release_branch_pushes(rebuilt, SHA)[0])
+        # So does a person or another App re-creating the branch.
+        for actor in ({"login": "a-writer", "type": "User"}, {"login": "github-actions[bot]", "type": "Bot"},
+                      {"login": policy.AUTHOR, "type": "User"}, {"login": policy.AUTHOR}, {}, None, "x"):
+            with self.subTest(actor=actor):
+                creation = dict(ACTIVITY[2], actor=actor)
+                self.assertFalse(policy.release_branch_pushes(ACTIVITY[:2] + [creation] + ACTIVITY[3:], SHA)[0])
+        missing = [{key: value for key, value in row.items() if key != "actor"} for row in ACTIVITY]
+        self.assertFalse(policy.release_branch_pushes(missing, SHA)[0])
+
+    def test_unknown_or_incomplete_history_waits(self):
+        # The feed has not caught up with the PR head yet.
+        allowed, reason = policy.release_branch_pushes(ACTIVITY[1:], SHA)
+        self.assertFalse(allowed)
+        self.assertIn("not the PR head yet", reason)
+        # No creation among the rows read: more pushes than one page holds.
+        allowed, reason = policy.release_branch_pushes(ACTIVITY[:2], SHA)
+        self.assertFalse(allowed)
+        self.assertIn("creation is not among", reason)
+        for activity in (None, {}, [], "rows", [None], [{"after": SHA}], ACTIVITY[:1] + [None] + ACTIVITY[1:],
+                         [dict(ACTIVITY[0], ref="refs/heads/other")] + ACTIVITY[1:],
+                         ACTIVITY[:1] + [dict(ACTIVITY[1], ref=None)] + ACTIVITY[2:]):
+            with self.subTest(activity=activity):
+                self.assertFalse(policy.release_branch_pushes(activity, SHA)[0])
+
+
 class ReleaseGateTests(unittest.TestCase):
     NOW = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
 
-    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None, pr=None):
+    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None, pr=None, activity=None):
         responses = {"git/ref/heads/main": {"object": {"sha": "c" * 40}},
                      f"compare/{'c' * 40}...{SHA}": {"behind_by": behind},
-                     f"commits/{'c' * 40}": {"commit": {"committer": {"date": main_date}}}}
-        with patch.object(policy, "pages", return_value=runs), \
+                     f"commits/{'c' * 40}": {"commit": {"committer": {"date": main_date}}},
+                     ACTIVITY_PATH: ACTIVITY if activity is None else activity}
+        with patch.object(policy, "pages", return_value=runs) as pages, \
                 patch.object(policy, "api", side_effect=lambda path, **kw: responses[path]):
+            self.pages = pages
             return policy.release_gates(pr or PR, config or {}, self.NOW)
+
+    def test_a_persons_push_to_the_release_branch_stops_before_any_other_read(self):
+        person = activity_row("push", SHA, login="a-writer", user_type="User", before="e" * 40)
+        allowed, reason = self.gates([self.callout_run()], activity=[person] + ACTIVITY[1:])
+        self.assertFalse(allowed)
+        self.assertIn("someone other than the release App", reason)
+        self.pages.assert_not_called()
+        # The feed is read once, newest first, by cursor page size; pages() would
+        # repeat its first page, because the endpoint ignores page numbers.
+        self.assertTrue(self.gates([self.callout_run()])[0])
+        self.assertIsNone(re.search(r"[?&]page=", ACTIVITY_PATH))
 
     def callout_run(self, **fields):
         return {"id": 5, "path": policy.CALLOUT_WORKFLOW, "head_sha": SHA, "status": "completed",

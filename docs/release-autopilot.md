@@ -188,7 +188,16 @@ changes none of them.
   reason "main requires an up-to-date branch". GitHub may instead report
   `blocked` until the PR has its approval; then the first run approves and
   defers the merge at its recheck, and later runs wait. Either way the release
-  waits, with green runs, until a person updates the release branch.
+  waits, with green runs. Updating the release branch does not release it: the
+  update is a person's push, so the autopilot leaves that release to a person,
+  who merges it by hand (see "Who pushed" below). Remove the rule instead.
+- **Release branch ruleset.** Add a repository ruleset on
+  `release-please--branches--main` that restricts creations and updates, with
+  only the release App on its bypass list. Do not restrict deletion: GitHub
+  deletes the branch after each merge (`delete_branch_on_merge` is on), and
+  the deletion is recorded under the person or App that merged. The branch has
+  no rule today (read-only check, 11 Nov), so any writer can push to it. Until
+  the ruleset exists, the autopilot's push check below is the only stop.
 - Add a tag ruleset on `v*` (which also covers beta and rc tags). Only
   administrators and the release App (bypass list) can create, update or
   delete `v*` tags. Beta and rc tags are then cut by an administrator or by the
@@ -232,6 +241,34 @@ data, incomplete file lists and changes outside release metadata all stop
 automation. The file allowlist follows the simple release-please config:
 `CHANGELOG.md`, `.release-please-manifest.json`, `version.txt`, and
 `deploy/helm/futureagi/Chart.yaml`; only additions/modifications are eligible.
+The PR must have exactly one commit. Each of the 15 release PRs merged from
+4 Oct to 3 Nov had one (read-only check, 11 Nov).
+
+**Who pushed.** Who opened the PR is not enough: a writer's commit on the
+release branch could set any higher version. The script reads the branch's
+activity feed (`GET /repos/future-agi/future-agi/activity`, newest first) and
+requires all of the following:
+
+- The newest row is a push of the PR's head commit. Until the feed shows it,
+  the release waits.
+- The branch's most recent `branch_creation` row is among the newest 100 rows.
+- That row and every later row have the actor `futureagi-release-bot[bot]`, of
+  type Bot.
+
+Rows before that creation belong to the previous release PR and do not count.
+The branch name is reused for every release, and the person who merged the
+previous PR shows up as the one who deleted the branch. A person's push,
+including **Update branch**, makes the autopilot leave that release to a
+person. This holds even after release-please force-pushes over it, because a
+force-push does not start a new branch lifetime. The endpoint pages by cursor
+and ignores page numbers, so the script reads one page. A lifetime longer
+than 100 rows also waits for a person. On 11 Nov the live feed held 29
+branch lifetimes since 17 Sep, of 2 to 4 rows each, all created and pushed by
+the release App. Replaying the rule on it allows each of the last 15 release
+PRs at its merged head. A missing or null actor, a row for another ref and a
+malformed response also wait. The read uses the workflow token's Contents read
+permission. That this permission is enough for this
+endpoint is not verified live; a refused read fails the run red.
 
 Paths alone are not approval evidence. The script reads those files **as data**
 at the API-reported immutable base and head commit SHAs, using Git trees and
@@ -273,9 +310,12 @@ Once reliable, an admin can add its exact aggregate check name to
 is not evidence that E2E passed.
 
 The policy re-reads the PR around each evidence collection and repeats the whole
-decision, including contents and case-insensitive holds, after recording its audit
-and approval. Policy-v2 approval and audit writes are idempotent per head/base SHA
-pair; older policy approvals are not reused as v2 evidence. If the writes reset
+decision, including contents, the push check and case-insensitive holds, after
+recording its audit and approval. If the PR changes between those reads, for
+example while GitHub recomputes mergeability after a push to main, the run
+fails red and the next poll decides again. Policy-v2 approval and audit writes
+are idempotent per head/base SHA pair; older policy approvals are not reused as
+v2 evidence. If the writes reset
 GitHub's `updated_at`, the merge waits another
 configured cooldown; later runs reuse the existing approval/comment instead of
 resetting the clock forever. The autopilot's own reviews are those by the
@@ -469,8 +509,8 @@ run by this bot.
   the prerequisites for why `main`). The
   in-code actor check is defence in
   depth; the ruleset is the control that matters. Also complete the approver
-  App, environment and Actions-approval settings above, so that no writer can
-  approve a change into main without a person.
+  App, environment, Actions-approval and release-branch settings above, so
+  that no writer can approve a change into main without a person.
 - Do not cut beta/rc tags from dev until this change has reached main: the policy
   runs from main, and both release-images steps stop with a clear error if the
   script is missing there. Keep the script's arguments and outputs backward

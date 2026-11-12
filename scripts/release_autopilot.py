@@ -223,6 +223,9 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
                    or row.get("status") not in {"added", "modified"} for row in files)
             or len({row["filename"] for row in files}) != len(files)):
         return False, "changed files are unknown or outside release metadata"
+    # release-please writes one commit and force-pushes it on each rebuild.
+    if type(pr.get("commits")) is not int or pr["commits"] != 1:
+        return False, "the release PR is not a single release-please commit"
     if not metadata_allows(pr, files, metadata, pr["title"].removeprefix("chore(main): release ")):
         return False, "release metadata contents, versions or file types are not permitted"
     try:
@@ -242,11 +245,43 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
 
 
 CALLOUT_WORKFLOW = ".github/workflows/migrations-callout-check.yml"
+ACTIVITY_ROWS = 100
+
+
+def release_branch_pushes(activity, sha):
+    """Allow only a release branch that the release App alone created and pushed.
+
+    Who opened the PR is not enough: a writer's commit on the branch could set
+    any higher version. GitHub lists the branch's activity newest first. The
+    branch name is reused for every release, so rows before its most recent
+    creation, such as the merger's deletion of the previous branch, do not count.
+    """
+    if not isinstance(activity, list) or not activity or not isinstance(activity[0], dict):
+        return False, "the release branch's push history is unknown"
+    if activity[0].get("after") != sha:
+        return False, "the release branch's newest push is not the PR head yet"
+    for row in activity:
+        if not isinstance(row, dict) or row.get("ref") != f"refs/heads/{BRANCH}":
+            return False, "the release branch's push history is unknown"
+        actor = row.get("actor")
+        if not isinstance(actor, dict) or actor.get("login") != AUTHOR or actor.get("type") != "Bot":
+            return False, "someone other than the release App pushed to the release branch; a person merges this release"
+        if row.get("activity_type") == "branch_creation":
+            return True, "only the release App created and pushed the release branch"
+    return False, f"the release branch's creation is not among its newest {ACTIVITY_ROWS} pushes"
 
 
 def release_gates(pr, config, now):
-    """Live evidence beyond the PR itself: the callout workflow and main's position."""
+    """Live evidence beyond the PR itself: who pushed, the callout workflow and main's position."""
     sha = pr["head"]["sha"]
+    # One page only: this endpoint pages by cursor and ignores page numbers, so
+    # pages() would read the same rows again. A release branch's lifetime has a
+    # handful of rows; one with more waits for a person.
+    activity = api(f"activity?ref={quote('refs/heads/' + BRANCH, safe='')}"
+                   f"&direction=desc&per_page={ACTIVITY_ROWS}")
+    allowed, reason = release_branch_pushes(activity, sha)
+    if not allowed:
+        return False, reason
     runs = pages(f"actions/runs?head_sha={sha}&event=pull_request", "workflow_runs")
     # Keep only runs of the release PR itself (its same-repository branch) before
     # choosing the newest: a PR from a fork or another branch at the same commit
