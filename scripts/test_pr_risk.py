@@ -2507,8 +2507,14 @@ class ControllerTests(unittest.TestCase):
         with patch.object(risk.time, "sleep"), self.assertRaisesRegex(risk.PolicyError, "merged, but"):
             risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
+        # The record names the planned dispatches; a second note names what
+        # did not start.
+        record, note = self.merged_records()
+        self.assertIn("`backend-ci.yml`", record)
+        self.assertNotIn("Not started", record)
+        self.assertIn("Not started (dispatch these on dev by hand): `merged label`", note)
 
-    # --- A merge whose run ended before its follow-ups ---
+    # --- A merge whose run ended before its merged record ---
 
     def merge_with_lost_answer(self, status=None):
         """GitHub merges, but the run gets no answer (None) or a server error."""

@@ -34,8 +34,9 @@ ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
 APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
 MERGE_BLOCKED_MARKER = "<!-- pr-autopilot:merge-blocked -->"
 APPROVER_UNAVAILABLE_MARKER = "<!-- pr-autopilot:approver-unavailable -->"
-# The record that a merge's follow-ups (dispatches, label) were started. A
-# sweep recovers a bot merge without it (recover_merges).
+# Written before a merge's follow-ups (dispatches, label) start, so a sweep
+# that finds it never starts them again. A sweep recovers a bot merge
+# without it (recover_merges).
 MERGED_MARKER = "<!-- pr-autopilot:merged -->"
 # Asks a person to dismiss an approval the autopilot could not withdraw. Not a
 # parking note: the PR's new head is judged as usual.
@@ -1343,7 +1344,7 @@ PARKING_NOTES = (ESCALATION_MARKER, MERGE_BLOCKED_MARKER, APPROVER_UNAVAILABLE_M
 
 
 # Closed PRs into dev, most recently updated first, that one sweep checks for
-# a merge without its follow-ups. One page: on 12 Nov 2026 it covered nine
+# a merge without its merged record. One page: on 12 Nov 2026 it covered nine
 # days, so a merge stays in view for days if recovery keeps failing.
 RECOVERY_LIST = "pulls?state=closed&base=dev&sort=updated&direction=desc&per_page=100"
 # Longer than the approve-and-merge job's 10-minute limit, so recovery never

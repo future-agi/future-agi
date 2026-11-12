@@ -114,7 +114,8 @@ jobs:
           PR_AUTOPILOT_TRUSTED_AUTHORS: ${{ vars.PR_AUTOPILOT_TRUSTED_AUTHORS }}
           AUTOPILOT_HOURS_UTC: ${{ vars.AUTOPILOT_HOURS_UTC }}
           REVIEW_KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
-          # The sweep starts the follow-ups of a merge whose run ended first.
+          # The sweep starts the follow-ups of a merge whose run ended before
+          # its merged record.
           DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}
           POLICY_SHA: ${{ steps.checkout-sha.outputs.sha }}
         run: |
