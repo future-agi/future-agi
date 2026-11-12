@@ -2,7 +2,22 @@ from django.db.models import F, Value
 from django.db.models.functions import Coalesce
 
 from simulate.models import CallExecution
-from simulate.models.test_execution import CallExecutionSnapshot, CallTranscript
+from simulate.models.test_execution import CallExecutionSnapshot
+
+
+def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
+    """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn."""
+    return list(
+        call_execution.transcripts.values(
+            "speaker_role",
+            "content",
+            "start_time_ms",
+            "end_time_ms",
+            "confidence_score",
+            speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
+            actor_id=F("actor_turn__actor_id"),
+        )
+    )
 
 
 def clear_call_for_rerun(
@@ -52,20 +67,10 @@ def clear_call_for_rerun(
         ai_interruption_rate=call_execution.ai_interruption_rate,
         avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
         conversation_metrics_data=call_execution.conversation_metrics_data,
-        transcripts=list(
-            call_execution.transcripts.values(
-                "speaker_role",
-                "content",
-                "start_time_ms",
-                "end_time_ms",
-                "confidence_score",
-                speaker_name=Coalesce("actor_turn__speaker_name", Value("")),
-                actor_id=F("actor_turn__actor_id"),
-            )
-        ),
+        transcripts=transcript_snapshot(call_execution),
     )
 
-    CallTranscript.delete_with_actor_turns(call_execution.transcripts.all())
+    call_execution.transcripts.all().delete()
 
     call_execution.service_provider_call_id = None
     call_execution.monitor_call_data = None

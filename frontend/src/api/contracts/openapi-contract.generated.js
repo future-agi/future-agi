@@ -125572,7 +125572,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentScenarioCallActor: {
-      required: ["id", "instruction", "trigger"],
+      required: ["id"],
       type: "object",
       properties: {
         id: {
@@ -125584,17 +125584,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Instruction",
           type: "string",
         },
+        knowledge: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentScenarioActorKnowledge",
+          },
+        },
         trigger: {
           $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
         },
         actions: {
           type: "array",
           items: {
-            type: "object",
-            additionalProperties: {
-              type: "string",
-              "x-nullable": true,
-            },
+            $ref: "#/definitions/HarnessEnvironmentScenarioActorAction",
           },
         },
       },
@@ -134371,7 +134373,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         kind: {
           title: "Kind",
           type: "string",
-          minLength: 1,
+          enum: [
+            "always",
+            "after_seconds",
+            "on_tool",
+            "contacted",
+            "probability",
+            "mid_journey",
+            "on_keyword",
+            "conditional",
+          ],
+        },
+        seconds: {
+          title: "Seconds",
+          type: "number",
         },
         turn: {
           title: "Turn",
@@ -134395,6 +134410,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
         p: {
           title: "P",
           type: "number",
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+        },
+        where: {
+          title: "Where",
+          type: "object",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessEnvironmentScenarioActorAction: {
+      required: ["action"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+        },
+        trigger: {
+          $ref: "#/definitions/HarnessEnvironmentCallActorTrigger",
+        },
+      },
+    },
+    HarnessEnvironmentScenarioActorKnowledge: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["facts", "files", "records"],
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+        paths: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        store: {
+          title: "Store",
+          type: "string",
+        },
+        collection: {
+          title: "Collection",
+          type: "string",
+        },
+        where: {
+          title: "Where",
+          type: "object",
         },
       },
     },

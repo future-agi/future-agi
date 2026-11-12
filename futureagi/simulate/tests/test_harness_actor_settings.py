@@ -376,3 +376,72 @@ def test_an_amend_to_another_scenario_is_applied_while_one_names_an_actor_the_li
     }
     assert edited[second["name"]]["tests"] == "edited"
     assert edited[first["name"]]["actors"] == [{"id": "manager"}]
+
+
+def _scenario_names_manager(environment, user):
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    first, *rest = suite_documents(drafts.edit_sides(environment)["suite"])
+    return drafts.write_suite_edit(
+        environment, [{**first, "actors": [{"id": "manager"}]}, *rest], user=user
+    )
+
+
+def _remove_manager(environment, user):
+    from simulate.services import harness_actors
+
+    return harness_actors.write_actor_edit(
+        environment,
+        op="delete",
+        actor_id="manager",
+        body=None,
+        user=user,
+        expected_revision=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "first, meanwhile",
+    [
+        (_remove_manager, _scenario_names_manager),
+        (_scenario_names_manager, _remove_manager),
+    ],
+    ids=[
+        "actor-removal-while-a-scenario-adds-it",
+        "scenario-adds-it-while-the-actor-is-removed",
+    ],
+)
+def test_an_actor_removal_and_a_scenario_naming_it_never_both_land(
+    user, workspace, storage, auth_client, first, meanwhile
+):
+    from unittest.mock import patch
+
+    from simulate.services.harness_versioning.versions import suite_documents
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    environment = _built(user, workspace, "actor-scenario-race")
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    real = drafts.record_draft
+    raced = []
+
+    # The other edit lands after this one read and validated both pieces, just before it writes.
+    def other_edit_lands_meanwhile(env, *args, **kwargs):
+        if not raced:
+            raced.append(True)
+            meanwhile(env, user)
+        return real(env, *args, **kwargs)
+
+    with patch.object(drafts, "record_draft", side_effect=other_edit_lands_meanwhile):
+        with pytest.raises(HostedHarnessError) as refused:
+            first(environment, user)
+
+    assert refused.value.code == "draft_changed"
+    sides = drafts.edit_sides(environment)
+    named = any(
+        one.get("id") == "manager"
+        for doc in suite_documents(sides["suite"])
+        for one in doc.get("actors") or []
+    )
+    listed = "manager" in drafts.actor_ids(sides["environment"])
+    # Whichever landed, the pair is consistent: no scenario names an actor the list lacks.
+    assert listed or not named

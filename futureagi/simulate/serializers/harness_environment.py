@@ -323,23 +323,64 @@ class HarnessEnvironmentCallActorSerializer(serializers.Serializer):
 
 
 class HarnessEnvironmentCallActorTriggerSerializer(serializers.Serializer):
-    """When an actor enters a call; only the keys its kind uses are present."""
+    """When an actor enters a call, or a scheduled action fires; only the keys its kind uses are present."""
 
-    kind = serializers.CharField(required=False)
+    kind = serializers.ChoiceField(
+        choices=(
+            "always",
+            "after_seconds",
+            "on_tool",
+            "contacted",
+            "probability",
+            "mid_journey",
+            "on_keyword",
+            "conditional",
+        ),
+        required=False,
+    )
+    seconds = serializers.FloatField(required=False)
     turn = serializers.IntegerField(required=False)
     tool = serializers.CharField(required=False, allow_blank=True)
     on_call = serializers.IntegerField(required=False)
     words = serializers.ListField(child=serializers.CharField(), required=False)
     p = serializers.FloatField(required=False)
+    # `conditional`: the record collection watched and the field values that bring the actor in.
+    collection = serializers.CharField(required=False, allow_blank=True)
+    where = serializers.JSONField(required=False)
+
+
+class HarnessEnvironmentScenarioActorActionSerializer(serializers.Serializer):
+    """A world action the actor takes in the scenario, with its arguments as the world receives them."""
+
+    action = serializers.CharField()
+    arguments = serializers.JSONField(required=False)
+    trigger = HarnessEnvironmentCallActorTriggerSerializer(required=False)
+
+
+class HarnessEnvironmentScenarioActorKnowledgeSerializer(serializers.Serializer):
+    """What the actor is given to read in this scenario: facts, files by path, or records from a store."""
+
+    kind = serializers.ChoiceField(choices=("facts", "files", "records"))
+    text = serializers.CharField(required=False, allow_blank=True)
+    paths = serializers.ListField(child=serializers.CharField(), required=False)
+    store = serializers.CharField(required=False, allow_blank=True)
+    collection = serializers.CharField(required=False, allow_blank=True)
+    where = serializers.JSONField(required=False)
 
 
 class HarnessEnvironmentScenarioCallActorSerializer(serializers.Serializer):
-    """An actor a scenario includes: what they say in it and when, and the world actions they take."""
+    """An actor a scenario includes: what they say in it and when, what they read, and the world actions they take."""
 
     id = serializers.CharField()
-    instruction = serializers.CharField(allow_blank=True)
-    trigger = HarnessEnvironmentCallActorTriggerSerializer()
-    actions = serializers.ListField(child=serializers.DictField(), required=False)
+    instruction = serializers.CharField(allow_blank=True, required=False)
+    knowledge = HarnessEnvironmentScenarioActorKnowledgeSerializer(
+        many=True, required=False
+    )
+    # Absent or null: the actor comes in the way its own activation says.
+    trigger = HarnessEnvironmentCallActorTriggerSerializer(
+        required=False, allow_null=True
+    )
+    actions = HarnessEnvironmentScenarioActorActionSerializer(many=True, required=False)
 
 
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):

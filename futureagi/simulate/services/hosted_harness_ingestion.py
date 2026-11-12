@@ -914,16 +914,20 @@ def _apply_receipt_to_call(
     else:
         metadata["harness_grading_status"] = "failed"
         failure = body.get("failure") or {}
-        metadata[
-            "harness_grading_error"
-        ] = "Required evaluation coverage was incomplete " f"({coverage['executed']}/{coverage['expected']} executed" + (
-            f", {coverage['unmeasured']} not measured"
-            if coverage.get("unmeasured")
-            else ""
-        ) + "). " + (
-            f"The trial ended with {failure.get('code') or failure.get('message')}."
-            if failure
-            else "This is a grading failure, not an agent failure."
+        metadata["harness_grading_error"] = (
+            "Required evaluation coverage was incomplete "
+            f"({coverage['executed']}/{coverage['expected']} executed"
+            + (
+                f", {coverage['unmeasured']} not measured"
+                if coverage.get("unmeasured")
+                else ""
+            )
+            + "). "
+            + (
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
+                if failure
+                else "This is a grading failure, not an agent failure."
+            )
         )
     update_fields = [
         "status",
@@ -1523,9 +1527,7 @@ def _ingest_hosted_transcript(
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))
                 segments.append(segment)
             ChatMessageModel.objects.filter(call_execution=call).delete()
-            CallTranscript.delete_with_actor_turns(
-                CallTranscript.objects.filter(call_execution=call)
-            )
+            CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
             if metadata is not None:
@@ -1632,9 +1634,7 @@ def _ingest_hosted_transcript(
                     content=str(payload["transcript"]),
                 )
             )
-        CallTranscript.delete_with_actor_turns(
-            CallTranscript.objects.filter(call_execution=call)
-        )
+        CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)
             CallTranscript.create_actor_turns(rows)

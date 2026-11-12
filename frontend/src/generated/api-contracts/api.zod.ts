@@ -38692,16 +38692,75 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       actors: zod.array(
         zod.object({
           id: zod.string().min(1),
-          instruction: zod.string(),
-          trigger: zod.object({
-            kind: zod.string().min(1).optional(),
-            turn: zod.number().optional(),
-            tool: zod.string().optional(),
-            on_call: zod.number().optional(),
-            words: zod.array(zod.string().min(1)).optional(),
-            p: zod.number().optional(),
-          }),
-          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
+          instruction: zod.string().optional(),
+          knowledge: zod
+            .array(
+              zod.object({
+                kind: zod.enum(["facts", "files", "records"]),
+                text: zod.string().optional(),
+                paths: zod.array(zod.string().min(1)).optional(),
+                store: zod.string().optional(),
+                collection: zod.string().optional(),
+                where: zod.object({}).passthrough().optional(),
+              }),
+            )
+            .optional(),
+          trigger: zod
+            .object({
+              kind: zod
+                .enum([
+                  "always",
+                  "after_seconds",
+                  "on_tool",
+                  "contacted",
+                  "probability",
+                  "mid_journey",
+                  "on_keyword",
+                  "conditional",
+                ])
+                .optional(),
+              seconds: zod.number().optional(),
+              turn: zod.number().optional(),
+              tool: zod.string().optional(),
+              on_call: zod.number().optional(),
+              words: zod.array(zod.string().min(1)).optional(),
+              p: zod.number().optional(),
+              collection: zod.string().optional(),
+              where: zod.object({}).passthrough().optional(),
+            })
+            .optional(),
+          actions: zod
+            .array(
+              zod.object({
+                action: zod.string().min(1),
+                arguments: zod.object({}).passthrough().optional(),
+                trigger: zod
+                  .object({
+                    kind: zod
+                      .enum([
+                        "always",
+                        "after_seconds",
+                        "on_tool",
+                        "contacted",
+                        "probability",
+                        "mid_journey",
+                        "on_keyword",
+                        "conditional",
+                      ])
+                      .optional(),
+                    seconds: zod.number().optional(),
+                    turn: zod.number().optional(),
+                    tool: zod.string().optional(),
+                    on_call: zod.number().optional(),
+                    words: zod.array(zod.string().min(1)).optional(),
+                    p: zod.number().optional(),
+                    collection: zod.string().optional(),
+                    where: zod.object({}).passthrough().optional(),
+                  })
+                  .optional(),
+              }),
+            )
+            .optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -38938,16 +38997,75 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       actors: zod.array(
         zod.object({
           id: zod.string().min(1),
-          instruction: zod.string(),
-          trigger: zod.object({
-            kind: zod.string().min(1).optional(),
-            turn: zod.number().optional(),
-            tool: zod.string().optional(),
-            on_call: zod.number().optional(),
-            words: zod.array(zod.string().min(1)).optional(),
-            p: zod.number().optional(),
-          }),
-          actions: zod.array(zod.record(zod.string(), zod.string())).optional(),
+          instruction: zod.string().optional(),
+          knowledge: zod
+            .array(
+              zod.object({
+                kind: zod.enum(["facts", "files", "records"]),
+                text: zod.string().optional(),
+                paths: zod.array(zod.string().min(1)).optional(),
+                store: zod.string().optional(),
+                collection: zod.string().optional(),
+                where: zod.object({}).passthrough().optional(),
+              }),
+            )
+            .optional(),
+          trigger: zod
+            .object({
+              kind: zod
+                .enum([
+                  "always",
+                  "after_seconds",
+                  "on_tool",
+                  "contacted",
+                  "probability",
+                  "mid_journey",
+                  "on_keyword",
+                  "conditional",
+                ])
+                .optional(),
+              seconds: zod.number().optional(),
+              turn: zod.number().optional(),
+              tool: zod.string().optional(),
+              on_call: zod.number().optional(),
+              words: zod.array(zod.string().min(1)).optional(),
+              p: zod.number().optional(),
+              collection: zod.string().optional(),
+              where: zod.object({}).passthrough().optional(),
+            })
+            .optional(),
+          actions: zod
+            .array(
+              zod.object({
+                action: zod.string().min(1),
+                arguments: zod.object({}).passthrough().optional(),
+                trigger: zod
+                  .object({
+                    kind: zod
+                      .enum([
+                        "always",
+                        "after_seconds",
+                        "on_tool",
+                        "contacted",
+                        "probability",
+                        "mid_journey",
+                        "on_keyword",
+                        "conditional",
+                      ])
+                      .optional(),
+                    seconds: zod.number().optional(),
+                    turn: zod.number().optional(),
+                    tool: zod.string().optional(),
+                    on_call: zod.number().optional(),
+                    words: zod.array(zod.string().min(1)).optional(),
+                    p: zod.number().optional(),
+                    collection: zod.string().optional(),
+                    where: zod.object({}).passthrough().optional(),
+                  })
+                  .optional(),
+              }),
+            )
+            .optional(),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -41904,17 +42022,74 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
         actors: zod.array(
           zod.object({
             id: zod.string().min(1),
-            instruction: zod.string(),
-            trigger: zod.object({
-              kind: zod.string().min(1).optional(),
-              turn: zod.number().optional(),
-              tool: zod.string().optional(),
-              on_call: zod.number().optional(),
-              words: zod.array(zod.string().min(1)).optional(),
-              p: zod.number().optional(),
-            }),
+            instruction: zod.string().optional(),
+            knowledge: zod
+              .array(
+                zod.object({
+                  kind: zod.enum(["facts", "files", "records"]),
+                  text: zod.string().optional(),
+                  paths: zod.array(zod.string().min(1)).optional(),
+                  store: zod.string().optional(),
+                  collection: zod.string().optional(),
+                  where: zod.object({}).passthrough().optional(),
+                }),
+              )
+              .optional(),
+            trigger: zod
+              .object({
+                kind: zod
+                  .enum([
+                    "always",
+                    "after_seconds",
+                    "on_tool",
+                    "contacted",
+                    "probability",
+                    "mid_journey",
+                    "on_keyword",
+                    "conditional",
+                  ])
+                  .optional(),
+                seconds: zod.number().optional(),
+                turn: zod.number().optional(),
+                tool: zod.string().optional(),
+                on_call: zod.number().optional(),
+                words: zod.array(zod.string().min(1)).optional(),
+                p: zod.number().optional(),
+                collection: zod.string().optional(),
+                where: zod.object({}).passthrough().optional(),
+              })
+              .optional(),
             actions: zod
-              .array(zod.record(zod.string(), zod.string()))
+              .array(
+                zod.object({
+                  action: zod.string().min(1),
+                  arguments: zod.object({}).passthrough().optional(),
+                  trigger: zod
+                    .object({
+                      kind: zod
+                        .enum([
+                          "always",
+                          "after_seconds",
+                          "on_tool",
+                          "contacted",
+                          "probability",
+                          "mid_journey",
+                          "on_keyword",
+                          "conditional",
+                        ])
+                        .optional(),
+                      seconds: zod.number().optional(),
+                      turn: zod.number().optional(),
+                      tool: zod.string().optional(),
+                      on_call: zod.number().optional(),
+                      words: zod.array(zod.string().min(1)).optional(),
+                      p: zod.number().optional(),
+                      collection: zod.string().optional(),
+                      where: zod.object({}).passthrough().optional(),
+                    })
+                    .optional(),
+                }),
+              )
               .optional(),
           }),
         ),

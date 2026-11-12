@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='CallTranscriptActor',
             fields=[
-                ('transcript', models.OneToOneField(db_constraint=False, on_delete=django.db.models.deletion.DO_NOTHING, primary_key=True, related_name='actor_turn', serialize=False, to='simulate.calltranscript')),
+                ('transcript', models.OneToOneField(db_constraint=False, on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='actor_turn', serialize=False, to='simulate.calltranscript')),
                 ('speaker_name', models.CharField(blank=True, default='', max_length=255)),
                 ('actor_id', models.CharField(blank=True, max_length=255, null=True)),
             ],

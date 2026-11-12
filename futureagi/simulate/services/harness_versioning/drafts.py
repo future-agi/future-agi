@@ -495,22 +495,24 @@ def record_draft(
     pieces: set[str] | None = None,
     nudge: Any = None,
     message_id: str = "",
+    checked: set[str] | None = None,
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 
     Each piece whose content differs from its default becomes, or updates, that
     piece's one draft; one equal to its default discards the draft. ``expected`` is the
     drafts the writer started from: another edit since refuses with ``draft_changed``.
-    ``pieces`` limits the writes and the check (both by default); ``nudge`` tags a draft
+    ``pieces`` limits the writes and the check (both by default); ``checked`` widens the check
+    to a piece the write was validated against but does not write; ``nudge`` tags a draft
     this call creates; ``message_id`` is the chat message the write answered, part of each moved item's
-    source. ``None`` once drafts no longer apply: the caller saves as
-    before.
+    source. ``None`` once drafts no longer apply: the caller saves as before.
     """
     from simulate.services.hosted_harness_conversation import (
         require_checkpoint_scenarios,
     )
 
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
+    checked = wanted | set(checked or ())
     published = archives.read_archive(body)
     split, prepared = prepare_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
@@ -572,7 +574,7 @@ def record_draft(
         if expected is not None:
             current = draft_refs(locked)
             for piece in DRAFT_PIECES:
-                if piece in wanted and expected.get(piece, NO_DRAFT) != current[piece]:
+                if piece in checked and expected.get(piece, NO_DRAFT) != current[piece]:
                     logger.info(
                         "harness_draft_changed environment=%s piece=%s origin=%s",
                         locked.id,
@@ -727,6 +729,8 @@ def write_suite_edit(
         _rewritten_authoring_archive,
     )
 
+    # Both refs before the files: an actor edit landing meanwhile fails this write's check.
+    refs = draft_refs(environment)
     sides = edit_sides(environment)
     from simulate.services.harness_scenarios import (
         actor_reference_problems,
@@ -766,9 +770,25 @@ def write_suite_edit(
     body = archives.pack_archive(
         archives.compose(sides["environment"], archives.read_archive(rewritten))
     )
-    write = record_draft(
-        environment, body, origin="manual", user=user, pieces={"suite"}
-    )
+    try:
+        write = record_draft(
+            environment,
+            body,
+            origin="manual",
+            user=user,
+            pieces={"suite"},
+            expected=refs,
+            # Validated against the actor list: an actor edit landing meanwhile refuses this one.
+            checked=set(DRAFT_PIECES),
+        )
+    except HostedHarnessError as exc:
+        if exc.code != "draft_changed":
+            raise
+        raise HostedHarnessError(
+            "draft_changed",
+            "the environment was edited elsewhere since you read it; read it again",
+            status_code=409,
+        ) from exc
     transaction.on_commit(lambda: retire_chat_runtime(environment))
     return write
 

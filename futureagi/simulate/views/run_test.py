@@ -140,7 +140,7 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
-from simulate.services.call_rerun import clear_call_for_rerun
+from simulate.services.call_rerun import clear_call_for_rerun, transcript_snapshot
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
     update_eval_config,
@@ -7513,15 +7513,7 @@ class CallExecutionRerunView(APIView):
             ai_interruption_rate=call_execution.ai_interruption_rate,
             avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
             conversation_metrics_data=call_execution.conversation_metrics_data,
-            transcripts=list(
-                call_execution.transcripts.values(
-                    "speaker_role",
-                    "content",
-                    "start_time_ms",
-                    "end_time_ms",
-                    "confidence_score",
-                )
-            ),
+            transcripts=transcript_snapshot(call_execution),
         )
 
         # Clear existing transcripts
@@ -7620,15 +7612,7 @@ class TestExecutionRerunView(APIView):
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: Capture transcript data before we delete them
-                    transcript_data = list(
-                        call_execution.transcripts.values(
-                            "speaker_role",
-                            "content",
-                            "start_time_ms",
-                            "end_time_ms",
-                            "confidence_score",
-                        )
-                    )
+                    transcript_data = transcript_snapshot(call_execution)
 
                     # Prepare full snapshot with all fields
                     snapshots_to_create.append(

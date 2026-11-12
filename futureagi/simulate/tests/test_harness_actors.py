@@ -475,6 +475,37 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(
     assert before != after and before == restamped
 
 
+@pytest.mark.parametrize(
+    "edited",
+    [
+        # An entry without an id, a second record under one id, and a field beside the cast.
+        {"actors": [MANAGER, {"name": "No id"}]},
+        {"actors": [MANAGER, {**MANAGER, "goal": "Approve fast"}]},
+        {"actors": [MANAGER], "extra": 1},
+    ],
+)
+def test_a_change_to_actors_json_outside_one_record_per_actor_still_reads_as_a_change(
+    edited,
+):
+    from simulate.services.harness_versioning import diffs, hashing
+
+    def digests(body):
+        return hashing.actor_digests({"actors.json": json.dumps(body).encode()})
+
+    before = digests({"schema": "actors.v1", "actors": [MANAGER]})
+    after = digests({"schema": "actors.v1", **edited})
+    assert before != after
+    summary = diffs.summarize_environment({"actors": diffs.keyed_diff(before, after)})
+    assert summary == "other actor settings changed"
+    assert hashing.actor_names({"actors.json": json.dumps(edited).encode()})[
+        hashing.ACTOR_OTHER_KEY
+    ]
+    assert digests({"schema": "x", "actors": [MANAGER]}) == digests(
+        {"actors": [MANAGER]}
+    )
+    assert hashing.actor_digests({"actors.json": b"[]"}) is None
+
+
 def test_an_actor_who_speaks_takes_the_whole_contract_in_the_one_actor_list(
     user, workspace, storage, auth_client
 ):
@@ -1903,3 +1934,72 @@ def test_an_actor_whose_actions_are_not_a_list_of_names_is_refused_never_an_erro
 
     assert (response.status_code, response.json()["error"]) == (400, "actor_invalid")
     assert (linked.status_code, linked.json()["error"]) == (400, "actor_invalid")
+
+
+# A scenario's actor as the runtime writes it: no trigger of its own, files and records to read, and scheduled
+# actions with nested arguments and their own triggers.
+SCENARIO_ACTOR_PAYLOAD = {
+    "id": "manager",
+    "instruction": "Approve only with a reason.",
+    "knowledge": [
+        {"kind": "facts", "text": "The discount ceiling is 15%."},
+        {"kind": "files", "paths": ["knowledge/policy.md"]},
+        {
+            "kind": "records",
+            "store": "crm",
+            "collection": "deals",
+            "where": {"stage": "review"},
+        },
+    ],
+    "actions": [
+        {
+            "action": "deals.change",
+            "arguments": {"id": "D-1", "approval": {"by": "manager", "levels": [1, 2]}},
+            "trigger": {"kind": "after_seconds", "seconds": 30},
+        },
+        {
+            "action": "deals.put",
+            "arguments": {"id": "D-2"},
+            "trigger": {
+                "kind": "conditional",
+                "collection": "deals",
+                "where": {"status": "pending"},
+            },
+        },
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        SCENARIO_ACTOR_PAYLOAD,
+        {"id": "friend"},
+        {**SCENARIO_ACTOR_PAYLOAD, "trigger": None},
+        {
+            **SCENARIO_ACTOR_PAYLOAD,
+            "trigger": {"kind": "on_tool", "tool": "book_ride", "on_call": 2},
+        },
+    ],
+    ids=["full", "id-only", "null-trigger", "own-trigger"],
+)
+def test_the_scenario_actor_contract_reads_what_the_runtime_writes(payload):
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentScenarioCallActorSerializer,
+    )
+
+    contract = HarnessEnvironmentScenarioCallActorSerializer(data=payload)
+    assert contract.is_valid(), contract.errors
+    # Nothing the runtime wrote is dropped or reshaped, nested arguments and triggers included.
+    assert json.loads(json.dumps(contract.validated_data)) == payload
+
+
+def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_environment import call_actor_labels
+
+    environment = _built(user, workspace, "actor-filter-labels")
+    assert "channel" not in MANAGER
+    assert _add(auth_client, environment, MANAGER).status_code == 200
+    assert call_actor_labels(environment)["manager"] == "Priya Raman"
