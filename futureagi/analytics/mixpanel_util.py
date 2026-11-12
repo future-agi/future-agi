@@ -96,7 +96,7 @@ class MixpanelTracker:
                     "Subscription Tier": subscription,
                 },
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort analytics never raises
             _log_delivery_failure(e, "update_org_details", "mixpanel_update_org_failed")
 
     def set_details(self, user: User):
@@ -169,7 +169,7 @@ class MixpanelTracker:
                 )
             user_id = str(properties.get("$user_id", "unknown"))
             self.mp.track(user_id, event_name, properties)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort analytics never raises
             _log_delivery_failure(e, "track_event", "mixpanel_track_event_failed")
 
 
