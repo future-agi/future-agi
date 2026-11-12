@@ -31,7 +31,7 @@ ProbabilityBar.propTypes = {
   value: PropTypes.number,
 };
 
-export default function JevResultDisplay({ result, jev }) {
+export default function JevResultDisplay({ result, jev, modelLabel = "Jev" }) {
   // A valid "fail" verdict is a successful evaluation. Only execution errors
   // suppress scores; the legacy `failure` flag also denotes a failed verdict.
   const error =
@@ -42,7 +42,7 @@ export default function JevResultDisplay({ result, jev }) {
       ? error
       : error?.message ||
         result.message ||
-        "Jev evaluation failed. Nothing was scored.";
+        `${modelLabel} evaluation failed. Nothing was scored.`;
   const output = normalizeEvalCellValue(result.output);
   const choice =
     typeof output === "string"
@@ -161,6 +161,17 @@ export default function JevResultDisplay({ result, jev }) {
       <Typography variant="caption">
         Returned: {jev.actual_model || "—"}
       </Typography>
+      {jev.connection && (
+        <Typography variant="caption">
+          Connection:{" "}
+          {{
+            typesafe: "TypeSafe",
+            openrouter: "OpenRouter",
+            openai: "OpenAI",
+            perplexity: "Perplexity",
+          }[jev.connection] || jev.connection}
+        </Typography>
+      )}
       {jev.mapping_revision && (
         <Typography variant="caption">
           Mapping: {jev.mapping_revision}
@@ -173,7 +184,9 @@ export default function JevResultDisplay({ result, jev }) {
         </Typography>
       )}
       <Typography variant="caption" color="text.secondary">
-        Jev does not provide written reasoning.
+        {modelLabel === "Jev"
+          ? "Jev does not provide written reasoning."
+          : "Typed probabilities are shown above; no written rationale is generated."}
       </Typography>
     </Box>
   );
@@ -181,4 +194,5 @@ export default function JevResultDisplay({ result, jev }) {
 JevResultDisplay.propTypes = {
   result: PropTypes.object.isRequired,
   jev: PropTypes.object.isRequired,
+  modelLabel: PropTypes.string,
 };
