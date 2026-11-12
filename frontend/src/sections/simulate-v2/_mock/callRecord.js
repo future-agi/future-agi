@@ -162,7 +162,7 @@ const VERDICT_WORD = {
   passed: "Passed",
   failed: "Failed",
   flaky: "Flaky",
-  unmeasured: "Couldn't measure",
+  unmeasured: "Unmeasured",
 };
 
 /* The plan's eval of the same name reads like the verdict it doesn't decide

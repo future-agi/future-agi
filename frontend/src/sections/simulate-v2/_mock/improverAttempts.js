@@ -63,8 +63,8 @@ const SCRIPT = [
     title: "Added a confirmation step and a second model call before closing",
     where: "future-agi",
     dirty: false,
-    reject: "cost",
-    why: "Cost per conversation rose past the ceiling — the second model call runs on every turn.",
+    reject: "mustPass",
+    why: "A must-pass scenario regressed: the extra confirmation step asked a verified caller to repeat their details.",
   },
   {
     title:
@@ -145,11 +145,6 @@ export const attemptsOf = (
     ...(r.heldTasks || []),
   ].filter((t) => t.critical);
   const per = PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
-  const ceiling = record.limits?.costCeiling ?? 0;
-  const costLabel =
-    ceiling <= 0
-      ? "Cost per conversation · no increase"
-      : `Cost per conversation within +${ceiling}%`;
   /* Today's agent on the visible scenarios — what every attempt's change is measured from. */
   const before = visible.length
     ? clampPct((100 * visible.filter(wasPassing).length) / visible.length)
@@ -183,35 +178,10 @@ export const attemptsOf = (
       }),
     );
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
-    /* Cost is checked only where it can be measured; elsewhere the second
-       model call shows up as latency instead. */
-    const costKnown = record.costMeasured !== false;
-    const latencyCeiling = record.limits?.latencyCeiling ?? 10;
-    const cost =
-      step.reject === "cost" ? ceiling + 6 : Math.max(0, ceiling - 3);
-    const latency =
-      step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
     const checks = [
       { id: "model", label: "Model unchanged", pass: true },
-      costKnown
-        ? {
-            id: "cost",
-            label: costLabel,
-            actual: `+${cost}%`,
-            pass: cost <= ceiling,
-          }
-        : {
-            id: "cost",
-            label: costLabel,
-            actual: "unverified — no cost data",
-            pass: null,
-          },
-      {
-        id: "latency",
-        label: `Latency within +${latencyCeiling}%`,
-        actual: `+${latency}%`,
-        pass: latency <= latencyCeiling,
-      },
+      /* No cost or latency checks: an improvement is bounded by credits and
+         time only (clarified plan, improve.md). */
       { id: "protected", label: "Protected parts untouched", pass: true },
       { id: "judges", label: "No scenario or evaluation edited", pass: true },
     ];
@@ -260,10 +230,7 @@ export const attemptsOf = (
       mustPass: { total: mustPass.length, failed: mustFailed },
       checks,
       accepted: !step.reject,
-      why:
-        step.reject === "cost" && !costKnown
-          ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
-          : step.why,
+      why: step.why,
       score,
       before,
       delta: score - before,
@@ -316,9 +283,6 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       )
     : 0;
   const per = PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
-  const ceiling = record.limits?.costCeiling ?? 0;
-  const latencyCeiling = record.limits?.latencyCeiling ?? 10;
-  const costKnown = record.costMeasured !== false;
   const reps = r.repeats || REPEATS;
   const out = [];
   let spent = 0;
@@ -385,36 +349,10 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       }),
     );
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
-    const cost = step.reject === "cost" ? Math.max(ceiling, 0) + 6 : 0;
-    const latency =
-      step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
     const checks = [
       { id: "model", label: "Model unchanged", pass: true },
-      costKnown
-        ? {
-            id: "cost",
-            label:
-              ceiling <= 0
-                ? "Cost per conversation · no increase"
-                : `Cost per conversation within +${ceiling}%`,
-            actual: `+${cost}%`,
-            pass: cost <= Math.max(ceiling, 0),
-          }
-        : {
-            id: "cost",
-            label:
-              ceiling <= 0
-                ? "Cost per conversation · no increase"
-                : `Cost per conversation within +${ceiling}%`,
-            actual: "unverified — no cost data",
-            pass: null,
-          },
-      {
-        id: "latency",
-        label: `Latency within +${latencyCeiling}%`,
-        actual: `+${latency}%`,
-        pass: latency <= latencyCeiling,
-      },
+      /* No cost or latency checks: an improvement is bounded by credits and
+         time only (clarified plan, improve.md). */
       { id: "protected", label: "Protected parts untouched", pass: true },
       { id: "judges", label: "No scenario or evaluation edited", pass: true },
     ];
@@ -444,10 +382,7 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       mustPass: { total: mustPass.length, failed: mustFailed },
       checks,
       accepted: !step.reject,
-      why:
-        step.reject === "cost" && !costKnown
-          ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
-          : step.why,
+      why: step.why,
       score,
       before,
       delta: score - before,

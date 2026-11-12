@@ -21,7 +21,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { ceilingLabel, improvementOutcome } from "../_mock/optimizationRuns";
+import { improvementOutcome } from "../_mock/optimizationRuns";
 import {
   PROVIDER_LABELS,
   definitionOf,
@@ -30,18 +30,11 @@ import {
 import { improvementRunName } from "../_mock/optimizer";
 import { useSimStore } from "../store";
 import { heldShortOf } from "../improvements/improvementRows";
-import {
-  COST_ABS_STEPS,
-  costModeOf,
-  defaultCostAbs,
-  dollarsLabel,
-  protectablePartsOf,
-} from "../_mock/agentConstraints";
+import { protectablePartsOf } from "../_mock/agentConstraints";
 import {
   SCHEDULE_DAYS,
   canarySupported,
   lastAutomaticRun,
-  measuredCostOf,
   nextScheduledAt,
   scheduleTimeLabel,
   surfaceAvailability,
@@ -60,8 +53,6 @@ import { segmentedToggleSx } from "./segmentedToggleSx";
 import { creditsLabel } from "../_mock/metering";
 
 const MODELS = ["gpt-4o", "gpt-4.1", "claude-sonnet-4", "gemini-2.5-pro"];
-const COST_STEPS = [0, 2, 5, 10, 20];
-const LATENCY_STEPS = [0, 5, 10, 20];
 const BUDGET_STEPS = [15, 25, 50, 100, 250, 500];
 const MINUTE_STEPS = [15, 30, 60, 120, 150];
 const HOURS = Array.from(
@@ -96,17 +87,9 @@ export default function AgentConstraintsTab({
   onBuildEnv,
   embedded = false,
 }) {
-  const { state } = useSimStore();
   const { limits, set, reset, custom } = useAgentLimits(agent.key);
   const can = useMemo(() => surfaceAvailability(agent), [agent]);
   const parts = useMemo(() => protectablePartsOf(files || []), [files]);
-  const measured = useMemo(() => measuredCostOf(state, agent), [state, agent]);
-  const costMode = costModeOf(limits);
-  const costAbs = limits.costCeilingAbs ?? defaultCostAbs(measured);
-  /* An amount set elsewhere (the connect step takes any) stays selectable. */
-  const absSteps = [...new Set([...COST_ABS_STEPS, costAbs])].sort(
-    (a, b) => a - b,
-  );
 
   const areaCount = useMemo(() => {
     const st = areaStatesOf(limits, can);
@@ -282,94 +265,9 @@ export default function AgentConstraintsTab({
                 })}
               </Stack>
             )}
-            <Row
-              title="Cost per conversation"
-              body={
-                costMode === "abs"
-                  ? measured != null
-                    ? `Today ≈ ${dollarsLabel(measured)}`
-                    : "A fixed ceiling"
-                  : "Compared with today's agent"
-              }
-              hint={
-                costMode === "abs"
-                  ? "Measured on every proposed change — none may cost more than this, whatever today's agent costs."
-                  : "Measured on every proposed change against today's agent."
-              }
-            >
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <ToggleButtonGroup
-                  size="small"
-                  exclusive
-                  value={costMode}
-                  onChange={(_, v) =>
-                    v &&
-                    set(
-                      v === "abs"
-                        ? { costMode: v, costCeilingAbs: costAbs }
-                        : { costMode: v },
-                    )
-                  }
-                  sx={toggleSx}
-                >
-                  <ToggleButton value="pct" aria-label="Percentage above today">
-                    %
-                  </ToggleButton>
-                  <ToggleButton
-                    value="abs"
-                    aria-label="Amount per conversation"
-                  >
-                    $
-                  </ToggleButton>
-                </ToggleButtonGroup>
-                {costMode === "abs" ? (
-                  <Select
-                    size="small"
-                    value={costAbs}
-                    onChange={(e) => set({ costCeilingAbs: e.target.value })}
-                    sx={{ ...selectSx, fontVariantNumeric: "tabular-nums" }}
-                  >
-                    {absSteps.map((n) => (
-                      <MenuItem
-                        key={n}
-                        value={n}
-                        sx={{
-                          typography: "s2",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >{`At most ${dollarsLabel(n)}`}</MenuItem>
-                    ))}
-                  </Select>
-                ) : (
-                  <Select
-                    size="small"
-                    value={limits.costCeiling}
-                    onChange={(e) => set({ costCeiling: e.target.value })}
-                    sx={selectSx}
-                  >
-                    {COST_STEPS.map((n) => (
-                      <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                        {ceilingLabel(n)}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                )}
-              </Stack>
-            </Row>
-            <Row title="Latency" body="Response time can't get worse than this">
-              <Select
-                size="small"
-                value={limits.latencyCeiling}
-                onChange={(e) => set({ latencyCeiling: e.target.value })}
-                sx={selectSx}
-              >
-                {LATENCY_STEPS.map((n) => (
-                  <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                    {ceilingLabel(n)}
-                  </MenuItem>
-                ))}
-              </Select>
-            </Row>
+            {/* No cost-per-conversation or latency ceiling (clarified plan,
+                improve.md: v0 bounds are credits and time only; no
+                per-conversation cost or latency promise). */}
             <MustPass mustPass={mustPass} />
           </Card>
         </SettingsSection>

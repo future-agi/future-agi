@@ -372,9 +372,9 @@ const TERMINAL_STEPS = [
 const SIM_STEPS = [
   {
     action: "reset",
-    obs: "episode start · scene loaded",
+    obs: "trial start · scene loaded",
     reward: 0,
-    note: "Fresh episode from the seeded scene.",
+    note: "Fresh trial from the seeded scene.",
   },
   {
     action: "observe",

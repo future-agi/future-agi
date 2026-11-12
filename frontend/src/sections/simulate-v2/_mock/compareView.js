@@ -84,13 +84,13 @@ export const filterFields = (evals = []) => [
     value: "baseline",
     label: "Verdict on baseline",
     type: "enum",
-    choices: ["Passed", "Failed", "Flaky", "Couldn't measure", "Not run"],
+    choices: ["Passed", "Failed", "Flaky", "Unmeasured", "Not run"],
   },
   {
     value: "candidate",
     label: "Verdict on a later run",
     type: "enum",
-    choices: ["Passed", "Failed", "Flaky", "Couldn't measure", "Not run"],
+    choices: ["Passed", "Failed", "Flaky", "Unmeasured", "Not run"],
   },
   /* Attribution as a filter: "show me only what the agent actually did". */
   {
@@ -140,7 +140,7 @@ const VERDICT_LABEL = {
   passed: "Passed",
   failed: "Failed",
   flaky: "Flaky",
-  unmeasured: "Couldn't measure",
+  unmeasured: "Unmeasured",
   missing: "Not run",
 };
 const verdictLabel = (status) => VERDICT_LABEL[status] || "Not run";
@@ -425,7 +425,7 @@ export const QUICK_FILTERS = [
   /* The rows that are ours to fix rather than the agent's. */
   {
     id: "unmeasured",
-    label: "Couldn't measure",
+    label: "Unmeasured",
     icon: "solar:shield-cross-linear",
   },
   { id: "unchanged", label: "Unchanged", icon: "solar:minus-circle-linear" },
@@ -506,9 +506,9 @@ const patternOfCompareRow = (row) => {
 
 const statusOfCompareRow = (row) => {
   const t = currentTaskOf(row);
-  if (!t) return "Couldn't measure";
+  if (!t) return "Unmeasured";
   if (t.status === "passed") return "Passed";
-  if (t.status === "unmeasured") return "Couldn't measure";
+  if (t.status === "unmeasured") return "Unmeasured";
   if (t.status === "error") return "Error";
   return "Failed";
 };
@@ -550,7 +550,7 @@ const GROUP_ORDER = {
     "Error",
     "Other failure",
   ],
-  status: ["Failed", "Error", "Couldn't measure", "Passed"],
+  status: ["Failed", "Error", "Unmeasured", "Passed"],
 };
 
 export const groupRows = (rows, group) => {

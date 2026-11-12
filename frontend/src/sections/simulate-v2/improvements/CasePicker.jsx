@@ -12,7 +12,7 @@ const STATUS = {
   flaky: "Flaky",
   passing: "Passing",
   passed: "Passing",
-  unmeasured: "Couldn't measure",
+  unmeasured: "Unmeasured",
 };
 
 /* One list: search, select all/none, back to the suggestion, then rows. */

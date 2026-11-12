@@ -491,7 +491,7 @@ export default function TrialAnswersView({
             <TableRow>
               <TableCell sx={{ ...headSx, width: 96 }}>Trial</TableCell>
               <TableCell sx={{ ...headSx, width: "24%" }}>Scenario</TableCell>
-              <TableCell sx={{ ...headSx, width: "16%" }}>Persona</TableCell>
+              <TableCell sx={{ ...headSx, width: "16%" }}>Actor</TableCell>
               <TableCell sx={{ ...headSx, width: 120 }}>Task checks</TableCell>
               <TableCell sx={{ ...headSx, width: 150 }}>Answer</TableCell>
               <TableCell sx={headSx}>Why</TableCell>

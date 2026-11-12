@@ -146,7 +146,7 @@ export const STATUS_META = {
   flaky: { role: "warning", label: "Flaky" },
   /* Nothing upstream of the agent worked, so there is no verdict to report.
      Deliberately not red: this is our failure, not the agent's. */
-  unmeasured: { role: "neutral", label: "Couldn't measure" },
+  unmeasured: { role: "neutral", label: "Unmeasured" },
   completed: { role: "neutral", label: "Completed" },
   /* A run whose worker or client stopped before every trial ran (runs §5). */
   interrupted: { role: "warning", label: "Interrupted" },
@@ -175,7 +175,7 @@ export const VERDICT_TONE = {
   passed: { color: "#5AA47B", label: "Passed" },
   failed: { color: "#C2603F", label: "Failed" },
   flaky: { color: "#B98A3C", text: "text.secondary", label: "Flaky" },
-  unmeasured: { color: "#9AA0A6", label: "Couldn't measure" },
+  unmeasured: { color: "#9AA0A6", label: "Unmeasured" },
   missing: { color: "#9AA0A6", label: "Not run" },
   /* eslint-enable no-restricted-syntax */
 };

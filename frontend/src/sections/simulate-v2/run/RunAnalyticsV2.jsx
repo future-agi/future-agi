@@ -415,7 +415,7 @@ const FILTER_TABS = [
       },
       {
         key: "Status",
-        values: ["Passed", "Flaky", "Failed", "Couldn't measure"],
+        values: ["Passed", "Flaky", "Failed", "Unmeasured"],
         test: (t, v) => OUTCOME_LABELS[outcomeOf(t)] === v,
       },
       {

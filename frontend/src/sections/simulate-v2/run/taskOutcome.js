@@ -22,7 +22,7 @@ export const OUTCOME_LABELS = {
   passed: "Passed",
   flaky: "Flaky",
   failed: "Failed",
-  unmeasured: "Couldn't measure",
+  unmeasured: "Unmeasured",
 };
 
 export function outcomeOf(t) {

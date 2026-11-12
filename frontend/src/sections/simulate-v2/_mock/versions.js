@@ -117,7 +117,7 @@ export const ENV_CHANGES = [
   { id: "toolbehaviour", label: "Tool behaviour changed", invalidates: true, blurb: "What a tool reads or writes changed — the reference solution may play out differently." },
   { id: "rules", label: "Rules changed", invalidates: false, blurb: "Graded differently; every scenario can still be staged." },
   { id: "scoring", label: "Evaluations changed", invalidates: false, blurb: "Evaluations or thresholds changed — runs before and after were graded differently." },
-  { id: "actors", label: "Actors changed", invalidates: false, blurb: "Who else acts in the world changed — the episodes play out differently." },
+  { id: "actors", label: "Actors changed", invalidates: false, blurb: "Who else acts in the world changed — the trials play out differently." },
   /* Tools added from an MCP server: nothing a scenario ran on changed, so no proof goes stale. */
   { id: "tools-added", label: "Tools added", invalidates: false, blurb: "The world answers more tools — every scenario still runs as it was proved." },
   /* Removed: a scenario that calls one can no longer play out as proved. */

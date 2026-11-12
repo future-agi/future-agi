@@ -436,7 +436,7 @@ const groupOfTask = (t, mode, env, members = NO_MEMBERS, observed = true) => {
        (a plain twin scenario without a persona), the task lands in "No
        persona" rather than dropping out — otherwise the reader would think
        those tasks were skipped. */
-    return t.persona?.name || "No persona";
+    return t.persona?.name || "No actor";
   }
   if (mode === "rule") {
     /* Rule-broken is a view of policy violations: the rule the agent was
@@ -968,7 +968,7 @@ export default function TraceTable({
                 {t.persona?.traits?.length > 0 && (
                   <Field
                     icon="solar:tag-linear"
-                    label="Traits"
+                    label="Persona"
                     value={t.persona.traits.join(", ")}
                   />
                 )}
@@ -1316,7 +1316,7 @@ export default function TraceTable({
               {/* Shrink to its content (the 1% trick) so it sits next to CSAT;
                   the spare width goes to Run details, not a gap. */}
               {show("persona") && (
-                <TableCell sx={{ ...headCell, width: "1%" }}>Persona</TableCell>
+                <TableCell sx={{ ...headCell, width: "1%" }}>Actor</TableCell>
               )}
               {show("scenario") && (
                 <TableCell sx={{ ...headCell, width: 300 }}>Scenario</TableCell>
@@ -1571,8 +1571,8 @@ function GroupHeaderRow({
     if (key === "persona")
       return counted(
         uniqueBy(group.rows, (t) => t.persona?.name),
-        "persona",
-        "personas",
+        "actor",
+        "actors",
       );
     if (key === "scenario")
       return counted(

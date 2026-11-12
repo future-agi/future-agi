@@ -954,7 +954,7 @@ export default function MyEnvironmentsTable({
                 primary={
                   active?.buildStatus === "ready" &&
                   (state.byEnv[active?.id]?.runs?.length || 0) > 0
-                    ? "Re-run simulation"
+                    ? "Run again"
                     : "Run simulation"
                 }
                 primaryTypographyProps={{ sx: { typography: "s2" } }}

@@ -627,12 +627,12 @@ export const estimatePackageValidation = ({
   const parts = [
     {
       label: "Reference runs",
-      detail: `${reference} episodes that must pass`,
+      detail: `${reference} trials that must pass`,
       credits: reference * perEpisode,
     },
     {
       label: "Negative and exploit controls",
-      detail: `${controls} episodes that must fail`,
+      detail: `${controls} trials that must fail`,
       credits: controls * perEpisode,
     },
     {

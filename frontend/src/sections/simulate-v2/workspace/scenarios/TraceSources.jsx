@@ -33,7 +33,7 @@ const RESULT = {
   passed: "Passed",
   failed: "Failed",
   flaky: "Flaky",
-  unmeasured: "Couldn't measure",
+  unmeasured: "Unmeasured",
 };
 const when = (iso) =>
   iso

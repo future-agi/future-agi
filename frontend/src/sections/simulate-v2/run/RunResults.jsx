@@ -1612,7 +1612,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             {snapshotNote && (
               <Tooltip
                 arrow
-                title="These scenarios were edited after the source run. Run again replays the pinned versions; Run again with current versions plays today's text."
+                title="These scenarios were edited after the source run. Run again uses the pinned versions; Run again with current versions uses today's text."
               >
                 <Typography
                   noWrap
@@ -2042,7 +2042,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <Stack direction="row" sx={{ flexShrink: 0 }}>
               <Tooltip
                 arrow
-                title={`Re-run the ${failingScenarioIds.length} scenario${failingScenarioIds.length === 1 ? "" : "s"} that didn't pass`}
+                title={`Run the ${failingScenarioIds.length} scenario${failingScenarioIds.length === 1 ? "" : "s"} that didn't pass again`}
               >
                 <Button
                   variant="outlined"
@@ -2060,7 +2060,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     borderBottomRightRadius: 0,
                   }}
                 >
-                  Re-run failing
+                  Run again · failing only
                 </Button>
               </Tooltip>
               <Button
@@ -2734,7 +2734,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           />
                         }
                       >
-                        Re-run {selected.size}
+                        Run again · {selected.size}
                       </Button>
                       {selectedFailingIds.length > 0 && (
                         <Tooltip
@@ -3081,7 +3081,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     rerun();
                   }}
                 >
-                  Re-run
+                  Run again
                 </Button>
               ),
             },
@@ -3237,7 +3237,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               letterSpacing: 0.4,
             }}
           >
-            Re-run {selected.size} scenario{selected.size === 1 ? "" : "s"}
+            Run again · {selected.size} scenario{selected.size === 1 ? "" : "s"}
           </Typography>
         </Box>
         <RerunModes

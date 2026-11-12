@@ -92,7 +92,7 @@ export const ACTION_SPACE = [
   {
     name: "finish",
     args: "summary: str",
-    note: "Ends the episode; the checks settle.",
+    note: "Ends the session; the checks settle.",
   },
 ];
 
@@ -191,14 +191,14 @@ export const rollouts = (envState, summaries = []) => {
         ) / 10
       : 0,
     success: measured ? Math.round((passed / measured) * 100) / 100 : 0,
-    format: "JSONL · one episode per line",
+    format: "JSONL · one session per line",
     /* Roughly 92KB per episode of transcript, tool calls and state diffs. */
     bytes: `${Math.max(0.1, Math.round(episodes * 0.092 * 10) / 10)} MB`,
   };
 };
 
 export const rolloutSample = () =>
-  `{"episode": "ep_00291", "scenario": "otp-before-card-refund", "steps": [
+  `{"session": "ses_00291", "scenario": "otp-before-card-refund", "steps": [
   {"obs": {...}, "action": {"call_tool": "send_otp"}, "reward": 0.15, "done": false},
   {"obs": {...}, "action": {"say": "I've sent a code..."}, "reward": -0.01, "done": false},
   {"obs": {...}, "action": {"call_tool": "check_otp"}, "reward": 0.15, "done": false},

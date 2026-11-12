@@ -10,7 +10,7 @@
  */
 import { submitStepOf } from "./candidateRoute";
 import { KIND_SURFACE } from "./optimizer";
-import { limitRows, ceilingLabel, costCeilingLabel } from "./optimizationRuns";
+import { limitRows } from "./optimizationRuns";
 import { changeFileFor } from "./optimize";
 import { scrubPersonalData } from "./rsiModel";
 
@@ -64,13 +64,9 @@ export const fixScope = (proposal, { env, limits } = {}) => {
       verdict: approved ? "on the approved list" : "not allowed", blocked: !approved,
     });
   }
-  /* What a model or setting change may cost or slow down is only known once
-     it runs; the ceiling it's held to is the agent's own. */
-  if (switches) {
-    checks.push({ id: "cost", constraint: "Cost ceiling", ceiling: costCeilingLabel(limits).toLowerCase(), says: "likely adds cost", verdict: "checked when it runs" });
-  } else if (surface === "settings" && proposal?.step === "turn_taking") {
-    checks.push({ id: "latency", constraint: "Latency ceiling", ceiling: ceilingLabel(limits?.latencyCeiling ?? 0).toLowerCase(), says: "waits longer before answering", verdict: "checked when it runs" });
-  } else if (surface === "settings") {
+  /* No cost or latency ceilings to hold a change to: an improvement is
+     bounded by credits and time only (clarified plan, improve.md). */
+  if (!switches && surface === "settings") {
     /* Any other setting (temperature, retrieval) leaves the model alone. */
     checks.push({ id: "model", constraint: "Model lock", says: "keeps the model", verdict: "allowed" });
   }

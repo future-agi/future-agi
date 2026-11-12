@@ -1646,7 +1646,7 @@ function LiveRun() {
               title={[
                 `${named.label}`,
                 partial
-                  ? `Re-run · ${scenarios.length} of ${poolSize} scenarios`
+                  ? `Run again · ${scenarios.length} of ${poolSize} scenarios`
                   : null,
                 liveProof?.kind !== "live" ? SHADOW_SUMMARY : null,
                 `${stats.done} of ${stats.total} scenarios done${repeats > 1 ? ` · ${repeats} repeats each` : ""}`,

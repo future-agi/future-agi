@@ -301,7 +301,7 @@ export default function AnalyticsPanel({ env, envState }) {
             lowerIsBetter: true,
           },
           {
-            label: "Couldn't measure",
+            label: "Unmeasured",
             value: unmeasured,
             sub: "inconclusive, test invalid or error",
           },

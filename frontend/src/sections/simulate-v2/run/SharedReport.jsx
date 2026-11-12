@@ -514,7 +514,7 @@ function ScenarioResults({ tasks, onOpen = null }) {
             )}
           </Box>
           <Box sx={{ width: 140, flexShrink: 0 }}>
-            {/* Anything that isn't a pass, fail or flaky verdict reads "Couldn't measure". */}
+            {/* Anything that isn't a pass, fail or flaky verdict reads "Unmeasured". */}
             <Verdict
               status={
                 ["passed", "failed", "flaky"].includes(t.status)

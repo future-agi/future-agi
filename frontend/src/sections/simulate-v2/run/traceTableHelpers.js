@@ -62,7 +62,9 @@ export const TRACE_COLUMNS = [
   },
   {
     key: "persona",
-    label: "Persona",
+    /* Glossary: the actor is the simulated person (name, age, voice); the
+       persona is how they behave — in the hovercard's traits. */
+    label: "Actor",
     defaultOn: true,
     width: 210,
     group: "Scenario details",
@@ -152,7 +154,7 @@ export const GROUPINGS = [
     multiAgent: true,
     hint: "Each conversation counts for the member it ended with.",
   },
-  { id: "persona", label: "Persona", icon: "solar:user-rounded-linear" },
+  { id: "persona", label: "Actor", icon: "solar:user-rounded-linear" },
   { id: "rule", label: "Rule broken", icon: "solar:shield-cross-linear" },
   { id: "subGoal", label: "Failure sub-goal", icon: "solar:map-linear" },
   {

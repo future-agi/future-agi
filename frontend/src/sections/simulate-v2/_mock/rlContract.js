@@ -192,13 +192,13 @@ export const observationSpace = (env, adapter) => {
     {
       field: "world",
       type: "dict",
-      filled: `${env?.seed?.tables?.length || 0} seeded tables, reset each episode.`,
+      filled: `${env?.seed?.tables?.length || 0} seeded tables, reset each session.`,
       generic: true,
     },
     {
       field: "history",
       type: "list[step]",
-      filled: "Every action and result so far this episode.",
+      filled: "Every action and result so far this session.",
       generic: true,
     },
     {
@@ -233,7 +233,7 @@ export const actionSpace = (env, adapter) => {
       verb === "call_tool"
         ? "The tools on the contract, with their real argument names."
         : verb === "finish"
-          ? "Ends the episode. Terminal — see the episode contract."
+          ? "Ends the session. Terminal — see the session contract."
           : `Provided by the ${a.label.toLowerCase()} adapter.`,
   }));
 };
@@ -432,7 +432,7 @@ export const contractParts = (env, envState) => [
     label: "Reward spec",
     done: (envState?.evals || []).length > 0,
   },
-  { id: "episode", label: "Episode contract", done: true },
+  { id: "episode", label: "Session contract", done: true },
 ];
 
 /* ── tools: arguments and their allowed values (the contract's spec) ─────── */

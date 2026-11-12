@@ -190,7 +190,7 @@ const rootLineOf = (root) => {
       note: "Grader verdict",
     };
   if (root.kind === "error")
-    return { label: "The episode errored before it finished", note: "Errored" };
+    return { label: "The trial errored before it finished", note: "Errored" };
   return { label: "No shared sub-goal, tool or grader", note: "Unclustered" };
 };
 
@@ -762,7 +762,7 @@ function briefOf({
     happened.push({
       text: `${notMeasured.count} didn't count`,
       ids: notMeasured.ids,
-      label: "Couldn't measure",
+      label: "Unmeasured",
     });
     happened.push({
       text: ` (${notMeasured.causes.map((c) => `${c.label} ${c.ids.length}`).join(", ")}) — neither for nor against the agent, left out of the rate.`,

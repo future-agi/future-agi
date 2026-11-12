@@ -24,7 +24,7 @@ const CFG = {
     colorMap: {
       Successful: "#16A34A",
       Unsuccessful: "#DC2626",
-      "Couldn't measure": "#94A3B8",
+      Unmeasured: "#94A3B8",
     },
     drilldown: true,
     info: "Share of tasks the agent completed.",
@@ -39,7 +39,7 @@ const CFG = {
       Passed: "#16A34A",
       Flaky: "#F59E0B",
       Failed: "#DC2626",
-      "Couldn't measure": "#94A3B8",
+      Unmeasured: "#94A3B8",
     },
     drilldown: true,
     info: "Passed, flaky, failed or not measured. Grey is infrastructure; amber is inconsistency.",

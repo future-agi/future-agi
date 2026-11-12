@@ -202,15 +202,17 @@ export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
         pr.title,
         pr.origin === "error_feed"
           ? "Error Feed will flag it if the issue comes back."
-          : "Re-run the same scenarios to confirm it in simulation.",
+          : "Run the same scenarios again to confirm it in simulation.",
       ],
-      actions: [pr.origin === "error_feed" ? "Open issue" : "Re-run to verify"],
+      actions: [
+        pr.origin === "error_feed" ? "Open issue" : "Run again to verify",
+      ],
       links:
         pr.origin === "error_feed" && pr.clusterId
           ? { "Open issue": paths.dashboard.errorFeed.detail(pr.clusterId) }
           : pr.envId
             ? {
-                "Re-run to verify": paths.dashboard.simulate.environmentStep(
+                "Run again to verify": paths.dashboard.simulate.environmentStep(
                   pr.envId,
                   "runs",
                 ),
@@ -364,8 +366,8 @@ export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
                 : pr.origin === "error_feed"
                   ? `${mergedLine(pr)}${pr.version ? ` — saved as agent ${pr.version}` : ""}. Error Feed will flag it if the issue comes back.`
                   : pr.version
-                    ? `${mergedLine(pr)} — saved as agent ${pr.version}. Re-run the same scenarios to confirm the fix holds.`
-                    : `${mergedLine(pr)}. Re-run the same scenarios to confirm the fix holds.`}
+                    ? `${mergedLine(pr)} — saved as agent ${pr.version}. Run the same scenarios again to confirm the fix holds.`
+                    : `${mergedLine(pr)}. Run the same scenarios again to confirm the fix holds.`}
           </Typography>
           {onRerun && !telemetry && (
             <Button
@@ -375,7 +377,7 @@ export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
               onClick={onRerun}
               startIcon={<Iconify icon="solar:play-bold" width={14} />}
             >
-              Re-run to verify
+              Run again to verify
             </Button>
           )}
         </Stack>

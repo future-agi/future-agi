@@ -147,7 +147,7 @@ function widgetOutcomeDonut(tasks) {
     title: "Run outcome",
     subtitle: `${c.passed} of ${total - c.unmeasured} measured passed`,
     config: {
-      labels: ["Passed", "Failed", "Error", "Couldn't measure"].filter(
+      labels: ["Passed", "Failed", "Error", "Unmeasured"].filter(
         (_, i) => [c.passed, c.failed, c.errored, c.unmeasured][i] > 0,
       ),
       series: [c.passed, c.failed, c.errored, c.unmeasured].filter(

@@ -185,7 +185,7 @@ export default function ImprovementDecision({
                 v={
                   outcome.costKnown
                     ? signed(outcome.effect.cost, "%")
-                    : "Couldn't measure"
+                    : "Unmeasured"
                 }
               />
               <Line

@@ -52,7 +52,6 @@ import {
   searchSpendParts,
   searchMinutes,
   trialsWithin,
-  costCeilingLabel,
   searchConversations,
   limitGate,
 } from "./optimizationRuns";
@@ -895,7 +894,6 @@ export const buildImprovement = ({
         anchors: result.trainMeasuredTasks.filter((t) => t.anchor).length,
       }),
       model: limits?.model || null,
-      cost: costCeilingLabel(limits),
       protected: limits?.protected || [],
       ...((limits?.protectedMembers || []).length && {
         protectedMembers: limits.protectedMembers,

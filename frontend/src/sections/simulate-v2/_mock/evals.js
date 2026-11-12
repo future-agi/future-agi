@@ -219,7 +219,7 @@ export const EVAL_CATALOG = [
     id: "rule_inference",
     name: "Rule inference",
     category: "Behaviour",
-    blurb: "Did the agent work out the world's rules from inside the episode?",
+    blurb: "Did the agent work out the world's rules from inside the trial?",
     type: "LLM judge",
     appliesTo: ["sim"],
     icon: "solar:lightbulb-bolt-linear",

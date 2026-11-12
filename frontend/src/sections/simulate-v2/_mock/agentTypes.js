@@ -699,13 +699,13 @@ export const AGENT_TYPES = [
       },
       {
         key: "maxSteps",
-        label: "Max steps per episode",
+        label: "Max steps per trial",
         type: FIELD.TEXT,
         placeholder: "500",
       },
       {
         key: "recordVideo",
-        label: "Record video of every episode",
+        label: "Record video of every trial",
         type: FIELD.SWITCH,
         default: true,
       },

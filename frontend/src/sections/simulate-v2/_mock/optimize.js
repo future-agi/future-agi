@@ -549,7 +549,7 @@ const VERIFIER_FIXES = {
   "hollow-pass": {
     title: "Make the scenario's required steps a gate, not a note",
     kind: "Verifier",
-    why: "Episodes passed while a step the scenario declares as required was never taken. A checklist that does not gate is documentation.",
+    why: "Trials passed while a step the scenario declares as required was never taken. A checklist that does not gate is documentation.",
     diff: [
       { type: "add", text: "gate: every step marked required in the scenario must appear in the call log before any check may return pass." },
     ],
@@ -557,7 +557,7 @@ const VERIFIER_FIXES = {
   "efficiency-exploit": {
     title: "Pay the efficiency term only on conversations that succeeded",
     kind: "Reward spec",
-    why: "The efficiency bonus is paid for finishing under the reference length. Episodes that got there by skipping the work collected it.",
+    why: "The efficiency bonus is paid for finishing under the reference length. Trials that got there by skipping the work collected it.",
     diff: [
       { type: "remove", text: "efficiency: +0.2 when steps < reference length." },
       { type: "add", text: "efficiency: +0.2 when steps < reference length AND the terminal task reward was earned." },

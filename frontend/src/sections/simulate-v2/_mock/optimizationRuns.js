@@ -446,16 +446,8 @@ export const limitRows = (
   { mustPass = null } = {},
 ) => [
   { id: "model", label: "Model", value: modelLimitLabel(limits, model) },
-  {
-    id: "cost",
-    label: "Cost per conversation",
-    value: costCeilingLabel(limits),
-  },
-  {
-    id: "latency",
-    label: "Latency",
-    value: ceilingLabel(limits.latencyCeiling),
-  },
+  /* No cost or latency ceilings: the plan bounds an improvement by credits
+     and time only (improve.md). */
   {
     id: "changes",
     label: "Allowed changes",

@@ -1114,7 +1114,8 @@ export default function ImprovementRunsView({
                 }}
               >
                 <Box />
-                <Head>Trial</Head>
+                {/* RSI's attempts are candidates; a trial is one scenario attempt. */}
+                <Head>Candidate</Head>
                 <Head>Status</Head>
                 <Head
                   right
