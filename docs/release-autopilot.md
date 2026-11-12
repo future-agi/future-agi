@@ -15,7 +15,7 @@ Only the exact value `on` enables a switch.
 | --- | --- | --- |
 | `RELEASE_AUTOPILOT` | Off | Set `on` to approve and merge eligible release-please PRs. |
 | `RELEASE_AUTO_APPROVE` | Off | Set `on` to let migration-free tag pushes use `production-auto` instead of `Production`. Independent of PR auto-merge. |
-| `RELEASE_AUTOPILOT_REQUIRED_CHECKS` | `Backend Tests Pass` | Comma- or newline-separated exact check/status names. Every listed name must succeed on the current PR head SHA. An explicitly nonempty but name-free list is invalid, not an empty gate. |
+| `RELEASE_AUTOPILOT_REQUIRED_CHECKS` | `Backend Tests Pass`, `E2E Tests Pass` | Comma- or newline-separated exact check/status names, added to that fixed minimum (they can never remove one). Every name must succeed on the current PR head SHA. An explicitly nonempty but name-free list is invalid, not an empty gate. |
 | `RELEASE_AUTOPILOT_MIN_AGE_MINUTES` | `30` | Non-negative integer minutes since the PR's last update (0–999999). The exact threshold is inclusive; malformed or future timestamps stop the merge. |
 | `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. |
 | `RELEASE_AUTOPILOT_WEEKENDS` | Off | Set `on` to allow Saturday/Sunday UTC. The day is the current UTC day, including for an overnight window. |
@@ -331,11 +331,13 @@ The latest attempt for each check name/App and each status context wins; multipl
 producers of one required name must all succeed. Unlisted checks are advisory to
 this policy; GitHub branch protection can still block the merge independently.
 
-**End-to-end is advisory by default.** The last measured baseline failed 17 of 30
-dev runs and both recent dev-to-main PRs, so it is not an honest required gate yet.
-Once reliable, an admin can add its exact aggregate check name to
-`RELEASE_AUTOPILOT_REQUIRED_CHECKS` and branch protection. A green backend check
-is not evidence that E2E passed.
+**End-to-end is required.** Since 12 Nov 2026, branch protection on main and dev
+requires both "Backend Tests Pass" and "E2E Tests Pass". So the policy always
+requires both, whatever `RELEASE_AUTOPILOT_REQUIRED_CHECKS` says; that variable
+can only add names. On a release PR, the E2E stack jobs are skipped by their path
+filter and "E2E Tests Pass" (`if: always()`) still concludes success, so release
+PRs do not wait on the end-to-end suite. A green backend check is not evidence
+that E2E passed.
 
 The policy re-reads the PR around each evidence collection and repeats the whole
 decision, including contents, the push check and case-insensitive holds, after

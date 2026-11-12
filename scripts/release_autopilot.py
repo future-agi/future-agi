@@ -124,14 +124,19 @@ def metadata_allows(pr, files, metadata, version):
         return False
 
 
+# Branch protection on main requires both since 12 Nov 2026. The configured
+# list adds names to this minimum; it can never remove one.
+MIN_REQUIRED_CHECKS = ("Backend Tests Pass", "E2E Tests Pass")
+
+
 def required_checks(config):
     value = config.get("RELEASE_AUTOPILOT_REQUIRED_CHECKS", "")
-    if not value:
-        return ["Backend Tests Pass"]
-    names = [name.strip() for name in re.split(r"[,\n]", value) if name.strip()]
-    if not names:
-        raise ValueError("required-check list is empty")
-    return list(dict.fromkeys(names))
+    names = []
+    if value:
+        names = [name.strip() for name in re.split(r"[,\n]", value) if name.strip()]
+        if not names:
+            raise ValueError("required-check list is empty")
+    return list(dict.fromkeys([*MIN_REQUIRED_CHECKS, *names]))
 
 
 def window_allows(now, value):

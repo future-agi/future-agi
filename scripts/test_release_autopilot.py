@@ -38,6 +38,9 @@ FILES = [{"filename": path, "status": "modified"} for path in sorted(policy.RELE
 APPROVER = "futureagi-release-approver[bot]"
 CHECK = {"id": 1, "name": "Backend Tests Pass", "head_sha": SHA,
          "app": {"id": 1}, "status": "completed", "conclusion": "success"}
+# Required on main since 12 Nov 2026; on a release PR the stack jobs are
+# path-filtered out and this aggregate still concludes success.
+E2E_CHECK = {**CHECK, "id": 20, "name": "E2E Tests Pass"}
 
 
 def blob_entry(text):
@@ -61,7 +64,7 @@ METADATA = {"base_sha": BASE, "head_sha": SHA,
 
 
 def evidence(pr=None, metadata=None):
-    return deepcopy((pr or PR, FILES, [CHECK], [], METADATA if metadata is None else metadata))
+    return deepcopy((pr or PR, FILES, [CHECK, E2E_CHECK], [], METADATA if metadata is None else metadata))
 
 
 class FrozenDatetime(datetime):
@@ -74,14 +77,22 @@ class MergePolicyTests(unittest.TestCase):
     def decide(self, *, pr=None, files=None, checks=None, statuses=None, metadata=None, config=None, now=NOW):
         return policy.merge_decision(deepcopy(PR if pr is None else pr),
                                      FILES if files is None else files,
-                                     [CHECK] if checks is None else checks,
+                                     [CHECK, E2E_CHECK] if checks is None else checks,
                                      [] if statuses is None else statuses,
                                      METADATA if metadata is None else metadata,
                                      CONFIG if config is None else config, now)[0]
 
     def test_all_default_conditions_allow(self):
         self.assertTrue(self.decide())
-        self.assertEqual(policy.required_checks({}), ["Backend Tests Pass"])
+        self.assertEqual(policy.required_checks({}), ["Backend Tests Pass", "E2E Tests Pass"])
+
+    def test_e2e_is_required_and_a_configured_list_cannot_drop_it(self):
+        self.assertFalse(self.decide(checks=[CHECK]))
+        self.assertFalse(self.decide(checks=[CHECK, {**E2E_CHECK, "conclusion": "failure"}]))
+        self.assertFalse(self.decide(checks=[CHECK, {**E2E_CHECK, "conclusion": "skipped"}]))
+        config = {**CONFIG, "RELEASE_AUTOPILOT_REQUIRED_CHECKS": "Backend Tests Pass"}
+        self.assertEqual(policy.required_checks(config), ["Backend Tests Pass", "E2E Tests Pass"])
+        self.assertFalse(self.decide(checks=[CHECK], config=config))
 
     def test_feature_switch_requires_exact_on(self):
         for value in ("", "off", "true", "ON", " on"):
@@ -181,25 +192,25 @@ class MergePolicyTests(unittest.TestCase):
         self.assertFalse(self.decide(checks=[{**CHECK, "status": "in_progress"}]))
         self.assertFalse(self.decide(checks=[{**CHECK, "id": None}]))
 
-    def test_required_list_is_configurable_and_e2e_is_advisory(self):
-        e2e = {**CHECK, "name": "E2E", "conclusion": "failure"}
-        self.assertTrue(self.decide(checks=[CHECK, e2e]))
+    def test_required_list_is_configurable_and_unlisted_checks_are_advisory(self):
+        e2e = {**CHECK, "id": 30, "name": "E2E", "conclusion": "failure"}
+        self.assertTrue(self.decide(checks=[CHECK, E2E_CHECK, e2e]))
         config = {**CONFIG, "RELEASE_AUTOPILOT_REQUIRED_CHECKS": "Backend Tests Pass, E2E\nBackend Tests Pass"}
-        self.assertEqual(policy.required_checks(config), ["Backend Tests Pass", "E2E"])
-        self.assertFalse(self.decide(checks=[CHECK, e2e], config=config))
-        self.assertTrue(self.decide(checks=[CHECK, {**e2e, "conclusion": "success"}], config=config))
+        self.assertEqual(policy.required_checks(config), ["Backend Tests Pass", "E2E Tests Pass", "E2E"])
+        self.assertFalse(self.decide(checks=[CHECK, E2E_CHECK, e2e], config=config))
+        self.assertTrue(self.decide(checks=[CHECK, E2E_CHECK, {**e2e, "conclusion": "success"}], config=config))
         self.assertFalse(self.decide(config={**CONFIG, "RELEASE_AUTOPILOT_REQUIRED_CHECKS": ", \n"}))
 
     def test_latest_attempt_wins_and_duplicate_producers_must_pass(self):
         failure = {**CHECK, "id": 2, "conclusion": "failure"}
-        self.assertFalse(self.decide(checks=[failure, CHECK]))
-        self.assertTrue(self.decide(checks=[failure, {**CHECK, "id": 3}]))
-        self.assertFalse(self.decide(checks=[CHECK, {**failure, "app": {"id": 2}}]))
-        self.assertFalse(self.decide(checks=[CHECK, {**CHECK, "id": 3, "status": "queued"}]))
+        self.assertFalse(self.decide(checks=[failure, CHECK, E2E_CHECK]))
+        self.assertTrue(self.decide(checks=[failure, {**CHECK, "id": 3}, E2E_CHECK]))
+        self.assertFalse(self.decide(checks=[CHECK, {**failure, "app": {"id": 2}}, E2E_CHECK]))
+        self.assertFalse(self.decide(checks=[CHECK, {**CHECK, "id": 3, "status": "queued"}, E2E_CHECK]))
 
     def test_legacy_statuses_are_bound_to_the_same_commit(self):
         status = {"context": "Backend Tests Pass", "sha": SHA, "id": 1, "state": "success"}
-        self.assertTrue(self.decide(checks=[], statuses=[status]))
+        self.assertTrue(self.decide(checks=[E2E_CHECK], statuses=[status]))
         self.assertFalse(self.decide(checks=[], statuses=[{**status, "sha": BASE}]))
         self.assertFalse(self.decide(statuses=[status, {**status, "id": 2, "state": "pending"}]))
         self.assertFalse(self.decide(checks=[{**CHECK, "conclusion": "failure"}], statuses=[status]))
@@ -950,7 +961,7 @@ class ApiAdapterTests(unittest.TestCase):
                 return FILES
             if "/check-runs" in path:
                 self.assertIn(SHA, path)
-                return [CHECK]
+                return [CHECK, E2E_CHECK]
             self.assertIn(f"commits/{SHA}/statuses", path)
             return [{"id": 1, "context": "Backend Tests Pass", "state": "success"}]
         with patch.object(policy, "api", return_value=PR), patch.object(policy, "pages", side_effect=listing), \
