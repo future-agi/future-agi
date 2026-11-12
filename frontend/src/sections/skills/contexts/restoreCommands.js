@@ -1,14 +1,15 @@
 const quote = (value) => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+const COMMIT = /^([0-9a-f]{40}|[0-9a-f]{64})$/;
 
-// The commands an operator runs to restore the checked-in lock exported from the
-// last reviewed commit. Native discovery is not qualified, so installation is an
-// explicit preview and never delivery evidence.
-export function restoreCommands({ name, version, lockPath }) {
+// One command restores the lock of the last reviewed commit: it reads that lock
+// from git, plans, applies and verifies in one quiescent step, refusing any
+// local collision and preserving files outside the managed paths. Native
+// discovery is not qualified, so installation is an explicit preview and never
+// delivery evidence.
+export function restoreCommands({ name, version, commit }) {
+  const ref = COMMIT.test(commit ?? "") ? commit : quote("<full id of the last reviewed commit>");
   return [
-    `python -m fi.context restore --allow-preview --lock ${quote(lockPath)} --project . --plan ${quote("restore-plan.json")}`,
-    `python -m fi.context inspect --plan ${quote("restore-plan.json")} --diff`,
-    `python -m fi.context apply --plan ${quote("restore-plan.json")} --quiescent`,
-    "python -m fi.context verify --project .",
+    `python -m fi.context restore --allow-preview --lock-from-git ${ref} --project . --apply --quiescent`,
     `# Expect ${name} v${version}. Local files outside the managed paths are preserved.`,
   ].join("\n");
 }

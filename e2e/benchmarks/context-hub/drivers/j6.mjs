@@ -129,7 +129,7 @@ export async function createDriver({ jobId, runId, registration }) {
   const open = async (name, actor) => {
     if (pages[name]) return pages[name];
     const browser = await chromium.launch({ headless: true });
-    const ctx = await browser.newContext({ baseURL: input.appUrl, viewport: { width: 1440, height: 900 } });
+    const ctx = await browser.newContext({ baseURL: input.appUrl, viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
     await ctx.addInitScript((who) => {
       localStorage.setItem('accessToken', who.access);
       localStorage.setItem('refreshToken', who.refresh);
@@ -143,20 +143,6 @@ export async function createDriver({ jobId, runId, registration }) {
     browsers.push({ browser, ctx });
     pages[name] = page;
     return page;
-  };
-  // Finished hops share the context name; a person filters the inbox to the pending requests.
-  const openPending = async (page, admin, target, id, signal) => {
-    await admin.click(page.getByRole('combobox', { name: 'Request status' }), `open-status-filter-${target}`);
-    await admin.click(page.getByRole('option', { name: 'Pending', exact: true }), `filter-pending-${target}`);
-    await expect(page.getByRole('table', { name: 'Assigned release reviews' }).getByRole('row').nth(1)).toBeVisible();
-    // Rows share the context name; the Updated stamp the screen shows tells them apart.
-    const inbox = await call(reviewer, 'GET', 'review-inbox/?status=pending&page=1&page_size=50', undefined, signal);
-    const wanted = inbox.result.results.find((row) => row.id === id);
-    requireValue(wanted, 'The wanted packet is not pending in the inbox');
-    const stamp = `${new Date(wanted.updated_at).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
-    await writeFile(resolve(output, `inbox-order-${target}.json`), JSON.stringify({ wanted: id, stamp, rows: inbox.result.results.map((row) => ({ id: row.id, status: row.status, revision: row.revision, updated_at: row.updated_at })) }, null, 2), { mode: 0o600 }).catch(() => {});
-    const row = page.getByRole('table', { name: 'Assigned release reviews' }).getByRole('row').filter({ hasText: `updated ${stamp}` });
-    await admin.click(row.getByRole('button', { name: input.contextName, exact: true }), `open-${target}`);
   };
   // Evidence images never show a one-time credential: readonly fields are masked in the capture only.
   const shot = async (page, name) => {
@@ -321,9 +307,13 @@ export async function createDriver({ jobId, runId, registration }) {
 
       if (stage.id === 'cas-rollback') {
         const submit = async (cycle) => {
-          await operator.click(authorPage.getByRole('button', { name: 'Preview rollback packet', exact: true }), `preview-rollback-packet-${cycle}`);
-          await operator.click(authorPage.getByRole('combobox', { name: 'Reviewer' }), `open-reviewer-list-${cycle}`);
-          await operator.click(authorPage.getByRole('option', { name: reviewerName, exact: true }), `choose-reviewer-${cycle}`);
+          // Acknowledging the review prepares the packet; the reviewer chosen once stays selected for a restarted review.
+          const reviewerBox = authorPage.getByRole('combobox', { name: 'Reviewer' });
+          await expect(authorPage.getByText('Packet fingerprint', { exact: false })).toBeVisible();
+          if (cycle === 1) {
+            await operator.click(reviewerBox, `open-reviewer-list-${cycle}`);
+            await operator.click(authorPage.getByRole('option', { name: reviewerName, exact: true }), `choose-reviewer-${cycle}`);
+          } else await expect(reviewerBox).toContainText(reviewerName);
           await operator.click(authorPage.getByRole('button', { name: 'Submit rollback for review', exact: true }), `submit-rollback-${cycle}`);
           await expect(authorPage.getByText('Rollback request submitted.', { exact: false })).toBeVisible();
         };
@@ -378,9 +368,12 @@ export async function createDriver({ jobId, runId, registration }) {
         const detail = await read(`release-requests/${fresh.id}/`, signal);
         const decision = decisionFor({ packet: detail.fingerprint }, { candidate: v1.id, from_version: 3, release_revision: (await read(`${context}release-state/`, signal)).release_revision });
         await operator.handoff('release-reviewer', async () => {});
-        await navigate(admin, ledger, stage, reviewerPage, '/dashboard/skills', 'open-skills-area');
-        await admin.click(reviewerPage.getByRole('tab', { name: 'Reviews', exact: true }), 'open-reviews-inbox');
-        await openPending(reviewerPage, admin, 'fresh-request', fresh.id, signal);
+        // The author copies the exact review link from the submitted request; the reviewer opens it.
+        await operator.click(authorPage.getByRole('button', { name: 'Copy review link', exact: true }), 'copy-review-link');
+        await expect(authorPage.getByText('Copied the review link.', { exact: true })).toBeVisible();
+        const reviewLink = await authorPage.evaluate(() => navigator.clipboard.readText());
+        requireValue(reviewLink === await authorPage.getByRole('textbox', { name: 'Review link' }).inputValue() && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
+        await navigate(admin, ledger, stage, reviewerPage, reviewLink, 'open-review-link');
         await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
         const ack = reviewerPage.getByRole('checkbox', { name: 'I reviewed this exact candidate, target, evidence and release consequence.', exact: true });
         await expect(ack).toBeEnabled();
@@ -424,15 +417,11 @@ export async function createDriver({ jobId, runId, registration }) {
           local: sha256(await readFile(resolve(input.project, 'docs', 'local-notes.md'), 'utf8')),
           lock: sha256(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8')),
         };
-        // The lock is exported from the last reviewed commit (a copy, as `git show REF:PATH > file` would do).
-        const exported = await command(stage, ledger, 'incident-operator', 'export-retained-lock', ['git', '-C', input.project, 'show', `${input.goodCommit}:.futureagi-context.lock.json`]);
-        const retained = resolve(input.project, '..', 'retained-lock.json');
-        await writeFile(retained, exported.stdout, { mode: 0o600 });
-        const plan = resolve(input.project, '..', 'restore-plan.json');
-        await hostCli(stage, ledger, 'plan-locked-restore', ['restore', '--allow-preview', '--lock', retained, '--project', '.', '--plan', plan], state.cliCredential);
-        await hostCli(stage, ledger, 'inspect-restore-plan', ['inspect', '--plan', plan, '--diff'], state.cliCredential);
-        await hostCli(stage, ledger, 'apply-locked-restore', ['apply', '--plan', plan, '--quiescent'], state.cliCredential);
-        await hostCli(stage, ledger, 'verify-locked-restore', ['verify', '--project', '.'], state.cliCredential);
+        // One command reads the lock of the last reviewed commit, plans, applies and verifies it.
+        const reviewedLock = (await run('git', ['-C', input.project, 'show', `${input.goodCommit}:.futureagi-context.lock.json`], { encoding: 'utf8' })).stdout;
+        const restored = await hostCli(stage, ledger, 'restore-locked', ['restore', '--allow-preview', '--lock-from-git', input.goodCommit, '--project', '.', '--apply', '--quiescent'], state.cliCredential);
+        const restoreResult = JSON.parse(restored.stdout);
+        requireValue(restoreResult.state === 'restored' && restoreResult.verification?.verified === true, 'The restore did not verify');
         const lock = JSON.parse(await readFile(resolve(input.project, '.futureagi-context.lock.json'), 'utf8'));
         const files = closureFiles(await readCompleteClosure(read, input.contextId, 1, signal));
         const notes = await readFile(resolve(input.project, 'docs', 'local-notes.md'), 'utf8');
@@ -449,10 +438,10 @@ export async function createDriver({ jobId, runId, registration }) {
           copied += 1;
         }
         requireValue(copied > 0, 'The restore owns no copied files');
-        const retainedManifest = JSON.parse(await readFile(resolve(input.project, '..', 'retained-lock.json'), 'utf8'));
+        const retainedManifest = JSON.parse(reviewedLock);
         requireValue(retainedManifest.version_id === lock.version_id && retainedManifest.digest === lock.digest, 'The restored lock differs from the retained one');
         const hash = await record('locked-restore', { lock_version: lock.version, lock_version_id: lock.version_id, lock_sha256_before: before.lock, local_notes_preserved: true, closure_files: files.length, managed_copies: copied,
-          timings_ms: { plan: state.timings['plan-locked-restore'], apply: state.timings['apply-locked-restore'] } });
+          timings_ms: { restore: state.timings['restore-locked'] } });
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'filesystem', artifactHash: hash, actionSequences: [] });
         return;
       }
@@ -701,7 +690,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const authz = registry.filter((row) => /access-check|sessions\//.test(row.route) && !row.outage);
         await writeFile(resolve(output, 'costs.json'), JSON.stringify({ evidence_class: GUEST_EVIDENCE_CLASS,
           live_authorization_latency_ms: { calls: authz.length, mean: authz.length ? Math.round(authz.reduce((sum, row) => sum + row.elapsed_ns, 0) / authz.length / 1e6) : null,
-            max: authz.length ? Math.round(Math.max(...authz.map((row) => row.elapsed_ns)) / 1e6) : null, host_lock_restore_ms: { plan: state.timings['plan-locked-restore'], apply: state.timings['apply-locked-restore'] } },
+            max: authz.length ? Math.round(Math.max(...authz.map((row) => row.elapsed_ns)) / 1e6) : null, host_lock_restore_ms: { restore: state.timings['restore-locked'] } },
           cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, operator_fields_per_thread: 3 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
       } catch { /* evidence writing never masks teardown */ }
       await Promise.all(browsers.map(async ({ ctx, browser }) => { await ctx.close().catch(() => {}); await browser.close().catch(() => {}); }));

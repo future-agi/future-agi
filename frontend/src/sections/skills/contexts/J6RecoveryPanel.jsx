@@ -31,6 +31,7 @@ import {
   useSubmitRecoveryRequest,
 } from "src/api/skills/j6-recovery";
 import { IdentityValue } from "../review/ReleaseReviewBody";
+import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
@@ -337,14 +338,29 @@ function RollbackRequest({
   canPromote,
   closureReady,
   releaseRevision,
+  reviewerId,
+  onReviewer,
 }) {
   const reviewers = useRecoveryReviewers();
   const preview = usePreviewRecoveryRelease();
   const submit = useSubmitRecoveryRequest(contextId);
   const [reviewed, setReviewed] = useState(false);
-  const [reviewerId, setReviewerId] = useState("");
   const [key] = useState(uuid);
+  const [copy, setCopy] = useState({ busy: false, done: false, error: "" });
   const packet = preview.data;
+  // The packet is computed from the reviewed closure the moment the review is
+  // acknowledged; there is nothing further to decide before choosing a reviewer.
+  const requested = useRef(false);
+  const startPreview = preview.mutate;
+  useEffect(() => {
+    if (!reviewed || requested.current) return;
+    requested.current = true;
+    startPreview({ contextId, candidateVersionId: candidate.id });
+  }, [reviewed, contextId, candidate.id, startPreview]);
+  const listed = (reviewers.data ?? []).some((item) => item.id === reviewerId);
+  const link = submit.data?.id
+    ? `${window.location.origin}${paths.dashboard.skills.contextReview(contextId)}?request=${submit.data.id}`
+    : "";
   return (
     <Section title={`Request rollback to v${candidate.number}`}>
       <Stack spacing={1.5}>
@@ -360,21 +376,24 @@ function RollbackRequest({
           control={
             <Checkbox
               checked={reviewed}
-              disabled={Boolean(packet) || !closureReady}
-              onChange={(_, checked) => setReviewed(checked)}
+              disabled={Boolean(packet) || preview.isPending || !closureReady}
+              onChange={(_, checked) => {
+                // Unchecking after a refused packet starts the review again.
+                if (!checked) {
+                  requested.current = false;
+                  preview.reset?.();
+                }
+                setReviewed(checked);
+              }}
             />
           }
           label={`I reviewed the complete v${candidate.number} closure, its retained children and the excluded alternatives.`}
         />
-        <Button
-          variant="outlined"
-          disabled={!reviewed || preview.isPending || Boolean(packet)}
-          onClick={() =>
-            preview.mutate({ contextId, candidateVersionId: candidate.id })
-          }
-        >
-          Preview rollback packet
-        </Button>
+        {preview.isPending && (
+          <Typography variant="s3" role="status">
+            Preparing the rollback packet.
+          </Typography>
+        )}
         {preview.error && (
           <Alert severity="error">
             The release service refused this packet. Recheck eligibility; no
@@ -388,9 +407,10 @@ function RollbackRequest({
               select
               size="small"
               label="Reviewer"
-              value={reviewerId}
+              value={listed ? reviewerId : ""}
               disabled={submit.isPending || Boolean(submit.data)}
-              onChange={(event) => setReviewerId(event.target.value)}
+              onChange={(event) => onReviewer(event.target.value)}
+              helperText="The reviewer you chose for the last request in this view stays selected."
             >
               {(reviewers.data ?? []).map((item) => (
                 <MenuItem key={item.id} value={item.id}>
@@ -401,7 +421,7 @@ function RollbackRequest({
             <Button
               variant="contained"
               disabled={
-                !reviewerId ||
+                !listed ||
                 !canPromote ||
                 submit.isPending ||
                 Boolean(submit.data)
@@ -419,7 +439,8 @@ function RollbackRequest({
             )}
             {submit.error && (
               <Alert severity="error">
-                Submission failed. Preview a fresh packet before retrying.
+                Submission failed. Submit again; the same request key prevents
+                a duplicate.
               </Alert>
             )}
             {submit.data && (
@@ -428,6 +449,44 @@ function RollbackRequest({
                 production from Skills Reviews; production is unchanged until
                 then.
               </Alert>
+            )}
+            {link && (
+              <Stack spacing={1}>
+                <TextField
+                  size="small"
+                  label="Review link"
+                  value={link}
+                  InputProps={{ readOnly: true }}
+                  helperText="Send this link to the reviewer; it opens the exact request."
+                />
+                <Button
+                  variant="outlined"
+                  disabled={copy.busy}
+                  onClick={async () => {
+                    setCopy({ busy: true, done: false, error: "" });
+                    try {
+                      if (!navigator.clipboard?.writeText)
+                        throw new Error("Unavailable");
+                      await navigator.clipboard.writeText(link);
+                      setCopy({ busy: false, done: true, error: "" });
+                    } catch {
+                      setCopy({
+                        busy: false,
+                        done: false,
+                        error: "Could not copy. Select and copy the link manually.",
+                      });
+                    }
+                  }}
+                >
+                  Copy review link
+                </Button>
+                {copy.done && (
+                  <Typography variant="s3" role="status">
+                    Copied the review link.
+                  </Typography>
+                )}
+                {copy.error && <Alert severity="error">{copy.error}</Alert>}
+              </Stack>
             )}
           </Stack>
         )}
@@ -448,11 +507,11 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
   const issue = useIssueRecoveryCredential(contextId);
   const [key] = useState(uuid);
   const [hours, setHours] = useState(24);
-  const [lockPath, setLockPath] = useState(".futureagi/retained-context.lock");
+  const [commit, setCommit] = useState("");
   const commands = restoreCommands({
     name: contextName,
     version: candidate.number,
-    lockPath,
+    commit: commit.trim(),
   });
   return (
     <Section title="Recover locks and applications">
@@ -511,10 +570,10 @@ function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
         <Typography variant="m3">Restore the checked-in lock</Typography>
         <TextField
           size="small"
-          label="Retained lock path"
-          value={lockPath}
-          onChange={(event) => setLockPath(event.target.value)}
-          helperText="Export the lock from the last reviewed commit; the restore refuses a lock whose identity differs."
+          label="Last reviewed commit"
+          value={commit}
+          onChange={(event) => setCommit(event.target.value)}
+          helperText="The full commit id whose lock was reviewed. The restore reads that lock, refuses one whose identity differs and verifies the result."
         />
         <Typography
           component="pre"
@@ -571,6 +630,11 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     return () => clearInterval(timer);
   }, []);
   const [chosen, setChosen] = useState(null);
+  // The reviewer stays selected across a restarted review (the release moved), so a
+  // fresh packet is one acknowledgement and one submit; a sole reviewer is preselected.
+  const reviewers = useRecoveryReviewers();
+  const [reviewerId, setReviewerId] = useState("");
+  const soleReviewer = reviewers.data?.length === 1 ? reviewers.data[0].id : "";
   const data = query.data;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
   const closure = useRecoveryClosure(
@@ -623,6 +687,8 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           canPromote={data.canPromote}
           closureReady={Boolean(closure.data)}
           releaseRevision={data.releaseRevision}
+          reviewerId={reviewerId || soleReviewer}
+          onReviewer={setReviewerId}
         />
       )}
       {candidate && (
