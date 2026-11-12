@@ -226,6 +226,9 @@ const IndividualExperimentSummary = lazyWithRetry(
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
 );
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
+);
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
 );
@@ -1171,6 +1174,10 @@ export const dashboardRoutes = (
         //   path: "logs",
         //   element: <LogsView />,
         // },
+        {
+          path: "query",
+          element: <SQLQueryView />,
+        },
         {
           path: "llm-tracing",
           element: <LLMTracingView />,
