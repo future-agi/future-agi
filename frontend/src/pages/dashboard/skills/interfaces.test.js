@@ -33,7 +33,9 @@ function auditInterfaces() {
   }));
   const issues = [];
   const imported = new Set();
-  for (const file of [...files, 'src/layouts/dashboard/config-navigation.jsx', 'src/routes/sections/dashboard.jsx']) {
+  // Entry points outside the feature roots that mount Skills modules: navigation, routes and the
+  // trace span pane, where context regression capture starts from the selected span.
+  for (const file of [...files, 'src/layouts/dashboard/config-navigation.jsx', 'src/routes/sections/dashboard.jsx', 'src/components/traceDetail/SpanDetailPane.jsx']) {
     const visit = (node) => {
       const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier?.text
         : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0]?.text : null;

@@ -15,6 +15,7 @@ import ContextEditorPage from './contexts/ContextEditorPage';
 import ContextReviewPage from './contexts/ContextReviewPage';
 import ContextCampaignPage from './contexts/ContextCampaignPage';
 import SkillsReviewsPage from './SkillsReviewsPage';
+import ContextTraceCaptureAction from 'src/sections/skills/contexts/ContextTraceCaptureAction';
 
 const identity = vi.hoisted(() => ({ workspace: '00000000-0000-4000-8000-000000000001', campaigns: false }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ authenticated: true, user: { id: 'author' } }) }));
@@ -88,24 +89,28 @@ it('opens the real context controller through production navigation and reads ex
   expect(screen.getByText(`v4 · ${versionId}`)).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Agent contexts' })).not.toBeDisabled();
 });
-it('captures an authorized trace through the production context page and shares only the reviewed redaction', async () => {
+// Capture starts from the selected span (SpanDetailPane mounts this action), not from a
+// context page form: the physical identity is carried, never transcribed.
+const traceRef = { projectId: id, traceId: 'trace', spanId: 'span', startTime: '2026-11-10T00:00:00.123456Z' };
+const mountTraceCapture = () => render(<QueryClientProvider client={client}><MemoryRouter><ContextTraceCaptureAction traceRef={traceRef} contextHint={id} /></MemoryRouter></QueryClientProvider>);
+it('captures an authorized trace from the span into its delivered context and shares only the reviewed redaction', async () => {
   const read = axios.get.getMockImplementation();
   const suite = { revision: 2, digest, cases: [], updated_at: null, updated_by: null, visibility: 'workspace' };
   axios.get.mockImplementation((url, config) => url.endsWith('/tests/') ? Promise.resolve(envelope(suite)) : read(url, config));
-  const traceRef = { project_id: id, trace_id: 'trace', span_id: 'span', start_time: '2026-11-10T00:00:00.123456Z' };
+  const wireRef = { project_id: id, trace_id: 'trace', span_id: 'span', start_time: traceRef.startTime };
   const segments = [{ id: 'request-1', kind: 'request', text: 'Customer private request' }];
   axios.post.mockImplementation(async (url, body) => {
-    if (url.endsWith('/captures/source/')) { expect(body).toEqual({ trace_ref: traceRef }); return envelope({ trace_ref: traceRef, source_fingerprint: digest, segments }); }
-    if (url.endsWith('/captures/preview/')) { expect(body).toEqual({ trace_ref: traceRef, selected_segment_ids: ['request-1'] }); return envelope({ capture_id: versionId, expires_at: '2099-01-01T00:00:00Z', source_fingerprint: digest, recorded_context: null, segments, omitted: [], outbound_findings: [], replay_scope: 'text_only' }); }
+    if (url.endsWith('/captures/source/')) { expect(body).toEqual({ trace_ref: wireRef }); return envelope({ trace_ref: wireRef, source_fingerprint: digest, segments }); }
+    if (url.endsWith('/captures/preview/')) { expect(body).toEqual({ trace_ref: wireRef, selected_segment_ids: ['request-1'] }); return envelope({ capture_id: versionId, expires_at: '2099-01-01T00:00:00Z', source_fingerprint: digest, recorded_context: null, segments, omitted: [], outbound_findings: [], replay_scope: 'text_only' }); }
     if (url.endsWith(`/captures/${versionId}/accept/`)) return envelope({ ...suite, revision: 3 });
     throw new Error(`Unexpected write ${url}`);
   });
-  mount(`/dashboard/skills/contexts/${id}?version=4`);
-  await screen.findByText('# Exact policy');
-  fireEvent.click(screen.getByRole('button', { name: 'Create regression case from trace' }));
-  for (const [label, value] of Object.entries({ 'Source project ID': id, 'Source trace ID': 'trace', 'Source span ID': 'span', 'Span start time': traceRef.start_time })) fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
-  fireEvent.click(screen.getByRole('button', { name: 'Load authorized source' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'Request · request-1' }));
+  mountTraceCapture();
+  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  // No identity fields to transcribe: the span's identity is loaded into the authorized review.
+  expect(screen.queryByRole('textbox', { name: 'Source trace ID' })).not.toBeInTheDocument();
+  // Every supported segment starts selected; the reviewer deselects anything irrelevant.
+  expect(await screen.findByRole('checkbox', { name: 'Request · request-1' })).toBeChecked();
   fireEvent.click(screen.getByRole('button', { name: 'Preview selected text' }));
   fireEvent.change(await screen.findByRole('textbox', { name: 'Redacted request' }), { target: { value: 'Redacted request' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Example title' }), { target: { value: 'Regression' } });
@@ -128,9 +133,10 @@ it('does not offer context capture when the authoritative write permission is ab
     if (url === `/model-hub/skills/contexts/${id}/`) value.data.result.release_state = { ...releaseState, permissions: { ...permissions, can_publish: false } };
     return value;
   });
-  mount(`/dashboard/skills/contexts/${id}?version=4`);
-  await screen.findByText('# Exact policy');
-  expect(screen.getByRole('button', { name: 'Create regression case from trace' })).toBeDisabled();
+  mountTraceCapture();
+  fireEvent.click(screen.getByRole('button', { name: 'Create context regression case' }));
+  expect(await screen.findByText('Only a workspace author can capture cases into this context.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Review selected span' })).toBeDisabled();
   expect(axios.post).not.toHaveBeenCalled();
 });
 
