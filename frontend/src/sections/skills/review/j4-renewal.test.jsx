@@ -105,7 +105,8 @@ it('clears a refusal from the previous revision when the renewed revision is app
   fireEvent.click(screen.getByRole('button', { name: 'Release approved packet' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production' }));
   expect(await screen.findByText(/Request rejected/)).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Renew review' })).toBeVisible();
+  // The confirmation is still closing; wait until the page is interactive again.
+  expect(await screen.findByRole('button', { name: 'Renew review' })).toBeVisible();
   rerender(<ReleaseRequestPanel {...props} preview={{ packet, fingerprint: 'fp2', current: true }} request={{ id: 'request', revision: 3, status: 'approved' }} reviewedIdentity={null} onReviewedChange={vi.fn()} />);
   expect(screen.queryByText(/Request rejected/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();

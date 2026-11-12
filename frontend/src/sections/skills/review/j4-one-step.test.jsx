@@ -84,8 +84,9 @@ it('carries the published candidate forward, preselects the only target and shar
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-a', acknowledgeSnapshotSharing: true }));
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare exact review' }));
-  await waitFor(() => expect(prepare).toHaveBeenCalled());
+  // The batch decision continues to the exact packet without another click;
+  // the packet is only prepared for inspection, never sent.
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
   const input = prepare.mock.calls[0][0];
   expect(input).toMatchObject({ resourceId: 'context', kind: 'agent_context', candidateId: 'v2', target: { bindingId: 'binding', revision: 1 } });
   expect(input.evidence.map((item) => item.sourceId).sort()).toEqual(['run-a', 'run-b']);
@@ -139,4 +140,20 @@ it('keeps an unknown publish outcome retryable without a second head acknowledgm
   expect(ack).toHaveBeenCalledTimes(1);
   expect(publish.mock.calls[1][0].idempotencyKey).toBe(publish.mock.calls[0][0].idempotencyKey);
   expect(publish.mock.calls[1][0]).toMatchObject({ revision: 4, reviewFingerprint: 'fp4' });
+});
+
+it('keeps the form open instead of preparing when the optional pipeline record is incomplete', async () => {
+  useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewCandidates.mockReturnValue({ data: { results: [], total_pages: 1 } });
+  useReviewOptions.mockReturnValue({ data: { targets: [], evidence: [ref('run-a', 'workspace')], recipients: [] }, refetch: vi.fn() });
+  const prepare = vi.fn().mockResolvedValue(null);
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
+  useSubmitReleaseReview.mockReturnValue({ mutateAsync: vi.fn() });
+  useShareReleaseEvidence.mockReturnValue({ mutateAsync: vi.fn() });
+  render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
+  fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Attach 1 results' }));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach text evidence / })).toBeChecked());
+  expect(prepare).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Prepare exact review' })).toBeDisabled();
 });

@@ -254,18 +254,20 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(author.getByLabel('Published candidate', { exact: true })).toHaveValue(`v${published.number}`);
           await expect(author.getByLabel('Application target', { exact: true })).toHaveText(/ · configuration r\d+$/);
           // One explicit decision shares and attaches every listed
-          // exact-candidate result; the confirmation names each record.
+          // exact-candidate result; the confirmation names each record. The
+          // same decision continues to the exact packet (server-prepared, not
+          // sent); the author still inspects and attests it below.
           const attach = author.getByRole('checkbox', { name: /^Attach text evidence / });
           await expect(attach).toHaveCount(input.evidenceIds.length);
           await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
           for (const id of input.evidenceIds) await expect(confirmShare.getByText(new RegExp(`${id} · private`))).toBeVisible();
-          await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
-          await expect(author.getByRole('dialog')).toHaveCount(0);
-          for (let index = 0; index < input.evidenceIds.length; index += 1) await expect(attach.nth(index)).toBeChecked();
           const prepared = responseFor(author, '/release-requests/preview/');
-          await op.click(author.getByRole('button', { name: 'Prepare exact review', exact: true }), 'prepare-exact-packet');
+          await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
           const preview = (await (await prepared).json()).result;
+          await expect(author.getByRole('dialog')).toHaveCount(0);
+          requireValue(preview.packet.evidence.length === input.evidenceIds.length
+            && preview.packet.evidence.every((ref) => input.evidenceIds.includes(ref.source_id)), 'Prepared packet differs from the shared selection');
           // Preselected only when exactly one authorized reviewer exists.
           if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
           await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(ack(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));

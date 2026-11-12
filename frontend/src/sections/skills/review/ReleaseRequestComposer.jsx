@@ -45,7 +45,7 @@ function ShareAllEvidence({ packet, evidence, onShare, onShared }) {
     <ConfirmDialog open={open} onClose={() => { if (!busy) setOpen(false); }} closeDisabled={busy}
       title={`Share ${shareable.length} private results with the workspace?`}
       content={<Stack spacing={1}>
-        <Typography variant="s1">Each frozen draft, example inputs, model answers and file receipts become visible to workspace members. Sharing does not extend expiry or release content. These results are then attached to the review:</Typography>
+        <Typography variant="s1">Each frozen draft, example inputs, model answers and file receipts become visible to workspace members. Sharing does not extend expiry or release content. These results are then attached, and the exact review packet opens for you to inspect before anything is sent:</Typography>
         {all.map((ref) => <Typography key={`${ref.source}:${ref.sourceId}`} variant="s3" sx={{ overflowWrap: 'anywhere' }}>{ref.source === 'skills_text' ? 'Text' : 'Native'} · {ref.sourceId} · {ref.visibility}</Typography>)}
       </Stack>}
       action={<Button variant="contained" disabled={busy} onClick={async () => {
@@ -98,10 +98,11 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
   const packet = { subjectId: resourceId, subjectKind: kind, candidateDigest: candidate?.digest, target };
   const pipelineComplete = !pipelineUrl && !pipelineConfig && !pipelineDecision || /^https:\/\//.test(pipelineUrl) && pipelineConfig.trim() && pipelineDecision.trim();
   const refresh = () => { subjects.refetch(); if (resourceId) versions.refetch(); if (candidateId) options.refetch(); };
-  const preparePacket = async () => {
+  const labelValid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(label);
+  const preparePacket = async (evidence = selected) => {
     setError('');
     try {
-      setPrepared(await prepare.mutateAsync({ resourceId, kind, candidateId, label, target, evidence: selected,
+      setPrepared(await prepare.mutateAsync({ resourceId, kind, candidateId, label, target, evidence,
         externalPipeline: pipelineUrl ? { trust: 'operator_recorded_unimported', url: pipelineUrl, configuration_identity: pipelineConfig, decision: pipelineDecision, recorded_by: access.scope.userId } : null }));
     } catch { setError('Could not prepare the exact review. Reload the available records and inspect any changed selections. Nothing was submitted.'); }
   };
@@ -153,7 +154,12 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
             onShared={async (refs) => {
               const keys = new Set(refs.map((ref) => `${ref.source}:${ref.sourceId}`));
               const fresh = refs.some((ref) => ref.visibility !== 'workspace') ? (await options.refetch()).data : options.data;
-              setSelected((fresh?.evidence || []).filter((ref) => keys.has(`${ref.source}:${ref.sourceId}`) && !evidenceProblems(ref, packet).length).map(evidenceSelection));
+              const attached = (fresh?.evidence || []).filter((ref) => keys.has(`${ref.source}:${ref.sourceId}`) && !evidenceProblems(ref, packet).length).map(evidenceSelection);
+              setSelected(attached);
+              // J4: the batch decision continues straight to the exact packet
+              // the author must inspect and attest; nothing is sent here. An
+              // incomplete optional pipeline record keeps the form open instead.
+              if (attached.length && pipelineComplete && labelValid) await preparePacket(attached);
             }} />
           <TypedEvidenceList packet={packet} evidence={options.data.evidence} selected={selected} onSelectionChange={setSelected} onShare={(input) => share.mutateAsync(input)} />
         </Stack>
@@ -166,7 +172,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill }) {
       </Stack></Section>
       <Stack direction="row" spacing={1}>
         <Button variant="outlined" disabled={busy} onClick={() => navigate(paths.dashboard.skills.reviews)}>Cancel</Button>
-        <Button variant="contained" disabled={busy || failed || options.isFetching || !candidate || !options.data || !pipelineComplete || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(label)} onClick={preparePacket}>Prepare exact review</Button>
+        <Button variant="contained" disabled={busy || failed || options.isFetching || !candidate || !options.data || !pipelineComplete || !labelValid} onClick={() => preparePacket()}>Prepare exact review</Button>
       </Stack>
     </>}
   </Stack>;
