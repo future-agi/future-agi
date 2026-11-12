@@ -125,7 +125,19 @@ class ViewerReadOnly(PermissionDenied):
 WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
 _VIEWER_REASON_PREFIX = "/simulate/"
 
-
+# These paths are excluded from workspace write checks because they:
+# - Don't modify workspace data (switch operations, profile updates)
+# - Or need to be accessible regardless of workspace role
+WORKSPACE_WRITE_EXEMPT_PATHS = (
+    "workspace/switch/",
+    "organizations/switch/",
+    "update-user-full-name",  # Users can always update their own profile
+    "onboarding/",  # Users can always update their own onboarding profile
+    "logout/",  # Users can always invalidate their own access token
+    "2fa/",  # Users can always manage their own second factor state
+    "passkey/",  # Users can always manage their own passkey challenges
+    "passkeys/",  # Users can always manage their own passkey records
+)
 _WRITE_METHODS = ("post", "put", "patch", "delete")
 
 
@@ -383,24 +395,12 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
-        # - Don't modify workspace data (switch operations, profile updates)
-        # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
-
         should_skip_write_check = (
             _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
+            or any(
+                exempt_path in request.path
+                for exempt_path in WORKSPACE_WRITE_EXEMPT_PATHS
+            )
             or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
