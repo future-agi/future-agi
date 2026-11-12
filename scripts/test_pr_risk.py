@@ -2506,6 +2506,192 @@ class ControllerTests(unittest.TestCase):
                 self.summary.assert_called_with(
                     "Waiting: the branch is behind dev; update it from dev to continue.")
 
+    def dispatches(self):
+        return self.api.writes(f"actions/workflows/{risk.WORKFLOW}/dispatches")
+
+    def test_a_behind_head_gets_the_note_only_after_its_push_history_is_read(self):
+        # Every push so far came from a trusted author, so merging dev in can
+        # continue the run: the note is posted.
+        self.api.push("1" * 40)
+        self.fall_behind()
+        self.prepare()
+        [note] = self.behind_notes()
+        self.assertIn(f"Head: `{'1' * 40}`.", note)
+        self.assertEqual(self.escalations(), [])
+        self.assertTrue(any(r[1].startswith("activity?") for r in self.api.requests))
+
+    def test_a_behind_head_whose_push_history_needs_a_person_is_escalated_without_a_note(self):
+        # Merging dev in cannot lift this escalation, so a note would only
+        # send the author on an errand.
+        pushed = "1" * 40
+        self.api.push(pushed, actor="someone-else")
+        self.fall_behind()
+        self.prepare()
+        self.assertEqual(self.behind_notes(), [])
+        [escalation] = self.escalations()
+        self.assertIn("not a trusted author", escalation)
+        self.assertIn(f"Head: `{pushed}`.", escalation)
+        self.assertFalse(self.reservations())
+        self.assertEqual(self.outputs["review"], "false")
+        self.summary.assert_called_with(
+            "A push to this branch came from an account that is not a trusted "
+            "author. A person must review this PR.")
+        # The author merges dev in anyway: the new head goes to a person too,
+        # and still gets no note.
+        merged = "2" * 40
+        self.new_head(merged)
+        self.api.pr["base"]["sha"] = OTHER
+        self.prepare()
+        self.assertEqual(self.behind_notes(), [])
+        [escalation] = self.escalations()
+        self.assertIn(f"Head: `{merged}`.", escalation)
+        self.assertFalse(self.reservations())
+        # Every other way the history goes to a person: escalated, no note.
+        creation = {"before": risk.ZERO_SHA, "after": HEAD, "actor": {"login": "trusted-author"},
+                    "activity_type": "branch_creation"}
+        push = {**creation, "before": OTHER, "activity_type": "push"}
+        histories = {
+            "empty": ([], "empty or too long"),
+            "too long": ([push] * 99 + [creation], "empty or too long"),
+            "no branch creation": ([push], "does not reach back"),
+        }
+        for name, (rows, reason) in histories.items():
+            with self.subTest(history=name):
+                self.api = FakeGitHub()
+                self.api.activity = rows
+                self.fall_behind()
+                self.prepare()
+                self.assertEqual(self.behind_notes(), [])
+                [escalation] = self.escalations()
+                self.assertIn(reason, escalation)
+
+    def test_a_behind_head_whose_push_history_is_unread_or_not_current_gets_nothing_yet(self):
+        behind = "Waiting: the branch is behind dev; update it from dev to continue."
+        # The read fails, or answers something other than a list: no note, no
+        # escalation and a green run; the PR is not parked, so the next
+        # sweep tries again.
+        for name in ("HTTP 502", "not a list"):
+            with self.subTest(read=name):
+                self.api = FakeGitHub()
+                self.fall_behind()
+                if name == "HTTP 502":
+                    self.failing(lambda method, route, data: route.startswith("activity?"), 1)
+                else:
+                    self.api.activity = {"message": "unavailable"}
+                self.prepare()
+                self.assertEqual(self.behind_notes(), [])
+                self.assertEqual(self.escalations(), [])
+                self.summary.assert_called_with(behind)
+                self.assertFalse(risk.parked(self.api, {"number": 42, "head": {"sha": HEAD}}))
+        # The history has not recorded this head yet: a push it does not show
+        # may be someone else's, so wait without a note.
+        self.api = FakeGitHub()
+        self.api.push("1" * 40)
+        self.api.activity = [{"before": risk.ZERO_SHA, "after": HEAD, "actor": {"login": "trusted-author"},
+                              "activity_type": "branch_creation"}]
+        self.fall_behind()
+        self.prepare()
+        self.assertEqual(self.behind_notes(), [])
+        self.assertEqual(self.escalations(), [])
+        self.summary.assert_called_with(behind)
+        # Once it has, the note follows.
+        self.api.activity = None
+        self.prepare()
+        self.assertEqual(len(self.behind_notes()), 1)
+
+    def test_a_behind_dev_note_on_an_older_head_no_longer_applies_once_a_person_has_the_pr(self):
+        self.fall_behind()
+        self.prepare()
+        [note] = self.behind_notes()
+        # Someone not on the list pushes; the branch is still behind.
+        self.api.push("1" * 40, actor="someone-else")
+        self.prepare()
+        [note] = self.behind_notes()
+        self.assertTrue(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES), note)
+        self.assertIn(risk.BEHIND_DEV_HANDED, note)
+        [escalation] = self.escalations()
+        self.assertIn(f"Head: `{'1' * 40}`.", escalation)
+        # A head escalated earlier: the next behind run clears a live note too,
+        # without reading the push history again.
+        self.api = FakeGitHub()
+        risk.post_note(self.api, 42, [], risk.BEHIND_DEV_MARKER, risk.BEHIND_DEV_NOTE, OTHER)
+        risk.escalate(self.api, 42, self.api.comments, HEAD, "A person must review this PR.")
+        self.fall_behind()
+        self.prepare()
+        [note] = self.behind_notes()
+        self.assertTrue(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES), note)
+        self.assertFalse(any(r[1].startswith("activity?") for r in self.api.requests))
+        self.assertEqual(len(self.escalations()), 1)
+
+    def test_the_behind_dev_note_no_longer_applies_once_the_autopilot_stops_handling_the_pr(self):
+        changes = {
+            "hold label": ("pull_request_target",
+                           lambda api: api.pr["labels"].append({"name": "autopilot-hold"}) or settings()),
+            "not LOW": ("pull_request_target",
+                        lambda api: (api.push("1" * 40),
+                                     setattr(api, "files", [file("scripts/pr_risk.py")])) and settings()),
+            "draft": ("pull_request_target", lambda api: api.pr.update(draft=True) or settings()),
+            "author left the list": ("workflow_dispatch", lambda api: settings(authors="someone-else")),
+        }
+        for name, (event_name, change) in changes.items():
+            with self.subTest(change=name):
+                self.api = FakeGitHub()
+                self.fall_behind()
+                self.prepare()
+                [note] = self.behind_notes()
+                self.assertFalse(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+                config = change(self.api)
+                self.prepare(config, event_name=event_name)
+                [note] = self.behind_notes()
+                self.assertTrue(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES), note)
+                self.assertIn(risk.BEHIND_DEV_DROPPED, note)
+                self.assertNotIn("Head: `", note)
+                self.assertFalse(self.dispatches())
+                self.assertFalse(self.reservations())
+
+    def test_a_wait_the_autopilot_still_handles_leaves_the_behind_dev_note_live(self):
+        # Hours and mergeability change without any push, so a note that
+        # followed them would flip between live and cleared.
+        waits = {
+            "outside working hours": lambda api: settings(hours="11-12"),
+            "mergeability unknown": lambda api: api.pr.update(mergeable=None) or settings(),
+        }
+        for name, change in waits.items():
+            for event_name in ("pull_request_target", "workflow_dispatch"):
+                with self.subTest(wait=name, event=event_name):
+                    self.api = FakeGitHub()
+                    self.fall_behind()
+                    self.prepare()
+                    config = change(self.api)
+                    with patch.object(risk, "clear_note") as clear:
+                        self.prepare(config, event_name=event_name)
+                    clear.assert_not_called()
+                    [note] = self.behind_notes()
+                    self.assertFalse(note.startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+                    self.assertIn(f"Head: `{HEAD}`.", note)
+
+    def test_a_cleared_behind_dev_note_comes_back_when_the_hold_is_removed(self):
+        self.fall_behind()
+        self.prepare()
+        [first] = [c for c in self.api.comments if c["body"].startswith(risk.BEHIND_DEV_MARKER)]
+        self.api.pr["labels"].append({"name": "autopilot-hold"})
+        self.prepare(event_name="pull_request_target")
+        self.assertTrue(self.behind_notes()[0].startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        # The hold comes off: the PR event dispatches a run on dev, and that
+        # run edits the same comment back to a live note naming the head.
+        self.api.pr["labels"] = [label for label in self.api.pr["labels"]
+                                 if label["name"] != "autopilot-hold"]
+        self.prepare(event_name="pull_request_target")
+        self.assertEqual(len(self.dispatches()), 1)
+        self.prepare()
+        [note] = [c for c in self.api.comments if c["body"].startswith(risk.BEHIND_DEV_MARKER)]
+        self.assertEqual(note["id"], first["id"])
+        self.assertFalse(note["body"].startswith(risk.BEHIND_DEV_MARKER + risk.NO_LONGER_APPLIES))
+        self.assertIn(f"Head: `{HEAD}`.", note["body"])
+        posts = [w for w in self.api.requests if w[0] == "POST" and w[1] == "issues/42/comments"
+                 and str(w[2].get("body", "")).startswith(risk.BEHIND_DEV_MARKER)]
+        self.assertEqual(len(posts), 1)
+
     def test_no_behind_dev_note_on_a_head_already_handed_to_a_person(self):
         # An escalation of this head (here a push by someone not on the list)
         # survives a merge of dev, so telling the author to merge dev would
@@ -4161,6 +4347,22 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--tools is not a known flag here", defects)
         _, defects = self.claude_args_defects(args.replace("--model claude-opus-5-5", "--model"))
         self.assertIn("--model has no value", defects)
+
+    def test_the_pr_events_that_end_a_behind_dev_note_start_a_run(self):
+        # prepare clears a live behind-dev note in the run that a hold, a
+        # draft or a push starts, so those events must run this workflow.
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        trigger = yaml.safe_load(WORKFLOW_TEXT)[True]["pull_request_target"]
+        self.assertEqual(trigger["branches"], ["dev"])
+        needed = {"labeled", "unlabeled", "converted_to_draft", "ready_for_review", "synchronize"}
+        self.assertLessEqual(needed, set(trigger["types"]))
+        # A copy without one of them fails the same check.
+        for missing in sorted(needed):
+            with self.subTest(missing=missing):
+                self.assertFalse(needed <= set(trigger["types"]) - {missing})
 
     def test_policy_tests_run_for_every_file_they_read(self):
         # The post-merge coverage test reads every workflow file, so a PR that

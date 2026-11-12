@@ -91,8 +91,8 @@ case-insensitive; malformed entries stop automation. Start with a small,
 explicitly approved list. A fork, even from a trusted author, is never eligible.
 
 Trust covers **who pushed**, not only who opened the PR. Before it reserves a
-review, and again before approval and merge, the controller reads the branch's
-push history (`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<branch>`,
+review, before it posts a behind-dev note, and again before approval and
+merge, the controller reads the branch's push history (`GET /repos/{owner}/{repo}/activity?ref=refs/heads/<branch>`,
 one page of up to 100 rows). Every row must name a trusted author. A push by
 anyone else, including an "Update branch" click by someone not on the list,
 sends the PR to a person for good; the author has to merge `dev` into the
@@ -102,7 +102,8 @@ older pushes, or a page whose oldest row is not the branch's
 On 2026-11-11 the oldest row of all 19 sampled PR branches in this
 repository was `branch_creation`. If the newest push in the feed is not yet
 the PR head, the run waits. If the endpoint does not answer, the run stops
-and approves nothing.
+and approves nothing; a run on a branch behind `dev` posts no note and waits
+for the next sweep.
 
 An invalid or overnight working-hours window denies automation. Use one
 same-day UTC window; there is no local-time/DST conversion or implicit fallback.
@@ -426,31 +427,47 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    the controller always asks GitHub's compare API, because a recorded base
    SHA equal to the tip only means the PR was opened after that commit, not
    that its branch contains it. A PR that is behind `dev` spends no review
-   round and waits. If the PR passes every other part of the merge decision
-   (item 2: trusted author, LOW, no hold, review key, hours, mergeability)
-   and no standing escalation names its head, the bot posts one behind-dev
-   note (marker `pr-autopilot:behind-dev`) that names the head. Merging
-   `dev` in does not lift an escalation, so an escalated head gets no such
-   note. The note says that the autopilot reviews and merges
-   only a head that contains the live `dev` tip, and that the author (or
-   another trusted author) merges `dev` into the branch locally and pushes.
-   It also says that a push or an "Update branch" by anyone not on the
-   trusted-author list sends the PR to a person for good. A new head that
-   is still behind gets the same comment, edited to name it. The first run
-   that finds the tip contained marks the note "No longer applies". If the
-   PR falls behind again later, the bot edits that comment back. GitHub
-   sends no notification for an edited comment, so only the first behind
-   episode notifies the author. `dev`
+   round and waits. The bot posts one behind-dev note (marker
+   `pr-autopilot:behind-dev`) that names the head only when merging `dev`
+   in would let the run continue. Three things must hold. The PR passes
+   every other part of the merge decision (item 2: trusted author, LOW, no
+   hold, review key, hours, mergeability). No standing escalation names
+   its head. Its push history needs no person (the who-pushed check in
+   [Switches and administrative
+   prerequisites](#switches-and-administrative-prerequisites)): every push
+   came from a trusted author, the history reaches back to the
+   branch's creation, and it already shows this head. The run reads that
+   history before it posts the note. If the history needs a person, the
+   run escalates at once and posts no note, because merging `dev` in does
+   not lift that escalation. If the read fails, or the history does not
+   show this head yet, the run posts nothing; the PR is not parked, so the
+   next sweep reads again. The note says that the autopilot reviews and
+   merges only a head that contains the live `dev` tip, and that the
+   author (or another trusted author) merges `dev` into the branch locally
+   and pushes. It also says that a push or an "Update branch" by anyone
+   not on the trusted-author list sends the PR to a person for good. A new
+   head that is still behind gets the same comment, edited to name it.
+   The bot marks the note "No longer applies", with fixed text, in three
+   cases:
+   - the first run that finds the tip contained;
+   - a run on a behind head that a person now has (an escalation names
+     the head);
+   - any run, from a PR event or a dispatch, that finds the PR is a draft,
+     has `autopilot-hold`, is not LOW, or has an author who is not on the
+     trusted-author list. Hours and mergeability do not clear it, because
+     they change without a push and the note would flip back and forth.
+   If the PR waits behind `dev` again later, the bot edits that comment
+   back. GitHub sends no notification for an edited comment, so only the
+   first behind episode notifies the author. A change to the trusted-author
+   list starts no run, and the sweep does not dispatch a PR that the list
+   no longer covers. The note on such a PR stays live until the PR's next
+   event (a push, a label, a draft change) or a manual dispatch. `dev`
    does not require up-to-date branches and the repository setting
    "Always suggest updating pull request branches" is off, so GitHub shows
    no out-of-date notice and no "Update branch" button on these PRs; the
    note is the only sign of the wait. The note does not suggest
    `gh pr update-branch`: whether that REST call works with the setting
-   off is not known yet (rollout step 2). The note comes before the
-   push-history check. So a branch with a push by someone not on the list
-   still gets it while no escalation names its head, for example when the
-   branch was already behind on the first run after that push. After the
-   author merges `dev` in, that PR goes to a person. Manual dispatches on other branches are rejected.
+   off is not known yet (rollout step 2). Manual dispatches on other branches are rejected.
    PR-event runs and the schedule both need this workflow on the default
    branch.
 2. The controller classifies and audits the tier. It requires an open,
@@ -1159,8 +1176,10 @@ Suggested rollout:
    pending/failed checks, three-diff escalation, a dev catch-up with an unchanged
    diff, a branch behind `dev` (one behind-dev note naming the head, the
    sweep dispatching the PR about hourly, and the note marked "No longer
-   applies" after the author merges `dev` in and pushes), a push by an
-   account not on the list, a dismissed App approval, a
+   applies" after the author merges `dev` in and pushes, and again after
+   `autopilot-hold` is added), a branch behind `dev` with a push by an
+   account not on the list (an escalation and no behind-dev note), a push
+   by an account not on the list, a dismissed App approval, a
    blocked diff fixed by a new commit (the escalation must then say it no
    longer applies), an escalated PR that the sweep then dispatches about
    hourly, and post-merge dispatches.
@@ -1182,9 +1201,13 @@ unreadable records, persistent budgets, HTTP 404/410 versus transient API
 failures and the HTTP code on `GitHub.request` errors, clearing a superseded
 escalation, pusher trust and the `branch_creation` row, dismissed approvals,
 the compare-only behind-dev rule, the behind-dev note (one per head, only for
-a PR the merge decision would otherwise allow and not on an escalated head,
-cleared once the branch contains the tip, and parked by the sweep), the
-sweep's
+a PR the merge decision would otherwise allow, not on an escalated head, and
+only after the push history is read and shows the head; a history that needs
+a person is escalated at once instead; cleared once the branch contains the
+tip, once a person has the head, or once the PR is a draft, held, not LOW or
+no longer from a trusted author, but not for hours or mergeability; edited
+back to live when it applies again; and parked by the sweep), the PR-event
+types that clear it, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
 approval/merge races (including holds during audit/duplicate-review reads, and `dev`
 moving just before the merge call), audit

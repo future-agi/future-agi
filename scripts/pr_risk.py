@@ -55,6 +55,15 @@ BEHIND_DEV_NOTE = (
     "push, and about once an hour until then."
 )
 BEHIND_DEV_CLEARED = "The branch now contains the live `dev` tip."
+# The two other ways the note stops applying. Fixed text, like every cleared note.
+BEHIND_DEV_HANDED = (
+    "A person must review this PR (see the escalation note). Merging `dev` in "
+    "does not change that."
+)
+BEHIND_DEV_DROPPED = (
+    "The autopilot no longer handles this PR: it is a draft, has "
+    "`autopilot-hold`, is not LOW, or its author is not on the trusted-author list."
+)
 # The first line after a note's marker once the bot has marked it superseded.
 NO_LONGER_APPLIES = "\n**No longer applies.**"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -1677,6 +1686,46 @@ def require_initial_attempt():
         )
 
 
+def behind_dev(api, policy, settings, pr, comments, decision):
+    """The branch does not contain the live dev tip, so the author merges dev
+    in; no review round is spent. The behind-dev note is the PR's only sign of
+    this wait, and it parks the PR until the head changes (PARKING_NOTES).
+
+    The note goes only on a head that merging dev in would let continue: the
+    merge decision would otherwise allow it, no escalation names it, and its
+    push history needs no person. Otherwise the note would send the author on
+    an errand: a history that needs a person is escalated now, and a live note
+    is cleared."""
+    number, head = pr["number"], pr["head"]["sha"]
+    waiting = "Waiting: the branch is behind dev; update it from dev to continue."
+    if not decision["allow"]:
+        summary(waiting)
+        return
+    if not noted_at(comments, ESCALATION_MARKER, head):
+        try:
+            pushes = branch_pushes(api, pr, trusted_authors(policy, settings["authors"]))
+        except NeedsPerson as exc:
+            escalate(api, number, comments, head, str(exc))
+        except PolicyError:
+            # Unread: nothing is posted and nothing parks the PR, so the next
+            # sweep reads the history again.
+            summary(waiting)
+            return
+        else:
+            # A head the history has not recorded yet may come from a push by
+            # someone else; wait for it, as the review path does.
+            if pushes[0].get("after") == head:
+                post_note(api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, head)
+            summary(waiting)
+            return
+    else:
+        summary("Waiting: a person must review this head (see the escalation note).")
+    # Whether this run or an earlier one escalated, so the next run retries a
+    # clear that failed.
+    if live_note(comments, BEHIND_DEV_MARKER):
+        clear_note(api, number, BEHIND_DEV_MARKER, BEHIND_DEV_HANDED)
+
+
 def prepare(api, policy, settings, event, event_name):
     emit("review", "false")
     emit("context", "")
@@ -1694,6 +1743,15 @@ def prepare(api, policy, settings, event, event_name):
     comments = api.pages(f"issues/{number}/comments")
     ensure_labels(api, policy["labels"].values())
     tier_audit(api, pr, risk, policy, comments)
+    # A behind-dev note says the autopilot waits for this PR. Once a hold, a
+    # draft, a new tier or the trusted-author list says it no longer handles
+    # the PR, no run would correct the note, so clear it here. Not on the
+    # merge decision: hours and mergeability change without a push, and the
+    # note would flip between live and cleared.
+    if live_note(comments, BEHIND_DEV_MARKER) and not (
+        same_repo_ready(pr, api.repository) and actionable(pr, risk["tier"], policy, settings)
+    ):
+        clear_note(api, number, BEHIND_DEV_MARKER, BEHIND_DEV_DROPPED)
     if event_name == "pull_request_target":
         # Review, approval and merge happen only in a dispatch run on dev; review
         # evidence is bound to that run's dev commit (trusted_run).
@@ -1718,16 +1776,7 @@ def prepare(api, policy, settings, event, event_name):
     )
     base = current_base(api, pr)
     if base is None:
-        # Behind dev: the author updates the branch. No review round is spent.
-        # The note is the PR's only sign of this wait, and it parks the PR
-        # until the head changes (PARKING_NOTES). Not on a head that a standing
-        # escalation already hands to a person: merging dev in does not lift
-        # an escalation, so the note would only send the author on an errand.
-        if decision["allow"] and not noted_at(comments, ESCALATION_MARKER, pr["head"]["sha"]):
-            post_note(
-                api, number, comments, BEHIND_DEV_MARKER, BEHIND_DEV_NOTE, pr["head"]["sha"]
-            )
-        summary("Waiting: the branch is behind dev; update it from dev to continue.")
+        behind_dev(api, policy, settings, pr, comments, decision)
         return
     if live_note(comments, BEHIND_DEV_MARKER):
         clear_note(api, number, BEHIND_DEV_MARKER, BEHIND_DEV_CLEARED)
