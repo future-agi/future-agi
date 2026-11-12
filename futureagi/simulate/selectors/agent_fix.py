@@ -1185,7 +1185,9 @@ def launch_blocker(
     when nothing would. Launch checks usage itself, to answer with the usage refusal."""
     if source_run.state not in FINISHED_RUN_STATES:
         return HostedHarnessError(
-            "fix_source_running", "wait for the run to finish", status_code=409
+            "fix_source_running",
+            "This run is still going. Start a fix once it finishes.",
+            status_code=409,
         )
     try:
         agent_kind(source_run.environment).require_available()
@@ -1196,7 +1198,8 @@ def launch_blocker(
     ).exists():
         return HostedHarnessError(
             "fix_run_active",
-            "this environment already has a fix in progress",
+            "A fix is already running in this environment. Open it, or wait for it to"
+            " finish.",
             status_code=409,
         )
     if usage:
@@ -1237,8 +1240,8 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     if source_run.suite_version_id is None or source_run.environment_version_id is None:
         return HostedHarnessError(
             "fix_variations_unpinned",
-            "variations need a run pinned to scenario and environment versions; run the"
-            " environment again",
+            "This run was made before versions were saved. Run the environment again,"
+            " then start the fix.",
             status_code=409,
         )
     if environment.state != HostedHarnessJob.State.COMPLETED:
@@ -1345,7 +1348,8 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
                 allowed=surface in offered,
                 reason=None
                 if surface in offered
-                else "this kind of agent does not let a fix change it",
+                else f"Fix my agent can't change the {label.lower()} of this kind of"
+                " agent.",
             )
             for surface, label in SURFACE_LABELS.items()
         ],

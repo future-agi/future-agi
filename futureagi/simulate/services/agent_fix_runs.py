@@ -280,7 +280,7 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if not is_retryable(failed):
         raise HostedHarnessError(
             "fix_not_retryable",
-            "only a failed fix can be started again, and only once",
+            "Only a failed fix can be retried, and only once.",
             status_code=409,
         )
     source_run = failed.source_run
@@ -523,7 +523,8 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
         if eval_review(candidate.fix_run).grading == EvalGrading.PENDING:
             raise HostedHarnessError(
                 "fix_grading_pending",
-                "the evals are still grading this trial; ship it once they finish",
+                "Platform evals are still scoring this trial. You can ship it once they"
+                " finish.",
                 status_code=409,
             )
         if override_reason:
@@ -617,8 +618,9 @@ def make_candidate_default(
     if outcome not in ("activated", "already_default"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
-            f"the version could not become the default: {outcome}",
+            "The version could not become the environment default. Try again.",
             status_code=409,
+            details={"outcome": outcome},
         )
     record_override(candidate, reason=override_reason, user=user)
     return outcome
