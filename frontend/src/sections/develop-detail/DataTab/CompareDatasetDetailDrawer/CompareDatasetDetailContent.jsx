@@ -712,7 +712,12 @@ export default function CompareDatasetDetailContent({
                           <DatapointCard
                             key={eachCol?.id}
                             showDiff={value?.cell_diff_value}
-                            value={value}
+                            // GetCompareDatasetRow cells are snake_case; the
+                            // Difference tab reads DatapointCard's cellDiffValue.
+                            value={{
+                              ...value,
+                              cellDiffValue: value?.cell_diff_value,
+                            }}
                             column={{
                               dataType: eachCol?.data_type,
                               headerName: eachCol?.group?.name,
@@ -730,6 +735,7 @@ export default function CompareDatasetDetailContent({
                                   ? activeTab
                                   : ""
                             }
+                            indColsDifTracker={indColsDifTracker}
                           />
                         );
                       })}
