@@ -403,8 +403,17 @@ def arm_submission_recovery(submission_id, *, store):
         )
 
 
-def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
+def drain_submissions(
+    store, *, organization_id, project_id=None, run_id=None, snapshot_ids=None
+):
     """Recover prepared work, or require terminal IO/restart proof for ambiguity.
+
+    snapshot_ids (an iterable or a lazily evaluated queryset of snapshot keys)
+    narrows a run's drain to those attempt namespaces. Retiring a prepared
+    submission fences its sender for good, so cleanup of one capture attempt
+    must never drain a live successor attempt of the same run: every capture
+    attempt writes under its own unique snapshot_id, which _write stamps on
+    each submission. Whole-run deletion, erasure and redaction drain run-wide.
 
     Operational recovery: if a dispatching query never reached the server (or
     its query log expired), restart the configured single native server, then
@@ -424,6 +433,8 @@ def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
         jobs = jobs.filter(project_key=project_id)
     if run_id:
         jobs = jobs.filter(run_key=run_id)
+    if snapshot_ids is not None:
+        jobs = jobs.filter(snapshot_key__in=snapshot_ids)
     for job in jobs:
         with serialized_project(job.project_key):
             job.refresh_from_db()
@@ -514,6 +525,12 @@ def purge_run(
     Capture setup/failure must pass result_id. A stale worker can continue after
     losing its PostgreSQL gate, so neither its DELETE nor its cleanup outbox may
     address the shared run namespace. Explicit deletion still collects ALL runs.
+
+    An attempt-only purge also drains ONLY that attempt's submissions. The
+    takeover records the detached attempt's cleanup while its successor starts
+    capturing, and the erasure sweep runs that cleanup concurrently: a run-wide
+    drain would retire the successor's prepared submissions (its dispatch CAS
+    then fails it for good) or block on its dispatching ones.
     """
     params = {
         "org": str(organization_id),
@@ -523,8 +540,15 @@ def purge_run(
         "result": str(result_id),
     }
     base = "org_id = toUUID(%(org)s) AND project_id = toUUID(%(project)s)"
+    if result_id is not None and snapshot_id is None:
+        # Never widen an attempt cleanup to the run: fail closed instead.
+        raise MetricStateConflict("snapshot attempt namespace is unknown")
     drain_submissions(
-        store, organization_id=organization_id, project_id=project_id, run_id=run_id
+        store,
+        organization_id=organization_id,
+        project_id=project_id,
+        run_id=run_id,
+        snapshot_ids=None if result_id is None else (snapshot_id,),
     )
     result_predicate = " AND run_id = toUUID(%(run)s)"
     if result_id is not None:
@@ -815,7 +839,18 @@ def recoverable_captures(limit=10):
     )
 
 
+ATTEMPT_CLEANUP_PROTOCOL = "metric_snapshot_attempt_cleanup"
+
+
 def _capture_cleanup(run):
+    """The durable purge obligation of ONE capture attempt's namespaces.
+
+    Recorded only once that attempt is detached for good: atomically with the
+    takeover that replaces it, by an erasure parent that fails it under the
+    lifecycle lock, or by its own worker after its failure. An attempt never
+    becomes live again, so the set of namespaces these obligations name only
+    grows and never includes a live attempt (see _detached_namespaces).
+    """
     return _intent(
         organization_id=run.definition.metric.organization_id,
         project_id=run.definition.metric.project_id,
@@ -825,8 +860,27 @@ def _capture_cleanup(run):
         snapshot_key=run.snapshot_id,
         result_key=run.attempt_id,
         deletion_key=f"capture-attempt:{run.id}:{run.attempt_id}",
-        store_payload={"protocol": "metric_snapshot_attempt_cleanup"},
+        store_payload={"protocol": ATTEMPT_CLEANUP_PROTOCOL},
     )
+
+
+def _detached_namespaces(run_id):
+    """Snapshot keys of this run's detached capture attempts, evaluated lazily.
+
+    A capture's setup drain must wait for every earlier attempt's senders
+    (an old commit could otherwise land after ours), but it must never retire
+    a LIVE attempt's prepared submission. A stale worker can reach its setup
+    drain after a successor took over, so "every attempt but mine" is wrong:
+    the stale worker's own view of "mine" is the dead attempt. Detachment is
+    durable and monotone instead. A successor's claim records its predecessor
+    here in the same transaction that replaces it, so a live successor sees
+    every earlier attempt, and a stale worker never sees the live one.
+    """
+    return MetricErasureRequest.objects.filter(
+        run_key=run_id,
+        store_payload__protocol=ATTEMPT_CLEANUP_PROTOCOL,
+        snapshot_key__isnull=False,
+    ).values("snapshot_key")
 
 
 def execute_snapshot(run_id, *, store=None, policy=None):
@@ -897,11 +951,14 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
             # gate backend disconnects and a successor completes while paused
             # here (or in a native DELETE), cleanup can touch only OUR attempt.
             # Dispatch receipts independently fence INSERTs against erasure.
+            # Drain only DETACHED attempts: if we are stale by now, a run-wide
+            # drain would retire our live successor's prepared submissions.
             drain_submissions(
                 connection,
                 organization_id=scope.organization,
                 project_id=scope.project,
                 run_id=run.id,
+                snapshot_ids=_detached_namespaces(run.id),
             )
             _assert_retained(
                 connection,

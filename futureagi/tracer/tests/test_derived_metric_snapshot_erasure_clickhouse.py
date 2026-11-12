@@ -524,6 +524,334 @@ def test_failed_redaction_child_keeps_its_completed_namespace(
     ) == [(0,)]
 
 
+def capture_purges(run):
+    """Whole-run failure purges and attempt-namespace cleanups of one run."""
+    failed = Q(deletion_key=f"failed-capture:{run.id}")
+    attempt = Q(store_payload__protocol="metric_snapshot_attempt_cleanup")
+    return MetricErasureRequest.objects.filter(failed | attempt, run_key=run.id)
+
+
+@pytest.mark.parametrize("decided", ["completes_after_cursor", "still_running"])
+def test_parent_routes_a_capture_from_its_current_state_not_its_cursor(
+    capture_case, live_writer, monkeypatch, decided
+):
+    """The parent's run cursor is a snapshot taken when it opened.
+
+    A capture's commits INSERT passes its dispatch CAS before the erasure
+    request exists, so capture_blocked cannot fence it, and its final
+    transition does not recheck it. The parent's cursor reads the run as
+    running. If the capture completes before the parent decides, the parent
+    must redact the COMPLETED snapshot through a child, never fail-and-purge
+    it (that left status complete with no rows and no data_erasure mark). If it
+    is still running when the parent decides, the parent fails it and purges
+    ONLY that attempt's namespace, once the attempt's sender has drained.
+    """
+    metric, run, _ = capture_case
+    store = live_writer.store
+    native = store.client.execute
+    parents, cursor = [], []
+
+    def open_parent_cursor(sql, *args, **kwargs):
+        if (
+            not parents
+            and kwargs.get("query_id", "").startswith("metric-snapshot-")
+            and sql.startswith("INSERT INTO derived_metric_commits")
+        ):
+            # The commit's dispatch CAS has committed; the INSERT is not sent.
+            parent = erasure.erase_metric_data(
+                organization_id=metric.organization_id,
+                project_id=metric.project_id,
+                scope_kind="users",
+                subject_ids=["erase-me"],
+            )
+            parents.append(parent)
+            cursor.extend(erasure._runs(parent))
+            assert [(r.id, r.status) for r in cursor] == [(run.id, "running")]
+            if decided == "still_running":
+                # Decided before the capture's sender drained: the attempt
+                # cleanup cannot prove drainage yet, so the parent waits.
+                assert not erasure.process_erasure(
+                    parent.id, store=store, writer=live_writer
+                )
+        return native(sql, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(store.client, "execute", open_parent_cursor)
+        execute(run, store)
+    (parent,) = parents
+    real_runs = erasure._runs
+
+    class StaleCursor:
+        """The parent's server-side cursor: rows as of when it opened."""
+
+        def __init__(self, queryset):
+            self.queryset = queryset
+
+        def iterator(self, chunk_size=None):
+            return iter(cursor)
+
+        def __getattr__(self, name):
+            return getattr(self.queryset, name)
+
+    def runs_for(request):
+        if request.id == parent.id:
+            return StaleCursor(real_runs(request))
+        return real_runs(request)
+
+    monkeypatch.setattr(erasure, "_runs", runs_for)
+    snapshot, attempt = run.snapshot_id, run.attempt_id
+
+    def frozen_inputs():
+        return store.execute(
+            "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+            {"s": str(snapshot)},
+        )[0][0]
+
+    if decided == "completes_after_cursor":
+        assert run.status == "complete", run.error
+        assert erasure.process_erasure(parent.id, store=store, writer=live_writer)
+        run.refresh_from_db()
+        assert run.status == "complete" and run.snapshot_id == snapshot
+        assert run.change_reason == "data_erasure" and run.removed_unit_count == 1
+        assert overall(store, run) == [(4.0, 3)]
+        assert frozen_inputs() == 3
+        child = MetricErasureRequest.objects.get(
+            deletion_key=f"redact:{parent.id}:{run.id}"
+        )
+        assert child.status == "done"
+        # Neither a whole-run purge nor an attempt purge of a completed capture.
+        assert not capture_purges(run).exists()
+    else:
+        # The parent failed the capture: its final transition was rejected.
+        assert run.status == "failed" and run.result_id is None
+        assert erasure.process_erasure(parent.id, store=store, writer=live_writer)
+        (job,) = capture_purges(run)
+        assert job.deletion_key == f"capture-attempt:{run.id}:{attempt}"
+        assert (job.snapshot_key, job.result_key) == (snapshot, attempt)
+        assert job.status == "done"
+        assert frozen_inputs() == 0
+        for table in ("derived_metric_results", "derived_metric_commits"):
+            assert store.execute(
+                f"SELECT count() FROM {table} WHERE run_id = %(r)s",
+                {"r": str(run.id)},
+            ) == [(0,)]
+    parent.refresh_from_db()
+    assert parent.status == "done"
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE user_id = 'erase-me'"
+    ) == [(0,)]
+
+
+def detached_attempt(metric, run, store):
+    """A claimed attempt A1 whose worker died after writing part of its namespace.
+
+    Its frozen inputs, an overall result and a commit row are under its own
+    snapshot and result namespaces, and one submission it prepared never
+    reached its dispatch CAS. Its 15-minute lease has expired.
+    """
+    from tracer.services.derived_metrics.queries import QUERY_SETTINGS, rollup_insert
+
+    a1, s1 = uuid4(), uuid4()
+    DerivedMetricRun.objects.filter(pk=run.id).update(
+        status="running",
+        attempt_id=a1,
+        snapshot_id=s1,
+        result_id=None,
+        lease_expires_at=timezone.now() - timedelta(seconds=1),
+    )
+    run.refresh_from_db()
+    settings = {**QUERY_SETTINGS, "max_threads": 1, "enable_analyzer": 0}
+    sql, params = snapshots.capture_select(
+        run, run.pin.manifest, run.window_start, run.window_end
+    )
+    store.client.execute(sql, params, settings=settings)
+    sql, params = rollup_insert(run.definition, run, a1, "overall")
+    store.client.execute(sql, params, settings=settings)
+    store.client.execute(
+        "INSERT INTO derived_metric_commits VALUES (%(org_id)s, %(workspace_id)s, "
+        "%(project_id)s, %(metric_id)s, %(run_id)s, %(result_id)s, %(committed_at)s, 1)",
+        {
+            **snapshots.scope_for(run).parameters(),
+            "metric_id": str(metric.id),
+            "run_id": str(run.id),
+            "result_id": str(a1),
+            "committed_at": timezone.now(),
+        },
+    )
+    leftover = _intent(
+        organization_id=metric.organization_id,
+        project_id=metric.project_id,
+        scope="history",
+        metric_key=metric.id,
+        run_key=run.id,
+        snapshot_key=s1,
+        store_payload={
+            "protocol": snapshots.SUBMISSION_PROTOCOL,
+            "phase": "prepared",
+            "transport": "native_no_reconnect",
+            "query_id": "metric-snapshot-" + uuid4().hex,
+        },
+    )
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+        {"s": str(s1)},
+    ) == [(4,)]
+    return a1, s1, leftover
+
+
+def assert_detached_attempt_purged(store, run, a1, s1, leftover):
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+        {"s": str(s1)},
+    ) == [(0,)]
+    for table in ("derived_metric_results", "derived_metric_commits"):
+        assert store.execute(
+            f"SELECT count() FROM {table} WHERE run_id = %(r)s AND result_id = %(a)s",
+            {"r": str(run.id), "a": str(a1)},
+        ) == [(0,)]
+    leftover.refresh_from_db()
+    assert leftover.status == "done"
+    assert leftover.receipts == {"not_submitted": {"drained": 1}}
+
+
+def assert_successor_intact(store, run, a1, s1):
+    assert run.status == "complete", run.error
+    assert run.attempt_id != a1 and run.snapshot_id != s1
+    assert run.result_id == run.attempt_id
+    assert overall(store, run) == [(3.0, 4)]
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(s)s",
+        {"s": str(run.snapshot_id)},
+    ) == [(4,)]
+    assert store.execute(
+        "SELECT count() FROM derived_metric_commits WHERE run_id = %(r)s AND result_id = %(a)s",
+        {"r": str(run.id), "a": str(run.result_id)},
+    ) == [(1,)]
+
+
+@pytest.mark.parametrize("window", ["prepared", "dispatching"])
+def test_detached_attempt_cleanup_never_fences_its_successor(
+    capture_case, live_writer, monkeypatch, window
+):
+    """A takeover records A1's attempt cleanup while A2 starts capturing.
+
+    The erasure sweep processes that cleanup concurrently with A2: nothing
+    excludes the two. Its drain must address ONLY A1's namespace. A run-wide
+    drain retired A2's prepared submission (A2's dispatch CAS then failed it
+    for good) or found A2's dispatching one unproven and failed the cleanup.
+    """
+    metric, run, _ = capture_case
+    store = live_writer.store
+    a1, s1, leftover = detached_attempt(metric, run, store)
+    cleaned = []
+
+    def process_cleanup():
+        cleaned.append(None)
+        job = MetricErasureRequest.objects.get(
+            deletion_key=f"capture-attempt:{run.id}:{a1}"
+        )
+        assert (job.snapshot_key, job.result_key) == (s1, a1)
+        # A2's open submission (A1's leftover keeps its phase once retired).
+        submission = (
+            MetricErasureRequest.objects.filter(
+                run_key=run.id, store_payload__protocol=snapshots.SUBMISSION_PROTOCOL
+            )
+            .exclude(status="done")
+            .get()
+        )
+        assert submission.store_payload["phase"] == window
+        assert submission.snapshot_key != s1
+        cleaned[-1] = erasure.process_erasure(job.id, store=store)
+
+    if window == "prepared":
+        clock = snapshots._server_clock
+
+        def prepared(store_):
+            # A2's submission is durable as prepared; its CAS has not run.
+            if not cleaned:
+                process_cleanup()
+            return clock(store_)
+
+        monkeypatch.setattr(snapshots, "_server_clock", prepared)
+    else:
+        native = store.client.execute
+
+        def dispatching(sql, *args, **kwargs):
+            # A2's dispatch CAS committed; its INSERT is not on the wire yet.
+            if not cleaned and kwargs.get("query_id", "").startswith(
+                "metric-snapshot-"
+            ):
+                process_cleanup()
+            return native(sql, *args, **kwargs)
+
+        monkeypatch.setattr(store.client, "execute", dispatching)
+    execute(run, store)
+    # The cleanup completed in A2's window, without waiting for A2.
+    assert cleaned == [True]
+    assert_successor_intact(store, run, a1, s1)
+    assert_detached_attempt_purged(store, run, a1, s1, leftover)
+
+
+def test_stale_attempt_setup_drain_never_fences_its_successor(
+    capture_case, live_writer, monkeypatch
+):
+    """A1 pauses between its _current check and its setup drain.
+
+    Its gate backend dies, A2 takes over, and A1's drain lands while A2's
+    submission is prepared. A1's drain may address only attempts that are
+    already detached, never its live successor's namespace.
+    """
+    from django.db import connections
+
+    metric, run, _ = capture_case
+    store = live_writer.store
+    copy_database = connections["default"].copy
+    gates, paused, replayed, stale = [], [], [], []
+
+    def remember_gate(*args, **kwargs):
+        database = copy_database(*args, **kwargs)
+        if kwargs.get("alias") == "metric_snapshot_execution":
+            gates.append(database)
+        return database
+
+    monkeypatch.setattr(connections["default"], "copy", remember_gate)
+    drain, clock = snapshots.drain_submissions, snapshots._server_clock
+
+    def a2_prepared(store_):
+        if paused and not replayed:
+            replayed.append(True)
+            # A1's OWN setup drain call, exactly as A1 issued it.
+            args, kwargs = paused[0]
+            drain(*args, **kwargs)
+        return clock(store_)
+
+    def a1_setup_drain(*args, **kwargs):
+        if paused:
+            return drain(*args, **kwargs)
+        paused.append((args, kwargs))
+        a1 = DerivedMetricRun.objects.get(pk=run.id)
+        assert a1.status == "running" and a1.attempt_id
+        terminate_gate(gates[0])
+        DerivedMetricRun.objects.filter(pk=run.id).update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        snapshots.execute_snapshot(run.id, store=store, policy=lambda _: 0)
+        stale.append((a1.attempt_id, a1.snapshot_id))
+        # A1's drain already ran, inside A2's prepared window.
+        return None
+
+    monkeypatch.setattr(snapshots, "drain_submissions", a1_setup_drain)
+    monkeypatch.setattr(snapshots, "_server_clock", a2_prepared)
+    execute(run, store)
+    assert replayed and len(stale) == 1
+    a1, s1 = stale[0]
+    assert_successor_intact(store, run, a1, s1)
+    (job,) = capture_purges(run)
+    assert job.deletion_key == f"capture-attempt:{run.id}:{a1}"
+    assert erasure.process_erasure(job.id, store=store)
+    assert_successor_intact(store, run, a1, s1)
+
+
 def test_90_day_capture_stays_pinned_across_uncommitted_and_later_refresh(
     capture_case, live_writer
 ):

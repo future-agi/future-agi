@@ -31,8 +31,10 @@ from tracer.services.derived_metrics.snapshot_sketches import (
     rebuild_buckets,
 )
 from tracer.services.derived_metrics.snapshots import (
+    ATTEMPT_CLEANUP_PROTOCOL,
     REDACTION_PROTOCOL,
     SUBMISSION_PROTOCOL,
+    _capture_cleanup,
     commit_results,
     delete_rows,
     drain_submissions,
@@ -299,27 +301,64 @@ def _redact_owned(store, request, token):
         MetricErasureRequest.finish(request.id, token=token)
 
 
-def _redact_subjects(store, request):
-    reopened = []
-    for run in _runs(request).iterator(chunk_size=100):
-        key = f"redact:{request.id}:{run.id}"
-        child = MetricErasureRequest.objects.filter(deletion_key=key).first()
-        if child is not None and not run.deleted_at:
-            continue
-        if not run.deleted_at and redaction_owned(run):
-            # ANOTHER request's redaction child reopened this completed capture
-            # (and may have failed or lost its gate since). Its frozen inputs
-            # are not an incomplete capture: never fail-and-purge them. Drive
-            # that child below, then count our own subjects on a later pass,
-            # once the namespace is complete again.
-            reopened.append(run.id)
-            continue
-        if run.deleted_at or run.status != "complete":
-            # Revoked queued captures fail explicitly, rather than capture an
-            # incomplete surviving population after erasure.
-            DerivedMetricRun.objects.filter(
-                pk=run.id, status__in=["queued", "running"]
-            ).update(status="failed", error="expired")
+_REOPENED = object()
+
+
+def _settle_run(request, stale):
+    """Route one run from its CURRENT state, read under its lifecycle lock.
+
+    The parent's run cursor is a snapshot taken when it opened (a server-side
+    cursor on PostgreSQL), so its rows can be stale for the whole loop. A
+    capture whose commits INSERT passed its dispatch CAS before this request
+    existed can still complete after the cursor read it as running: its final
+    transition does not recheck capture_blocked. Failing and purging from the
+    cursor's view would wipe that COMPLETED snapshot's inputs and results
+    while it stays complete, with no data_erasure mark. Capture claims and
+    completion serialize on the lifecycle lock and legacy raw-run transitions
+    on the row lock, so under both this read is the run's current state.
+    (Legacy raw runs keep their existing failed-run path; _purge_snapshots
+    refuses to start while any of them is unfinished.)
+
+    Returns the run when its completed namespace must be counted for a
+    redaction child, _REOPENED when another request's redaction holds it open,
+    and None once any purge obligation for it is durable.
+    """
+    with serialized_project(stale.definition.metric.project_id):
+        run = (
+            DerivedMetricRun.objects.select_for_update(of=("self",))
+            .select_related("definition__metric")
+            .filter(pk=stale.id)
+            .first()
+        )
+        if run is None:
+            # Hard-deleted: the run intent retained on deletion owns its purge.
+            return None
+        if not run.deleted_at:
+            if redaction_owned(run):
+                # ANOTHER request's redaction child reopened this completed
+                # capture (and may have failed or lost its gate since). Its
+                # frozen inputs are not an incomplete capture: never fail or
+                # purge them. Drive that child, then count our own subjects on
+                # a later pass, once the namespace is complete again.
+                return _REOPENED
+            if run.status == "complete":
+                return run
+        if run.status in {"queued", "running"}:
+            # Revoked captures fail explicitly, rather than capture an
+            # incomplete surviving population after erasure. A capture's next
+            # dispatch CAS and its final transition both reject a failed run,
+            # so a capture failed here can never complete afterwards.
+            DerivedMetricRun.objects.filter(pk=run.id).update(
+                status="failed", error="expired"
+            )
+        if run.kind == "snapshot" and run.attempt_id and not run.deleted_at:
+            # Only THIS attempt's namespaces: the same obligation its own
+            # worker records on failure (one deletion key, so they coincide).
+            # Its drain is attempt-qualified; it never touches another
+            # attempt's inputs, results or senders.
+            _capture_cleanup(run)
+        else:
+            # Deleted runs, never-claimed captures and legacy raw runs.
             _intent(
                 organization_id=request.organization_key,
                 project_id=run.definition.metric.project_id,
@@ -329,8 +368,27 @@ def _redact_subjects(store, request):
                 metric_key=run.definition.metric_id,
                 deletion_key=f"failed-capture:{run.id}",
             )
+    return None
+
+
+def _redact_subjects(store, request):
+    reopened = []
+    for stale in _runs(request).iterator(chunk_size=100):
+        key = f"redact:{request.id}:{stale.id}"
+        child = MetricErasureRequest.objects.filter(deletion_key=key).first()
+        if child is not None and not stale.deleted_at:
             continue
-        key = f"redact:{request.id}:{run.id}"
+        # Every fail/purge/count decision comes from the locked current row,
+        # never from the cursor's possibly stale view of it.
+        run = _settle_run(request, stale)
+        if run is _REOPENED:
+            reopened.append(stale.id)
+            continue
+        if run is None:
+            continue
+        # Counted outside the lifecycle lock: no native I/O holds it. A
+        # completed namespace changes only by redaction (which keeps its
+        # snapshot_id) or deletion; the child revalidates both under the lock.
         child = MetricErasureRequest.objects.filter(deletion_key=key).first()
         if child is None:
             params = {
@@ -441,11 +499,10 @@ def _purge_snapshots(store, request):
             run_id=request.run_key,
             snapshot_id=request.snapshot_key,
             result_id=request.result_key
-            if request.store_payload.get("protocol")
-            == "metric_snapshot_attempt_cleanup"
+            if request.store_payload.get("protocol") == ATTEMPT_CLEANUP_PROTOCOL
             else None,
         )
-        if request.store_payload.get("protocol") != "metric_snapshot_attempt_cleanup":
+        if request.store_payload.get("protocol") != ATTEMPT_CLEANUP_PROTOCOL:
             DerivedMetricRun.objects.filter(
                 pk=request.run_key, deleted_at__isnull=False
             ).update(cleanup_status="done")
