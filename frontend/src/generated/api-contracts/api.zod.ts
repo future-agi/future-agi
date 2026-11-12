@@ -5145,6 +5145,12 @@ export const AgentccGatewaysListResponse = zod.object({
       name: zod.string().min(1),
       base_url: zod.string().url().min(1),
       status: zod.string().min(1),
+      last_health_check: zod
+        .string()
+        .datetime({ offset: true })
+        .describe(
+          "Completion time of this request's live health probe, including unreachable results.",
+        ),
       provider_count: zod.number().optional(),
       model_count: zod.number().optional(),
     }),
@@ -5173,6 +5179,12 @@ export const AgentccGatewaysReadResponse = zod.object({
     name: zod.string().min(1),
     base_url: zod.string().url().min(1),
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe(
+        "Completion time of this request's live health probe, including unreachable results.",
+      ),
     provider_count: zod.number().optional(),
     model_count: zod.number().optional(),
   }),
@@ -5303,6 +5315,10 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     status: zod.string().min(1),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .describe("Completion time of this request's live health probe."),
     health: zod.object({}).passthrough().optional(),
     providers: zod.object({
       providers: zod.array(
@@ -21416,7 +21432,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin)
         .max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax)
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -21426,7 +21443,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -21436,7 +21454,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -21444,7 +21463,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin)
@@ -21452,11 +21472,13 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -21464,7 +21486,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -21473,17 +21496,20 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
         .max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax)
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault),
 });
@@ -21801,7 +21827,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin)
         .max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax)
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -21811,7 +21838,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -21821,7 +21849,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -21829,7 +21858,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin)
@@ -21837,11 +21867,13 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -21849,7 +21881,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -21858,17 +21891,20 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
         .max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax)
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault),
 });
@@ -22115,7 +22151,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax,
         )
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -22125,7 +22162,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -22135,7 +22173,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -22143,7 +22182,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin)
@@ -22151,11 +22191,13 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -22163,7 +22205,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -22172,11 +22215,13 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
@@ -22184,7 +22229,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax,
         )
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),
   first_n_rows: zod.number().min(1).optional(),
@@ -32243,9 +32289,7 @@ export const ModelHubTestEvaluationCreateBody = zod.object({
   optional_keys: zod
     .array(zod.string().min(1))
     .default(modelHubTestEvaluationCreateBodyOptionalKeysDefault),
-  variable_keys: zod
-    .object({})
-    .passthrough()
+  variable_keys: jsonValueSchema
     .default(modelHubTestEvaluationCreateBodyVariableKeysDefault)
     .describe("Any valid JSON value."),
   run_prompt_column: zod
@@ -42073,13 +42117,13 @@ export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax = 8640
 
 export const simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault = `live`;
 export const simulateApiHarnessJobsCreateBodyRuntimeDefault = {
-  isolation: "dedicated_vm",
+  isolation: "dedicated_vm" as const,
   cpu_units: 4,
   memory_mb: 8192,
   parallelism: 1,
   concurrency_weight: 1,
   max_duration_seconds: 3600,
-  network_policy: "live",
+  network_policy: "live" as const,
 };
 export const simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault =
   true;
@@ -42116,7 +42160,7 @@ export const simulateApiHarnessJobsCreateBodyRetryDefault = {
   max_infrastructure_attempts: 2,
   initial_backoff_seconds: 1,
   max_backoff_seconds: 15,
-  retryable_domains: ["infrastructure", "connectivity"],
+  retryable_domains: ["infrastructure" as const, "connectivity" as const],
 };
 export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault = 30;
 export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax = 3650;
@@ -42421,13 +42465,13 @@ export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax = 8
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault = `live`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeDefault = {
-  isolation: "dedicated_vm",
+  isolation: "dedicated_vm" as const,
   cpu_units: 4,
   memory_mb: 8192,
   parallelism: 1,
   concurrency_weight: 1,
   max_duration_seconds: 3600,
-  network_policy: "live",
+  network_policy: "live" as const,
 };
 export const simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault =
   true;
@@ -42464,7 +42508,7 @@ export const simulateApiHarnessJobsPreflightBodyRetryDefault = {
   max_infrastructure_attempts: 2,
   initial_backoff_seconds: 1,
   max_backoff_seconds: 15,
-  retryable_domains: ["infrastructure", "connectivity"],
+  retryable_domains: ["infrastructure" as const, "connectivity" as const],
 };
 export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault = 30;
 export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax = 3650;

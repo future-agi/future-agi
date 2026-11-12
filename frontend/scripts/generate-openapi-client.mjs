@@ -8,6 +8,12 @@ import { fileURLToPath } from "node:url";
 import { generate } from "orval";
 import prettier from "prettier";
 
+import {
+  deduplicateTypeAliases,
+  makeObjectPropertiesNullable,
+  preserveDefaultLiterals,
+} from "./openapi-typescript.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
@@ -396,6 +402,29 @@ async function runGeneration(schemaPath) {
     return source.slice(0, start) + rewritten + source.slice(end);
   }
 
+  // The Fetch generator assumes browser Headers, but this mutator returns an
+  // Axios response unchanged. Keep its envelope and header type truthful.
+  let api = fs.readFileSync(apiOutputPath, "utf8");
+  api = assertReplaceRegex(
+    api,
+    /import \{ apiMutator \} from ['"]\.\.\/\.\.\/api\/contracts\/openapi-mutator['"];?/,
+    '$&\nimport type { ApiResponseHeaders } from "../../api/contracts/openapi-mutator";',
+    "Axios response headers import",
+  );
+  api = assertReplaceRegex(
+    api,
+    /headers: Headers\b/g,
+    "headers: ApiResponseHeaders",
+    "Axios response headers",
+  );
+  fs.writeFileSync(apiOutputPath, api);
+
+  const promptConfigNullableFields = Object.entries(
+    swagger.definitions.PromptConfig.properties,
+  )
+    .filter(([, schema]) => schema["x-nullable"] === true)
+    .map(([field]) => field);
+
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
     GroupAggregatesApi: [
@@ -454,7 +483,39 @@ async function runGeneration(schemaPath) {
   ];
   const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
   if (fs.existsSync(schemasOutputPath)) {
-    let schemas = fs.readFileSync(schemasOutputPath, "utf8");
+    let schemas = deduplicateTypeAliases(
+      fs.readFileSync(schemasOutputPath, "utf8"),
+    );
+
+    // Closed coverage objects are JSON values. Type aliases get TS's implicit
+    // index signature; interfaces deliberately do not (declaration merging).
+    // This changes neither the field types nor the row's JSON-only catchall.
+    for (const typeName of ["CostCoverageApi", "CaptureCoverageApi"]) {
+      schemas = assertReplaceRegex(
+        schemas,
+        new RegExp(`export interface ${typeName} \\{([^}]+)\\}`),
+        `export type ${typeName} = {$1};`,
+        `${typeName} implicit JSON index signature`,
+      );
+    }
+    // Optional known keys can be absent, even when present additional keys must
+    // be arrays. Preserve the value type instead of requiring optional fields.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export type ModelHubPerformanceTagDistributionCreate200Result =",
+      "[key: string]: string[][]",
+      "[key: string]: string[][] | undefined",
+      "optional tag distribution keys",
+    );
+    for (const field of promptConfigNullableFields) {
+      schemas = assertReplaceRegexInNamedBlock(
+        schemas,
+        "export interface PromptConfigApi {",
+        new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+        "$1 | null$2",
+        `PromptConfigApi.${field} nullable`,
+      );
+    }
 
     for (const [typeName, fields] of Object.entries(
       interruptionNullableFields,
@@ -490,6 +551,17 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // This error-only x-string-or-object serializer has a typed object branch.
+    // Preserve Orval's generated fields instead of widening them to a record.
+    // Error responses are emitted as TS models, not response Zod validators;
+    // the runtime mapper already handles the extension on shaped definitions.
+    schemas = assertReplace(
+      schemas,
+      "export interface GatewayHealthErrorResultApi {",
+      "export type GatewayHealthErrorResultApi = string | {",
+      "GatewayHealthErrorResultApi → string | typed probe result",
+    );
+
     // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
     // Define one recursive JSON type, then use it for every field carrying the
     // extension (including dynamic trace/span list row cells).
@@ -518,6 +590,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
     );
     for (const jsonAlias of [
       "SpanAttributeValueApiValue",
+      "TestEvalTemplateApiVariableKeys",
       "DashboardFilterValueOptionApiValue",
       "TraceSessionTableRowApiFirstMessage",
       "TraceSessionTableRowApiLastMessage",
@@ -2061,6 +2134,27 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       `"tool_call_id": zod.string().min(1).optional(),\n  "id": zod.string().min(1).optional()\n}).passthrough()).optional(),`,
       "MessageItem → .passthrough() (additionalProperties: true)",
     );
+
+    // PromptConfig already declares these fields x-nullable in Swagger; Orval
+    // drops that extension and incorrectly rejects the serializer's null defaults.
+    zod = makeObjectPropertiesNullable(
+      zod,
+      [
+        "ModelHubDevelopsAddRunPromptColumnCreateBody",
+        "ModelHubDevelopsEditRunPromptColumnCreateBody",
+        "ModelHubDevelopsPreviewRunPromptColumnCreateBody",
+      ],
+      "config",
+      promptConfigNullableFields,
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ModelHubTestEvaluationCreateBody =",
+      /("variable_keys": )zod\.object\(\{\s*\}\)\.passthrough\(\)/,
+      "$1jsonValueSchema",
+      "TestEvalTemplate.variable_keys JSON value",
+    );
+    zod = preserveDefaultLiterals(zod);
 
     // Read aliases share the existing GET validator, including its JSON/nullable fixes.
     const responseName = (id) =>
