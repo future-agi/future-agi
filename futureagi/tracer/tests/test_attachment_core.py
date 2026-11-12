@@ -31,7 +31,7 @@ from tracer.models.attachment import (
 )
 from tracer.models.project import Project
 from tracer.services.attachments import bootstrap as broker
-from tracer.services.attachments import uploads, validation
+from tracer.services.attachments import retention, uploads, validation
 from tracer.services.attachments.contract import (
     AttachmentError,
     CapturePolicy,
@@ -911,3 +911,30 @@ def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
     )
     assert sum(by_shard.values()) == project_cap
     assert max(by_shard.values()) < uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+
+
+def test_deletion_releases_the_shard_its_upload_was_charged_to(setup, monkeypatch):
+    """Deletion batches lock every shard first (they may settle any of them),
+    and the tombstone releases the upload's own shard."""
+    _upload_ids(monkeypatch, 11)
+    upload, _, _, _ = initialized(setup)
+    scope, _ = setup
+    occurrence = upload.occurrence
+    parent = SimpleNamespace(trace_id=occurrence.trace_id, span_id=occurrence.span_id)
+    retention.tombstone_parent(scope_id=scope.id, parent=parent, source_generation=0)
+    rows = dict(
+        AttachmentBudget.objects.filter(key__startswith="global:").values_list(
+            "key", "active_transfers"
+        )
+    )
+    assert rows == {f"global:{shard}": 0 for shard in range(uploads.GLOBAL_SHARDS)}
+    assert UploadReservation.objects.get(upload=upload).settled_at is not None
+
+
+def test_sweep_takes_no_budget_locks_when_a_scope_has_nothing_due(setup):
+    """``sweep`` visits every scope each minute; with sharded budgets an idle
+    scope must not lock all the shard rows just to find nothing."""
+    scope, _ = setup
+    assert retention.expire_occurrences(scope_id=scope.id) == 0
+    assert retention.tombstone_fenced(scope_id=scope.id) == 0
+    assert not AttachmentBudget.objects.exists()

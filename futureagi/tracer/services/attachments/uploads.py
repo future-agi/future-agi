@@ -110,19 +110,33 @@ def _limits():
     return (tuple(-(-cap // GLOBAL_SHARDS) for cap in deployment), *scoped)
 
 
+def _lock_budget(key):
+    AttachmentBudget.objects.get_or_create(
+        key=key, defaults={"window_started_at": timezone.now()}
+    )
+    return AttachmentBudget.objects.select_for_update().get(pk=key)
+
+
 def _lock_budgets(scope, shard):
     """Lock one global shard, then the organization, then the project row.
 
-    Every transaction locks at most one shard, always first, so the order
-    stays global, organization, project and shards cannot deadlock.
+    An admission or a single settle holds one shard, always first. Operations
+    that may settle uploads of any shard use ``lock_all_budgets`` instead, so
+    the order stays global (ascending), organization, project, scope.
     """
-    rows = []
-    for key in _budget_keys(scope, shard):
-        AttachmentBudget.objects.get_or_create(
-            key=key, defaults={"window_started_at": timezone.now()}
-        )
-        rows.append(AttachmentBudget.objects.select_for_update().get(pk=key))
-    return rows
+    return [_lock_budget(key) for key in _budget_keys(scope, shard)]
+
+
+def lock_all_budgets(scope):
+    """Every global shard in ascending order, then the organization and project.
+
+    For deletion, expiry and tombstone batches: they settle uploads charged to
+    any shard while holding the scope lock, so they take all shards first and
+    can never wait on a shard an admission holds while it waits on the scope.
+    """
+    return [_lock_budget(f"global:{shard}") for shard in range(GLOBAL_SHARDS)] + [
+        _lock_budget(key) for key in _budget_keys(scope, 0)[1:]
+    ]
 
 
 @transaction.atomic
