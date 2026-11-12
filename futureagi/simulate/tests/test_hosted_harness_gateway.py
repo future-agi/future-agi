@@ -4154,6 +4154,83 @@ def test_export_environment_and_keys_for_a_bound_source_agent_with_observability
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, declared",
+    [
+        ("untraced", None),
+        # The agent's own exporter keeps its own endpoint: ours is under a name it never reads.
+        (
+            "untraced-own",
+            {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"},
+        ),
+    ],
+)
+def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_read(
+    tag, declared, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        declared=declared,
+    ).launch()
+    mark = world.mark
+
+    assert world.export_log() == []
+    assert set(mark) == {
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "FI_SIMULATION_EXPORT",
+        "FI_SIMULATION_INSTRUMENT",
+        "FI_SIMULATION_TRACES_ENDPOINT",
+    }
+    assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert mark["FI_SIMULATION_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    # Into the hidden project, under the agent's ingest key, as a traced agent's spans are.
+    assert f"project_name={quote(world.hidden.name, safe='')}" in _mark_text(mark)
+    assert {alias: world.secrets.get(alias) for alias in _INGEST_PAIR} == _INGEST_PAIR
+    # The agent's own endpoint, when it set one, reaches it as it gave it.
+    assert world.secrets == {**_INGEST_PAIR, **(declared or {})}
+    assert world.domains >= {"collector.example.com"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, options",
+    [
+        ("off-disabled", {"provider": "disabled"}),
+        ("off-missing", {"provider": "missing"}),
+        ("off-deleted", {"provider": "deleted"}),
+        ("off-project", {"project": "deleted"}),
+        ("off-org", {"project": "other_org"}),
+    ],
+)
+def test_the_agents_observability_switch_never_stops_the_measurement(
+    tag, options, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="traceai",
+        **options,
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.secrets == _INGEST_PAIR
+    # The spans go to the hidden project, never to the agent's own.
+    assert quote(world.project.name, safe="") not in _mark_text(world.mark)
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("flag", [None, "off", "on"])
 def test_the_harness_flag_never_changes_the_agents_own_export(
     flag, organization, workspace, user, settings, monkeypatch
@@ -4404,9 +4481,6 @@ _REFUSALS = {
     "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
     "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
     "agent_deleted": ({"bind": "deleted"}, "not_bound", "info"),
-    "row_disabled": ({"provider": "disabled"}, "observability_off", "info"),
-    "no_observability_row": ({"provider": "missing"}, "observability_off", "info"),
-    "project_deleted": ({"project": "deleted"}, "observability_off", "info"),
     "hidden_project_without_workspace": (
         {"hidden": "no_workspace"},
         "no_workspace",
@@ -4433,12 +4507,6 @@ _REFUSALS = {
         {"declared": {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"}},
         "customer_configuration",
         "warning",
-    ),
-    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
-    "project_of_another_organisation": (
-        {"project": "other_org"},
-        "observability_off",
-        "info",
     ),
     "otel_declares_traces_endpoint_in_lower_case": (
         {"declared": {"otel_exporter_otlp_traces_endpoint": "https://theirs.example"}},
@@ -4507,7 +4575,6 @@ _REFUSALS = {
         "customer_configuration",
         "warning",
     ),
-    "not_instrumented": ({"instrumentation": "none"}, "not_instrumented", "info"),
     "export_key_disabled": ({"credentials": "disabled"}, "key_disabled", "warning"),
     "key_resolver_raises": ({"credentials": "raises"}, "no_key", "warning"),
     "key_resolver_answers_nothing": ({"credentials": "none"}, "no_key", "warning"),
@@ -4536,7 +4603,6 @@ _REFUSALS = {
 _BEFORE_THE_HIDDEN_PROJECT = {
     "snapshot_unsupported",
     "not_bound",
-    "observability_off",
     "not_source",
 }
 

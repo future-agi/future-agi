@@ -1222,14 +1222,13 @@ _INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
 _INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
 _INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
 # Refusals that fire on every launch that was never meant to export: unbound, from an
-# unlisted snapshot, a hosted agent, observability off or no instrumentation. They log at info
-# so the reasons someone running the platform can act on stand out at warning.
+# unlisted snapshot, a hosted agent, or an instrumentation the sandbox cannot measure. They log
+# at info so the reasons someone running the platform can act on stand out at warning.
 _QUIET_EXPORT_REASONS = frozenset(
     {
         "not_bound",
         "snapshot_unsupported",
         "not_source",
-        "observability_off",
         "not_instrumented",
     }
 )
@@ -1318,13 +1317,8 @@ def _decide_observability_export(
 
     agent = _bound_agent_definition(job, payload)
 
-    provider = agent.observability_provider
-    if provider is None or provider.deleted or not provider.enabled:
-        raise _ExportRefused("observability_off")
-    # The row only gates the export: spans go to the hidden project, never to this one.
-    project = provider.project
-    if project.deleted or project.organization_id != job.organization_id:
-        raise _ExportRefused("observability_off")
+    # The agent's observability switch does not decide this: the spans measure the run (its
+    # models, tokens and cost) and go to the hidden project, never to the agent's own.
     from simulate.services.agent_setup import agent_summary
 
     summary = agent_summary(agent.id)
@@ -1369,8 +1363,11 @@ def _decide_observability_export(
     elif instrumentation == "traceai":
         if declared & (_OTEL_EXPORT_NAMES | {"FI_BASE_URL"}):
             raise _ExportRefused("customer_configuration")
-    else:
+    elif instrumentation != "none":
         raise _ExportRefused("not_instrumented")
+    # An agent that traces nothing itself is measured by the sandbox: its model SDKs'
+    # instrumentors export, through a provider of the sandbox's own, to a name no agent reads,
+    # so an endpoint the agent set for its own exporters is left as it is.
     # A customer value under one of our names would be overwritten by the sandbox key.
     if any(alias.startswith(_INGEST_ALIAS_PREFIX) for alias in declared):
         raise _ExportRefused("customer_configuration")
