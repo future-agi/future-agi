@@ -841,3 +841,17 @@ def test_deleting_transcripts_by_any_path_takes_their_actor_turns(
     assert not CallTranscriptActor.objects.filter(
         actor_id__in=["friend", "partner"]
     ).exists()
+
+
+def test_a_trial_s_actor_limits_keep_only_the_known_limits_and_their_shapes():
+    from simulate.services.hosted_harness_ingestion import _actor_limits
+
+    assert _actor_limits(
+        {
+            "max_messages": 4,
+            "model": "m" * 121,
+            "live_turns_per_trial": None,
+            "max_active": True,
+            "anything": "x" * 10_000,
+        }
+    ) == {"max_messages": 4, "live_turns_per_trial": None}

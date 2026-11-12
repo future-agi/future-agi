@@ -2018,6 +2018,42 @@ def test_the_scenario_actor_contract_reads_what_the_runtime_writes(payload):
     assert json.loads(json.dumps(contract.validated_data)) == payload
 
 
+def test_the_scenario_filter_keeps_its_own_names_when_the_environment_s_files_cannot_be_read(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services import harness_environment
+    from simulate.services.harness_versioning import archives
+
+    environment = _built(user, workspace, "actor-filter-storage-down")
+    assert _add(auth_client, environment, MANAGER).status_code == 200
+
+    def down(*_args, **_kwargs):
+        raise RuntimeError("storage down")
+
+    monkeypatch.setattr(archives, "get_archive", down)
+    from django.core.cache import cache
+
+    cache.clear()
+    assert harness_environment.call_actor_labels(environment) == {
+        "none": "Simulated user only"
+    }
+
+
+def test_a_suite_without_actors_never_reads_the_environment_s_files_for_the_filter():
+    from simulate.services.harness_scenarios import field_catalogue
+
+    asked = []
+
+    class _NoRows:
+        def values(self, *_fields):
+            return []
+
+    catalogue = field_catalogue(
+        _NoRows(), call_actor_labels=lambda: asked.append(1) or {}
+    )
+    assert asked == [] and not [one for one in catalogue if one["value"] == "actors"]
+
+
 def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
     user, workspace, storage, auth_client
 ):
