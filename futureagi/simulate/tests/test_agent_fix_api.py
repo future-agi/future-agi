@@ -82,7 +82,9 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.views.run_results_v3 import _execution_payload
+from tfc.capabilities.service import CapabilityDecision, denial_message
 from tfc.ee_gating import EEFeature, FeatureUnavailable
+from tfc.licensing.types import DenialReason
 
 pytestmark = pytest.mark.django_db
 
@@ -2238,6 +2240,17 @@ class TestUserApi:
         # Nothing was pushed, and no reason was recorded.
         assert _git(github.bare, "for-each-ref", "refs/heads/futureagi") == ""
         assert self._override(auth_client, fix_run)["reason"] == ""
+
+
+def test_a_plan_refusal_names_the_feature_epoch():
+    """The plan and licence gate names the feature the way every screen does."""
+    refusal = CapabilityDecision(
+        allowed=False,
+        feature_id="fix_my_agent",
+        reason_code=DenialReason.PLAN_FEATURE_MISSING.value,
+    )
+
+    assert denial_message(refusal) == "Epoch isn't included in your plan."
 
 
 @pytest.mark.parametrize(

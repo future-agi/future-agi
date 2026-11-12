@@ -194,7 +194,7 @@ FEATURE_INSIGHTS = FeatureDefinition(
 
 FEATURE_FIX_MY_AGENT = FeatureDefinition(
     id="fix_my_agent",
-    display_name="Fix My Agent",
+    display_name="Epoch",
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,
