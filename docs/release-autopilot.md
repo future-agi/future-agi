@@ -35,16 +35,30 @@ changes none of them.
   `frontend-auto-approve-hotfix.yml`, which approves with that token. `ee` and
   `agent-learning-kit` also produce deployed images and had the setting on
   (read-only check, 11 Nov); turn it off there too, and add a repository
-  ruleset on each one's `main` with `require_last_push_approval: true`. Their
-  workflows were not checked for anything that relies on the setting.
+  ruleset on each one's `main` with `require_last_push_approval: true`. On
+  11 Nov neither had a workflow-token approval (default branch and dev), nor
+  did docs, and their jobs that open PRs use the App token. futureagi-sdk is
+  different. The key custody below needs the setting off there too, and its
+  `release-please.yml` approves the generated version PR with the workflow
+  token (`release_guard.py approve`). With the setting off, that step fails on
+  every run while a version PR is open, and the PR is never queued for merge.
+  Leaving the setting on there is not an option, because it reopens the path
+  the custody closes. So that workflow changes first, in a reviewed PR: it
+  approves with a dedicated approver App whose key sits in a main-only
+  environment, or it accepts a person's approval and drops the workflow-token
+  approval step (`docs/auto-deploy.md`, Administrator setup step 1, in
+  `future-agi/deployment`).
 - **Last-push approval.** Add a repository ruleset on `main` and `dev` with
   `require_last_push_approval: true`. Do not edit organisation ruleset
   2289447, which covers other repositories. Without it, a writer can push to
   someone else's PR branch and then approve that PR. A branch workflow can
-  still push onto another person's PR as a bot (workflow token or App token),
-  and the writer's own approval then probably counts (inferred, not tested).
-  Test that on a scratch repository before relying on this rule; until the
-  test shows that it does not count, this setting is not met.
+  still push onto another person's PR as a bot, and the writer's own approval
+  then probably counts (inferred, not tested). The deployment repository's
+  scratch-repository test covers two workflow-token pushes: a direct push, and
+  a workflow that merges another branch into the PR branch. Until it shows
+  that the writer's approval does not count after either, this setting is not
+  met. A push with an App token is expected to let the writer's approval
+  count, so for App keys the key custody below is the control.
 - **Approver App.** The release PR is approved by a dedicated GitHub App, not
   by the workflow token:
   - The owner creates an App used only for autopilot approvals, distinct from
@@ -116,7 +130,19 @@ changes none of them.
   applied. The text below matches the header of
   `us/gcp/terraform/deploy_github.tf` and `docs/auto-deploy.md`
   (Administrator setup step 1) in `future-agi/deployment`; where they differ,
-  that header is the later text.
+  that header is the later text. The custody is not limited to this key. No
+  credential that a branch workflow can read may have Contents, Pull
+  requests, Administration or Actions write on `future-agi/deployment`, or on
+  a branch or tag that a key environment admits, such as this repository's
+  `main` once it holds the key. That covers personal access tokens (classic
+  and fine-grained), OAuth tokens copied from a tool, App keys and deploy
+  keys. Those documents name eight secrets that look like GitHub credentials
+  and that no document classifies, `ORG_READ_TOKEN` and `EE_REPO_READ_TOKEN`
+  here among them, and three checks: fine-grained Active tokens, the
+  organisation's restriction on classic tokens, and each App installation's
+  repositories. Last before the deployment apply, bot approvals on open PRs
+  here are dismissed once, as part of the one-time baseline in those
+  documents.
   Hold the key only in environment secrets whose deployment branch policy
   admits only refs that one writer cannot create or merge into alone, and
   delete the organisation secret and the repository copies. "Protected
