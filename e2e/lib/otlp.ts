@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { APIRequestContext } from '@playwright/test';
+import { deliverOtlp } from './otlp-delivery';
 
 /** `traceId` is the dashed-UUID form the collector writes to CH `spans.trace_id` /
  *  `traces.trace_id` (converter.go `traceIDToUUIDString`); the OTLP wire carries
@@ -433,12 +434,13 @@ export function assertOtlpSuccess(body: string): void {
   }
 }
 async function postOtlp(req: APIRequestContext, cfg: SendOtlpConfig, payload: unknown): Promise<void> {
-  const res = await req.post(`${cfg.collectorUrl}/v1/traces`, {
+  // Freeze wire bytes and credentials before the first await. A refused export
+  // is replayed verbatim, never regenerated with fresh IDs or timestamps.
+  await deliverOtlp(req, {
+    url: `${cfg.collectorUrl}/v1/traces`,
     headers: { 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' },
-    data: payload,
-  });
-  if (res.status() < 200 || res.status() >= 300) throw new Error(`collector HTTP ${res.status()}`);
-  assertOtlpSuccess(await res.text());
+    data: JSON.stringify(payload),
+  }, assertOtlpSuccess);
 }
 /** Only JSON/HTTP to the caller's collector base + /v1/traces. This does not
  * activate disabled Python routes or qualify protobuf/gRPC transports. */
