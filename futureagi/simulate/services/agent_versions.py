@@ -771,6 +771,7 @@ def build_preflight(
         source = runtime.source or {}
         stored = CodeArchive.no_workspace_objects.filter(
             organization_id=definition.organization_id,
+            workspace_id=definition.workspace_id,
             repository=str(source.get("repository") or "").lower(),
             commit_sha=str(source.get("commit_sha") or "").lower(),
         ).exists()

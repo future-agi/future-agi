@@ -435,7 +435,10 @@ def read_version(version_id: UUID | str, *, document_only: bool = False) -> Read
     except HostedHarnessError as exc:
         return ReadOutcome("failed", code=exc.code, message=exc.message)
     source_archive, _commit = acquire_source_archive(
-        runtime.organization_id, version_source(runtime), label=str(version_id)
+        runtime.organization_id,
+        runtime.workspace_id,
+        version_source(runtime),
+        label=str(version_id),
     )
     labels = {
         "futureagi.agent_version": str(version_id),
@@ -633,7 +636,7 @@ def scan_source(scan_id: UUID | str) -> None:
                 scan.organization_id, scan.workspace_id, source
             )
         source_archive, commit = acquire_source_archive(
-            scan.organization_id, source, label=f"scan-{scan.id}"
+            scan.organization_id, scan.workspace_id, source, label=f"scan-{scan.id}"
         )
     except HostedHarnessError as exc:
         if exc.retryable:

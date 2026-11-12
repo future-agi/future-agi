@@ -968,11 +968,15 @@ _SOURCE_REF = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
 def acquire_source_archive(
-    organization_id: Any, source: Mapping[str, Any], *, label: str
+    organization_id: Any,
+    workspace_id: Any,
+    source: Mapping[str, Any],
+    *,
+    label: str,
 ) -> tuple[bytes, str]:
     """The ``source/``-rooted tar.gz of a job's or a version's source, and the commit
-    it stands at (empty for an upload). A GitHub commit already stored is read from
-    its archive; any other is cloned once and stored."""
+    it stands at (empty for an upload). A GitHub commit the workspace already stored
+    is read from its archive; any other is cloned once and stored for it."""
     kind = source["kind"]
     if kind in {"remote", "provider"}:
         return _empty_source_archive(), ""
@@ -999,6 +1003,7 @@ def acquire_source_archive(
     if pinned_commit:
         stored = stored_commit_archive(
             organization_id=organization_id,
+            workspace_id=workspace_id,
             repository=repository,
             commit_sha=pinned_commit,
         )
@@ -1045,6 +1050,7 @@ def acquire_source_archive(
         body = archive.getvalue()
         store_commit_archive(
             organization_id=organization_id,
+            workspace_id=workspace_id,
             repository=repository,
             commit_sha=commit_sha,
             body=body,
@@ -1058,7 +1064,10 @@ class HostedSourceAcquirer:
 
     def acquire(self, job: HostedHarnessJob) -> tuple[bytes, str]:
         return acquire_source_archive(
-            job.organization_id, job.payload["source"], label=str(job.id)
+            job.organization_id,
+            job.workspace_id,
+            job.payload["source"],
+            label=str(job.id),
         )
 
 
@@ -2470,7 +2479,6 @@ class HostedHarnessGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         _mark_stage(job, "acquiring_source")
@@ -4464,7 +4472,6 @@ class HostedHarnessGateway:
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
-
         # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
         # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
@@ -4882,7 +4889,6 @@ class HostedHarnessGateway:
         retry_pending: bool = False,
         after_provider_cleanup: Callable[[], Any] | None = None,
     ) -> HostedHarnessJob:
-
         try:
             sandbox = self.client.get(
                 str(attempt.provider_ref),

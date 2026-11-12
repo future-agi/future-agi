@@ -18,10 +18,15 @@ _STORAGE_ERRORS = (S3Error, HTTPError)
 
 
 def stored_commit_archive(
-    *, organization_id: UUID, repository: str, commit_sha: str
+    *,
+    organization_id: UUID,
+    workspace_id: UUID | None,
+    repository: str,
+    commit_sha: str,
 ) -> bytes | None:
     archive = CodeArchive.no_workspace_objects.filter(
         organization_id=organization_id,
+        workspace_id=workspace_id,
         repository=repository.lower(),
         commit_sha=commit_sha.lower(),
     ).first()
@@ -49,7 +54,12 @@ def stored_commit_archive(
 
 
 def store_commit_archive(
-    *, organization_id: UUID, repository: str, commit_sha: str, body: bytes
+    *,
+    organization_id: UUID,
+    workspace_id: UUID | None,
+    repository: str,
+    commit_sha: str,
+    body: bytes,
 ) -> None:
     key = f"code-archives/{organization_id}/{uuid.uuid4()}.tar.gz"
     client = get_storage_client()
@@ -67,6 +77,7 @@ def store_commit_archive(
         return
     identity = {
         "organization_id": organization_id,
+        "workspace_id": workspace_id,
         "repository": repository.lower(),
         "commit_sha": commit_sha.lower(),
     }

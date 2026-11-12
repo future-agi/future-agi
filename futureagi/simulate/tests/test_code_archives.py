@@ -14,7 +14,10 @@ from simulate.services.code_archives import (
     stored_commit_archive,
 )
 from simulate.services.hosted_harness import create_hosted_job
-from simulate.services.hosted_harness_gateway import HostedSourceAcquirer
+from simulate.services.hosted_harness_gateway import (
+    HostedSourceAcquirer,
+    acquire_source_archive,
+)
 from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
 from simulate.tests.test_hosted_harness_gateway import _payload
 
@@ -82,9 +85,10 @@ def _job(organization, key):
     return job
 
 
-def _store(organization, body=b"stored-archive"):
+def _store(organization, body=b"stored-archive", workspace_id=None):
     store_commit_archive(
         organization_id=organization.id,
+        workspace_id=workspace_id,
         repository=REPOSITORY,
         commit_sha=COMMIT,
         body=body,
@@ -129,7 +133,43 @@ def test_store_is_scoped_to_the_organization(organization, storage):
 
     assert (
         stored_commit_archive(
-            organization_id=uuid.uuid4(), repository=REPOSITORY, commit_sha=COMMIT
+            organization_id=uuid.uuid4(),
+            workspace_id=None,
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
+        )
+        is None
+    )
+
+
+@pytest.mark.django_db
+def test_store_is_scoped_to_the_workspace(
+    organization, workspace, storage, monkeypatch
+):
+    _store(organization, workspace_id=workspace.id)
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("cloned instead of served from the store")
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.github_checkout", refuse
+    )
+    source = {
+        "kind": "github",
+        "repository": REPOSITORY,
+        "ref": "main",
+        "commit_sha": COMMIT,
+        "visibility": "public",
+    }
+
+    with pytest.raises(RuntimeError):
+        acquire_source_archive(organization.id, uuid.uuid4(), source, label="other")
+    assert (
+        stored_commit_archive(
+            organization_id=organization.id,
+            workspace_id=uuid.uuid4(),
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
         )
         is None
     )
@@ -146,7 +186,10 @@ def test_storing_a_commit_again_replaces_the_previous_object(organization, stora
     assert list(storage.objects.values()) == [b"second"]
     assert (
         stored_commit_archive(
-            organization_id=organization.id, repository=REPOSITORY, commit_sha=COMMIT
+            organization_id=organization.id,
+            workspace_id=None,
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
         )
         == b"second"
     )
@@ -160,7 +203,10 @@ def test_soft_deleted_row_is_revived_by_the_next_store(organization, storage):
 
     assert (
         stored_commit_archive(
-            organization_id=organization.id, repository=REPOSITORY, commit_sha=COMMIT
+            organization_id=organization.id,
+            workspace_id=None,
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
         )
         == b"second"
     )
@@ -194,7 +240,10 @@ def test_missing_stored_object_is_cloned_and_healed(organization, storage, clone
     assert "code_archive_unreadable" in [log["event"] for log in logs]
     assert (
         stored_commit_archive(
-            organization_id=organization.id, repository=REPOSITORY, commit_sha=COMMIT
+            organization_id=organization.id,
+            workspace_id=None,
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
         )
         == archive
     )
@@ -215,7 +264,10 @@ def test_corrupt_stored_object_is_cloned_and_healed(organization, storage, clone
     assert storage.removed == [key]
     assert (
         stored_commit_archive(
-            organization_id=organization.id, repository=REPOSITORY, commit_sha=COMMIT
+            organization_id=organization.id,
+            workspace_id=None,
+            repository=REPOSITORY,
+            commit_sha=COMMIT,
         )
         == archive
     )

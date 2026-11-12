@@ -136,16 +136,18 @@ def version_code(version: AgentVersion) -> VersionCode:
     kind = runtime.source_kind
     subfolder = str(source.get("subfolder") or "").strip("/")
     organization_id = version.organization_id
+    workspace_id = version.workspace_id
     if kind == HarnessAgentVersionRuntime.SourceKind.GITHUB:
         repository = str(source.get("repository") or "").lower()
         commit = str(source.get("commit_sha") or "").lower()
         if not repository or not commit:
             raise _no_code()
         return VersionCode(
-            identity=f"github:{organization_id}:{repository}:{commit}",
+            identity=f"github:{organization_id}:{workspace_id}:{repository}:{commit}",
             subfolder=subfolder,
             load=lambda: stored_commit_archive(
                 organization_id=organization_id,
+                workspace_id=workspace_id,
                 repository=repository,
                 commit_sha=commit,
             ),

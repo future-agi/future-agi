@@ -181,7 +181,7 @@ def snapshot(version_id: Any) -> StepOutcome:
                 )
             return StepOutcome("done")
         _body, commit = acquire_source_archive(
-            runtime.organization_id, source, label=str(version_id)
+            runtime.organization_id, runtime.workspace_id, source, label=str(version_id)
         )
     except HostedHarnessError as exc:
         if exc.retryable:

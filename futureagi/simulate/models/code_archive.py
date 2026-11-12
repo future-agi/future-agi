@@ -3,6 +3,7 @@ import uuid
 from django.db import models
 
 from accounts.models import Organization
+from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
 
 
@@ -10,6 +11,9 @@ class CodeArchive(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="+", null=True, blank=True
     )
     repository = models.CharField(max_length=255)
     commit_sha = models.CharField(max_length=40)
@@ -21,7 +25,8 @@ class CodeArchive(BaseModel):
         db_table = "simulate_code_archive"
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "repository", "commit_sha"],
-                name="uniq_code_archive_commit",
+                fields=["organization", "workspace", "repository", "commit_sha"],
+                name="uniq_code_archive_workspace_commit",
+                nulls_distinct=False,
             ),
         ]

@@ -8,6 +8,7 @@ import tarfile
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition, HarnessAgentVersionRuntime
 from simulate.services.agent_code import MAX_FILE_BYTES
 from simulate.services.code_archives import store_commit_archive
@@ -63,9 +64,10 @@ SECOND = {
 del SECOND["agents/support/prompts/system.md"]
 
 
-def _stored(organization, commit, files):
+def _stored(agent, commit, files):
     store_commit_archive(
-        organization_id=organization.id,
+        organization_id=agent.organization_id,
+        workspace_id=agent.workspace_id,
         repository="acme/agent",
         commit_sha=commit * 40,
         body=_archive(files),
@@ -94,7 +96,7 @@ def test_tree_lists_the_folder_the_agent_lives_in(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
 
     response = auth_client.get(_url(agent, version, "tree"))
@@ -118,7 +120,7 @@ def test_tree_covers_the_whole_repository_without_a_subfolder(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a", subfolder="")
 
     body = auth_client.get(_url(agent, version, "tree")).json()
@@ -136,7 +138,7 @@ def test_file_answers_text_with_its_language_and_kinds_without_content(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
 
     text = auth_client.get(
@@ -174,7 +176,7 @@ def test_a_path_outside_the_archive_is_refused(
     agent,
     path,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
 
     response = auth_client.get(_url(agent, version, "file"), {"path": path})
@@ -189,7 +191,7 @@ def test_a_missing_file_and_a_version_without_code_answer_404(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
     assert (
         auth_client.get(_url(agent, version, "file"), {"path": "nope.py"}).status_code
@@ -209,7 +211,7 @@ def test_a_stored_archive_that_cannot_be_read_is_unavailable(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
     storage.objects.clear()
 
@@ -225,8 +227,8 @@ def test_changes_compare_with_the_previous_version_within_the_folder(
     storage,
     agent,  # noqa: F811
 ):
-    _stored(organization, "a", FIRST)
-    _stored(organization, "b", SECOND)
+    _stored(agent, "a", FIRST)
+    _stored(agent, "b", SECOND)
     first = _version(agent, commit="a")
     second = _version(agent, commit="b", parent=first)
 
@@ -264,7 +266,7 @@ def test_another_organization_cannot_read_the_code(
     from accounts.models.user import User
     from tfc.constants.roles import OrganizationRoles
 
-    _stored(organization, "a", FIRST)
+    _stored(agent, "a", FIRST)
     version = _version(agent, commit="a")
     other_org = Organization.objects.create(name="Other Org")
     other = User.objects.create_user(
@@ -294,3 +296,39 @@ def test_another_organization_cannot_read_the_code(
         theirs.get(_url(agent, version, "changes")).status_code
         == status.HTTP_404_NOT_FOUND
     )
+
+
+@pytest.mark.usefixtures("storage")
+def test_another_workspace_connecting_the_same_commit_reads_none_of_its_code(
+    auth_client, organization, workspace, user, settings, agent
+):
+    settings.HARNESS_AGENT_READING_ENABLED = True
+    _stored(agent, "a", FIRST)
+    _version(agent, commit="a")
+    other = Workspace.objects.create(
+        name="Other", organization=organization, is_active=True, created_by=user
+    )
+    auth_client.set_workspace(other)
+
+    connected = auth_client.post(
+        "/simulate/agents/connect/",
+        {
+            "kind": "github",
+            "repository": "acme/agent",
+            "ref": "main",
+            "commit_sha": "a" * 40,
+            "name": "Mirror",
+        },
+        format="json",
+    )
+    assert connected.status_code == status.HTTP_201_CREATED, connected.content
+    body = connected.json()
+    response = auth_client.get(
+        f"/simulate/agent-definitions/{body['agent_id']}/versions/"
+        f"{body['version_id']}/code/file/",
+        {"path": "agents/support/agent.py"},
+    )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()["code"] == "archive_unavailable"
+    assert b"return 'hi'" not in response.content
