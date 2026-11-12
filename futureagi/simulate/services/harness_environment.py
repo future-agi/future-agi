@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
+import structlog
 from django.db.models import (
     CharField,
     Count,
@@ -45,6 +46,8 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.types import ContractCallActor
 from simulate.utils.ended_reason import canonical_ended_reasons
+
+logger = structlog.get_logger(__name__)
 
 # The four states the list's status pill knows. The pipeline reports far finer
 # stages; the raw one travels alongside as ``stage`` so a caller that wants
@@ -865,10 +868,22 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
 def call_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
     """How the scenario filter names each of the environment's actors: every actor in its `actors.json`, world-only
     ones included, over the speaking actors the actor list stage output kept for environments without one."""
+    from django.core.cache import cache
+
     from simulate.services.harness_versioning import drafts, hashing
 
     labels = call_actor_choice_labels(_stage_output(job, "call_actors"))
-    names = hashing.actor_names(drafts.edit_sides(job)["environment"]) or {}
+    try:
+        files, key = drafts.edit_side(job, "environment")
+    except Exception:  # noqa: BLE001 - the labels are a convenience: storage trouble keeps the list's own names
+        logger.warning("scenario_filter_actor_names_unreadable", job_id=str(job.id))
+        return labels
+    cache_key = f"simulate:actor-names:{key}" if key else None
+    names = cache.get(cache_key) if cache_key else None
+    if names is None:
+        names = hashing.actor_names(files) or {}
+        if cache_key:
+            cache.set(cache_key, names, 3600)
     labels.update(
         {
             actor_id: name

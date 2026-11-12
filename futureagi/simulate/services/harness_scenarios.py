@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import count
 from typing import Any
@@ -1115,7 +1115,7 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
 def field_catalogue(
     queryset: QuerySet,
     spoken: bool = True,
-    call_actor_labels: dict[str, str] | None = None,
+    call_actor_labels: dict[str, str] | Callable[[], dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
@@ -1152,7 +1152,13 @@ def field_catalogue(
         ]
         entry["counts"] = counts
         if field["value"] == "actors":
-            entry["choice_labels"] = call_actor_labels or call_actor_choice_labels(None)
+            # Reached only when the suite has actors: naming them reads the environment's files.
+            labels = (
+                call_actor_labels()
+                if callable(call_actor_labels)
+                else call_actor_labels
+            )
+            entry["choice_labels"] = labels or call_actor_choice_labels(None)
         catalogue.append(entry)
     return catalogue
 

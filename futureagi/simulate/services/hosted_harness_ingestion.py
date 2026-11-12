@@ -39,6 +39,32 @@ from tfc.utils.storage_client import get_object_url, get_storage_client
 
 logger = logging.getLogger(__name__)
 
+# The actor limits a trial reports (agent-learning-kit's actor `Limits`); anything else the sandbox sends is dropped.
+_ACTOR_LIMIT_KEYS = (
+    "max_active",
+    "caller_takes_back_after_turns",
+    "actor_seconds_per_call",
+    "max_messages",
+    "live_turns_per_actor",
+    "live_turns_per_trial",
+    "model",
+)
+
+
+def _actor_limits(limits: dict) -> dict:
+    """The known actor limits, each a number, a short model name or unset."""
+    kept = {}
+    for key in _ACTOR_LIMIT_KEYS:
+        value = limits.get(key)
+        if value is None or (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        ):
+            kept[key] = value
+        elif isinstance(value, str) and len(value) <= 120:
+            kept[key] = value
+    return {key: value for key, value in kept.items() if key in limits}
+
+
 _EVENT_TYPES = {
     "stage_changed",
     "parallelism_degraded",
@@ -1444,7 +1470,7 @@ def _ingest_hosted_transcript(
             }
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
-                trial["limits"] = world["limits"]
+                trial["limits"] = _actor_limits(world["limits"])
             # What the person should know about how the trial ran, e.g. a fault that did not take effect.
             notices = payload.get("notices") if isinstance(payload, dict) else None
             notices = [
