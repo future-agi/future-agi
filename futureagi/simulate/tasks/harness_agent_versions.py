@@ -43,7 +43,9 @@ def schedule_agent_preflight(version_id: Any):
 
 
 @temporal_activity(
-    time_limit=READING_ACTIVITY_TIMEOUT_SECONDS, max_retries=1, queue="simulation_runner"
+    time_limit=READING_ACTIVITY_TIMEOUT_SECONDS,
+    max_retries=1,
+    queue="simulation_runner",
 )
 def read_harness_agent_version_document(version_id: str) -> str:
     """Read an environment-made agent version only to store its document; the
