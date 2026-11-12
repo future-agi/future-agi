@@ -1694,6 +1694,15 @@ class WorkflowContractTests(unittest.TestCase):
     CHECKS = Path(__file__).resolve().parents[1] / ".github/workflows/worker-release-checks.yml"
     RELEASE_TEST_MODULES = ("test_release_autopilot", "test_release_error_feed_worker",
                             "test_verify_platform_image_tags")
+    # Files the release tests read besides their own modules; a change to any of them must run the tests.
+    READ_INPUTS = (".github/workflows/release-images.yml", ".github/workflows/release-autopilot.yml",
+                   ".github/workflows/sdk-sync.yml", ".github/workflows/worker-release-checks.yml",
+                   "docs/release-autopilot.md")
+
+    @classmethod
+    def unwatched_inputs(cls, workflow):
+        paths = workflow[True]["pull_request"]["paths"]
+        return [path for path in cls.READ_INPUTS if path not in paths]
 
     @staticmethod
     def unittest_modules(workflow):
@@ -1721,9 +1730,9 @@ class WorkflowContractTests(unittest.TestCase):
         # Every watched script has its test module in the list, and nothing else is run.
         subjects = {path for path in paths if path.startswith("scripts/") and "/test_" not in path}
         self.assertEqual({"test_" + Path(path).stem.replace("-", "_") for path in subjects}, set(modules))
-        for workflow_file in ("release-images.yml", "release-autopilot.yml", "sdk-sync.yml",
-                              "worker-release-checks.yml"):
-            self.assertIn(f".github/workflows/{workflow_file}", paths)
+        self.assertEqual(self.unwatched_inputs(workflow), [])
+        for path in self.READ_INPUTS:
+            self.assertTrue((scripts.parent / path).is_file(), path)
 
     def test_a_discover_run_or_an_unrelated_module_is_not_the_release_set(self):
         import yaml
@@ -1737,6 +1746,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotEqual(self.unittest_modules(workflow), list(self.RELEASE_TEST_MODULES))
         del step["working-directory"]
         self.assertIsNone(self.unittest_modules(workflow))
+        # A doc-only edit that the tests read must still start the job.
+        workflow[True]["pull_request"]["paths"].remove("docs/release-autopilot.md")
+        self.assertEqual(self.unwatched_inputs(workflow), ["docs/release-autopilot.md"])
 
 
 class SdkSyncWorkflowTests(unittest.TestCase):

@@ -5,11 +5,12 @@ publication approval. Neither policy deploys a cluster. Both switches ship off.
 The main-ancestry guard is unconditional: even a manually approved release must
 come from reviewed `main` history.
 
-The `future-agi/deployment` files this document cites are on open PRs, not on
-deployment `main` (read-only contents reads, 12 Nov): `us/gcp/terraform/deploy_github.tf`
-on #434, `docs/auto-deploy.md` and `scripts/deploy/migration_check_job.py` on
-#437 (stacked on #435), and `docs/bot-pr-autopilot.md` on #438. What they
-describe does not run until those PRs merge and are applied or turned on.
+Four `future-agi/deployment` files this document cites are on open PRs, not
+on deployment `main` (read-only contents reads, 12 Nov):
+`us/gcp/terraform/deploy_github.tf` on #434, `docs/auto-deploy.md` and
+`scripts/deploy/migration_check_job.py` on #437 (stacked on #435), and
+`docs/bot-pr-autopilot.md` on #438. What they describe does not run until
+those PRs merge and are applied or turned on.
 
 ## Switches and prerequisites
 
@@ -742,7 +743,8 @@ Run workload tests only in E2B or CI, not on the shared development host.
 from `scripts/`, runs three test modules by name: `test_release_autopilot`,
 `test_release_error_feed_worker` and `test_verify_platform_image_tags`. It runs
 when `release-images.yml`, `release-autopilot.yml`, `sdk-sync.yml`, the three
-scripts or their tests change. Other `scripts/test_*.py` files run in their own
+scripts, their tests or this document change. This document is listed because
+a test checks that it quotes the autopilot's wait reasons. Other `scripts/test_*.py` files run in their own
 workflows with their own tools: `python-lint.yml` runs the lint-gate test with
 ruff, `test-integrity.yml` runs its own self-test, and `standalone-ci.yml` runs
 the install smoke test. A test guards this list. The `paths` filter does not list

@@ -12,6 +12,8 @@ on:
       - ".github/workflows/sdk-sync.yml"
       - "scripts/release_autopilot.py"
       - "scripts/test_release_autopilot.py"
+      # test_release_autopilot.py checks that this doc quotes the autopilot's reasons.
+      - "docs/release-autopilot.md"
 permissions:
   contents: read
 jobs:
