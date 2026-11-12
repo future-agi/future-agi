@@ -3379,6 +3379,30 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("PR Autopilot review", text)
         self.assertIn("persist-credentials: false", text)
 
+    def test_policy_tests_run_for_every_file_they_read(self):
+        # The post-merge coverage test reads every workflow file, so a PR that
+        # changes or adds any of them runs the policy tests, not only a PR
+        # that changes an autopilot file.
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        trigger = yaml.safe_load(WORKFLOW_TEXT)[True]["pull_request"]
+        self.assertEqual(trigger["branches"], ["dev"])
+        directory = Path(__file__).resolve().parents[1] / ".github/workflows"
+        read = [".github/pr-autopilot.yml", "scripts/pr_risk.py", "scripts/test_pr_risk.py",
+                ".github/workflows/a-new-dev-push-workflow.yaml"]
+        read += [f".github/workflows/{path.name}" for path in directory.glob("*.y*ml")]
+        self.assertIn(".github/workflows/low-risk-pr-autopilot.yml", read)
+        for path in read:
+            with self.subTest(path=path):
+                self.assertTrue(risk.matches(path, trigger["paths"]))
+        # Other changes do not run them: the job is not a required check.
+        for path in ("docs/guide.md", "scripts/other.py", ".github/CODEOWNERS",
+                     ".github/actions/setup-helm-tools/action.yml"):
+            with self.subTest(path=path):
+                self.assertFalse(risk.matches(path, trigger["paths"]))
+
     def test_all_privileged_jobs_and_ai_job_reject_partial_or_full_reruns(self):
         for name in ("prepare", "ai-review", "review-gate-and-merge", "approve-and-merge"):
             job = workflow_job(name)

@@ -16,11 +16,14 @@ on:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
   # Tests of proposed policy code run separately, without secrets or write rights.
+  # Every workflow file, not only this one: a test checks the post-merge
+  # dispatch list against every dev push workflow, and an exact list would
+  # miss a new one.
   pull_request:
     branches: [dev]
     paths:
       - .github/pr-autopilot.yml
-      - .github/workflows/low-risk-pr-autopilot.yml
+      - .github/workflows/**
       - scripts/pr_risk.py
       - scripts/test_pr_risk.py
   schedule:

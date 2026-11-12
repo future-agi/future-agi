@@ -710,7 +710,15 @@ file and fails if a `dev` push workflow that a LOW merge would start is not
 dispatched under the same paths, or if a dispatch's inputs do not fit the
 workflow. It counts every push trigger form that can run on `dev`, and reports
 `branches-ignore`, `paths-ignore` and negated branch patterns as not modelled.
-Widening the LOW allowlist can therefore require new entries.
+Widening the LOW allowlist can therefore require new entries. The test runs in
+the `policy-tests` job on every PR into `dev` that changes any workflow file
+or an autopilot file. A PR that changes a `dev` push filter or adds a `dev`
+push workflow may need a `post_merge_workflows` entry, and its `policy-tests`
+check fails until it has one. That check is not required (only `Backend Tests
+Pass` is), so it shows the drift on the PR that causes it but does not block
+the merge. Do not make it required: a path-filtered required check leaves
+every other PR pending. A workflow change that reaches `dev` another way, for
+example a merge from `main`, is caught only at the next such PR.
 
 Those workflows execute their own trusted post-merge code and use their own
 permissions/secrets. This lane adds no production credentials and does not
@@ -895,7 +903,8 @@ re-tier of moved heads and hourly dispatch of PRs that wait on a person,
 concurrent label creation, and post-merge coverage
 checked against every workflow file. No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
-changes; privileged jobs never execute the proposed controller.
+changes to an autopilot file or to any workflow file; privileged jobs never
+execute the proposed controller.
 
 ```bash
 # In E2B or CI, not on a shared developer machine:
