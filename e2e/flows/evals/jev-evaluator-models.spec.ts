@@ -162,7 +162,7 @@ async function authorJevEvaluator(page: Page, name: string,
   const picker = await openModelPicker(page);
   const latest = jevRows(picker).filter({ hasText: /^Jev latest/ });
   // Catalog readiness, not the legacy provider-status list, controls this row.
-  await ui(latest.getByText('via TypeSafe · Key configured', { exact: true })).toBeVisible();
+  await ui(latest.getByText('Key configured', { exact: true })).toBeVisible();
   await latest.click();
   await ui(page.getByPlaceholder('Search models...')).toBeHidden();
   await ui(page.getByText('Jev latest', { exact: true })).toBeVisible();
