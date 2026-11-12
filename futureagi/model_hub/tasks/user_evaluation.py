@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
     from simulate.models.test_execution import CallExecution
     from tracer.models.observation_span import ObservationSpan
+    from tracer.models.project import Project
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -906,24 +907,49 @@ def trigger_error_localization_for_span(
     Runs after the evaluator persisted the result, so nothing raised here
     reaches the caller. Deliberate refusals log a WARNING. Once the entry is
     completed nothing else retries localization, so a transient database
-    failure is retried here, each attempt in its own transaction or savepoint.
+    failure is retried here.
+
+    Each attempt checks the span's context in one short transaction or
+    savepoint and writes in another. Input types are detected between the two,
+    outside any transaction: detection fetches every URL-shaped mapping value
+    over the network, and an open transaction would hold a pooled connection
+    and table locks for the whole fetch. A refused entry never fetches, and a
+    retried write reuses the types already detected.
     """
     log_context = {
         "eval_logger_id": str(eval_logger.id),
         "span_id": str(observation_span.id),
     }
+    span_context = {
+        "eval_template": eval_template,
+        "eval_logger": eval_logger,
+        "observation_span": observation_span,
+    }
+    input_types = None
     for attempt in range(1, SPAN_LOCALIZATION_ATTEMPTS + 1):
         try:
+            if input_types is None:
+                with transaction.atomic():
+                    if _resolve_span_localization_workspace(**span_context) is None:
+                        return
+                input_types = _get_input_type(mapping)
             with transaction.atomic():
+                # The owning task is read again: its project may have been
+                # deleted while the media was being fetched.
+                target_workspace = _resolve_span_localization_workspace(**span_context)
+                if target_workspace is None:
+                    return
                 _create_or_refresh_span_localization(
                     eval_template=eval_template,
                     eval_logger=eval_logger,
+                    project=observation_span.project,
+                    target_workspace=target_workspace,
                     value=value,
                     mapping=mapping,
+                    input_types=input_types,
                     eval_explanation=eval_explanation,
                     log_id=log_id,
                     eval_config=eval_config,
-                    observation_span=observation_span,
                 )
         except _TRANSIENT_DB_ERRORS as e:
             if attempt < SPAN_LOCALIZATION_ATTEMPTS:
@@ -953,18 +979,20 @@ def trigger_error_localization_for_span(
         return
 
 
-def _create_or_refresh_span_localization(
+def _resolve_span_localization_workspace(
     *,
     eval_template: EvalTemplate,
     eval_logger: EvalLogger,
-    value: Any,
-    mapping: dict,
-    eval_explanation: str,
-    log_id: str | None,
-    eval_config: dict | None,
     observation_span: "ObservationSpan",
-) -> None:
-    """Use the evaluator's project-scoped span, which may exist only in CH."""
+) -> Workspace | None:
+    """Return the workspace that owns this span's localization.
+
+    Uses the evaluator's project-scoped span, which may exist only in CH.
+    Returns None after logging a WARNING when the span's context refuses
+    localization. A repeat call reads only the owning task, and a fallback
+    default workspace, again: the span's project, the config and their
+    workspaces come from relations cached on the instances.
+    """
     from tracer.models.eval_task import EvalTask
 
     project = observation_span.project
@@ -987,7 +1015,7 @@ def _create_or_refresh_span_localization(
                 eval_task_id=str(eval_logger.eval_task_id),
                 reason="owning_task_missing",
             )
-            return
+            return None
     if (
         str(eval_logger.observation_span_id) != str(observation_span.id)
         or str(eval_logger.trace_id) != str(observation_span.trace_id)
@@ -1000,14 +1028,8 @@ def _create_or_refresh_span_localization(
             eval_logger_id=str(eval_logger.id),
             reason="span_context",
         )
-        return
-    input_data_dict = mapping
-    input_keys = list(input_data_dict.keys())
-    input_type_dict = _get_input_type(input_data_dict)
+        return None
 
-    task_exists = ErrorLocalizerTask.objects.filter(
-        source_id=eval_logger.id
-    ).exists()
     target_workspace = project.workspace
     if not target_workspace:
         target_workspace = Workspace.objects.get(
@@ -1030,7 +1052,28 @@ def _create_or_refresh_span_localization(
             "error_localizer_workspace_mismatch",
             eval_logger_id=str(eval_logger.id),
         )
-        return
+        return None
+    return target_workspace
+
+
+def _create_or_refresh_span_localization(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    project: "Project",
+    target_workspace: Workspace,
+    value: Any,
+    mapping: dict,
+    input_types: dict,
+    eval_explanation: str,
+    log_id: str | None,
+    eval_config: dict | None,
+) -> None:
+    """Write the localization for a span whose context was just resolved."""
+    input_data_dict = mapping
+    input_keys = list(input_data_dict.keys())
+
+    task_exists = ErrorLocalizerTask.objects.filter(source_id=eval_logger.id).exists()
 
     rule_prompt = (
         eval_template.config.get("rule_prompt")
@@ -1074,7 +1117,7 @@ def _create_or_refresh_span_localization(
         task.eval_explanation = eval_explanation
         task.input_data = input_data_dict
         task.input_keys = input_keys
-        task.input_types = input_type_dict
+        task.input_types = input_types
         task.status = initial_status
         task.rule_prompt = rule_prompt
         task.error_message = error_message
@@ -1088,7 +1131,7 @@ def _create_or_refresh_span_localization(
             source_id=eval_logger.id,
             input_data=input_data_dict,
             input_keys=input_keys,
-            input_types=input_type_dict,
+            input_types=input_types,
             eval_result=value,
             eval_explanation=eval_explanation,
             rule_prompt=rule_prompt,
