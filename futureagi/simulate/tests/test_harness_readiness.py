@@ -1352,6 +1352,39 @@ class TestReviewFollowUps:
             "unobserved": [],
         }
 
+    def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
+        self, storage
+    ):
+        import io
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        body = archives.pack_archive(
+            {
+                "generic-harness/agent.json": b"{}",
+                "zz/large.bin": os.urandom(2 * 1024 * 1024),
+            }
+        )
+        read = []
+
+        class Counted(io.BytesIO):
+            def read(self, size=-1):
+                chunk = super().read(size)
+                read.append(len(chunk))
+                return chunk
+
+            def release_conn(self):
+                pass
+
+        # An older archive holds neither file: reading stops at the first member after
+        # where they would sort, not at the archive's end.
+        with patch.object(storage, "get_object", return_value=Counted(body)):
+            files = evidence._certification_files("harness-sealed/stream/old.tar.gz")
+
+        assert files == {"tools": [], "actions": []}
+        assert sum(read) < len(body) // 4
+
     def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
         import hashlib
 
