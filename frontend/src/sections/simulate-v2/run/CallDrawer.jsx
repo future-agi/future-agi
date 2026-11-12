@@ -297,46 +297,69 @@ export default function CallDrawer({
           flexShrink: 0,
         }}
       >
-        {/* One header for the trial: which one this is, then its ID. */}
-        <TrialSwitcher
-          samples={scenarioTask.samples}
-          index={trialIdx}
-          onPick={setTrialIdx}
-        />
-        <Typography
-          noWrap
-          sx={{ typography: "s1", fontWeight: 600, flexShrink: 1, minWidth: 0 }}
-        >
-          {trialTitleOf(task, { verdict: false, trial: false })}
-        </Typography>
-        {/* The pair this trial ran on, then its own ID. */}
-        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-          {[versionLineOf(run), `${copy.id} : ${task.trialId || task.id}`]
-            .filter(Boolean)
-            .join(" · ")}
-        </Typography>
-        <Tooltip arrow title={`Copy ${copy.id.toLowerCase()}`}>
-          <IconButton
-            size="small"
-            onClick={() =>
-              navigator.clipboard?.writeText(task.trialId || task.id)
-            }
+        {/* One header for the trial, on two lines so nothing is cut off:
+            the trial and its title on top, the versions and its ID under it. */}
+        <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ minWidth: 0 }}
           >
-            <Iconify
-              icon="solar:copy-linear"
-              width={14}
-              sx={{ color: "text.tertiary" }}
+            <TrialSwitcher
+              samples={scenarioTask.samples}
+              index={trialIdx}
+              onPick={setTrialIdx}
             />
-          </IconButton>
-        </Tooltip>
-        {/* This trial's own verdict: a later trial that passed has no cause. */}
-        <VerdictCauseChip
-          verdict={
-            task.status === "passed" ? null : verdict || task.verdictCause
-          }
-          task={task}
-        />
-        <Box flex={1} />
+            <Typography
+              noWrap
+              sx={{
+                typography: "s1",
+                fontWeight: 600,
+                flexShrink: 1,
+                minWidth: 0,
+              }}
+            >
+              {trialTitleOf(task, { verdict: false, trial: false })}
+            </Typography>
+            <VerdictCauseChip
+              verdict={
+                task.status === "passed" ? null : verdict || task.verdictCause
+              }
+              task={task}
+            />
+          </Stack>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ minWidth: 0 }}
+          >
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+            >
+              {[versionLineOf(run), `${copy.id} : ${task.trialId || task.id}`]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+            <Tooltip arrow title={`Copy ${copy.id.toLowerCase()}`}>
+              <IconButton
+                size="small"
+                onClick={() =>
+                  navigator.clipboard?.writeText(task.trialId || task.id)
+                }
+              >
+                <Iconify
+                  icon="solar:copy-linear"
+                  width={12}
+                  sx={{ color: "text.tertiary" }}
+                />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        </Stack>
+
         {/* The arrows move between scenarios; the trial switcher between trials. */}
         <Tooltip arrow title="Previous scenario">
           <span>
@@ -939,7 +962,8 @@ export default function CallDrawer({
                   />
                   <Box minWidth={0}>
                     <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                      {r.name} failed ({Math.round(r.score * 100)})
+                      {evalDisplayName(r.name)} failed (
+                      {Math.round(r.score * 100)})
                     </Typography>
                     <Typography
                       sx={{ typography: "s2", color: "text.secondary" }}
