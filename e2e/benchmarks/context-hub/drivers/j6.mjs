@@ -383,8 +383,10 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(ack).toBeEnabled();
         await admin.click(ack, 'acknowledge-fresh-packet');
         await admin.approve('approve-fresh-packet', ['packet'], () => reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
-        await expect(ack).not.toBeChecked();
-        await admin.click(ack, 'acknowledge-before-release');
+        // The acknowledgement is keyed to the exact packet revision and fingerprint and carries across
+        // pending -> approved; only a cleared acknowledgement (a new revision) needs another click.
+        if (!(await ack.isChecked())) await admin.click(ack, 'acknowledge-before-release');
+        await expect(ack).toBeChecked();
         await admin.click(reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }), 'release-approved-packet');
         await admin.click(reviewerPage.getByRole('button', { name: 'Move production', exact: true }), 'move-production');
         await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();

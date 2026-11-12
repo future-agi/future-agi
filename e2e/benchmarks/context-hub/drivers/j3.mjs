@@ -350,10 +350,12 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewed).toBeEnabled();
             await reviewer.review(`parent-${index}-release-review`, ['parent-candidate', 'target', 'evidence-absence', 'release-consequence'], [], () => reviewed.check(), decision);
             await reviewer.approve(`parent-${index}-approve-packet`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Approve exact packet', exact: true }).click(), decision);
-            await expect(reviewed).not.toBeChecked();
             await command(`parent-${index}-unrelated-heartbeat`, operationsArgs('heartbeat', index));
             ledger.fault('unrelated-heartbeat', `parent-${index}-observation-only`);
-            await reviewer.review(`parent-${index}-execution-review`, ['exact-approved-packet', 'current-preconditions'], [], () => reviewed.check(), decision);
+            // The acknowledgement is keyed to the exact packet revision and fingerprint and carries across
+            // pending -> approved; only a cleared acknowledgement (a new revision) is a new review action.
+            if (!(await reviewed.isChecked())) await reviewer.review(`parent-${index}-execution-review`, ['exact-approved-packet', 'current-preconditions'], [], () => reviewed.check(), decision);
+            await expect(reviewed).toBeChecked();
             await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Release approved packet', exact: true }).click(), decision);
             await reviewer.approve(`parent-${index}-move-production`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
             await expect(reviewerPage.getByText('Durable release receipt', { exact: true })).toBeVisible();
