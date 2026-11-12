@@ -73,6 +73,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.utils.eval_tasks",
     "tracer.utils.monitor",
     "tracer.services.feed_alerts.events",
+    "tracer.tasks.attachment_lifecycle",
     # simulate tasks
     "simulate.tasks.eval_summary_tasks",
     "simulate.tasks.scenario_tasks",
