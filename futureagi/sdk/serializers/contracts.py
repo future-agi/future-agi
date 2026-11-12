@@ -31,7 +31,18 @@ class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
         ref_name = "SDKConfigureEvaluationsRequest"
         # The view forwards undeclared JSON values from request.data as provider
         # credentials (including scalar strings); they are not object-only.
-        swagger_schema_fields = {"additional_properties": True}
+        # Swagger UI shows nothing for additionalProperties: true, so the
+        # description is what tells SDK users where the credentials go.
+        swagger_schema_fields = {
+            "description": (
+                "Provider credential fields go at the top level of this request, "
+                "next to eval_config and platform. The langfuse platform requires "
+                "non-empty langfuse_secret_key, langfuse_public_key and "
+                "langfuse_host. Every undeclared top-level field is stored as a "
+                "credential."
+            ),
+            "additional_properties": True,
+        }
 
 
 class SDKMessageResultSerializer(serializers.Serializer):
@@ -51,7 +62,13 @@ class SDKStandaloneEvalInputSerializer(serializers.Serializer):
         ref_name = "SDKStandaloneEvalInput"
         # DRF ignores undeclared nested input fields regardless of JSON type.
         # Keep their existing acceptance without claiming object-only values.
-        swagger_schema_fields = {"additional_properties": True}
+        swagger_schema_fields = {
+            "description": (
+                "One evaluation input. Only input and max_tokens are read; extra "
+                "fields of any JSON type in this object are accepted and ignored."
+            ),
+            "additional_properties": True,
+        }
 
 
 class SDKStandaloneEvalRequestSerializer(serializers.Serializer):

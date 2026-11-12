@@ -82394,6 +82394,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+      description:
+        "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
       additionalProperties: true,
     },
     SDKConfigureEvaluationsResponse: {
@@ -112328,6 +112330,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 1,
         },
       },
+      description:
+        "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
       additionalProperties: true,
     },
     SDKStandaloneEvalResultItem: {

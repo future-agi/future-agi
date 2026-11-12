@@ -14,6 +14,7 @@ from sdk.serializers.contracts import (
     SDKStandaloneEvalRequestSerializer,
 )
 from sdk.serializers.evaluations import EvalTemplate
+from tracer.models.external_eval_config import ExternalEvalConfig, PlatformChoices
 
 JSON_EXTRAS = ["scalar", 7, 2.5, True, None, ["item", 3], {"nested": "value"}]
 
@@ -69,6 +70,24 @@ def test_standalone_schema_matches_ignored_json_extras(extra):
     assert schema["properties"]["input"]["type"] == "string"
     assert schema["properties"]["max_tokens"]["type"] == "integer"
     assert schema["properties"]["max_tokens"]["minimum"] == 1
+
+
+def test_configure_schema_tells_users_where_credentials_go():
+    # Swagger UI renders nothing for additionalProperties: true, so the model
+    # description is the only place the docs say credentials go top level.
+    description = _schema(ConfigureEvaluationsRequestSerializer())["description"]
+    assert "top level of this request" in description
+    required = ExternalEvalConfig.get_required_credentials(PlatformChoices.LANGFUSE)
+    assert required
+    for credential in required:
+        assert credential in description
+
+
+def test_standalone_input_schema_describes_ignored_extras():
+    description = _schema(SDKStandaloneEvalInputSerializer())["description"]
+    for declared in SDKStandaloneEvalInputSerializer().fields:
+        assert declared in description
+    assert "accepted and ignored" in description
 
 
 def test_standalone_declared_fields_still_reject_invalid_values():
