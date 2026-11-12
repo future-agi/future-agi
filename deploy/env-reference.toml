@@ -649,6 +649,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "Sandbox snapshot names, comma-separated, that carry the SDK able to apply a run's observability export. Empty means no run exports. List a snapshot only once it carries agent-learning-kit #162, #172 and #173 together: without #173 the exporter never sends the agent's key."
 
     [[part.section.row]]
+    keys = ["ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Sandbox snapshot names, comma-separated, whose hook measures the model calls of an agent that traces nothing itself. A name counts only when `ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS` lists it too. Empty means an untraced agent's runs export nothing. List a snapshot only once it carries agent-learning-kit's `simulation_measure` module: an older hook puts the agent's ingest key on any exporter the agent aims at its own traces endpoint."
+
+    [[part.section.row]]
     keys = ["HARNESS_OBSERVABILITY", "FI_HARNESS_PROJECT"]
     default = "empty (off)"
     setups = ["S", "D", "H"]

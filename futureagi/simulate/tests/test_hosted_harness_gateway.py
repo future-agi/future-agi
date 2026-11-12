@@ -3599,6 +3599,7 @@ class _ExportWorld:
         provider="enabled",
         project="live",
         snapshot_setting=_EXPORT_SNAPSHOT,
+        measure_setting=_EXPORT_SNAPSHOT,
         collector=_COLLECTOR,
         credentials="ok",
         summary_raises=False,
@@ -3755,6 +3756,14 @@ class _ExportWorld:
         else:
             monkeypatch.delenv(
                 "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", raising=False
+            )
+        if measure_setting:
+            monkeypatch.setenv(
+                "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", measure_setting
+            )
+        else:
+            monkeypatch.delenv(
+                "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", raising=False
             )
         monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", self.logs)
         monkeypatch.setattr(
@@ -4231,6 +4240,28 @@ def test_the_agents_observability_switch_never_stops_the_measurement(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["traceai", "opentelemetry"])
+def test_a_snapshot_that_cannot_measure_still_exports_a_traced_agent(
+    instrumentation, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"nomeasure-{instrumentation[:4]}",
+        instrumentation=instrumentation,
+        measure_setting="",
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert "FI_SIMULATION_INSTRUMENT" not in world.mark
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("flag", [None, "off", "on"])
 def test_the_harness_flag_never_changes_the_agents_own_export(
     flag, organization, workspace, user, settings, monkeypatch
@@ -4477,6 +4508,29 @@ _REFUSALS = {
         "snapshot_unsupported",
         "info",
     ),
+    # An untraced agent is measured only on a snapshot whose hook knows how: an older one
+    # would put our key on the exporter the agent aims at its own endpoint.
+    "untraced_on_a_snapshot_that_cannot_measure": (
+        {"instrumentation": "none", "measure_setting": "some-other-snapshot"},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_with_the_measure_setting_empty": (
+        {"instrumentation": "none", "measure_setting": ""},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_own_endpoint_on_a_snapshot_that_cannot_measure": (
+        {
+            "instrumentation": "none",
+            "measure_setting": "",
+            "declared": {
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"
+            },
+        },
+        "not_instrumented",
+        "info",
+    ),
     "unbound": ({"bind": "none"}, "not_bound", "info"),
     "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
     "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
@@ -4625,6 +4679,9 @@ def test_a_refused_export_leaves_the_mark_and_launches(
     if reason in _BEFORE_THE_HIDDEN_PROJECT or case in {
         "summary_raises",
         "summary_module_missing",
+        "untraced_on_a_snapshot_that_cannot_measure",
+        "untraced_with_the_measure_setting_empty",
+        "untraced_own_endpoint_on_a_snapshot_that_cannot_measure",
     }:
         # A run refused before that step must not have made the project.
         assert world.hidden_calls == []

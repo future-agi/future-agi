@@ -1211,6 +1211,9 @@ def attach_platform_simulator_secret_refs(
 # The decision whether a run exports to the agent's hidden simulation project is made once, at
 # launch, and shipped in job.json; the sandbox repeats none of it. It never fails a launch.
 _EXPORT_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"
+# The listed snapshots whose hook can also measure an agent that traces nothing itself. An
+# older hook would put our key on any exporter the agent aims at its own traces endpoint.
+_MEASURE_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS"
 _EXPORT_SECRET_PURPOSE = "observability_export"
 # Only the endpoints name where a customer's spans go; their headers are merged by the hook.
 _OTEL_EXPORT_NAMES = frozenset(
@@ -1299,6 +1302,12 @@ def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
     return agent
 
 
+def _listed_snapshots(setting: str) -> set[str]:
+    return {
+        name.strip() for name in os.environ.get(setting, "").split(",") if name.strip()
+    }
+
+
 def _decide_observability_export(
     job: HostedHarnessJob,
     payload: Mapping[str, Any],
@@ -1307,12 +1316,7 @@ def _decide_observability_export(
     allowed_domains: Iterable[str],
     max_egress_domains: int | None,
 ) -> _ExportPlan:
-    listed = {
-        name.strip()
-        for name in os.environ.get(_EXPORT_SNAPSHOTS_SETTING, "").split(",")
-        if name.strip()
-    }
-    if selected_snapshot not in listed:
+    if selected_snapshot not in _listed_snapshots(_EXPORT_SNAPSHOTS_SETTING):
         raise _ExportRefused("snapshot_unsupported")
 
     agent = _bound_agent_definition(job, payload)
@@ -1324,6 +1328,12 @@ def _decide_observability_export(
     summary = agent_summary(agent.id)
     if summary.kind != "source":
         raise _ExportRefused("not_source")
+    # Decided before the hidden project or the key is made: on a snapshot that cannot measure,
+    # an agent that traces nothing exports nothing, as before.
+    if summary.instrumentation == "none" and selected_snapshot not in _listed_snapshots(
+        _MEASURE_SNAPSHOTS_SETTING
+    ):
+        raise _ExportRefused("not_instrumented")
     from tracer.services.simulation_project import ensure_simulation_project
 
     # A failure to make the project escapes to the guard, which logs the exception's class.
