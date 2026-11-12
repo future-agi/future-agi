@@ -67,6 +67,38 @@ function validateAccounting(job, cohort, events) {
   }
 }
 
+// ---- BEGIN J5 pre-Checkpoint-P measurement-only mode --------------------------
+// Orchestrator decision 2026-11-11 (spec/e2e-flow-approvals.md; spec/r5-state.json
+// J5.orchestrator_decision_2026_11_11). Measurement is not a claim. A J5
+// registration may opt in explicitly to measure its synthetic 40-target fixture on
+// the repository fake Git server before Checkpoint P. It never supplies or implies a
+// Checkpoint P receipt, never observes the external real-GitHub check (that check
+// stays preregistered and is reported external_open, never pass), and every report
+// it produces carries a blocked claim status that compareActionRuns refuses.
+export const PRE_CHECKPOINT_P = Object.freeze({
+  flag: 'pre_checkpoint_p_measurement', jobs: Object.freeze(['J5']),
+  evidence_class: 'synthetic fixture + fake Git server',
+  claim_status: 'blocked_pending_checkpoint_p_and_real_github',
+  external_checks: Object.freeze(['real-github-conformance']),
+});
+
+/** True only for an explicit, J5, synthetic, receipt-free opt-in; malformed opt-ins are refused. */
+export function preCheckpointMeasurement(job, registration) {
+  if (registration?.[PRE_CHECKPOINT_P.flag] === undefined) return false;
+  requireValue(registration[PRE_CHECKPOINT_P.flag] === true, 'Measurement-only opt-in must be explicit');
+  requireValue(PRE_CHECKPOINT_P.jobs.includes(job.id) && job.phase === 'E', 'Measurement-only mode is limited to J5');
+  requireValue(registration.evidence_scope === 'synthetic', 'Measurement-only mode is limited to the synthetic fixture');
+  requireValue(registration.checkpoint_P_receipt === undefined, 'Measurement-only mode never accompanies a Checkpoint P receipt');
+  return true;
+}
+
+function isPreCheckpointReport(run) {
+  return run?.measurement_mode === PRE_CHECKPOINT_P.flag || run?.claim_status === PRE_CHECKPOINT_P.claim_status
+    || run?.evidence_class === PRE_CHECKPOINT_P.evidence_class
+    || (Array.isArray(run?.checks) && run.checks.some((check) => check.status === 'external_open'));
+}
+// ---- END J5 pre-Checkpoint-P measurement-only mode ----------------------------
+
 /** Performs ordered complete-job stages; never infers A from the number of stages. */
 export async function runJourney({ jobId, runId, driver, registration, outputDir, deadlineMs = 1_800_000 }) {
   const job = getJob(jobId);
@@ -77,7 +109,8 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
   validateProvenance(driver.provenance);
   requireValue(['product', 'competitor', 'selftest'].includes(driver.mode), 'Invalid driver mode');
   requireValue(typeof driver.perform === 'function' && typeof driver.observe === 'function' && typeof driver.teardown === 'function', 'Complete driver required');
-  if (job.phase === 'E' && !SHA256.test(registration.checkpoint_P_receipt)) return unavailableJob(job, 'Campaign execution is deferred until Checkpoint P');
+  const measurementOnly = preCheckpointMeasurement(job, registration); // J5 pre-Checkpoint-P block above
+  if (job.phase === 'E' && !measurementOnly && !SHA256.test(registration.checkpoint_P_receipt)) return unavailableJob(job, 'Campaign execution is deferred until Checkpoint P');
   await mkdir(outputDir, { recursive: true });
   const ledger = new ActionLedger({ runId, job: jobId, mode: driver.mode, path: join(outputDir, `${runId}.jsonl`) });
   const controller = new AbortController();
@@ -91,6 +124,8 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
     comparison_identity: digest(comparisonContract(job, registration)),
     stages: [], checks: [], fault_ids: job.fault_ids, teardown: 'unknown', observations_complete: false,
     claim: 'Not qualified', error_code: null };
+  if (measurementOnly) Object.assign(report, { measurement_mode: PRE_CHECKPOINT_P.flag, // J5 pre-Checkpoint-P block above
+    evidence_class: PRE_CHECKPOINT_P.evidence_class, claim_status: PRE_CHECKPOINT_P.claim_status });
   ledger.registration({ comparisonIdentity: report.comparison_identity, preregistrationHash: report.preregistration_hash });
   const work = async () => {
     for (const stage of job.steps) {
@@ -108,6 +143,10 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
     }
     for (const check of job.checks) {
       if (controller.signal.aborted) throw new Error('journey_deadline');
+      if (measurementOnly && PRE_CHECKPOINT_P.external_checks.includes(check.id)) { // J5 pre-Checkpoint-P block above
+        report.checks.push({ id: check.id, status: 'external_open', reason: 'Requires an authorized real-GitHub exercise; never observed from the fake Git server' });
+        continue;
+      }
       const observation = await driver.observe(structuredClone(check), { signal: controller.signal });
       if (controller.signal.aborted) throw new Error('journey_deadline');
       try {
@@ -147,6 +186,17 @@ export async function runJourney({ jobId, runId, driver, registration, outputDir
     if (report.teardown !== 'confirmed' || !report.measurement.integrity.complete) report.status = 'failed';
     report.claim = report.status === 'completed' && driver.mode !== 'selftest'
       ? 'Observed action counts only; competitive and human study gates remain separate' : 'Not qualified';
+    if (measurementOnly) { // J5 pre-Checkpoint-P block above: counts are a measurement, never a supported claim.
+      // The external real-GitHub check is open, so the job's observations are not complete.
+      report.observations_complete = false;
+      report.claim = report.status === 'completed' && driver.mode !== 'selftest'
+        ? 'Pre-Checkpoint-P measurement: observed synthetic action counts only; no supported claim' : 'Not qualified';
+      report.components = Object.fromEntries([['cold_adoption', 'cold'], ['recurring_rollout', 'recurring'], ['recovery', 'recovery']]
+        .map(([name, phase]) => [name, phase === 'cold' && registration.cohort === 'configured'
+          ? { status: 'not_measured', reason: 'Cold adoption is outside the configured cohort', counts: null }
+          : { status: report.status === 'completed' ? 'pre_checkpoint_p_measurement' : 'failed', counts: report.measurement.phases[phase],
+            action_ratio: null, ten_x_actions: null, claim_status: PRE_CHECKPOINT_P.claim_status }]));
+    }
     // Exclusive report creation protects slow/failed runs from accidental replacement.
     await writeFile(join(outputDir, `${runId}.json`), `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   }
@@ -163,6 +213,10 @@ export function unavailableJob(job, reason) {
 
 export function compareActionRuns(ours, competitor, review) {
   const notMeasured = (reason) => ({ status: 'not_measured', reason, action_ratio: null, ten_x_actions: null });
+  if (isPreCheckpointReport(ours) || isPreCheckpointReport(competitor)) { // J5 pre-Checkpoint-P block above
+    return { ...notMeasured('Pre-Checkpoint-P measurement: no supported verdict without a Checkpoint P receipt and real-GitHub conformance'),
+      claim_status: PRE_CHECKPOINT_P.claim_status };
+  }
   if (ours?.status !== 'completed' || competitor?.status !== 'completed') return notMeasured('Both complete jobs must finish, including failed attempts/recovery');
   if (ours.mode !== 'product' || competitor.mode !== 'competitor' || ours.evidence_scope !== 'customer' || competitor.evidence_scope !== 'customer') return notMeasured('Synthetic fixtures and documentation are not customer comparisons');
   if (ours.comparison_identity !== competitor.comparison_identity) return notMeasured('Job inputs, initial conditions, cohort, population, safety or boundary differ');

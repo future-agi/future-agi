@@ -111,4 +111,16 @@ describe('independent observations and availability', () => {
     render(<ContextCampaignList query={{ refetch: vi.fn() }} state={state} onOpen={vi.fn()} page={1} onPageChange={vi.fn()} />);
     expect(screen.getByText(/Campaigns are unavailable/)).toBeInTheDocument();
   });
+  it('labels a predecessor link as a follow-up and keeps same-named rollouts distinguishable', () => {
+    // A parent is any predecessor: a replacement after base movement, a later update or a reverse plan.
+    const rows = [{ ...campaign, id: 'replacement', revision: 40, status: 'settled', parentCampaignId: 'cancelled' },
+      { ...campaign, id: 'cancelled', revision: 37, status: 'cancelled', parentCampaignId: null }];
+    const onOpen = vi.fn();
+    render(<ContextCampaignList query={{ data: { count: 2, results: rows }, refetch: vi.fn() }} enabled onOpen={onOpen} page={1} onPageChange={vi.fn()} />);
+    expect(screen.getByText(/Follows an earlier rollout/)).toBeInTheDocument();
+    expect(screen.queryByText(/Reverse campaign/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review Synthetic policy rollout, revision 40' }));
+    expect(onOpen).toHaveBeenCalledWith('replacement');
+    expect(screen.getByRole('button', { name: 'Review Synthetic policy rollout, revision 37' })).toBeInTheDocument();
+  });
 });

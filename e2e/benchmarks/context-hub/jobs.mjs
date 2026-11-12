@@ -143,7 +143,9 @@ const integrations = {
   J2: { status: 'incomplete', module: './drivers/j2.mjs', flow_id: 'SKILLS-E2E-020', flow: 'j2-historical-draft.spec.ts' },
   J3: { status: 'incomplete', module: './drivers/j3.mjs', flow_id: 'SKILLS-E2E-030', flow: 'j3-accepted-dependency.spec.ts' },
   J4: { status: 'incomplete', module: './drivers/j4.mjs', flow_id: 'SKILLS-E2E-040', flow: 'j4-reviewer-receipt.spec.ts' },
-  J5: { status: 'incomplete', module: './drivers/j5.mjs', flow_id: 'SKILLS-E2E-050', flow: 'j5-inventory-gate.spec.ts' },
+  // J5: three 33-37-target rollout rounds plus a configured cohort's separate setup round took 1,513 s solo
+  // and 1,763 s under parallel load against the 1,800 s default; it documents its own bounded 60-minute deadline.
+  J5: { status: 'incomplete', module: './drivers/j5.mjs', flow_id: 'SKILLS-E2E-050', flow: 'j5-inventory-gate.spec.ts', journey_deadline_ms: 3_600_000 },
   J6: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-060', flow: 'j6-recovery-coverage.spec.ts' },
 };
 export const JOBS = Object.freeze(jobs.map((job) => Object.freeze({ ...job,

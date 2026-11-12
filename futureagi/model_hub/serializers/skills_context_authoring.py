@@ -119,7 +119,9 @@ class CampaignChange(ctx.ContextSerializer):
     before_sha256 = s.CharField(allow_null=True)
     after_sha256 = s.CharField(allow_null=True)
     ownership = s.CharField()
-    diff_preview = s.CharField(allow_blank=True)
+    # The exact preview is part of plan_digest. DRF's default stripping would
+    # reject SDK-generated unified diffs (and silently alter the reviewed text).
+    diff_preview = s.CharField(allow_blank=True, trim_whitespace=False)
 
 
 class CampaignPlan(ctx.ContextSerializer):

@@ -20,9 +20,9 @@ export default function ContextCampaignList({ query, enabled = false, state, onO
         <TableContainer><Table size="small" aria-label="Repository rollouts">
           <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Rollout</TableCell><TableCell>Targets</TableCell><TableCell>State</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
           <TableBody>{data.results.map((campaign) => <TableRow hover key={campaign.id} sx={{ height: ROW_HEIGHT.default }}>
-            <TableCell><Typography variant="s1">{campaign.name}</Typography><Typography component="div" variant="s3" color="text.secondary">Revision {campaign.revision}{campaign.parentCampaignId ? ' · Reverse campaign' : ''}</Typography></TableCell>
+            <TableCell><Typography variant="s1">{campaign.name}</Typography><Typography component="div" variant="s3" color="text.secondary">Revision {campaign.revision}{campaign.parentCampaignId ? ' · Follows an earlier rollout' : ''}</Typography></TableCell>
             <TableCell>{campaign.targetCount}</TableCell><TableCell><StatusBadge status={campaign.status} /></TableCell>
-            <TableCell><Button size="small" onClick={() => onOpen(campaign.id)} aria-label={`Review ${campaign.name}`}>Review rollout</Button></TableCell>
+            <TableCell><Button size="small" onClick={() => onOpen(campaign.id)} aria-label={`Review ${campaign.name}, revision ${campaign.revision}`}>Review rollout</Button></TableCell>
           </TableRow>)}</TableBody>
         </Table></TableContainer>
         <DataTablePagination page={page - 1} pageSize={25} total={data.count} onPageChange={(next) => onPageChange(next + 1)} pageSizeOptions={[25]} disabled={query.isFetching} />

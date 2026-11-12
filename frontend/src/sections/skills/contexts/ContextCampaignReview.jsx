@@ -36,7 +36,7 @@ export default function ContextCampaignReview({ campaign, targets, onAuthorize, 
     setDecisions({}); setAcknowledged(false); setError('');
   };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-    <PageHeader title={campaign.name} description="Authorize only these exact patches. The local executor creates PRs using your GitHub access; it never merges them." badge={<StatusBadge status={campaign.status} />} />
+    <PageHeader title={campaign.name} description="Authorize only these exact patches. The local executor creates PRs using your GitHub access. Merging needs a separate reviewed merge decision." badge={<StatusBadge status={campaign.status} />} />
     <Typography variant="s3" sx={{ overflowWrap: 'anywhere' }}>Revision {campaign.revision} · {campaign.targetCount} fixed targets · {campaign.manifestDigest || 'Waiting for local plans'}</Typography>
     {!campaign.enabled && <Alert severity="info">Campaign execution is disabled. No repository writes can be authorized or claimed.</Alert>}
     {!campaign.canAuthorize && <Alert severity="info">A current workspace administrator must authorize these repository writes.</Alert>}
