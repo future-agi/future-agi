@@ -415,8 +415,23 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_without_stalling(
 # --- Sweeps --------------------------------------------------------------------
 
 
+def _bound_long_ago(row, *, hours=48):
+    AttachmentOccurrence.objects.filter(pk=row.pk).update(
+        bound_at=timezone.now() - timedelta(hours=hours)
+    )
+
+
+def _gone(project_id, span_ids):
+    return {}
+
+
+def _no_pg(project_id, rows):
+    return set(), set()
+
+
 def test_orphan_sweep_tombstones_only_on_a_successful_read(recording):
     r = recording
+    _bound_long_ago(r.row)
     reads = []
 
     def failing(project_id, span_ids):
@@ -426,6 +441,7 @@ def test_orphan_sweep_tombstones_only_on_a_successful_read(recording):
     assert lifecycle.sweep_orphans(span_reader=failing) == {"read_failed": 1}
     r.row.refresh_from_db()
     assert r.row.deleted_at is None and r.row.source_checked_at is None
+    assert r.row.source_missing_since is None
 
     def live(project_id, span_ids):
         return {r.row.span_id: str(r.row.trace_id)}
@@ -434,14 +450,145 @@ def test_orphan_sweep_tombstones_only_on_a_successful_read(recording):
     r.row.refresh_from_db()
     assert r.row.deleted_at is None and r.row.source_checked_at is not None
 
-    def gone(project_id, span_ids):
-        return {}
+    # First miss: stamped, never tombstoned.
+    assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {
+        "missing_first": 1
+    }
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None and r.row.source_missing_since is not None
 
-    counts = lifecycle.sweep_orphans(span_reader=gone)
-    assert counts["orphans_tombstoned"] == 1
+    # Second miss at least the grace later: tombstoned and the erase is queued.
+    erase_before = AttachmentOutbox.objects.filter(event="erase").count()
+    later = timezone.now() + lifecycle.orphan_grace() + timedelta(minutes=1)
+    counts = lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg, now=later)
+    assert counts == {"orphans_tombstoned": 1}
     r.row.refresh_from_db()
     assert r.row.deleted_at is not None
-    assert lifecycle.sweep_orphans(span_reader=gone) == {}
+    assert AttachmentOutbox.objects.filter(event="erase").count() == erase_before + 1
+    assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {}
+
+
+def test_one_empty_read_followed_by_a_live_read_never_tombstones(recording):
+    """Review P1 (c7): a lagging or partially restored replica returns one
+    successful-but-empty read. The next live read must clear it, so a later
+    empty read starts the grace again instead of erasing live media."""
+    r = recording
+    _bound_long_ago(r.row)
+    erase_before = AttachmentOutbox.objects.filter(event="erase").count()
+
+    def live(project_id, span_ids):
+        return {r.row.span_id: str(r.row.trace_id)}
+
+    assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {
+        "missing_first": 1
+    }
+    later = timezone.now() + lifecycle.orphan_grace() + timedelta(minutes=1)
+    assert lifecycle.sweep_orphans(span_reader=live, now=later) == {"checked": 1}
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None and r.row.source_missing_since is None
+
+    # The clock restarted: another empty read, even far later, is only a first miss.
+    much_later = later + lifecycle.orphan_grace() * 3
+    assert lifecycle.sweep_orphans(
+        span_reader=_gone, pg_reader=_no_pg, now=much_later
+    ) == {"missing_first": 1}
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None
+    assert AttachmentOutbox.objects.filter(event="erase").count() == erase_before
+
+
+def test_two_misses_inside_the_grace_never_tombstone(recording, settings):
+    r = recording
+    settings.FI_ATTACHMENTS_ORPHAN_GRACE_HOURS = 6
+    _bound_long_ago(r.row)
+    assert lifecycle.orphan_grace() == timedelta(hours=6)
+    lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg)
+    soon = timezone.now() + timedelta(hours=5)
+    assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg, now=soon) == {
+        "missing_pending": 1
+    }
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None
+    # The grace never drops below one hour, whatever the setting says.
+    settings.FI_ATTACHMENTS_ORPHAN_GRACE_HOURS = 0
+    assert lifecycle.orphan_grace() == timedelta(hours=1)
+
+
+def test_tombstone_refuses_a_row_whose_miss_was_cleared(recording):
+    """The tombstone re-checks ``source_missing_since`` under the scope lock,
+    so a live read between the sweep's read and its tombstone always wins."""
+    r = recording
+    _bound_long_ago(r.row)
+    AttachmentOccurrence.objects.filter(pk=r.row.pk).update(source_missing_since=None)
+    assert (
+        retention.tombstone_occurrences(
+            scope_id=r.scope.id,
+            occurrence_ids=[r.row.pk],
+            missing_before=timezone.now(),
+        )
+        == 0
+    )
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None
+
+
+def test_freshly_bound_occurrences_are_not_checked(recording):
+    r = recording  # bound just now by the fixture
+    reads = []
+
+    def recorder(project_id, span_ids):
+        reads.append(set(span_ids))
+        return {}
+
+    assert lifecycle.sweep_orphans(span_reader=recorder, pg_reader=_no_pg) == {}
+    assert reads == []
+    r.row.refresh_from_db()
+    assert r.row.source_checked_at is None and r.row.deleted_at is None
+
+
+def test_a_live_postgres_trace_blocks_the_tombstone(recording):
+    """ClickHouse may lag or be restored partially; PostgreSQL still holding the
+    trace as not deleted means the parent was never deleted."""
+    r = recording
+    _bound_long_ago(r.row)
+    trace = Trace.objects.create(id=r.row.trace_id, project=r.scope.project, name="t")
+    later = timezone.now() + lifecycle.orphan_grace() + timedelta(minutes=1)
+    for now in (timezone.now(), later, later + lifecycle.orphan_grace() * 2):
+        assert lifecycle.sweep_orphans(span_reader=_gone, now=now) == {
+            "checked": 1,
+            "kept_pg_live": 1,
+        }
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None and r.row.source_missing_since is None
+
+    # Soft-deleted in PostgreSQL: the two ClickHouse misses decide again.
+    Trace.all_objects.filter(pk=trace.pk).update(
+        deleted=True, deleted_at=timezone.now()
+    )
+    assert lifecycle.sweep_orphans(span_reader=_gone, now=later) == {"missing_first": 1}
+    final = later + lifecycle.orphan_grace() + timedelta(minutes=1)
+    assert lifecycle.sweep_orphans(span_reader=_gone, now=final) == {
+        "orphans_tombstoned": 1
+    }
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is not None
+
+
+def test_a_failed_postgres_check_never_tombstones(recording):
+    r = recording
+    _bound_long_ago(r.row)
+    AttachmentOccurrence.objects.filter(pk=r.row.pk).update(
+        source_missing_since=timezone.now() - timedelta(days=30)
+    )
+
+    def broken(project_id, rows):
+        raise RuntimeError("postgres check failed")
+
+    assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=broken) == {
+        "pg_read_failed": 1
+    }
+    r.row.refresh_from_db()
+    assert r.row.deleted_at is None
 
 
 def test_a_user_who_viewed_attachments_can_be_deleted(recording):

@@ -104,6 +104,7 @@ class Migration(migrations.Migration):
                 ('turn_id', models.CharField(max_length=128, null=True)),
                 ('tool_call_id', models.CharField(max_length=128, null=True)),
                 ('source_checked_at', models.DateTimeField(null=True)),
+                ('source_missing_since', models.DateTimeField(null=True)),
                 ('attachment', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to='tracer.attachment')),
                 ('recording', models.ForeignKey(null=True, on_delete=django.db.models.deletion.PROTECT, to='tracer.attachmentrecording')),
             ],

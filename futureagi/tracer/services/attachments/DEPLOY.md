@@ -13,7 +13,7 @@ exist only when `FI_ATTACHMENTS_ENABLED=true`. They run on the existing
 |---|---|---|
 | `attachment-outbox-drain` | 15 s | outbox rows by kind: up to 8 `validate` (one sandbox probe each), 16 `erase`, 100 `settled`, 100 `admitted` |
 | `attachment-lifecycle-sweep` | 60 s | expire reservations; per scope, expire occurrences and (for fenced scopes) tombstone the old generation; purge expired media sessions, playback grants and old audit rows |
-| `attachment-orphan-sweep` | 600 s | up to 200 bound occurrences, least recently checked first: tombstone those whose parent span is gone from ClickHouse |
+| `attachment-orphan-sweep` | 600 s | up to 200 bound occurrences, least recently checked first: tombstone those whose parent span is gone from ClickHouse on two sweeps at least the orphan grace apart (see below) |
 
 Without them nothing drains the outbox: streamed uploads stay `validating`,
 the budget rows never release (every tenant then gets 429 at 128 in-flight
@@ -52,6 +52,16 @@ deleted one hour after they expire or are revoked.
   backstop, and it is also the only path for deletions that touch ClickHouse
   alone: TTL expiry and the enterprise retention activities
   (`ee.cloud.tasks.retention`, not in this repository) do not call a hook.
+- The orphan sweep never tombstones on one read. ClickHouse is eventually
+  consistent (replica lag, a partially restored replica), and a tombstone is
+  irreversible and erases the bytes. So the sweep skips occurrences bound less
+  than `FI_ATTACHMENTS_ORPHAN_GRACE_HOURS` ago (default 24, minimum 1), stamps
+  `source_missing_since` on the first miss, clears it on any later live read,
+  and tombstones only on a miss at least the grace after the first one. It
+  also keeps any occurrence whose PostgreSQL Trace or ObservationSpan is still
+  present and not deleted (in every edition). An occurrence whose span is gone
+  is therefore erased one to two grace periods plus one sweep cycle after the
+  deletion; its `source_expires_at` still bounds it.
 - Deleting a user deletes their media sessions and playback grants; write
   grants they created keep `granted_by = NULL`. Audit rows keep the bare actor
   UUID.

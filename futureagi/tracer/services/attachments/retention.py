@@ -5,7 +5,8 @@ Hooks: ``tombstone_traces`` (trace and trace-session deletion),
 deletion) are called by the product's PostgreSQL deletion paths. Retention that
 only removes ClickHouse rows (TTL, the enterprise retention activities) is
 caught by ``lifecycle.sweep_orphans``, which tombstones bound occurrences whose
-parent span is gone. Fail closed on unknown retention provenance.
+parent span stayed missing across two sweeps ``orphan_grace()`` apart. Fail
+closed on unknown retention provenance.
 """
 
 from datetime import timedelta
@@ -255,13 +256,21 @@ def tombstone_traces(*, project_id, trace_ids):
 
 
 @transaction.atomic
-def tombstone_occurrences(*, scope_id, occurrence_ids):
-    """Orphan sweep: these bound occurrences lost their parent span in ClickHouse."""
+def tombstone_occurrences(*, scope_id, occurrence_ids, missing_before):
+    """Orphan sweep: these bound occurrences lost their parent span in ClickHouse.
+
+    Only rows whose span has been missing since ``missing_before`` or earlier
+    are tombstoned, so a live read that cleared ``source_missing_since`` after
+    the sweep's own read always wins.
+    """
     scope = AttachmentScope.objects.get(pk=scope_id)
     _lock_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = AttachmentOccurrence.objects.filter(
-        scope=scope, pk__in=list(occurrence_ids), bound_at__isnull=False
+        scope=scope,
+        pk__in=list(occurrence_ids),
+        bound_at__isnull=False,
+        source_missing_since__lte=missing_before,
     )
     return _tombstone_all(scope, rows, reason="retention")
 

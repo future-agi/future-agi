@@ -172,6 +172,10 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
     # Last time the orphan sweep confirmed the bound parent span still exists
     # in ClickHouse; the sweep's cursor. Operational, not identity.
     source_checked_at = models.DateTimeField(null=True)
+    # First sweep that found the parent span missing; cleared when it is seen
+    # again. The sweep tombstones only after a second miss at least the orphan
+    # grace later, never on one read. Operational, not identity.
+    source_missing_since = models.DateTimeField(null=True)
     recording = models.ForeignKey(
         "tracer.AttachmentRecording", null=True, on_delete=models.PROTECT
     )

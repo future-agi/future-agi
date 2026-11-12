@@ -12,7 +12,9 @@ payloads are logged.
 - ``sweep``: expired reservations, expired occurrences, occurrences of fenced
   (deleted) scopes, then the media session / playback grant / audit purge.
 - ``sweep_orphans``: bound occurrences whose parent span is gone from ClickHouse
-  (TTL, enterprise retention, any delete that bypassed the PostgreSQL hooks).
+  (TTL, enterprise retention, any delete that bypassed the PostgreSQL hooks),
+  only after two misses at least ``orphan_grace()`` apart and never while
+  PostgreSQL still holds the trace or span as not deleted.
 """
 
 from collections import defaultdict
@@ -21,7 +23,7 @@ from uuid import UUID
 
 import structlog
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -225,19 +227,84 @@ def _same_trace(value, trace_id):
         return False
 
 
-def sweep_orphans(*, span_reader=clickhouse_spans, limit=ORPHAN_LIMIT):
-    """Tombstone bound occurrences whose parent span ClickHouse no longer has.
+def orphan_grace():
+    """How long a parent span must stay missing before its media is erased.
 
-    Only a successful read that lacks the span (or finds it in another trace)
-    tombstones; a read error skips that project untouched. Checked rows are
-    stamped, so each tick moves on to the least recently checked ones.
+    The same window skips freshly bound occurrences: ClickHouse is eventually
+    consistent, so one empty read is never proof that a span is gone.
     """
+    hours = int(getattr(settings, "FI_ATTACHMENTS_ORPHAN_GRACE_HOURS", 24))
+    return timedelta(hours=max(hours, 1))
+
+
+def postgres_live_parents(project_id, rows):
+    """``(trace_ids, span_ids)`` that PostgreSQL still holds as not deleted.
+
+    Ingest writes a PostgreSQL Trace (and, on the legacy path, an
+    ObservationSpan) next to the ClickHouse span, and the product's deletion
+    paths soft-delete them. A live row here means the span was not deleted, so
+    a ClickHouse miss is lag or a partial replica, not an orphan. An absent row
+    (collector-only ingest, or the legacy span table dropped) proves nothing
+    either way and leaves the decision to the two ClickHouse misses.
+    """
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    traces = set(
+        Trace.no_workspace_objects.filter(
+            project_id=project_id, id__in={row["trace_id"] for row in rows}
+        ).values_list("id", flat=True)
+    )
+    spans = set()
+    if ObservationSpan._meta.db_table in connection.introspection.table_names():
+        spans = set(
+            ObservationSpan.no_workspace_objects.filter(
+                project_id=project_id, id__in={row["span_id"] for row in rows}
+            ).values_list("id", flat=True)
+        )
+    return traces, spans
+
+
+def sweep_orphans(
+    *,
+    span_reader=clickhouse_spans,
+    pg_reader=postgres_live_parents,
+    limit=ORPHAN_LIMIT,
+    now=None,
+):
+    """Tombstone bound occurrences whose parent span is gone, after two misses.
+
+    A tombstone is irreversible (0133) and queues the erase at once, so one
+    read of an eventually consistent ClickHouse never decides it:
+
+    - occurrences bound within ``orphan_grace()`` are not checked at all;
+    - a read error skips that project untouched;
+    - a span ClickHouse returns in the same trace, or one PostgreSQL still holds
+      as not deleted, clears ``source_missing_since``;
+    - the first miss only stamps ``source_missing_since``; a later miss at least
+      ``orphan_grace()`` after it tombstones. A live read in between restarts
+      the clock.
+
+    Every checked row is stamped, so each tick moves on to the least recently
+    checked ones.
+    """
+    now = now or timezone.now()
+    grace = orphan_grace()
     rows = list(
         AttachmentOccurrence.objects.filter(
-            deleted_at__isnull=True, bound_at__isnull=False
+            deleted_at__isnull=True,
+            bound_at__isnull=False,
+            bound_at__lte=now - grace,
         )
         .order_by(F("source_checked_at").asc(nulls_first=True), "id")
-        .values("pk", "scope_id", "scope__project_id", "trace_id", "span_id")[:limit]
+        .values(
+            "pk",
+            "scope_id",
+            "scope__project_id",
+            "trace_id",
+            "span_id",
+            "source_missing_since",
+        )[:limit]
     )
     by_project = defaultdict(list)
     for row in rows:
@@ -250,16 +317,46 @@ def sweep_orphans(*, span_reader=clickhouse_spans, limit=ORPHAN_LIMIT):
             logger.warning("attachment_orphan_read_failed")
             counts["read_failed"] += 1
             continue
-        gone = [
-            row["pk"]
+        missing = [
+            row
             for row in group
             if not _same_trace(live.get(row["span_id"]), row["trace_id"])
         ]
-        kept = [row["pk"] for row in group if row["pk"] not in set(gone)]
-        AttachmentOccurrence.objects.filter(pk__in=kept).update(
-            source_checked_at=timezone.now()
+        missing_pks = {row["pk"] for row in missing}
+        pg_traces, pg_spans = set(), set()
+        if missing:
+            try:
+                with transaction.atomic():
+                    pg_traces, pg_spans = pg_reader(project_id, missing)
+            except Exception:  # noqa: BLE001 - never tombstone without the PostgreSQL check
+                logger.warning("attachment_orphan_pg_read_failed")
+                counts["pg_read_failed"] += 1
+                continue
+        seen, first, pending, gone = [], [], [], []
+        for row in group:
+            if row["pk"] not in missing_pks:
+                seen.append(row["pk"])
+            elif row["trace_id"] in pg_traces or row["span_id"] in pg_spans:
+                counts["kept_pg_live"] += 1
+                seen.append(row["pk"])
+            elif row["source_missing_since"] is None:
+                first.append(row["pk"])
+            elif row["source_missing_since"] <= now - grace:
+                gone.append(row["pk"])
+            else:
+                pending.append(row["pk"])
+        AttachmentOccurrence.objects.filter(pk__in=seen).update(
+            source_checked_at=now, source_missing_since=None
         )
-        counts["checked"] += len(kept)
+        AttachmentOccurrence.objects.filter(pk__in=first).update(
+            source_checked_at=now, source_missing_since=now
+        )
+        AttachmentOccurrence.objects.filter(pk__in=pending).update(
+            source_checked_at=now
+        )
+        counts["checked"] += len(seen)
+        counts["missing_first"] += len(first)
+        counts["missing_pending"] += len(pending)
         if gone:
             _isolated(
                 counts,
@@ -267,5 +364,6 @@ def sweep_orphans(*, span_reader=clickhouse_spans, limit=ORPHAN_LIMIT):
                 retention.tombstone_occurrences,
                 scope_id=scope_id,
                 occurrence_ids=gone,
+                missing_before=now - grace,
             )
-    return dict(counts)
+    return {name: value for name, value in counts.items() if value}
