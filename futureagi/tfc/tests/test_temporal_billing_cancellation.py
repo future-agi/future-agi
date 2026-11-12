@@ -84,6 +84,33 @@ def _cloud_invoice_loop(monkeypatch, do_work):
     return module, module.InvoiceGenerationService.run_for_period
 
 
+def test_cloud_invoice_loop_reaches_every_organization(monkeypatch):
+    """The cloud case's isolation still lets the real loop run each organization.
+
+    The service swallows per-organization errors. If the isolation stops fitting
+    it (new engine keyword arguments, a per-organization transaction without a
+    database), no organization is ever worked on and the cancellation cases
+    below can only time out.
+    """
+    entered, progress, errors = [], [], []
+    _, run_for_period = _cloud_invoice_loop(monkeypatch, entered.append)
+
+    result = run_for_period(
+        period="2026-09",
+        org_id=None,
+        dry_run=False,
+        skip_stripe=True,
+        skip_email=True,
+        stderr=errors.append,
+        on_progress=progress.append,
+    )
+
+    assert errors == []
+    assert progress == list(ORG_IDS)
+    assert entered == list(ORG_IDS)
+    assert (result.created, result.skipped, result.errors) == (0, 2, 0)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("closing", [False, True], ids=["invoices", "closing"])
 @pytest.mark.parametrize("fail_current", [False, True], ids=["finish", "failure"])
