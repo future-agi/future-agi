@@ -526,10 +526,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             project_queryset_for_request(request), job, body["project_id"]
         )
         if project is None:
-            return Response(
-                {"detail": "Project not found in this environment's workspace"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            raise NotFound("Project not found in this environment's workspace")
         evidence_import, evidence = create_evidence_import(
             environment=job,
             project=project,
