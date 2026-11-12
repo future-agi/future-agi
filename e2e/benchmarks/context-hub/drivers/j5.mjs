@@ -372,7 +372,10 @@ class CampaignJourney {
     }
     this.selected = this.repos.map((repo) => ({ repository_id: repo.id, repository: `synthetic/${repo.name}`, project: this.projects.get(repo.id) }));
     const manifest = join(this.scratch, 'selected.json');
-    await writeFile(manifest, JSON.stringify(this.selected.map(({ repository_id, project }) => ({ repository_id, project }))));
+    // Choosing the 40 repositories is the operator's own input (the comparator
+    // counts its equivalent, write-selected-repositories-list): counted once.
+    await this.action('configuration_edit', () => writeFile(manifest,
+      JSON.stringify(this.selected.map(({ repository_id, project }) => ({ repository_id, project })))));
     await mkdir(this.config.evidence_dir, { recursive: true });
     // One product command: inventory without hooks and the grouped ownership packet for the next stage's review.
     const adopted = await this.action('command', () => this.rollout.inventoryOwnership({ manifestPath: manifest }));
