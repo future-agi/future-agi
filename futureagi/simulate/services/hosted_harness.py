@@ -2864,12 +2864,23 @@ def record_cleanup(
         )
         if attempt.attempt_number < job.current_attempt_number:
             return job
-        if retry_pending:
+        missing = (
+            executions_without_result(job, attempt.attempt_number)
+            if retry_pending
+            else None
+        )
+        # With every call's result in, a relaunch would only run them and charge them
+        # again: the attempt ends here instead.
+        if retry_pending and missing != []:
             # Whatever ended the attempt, the retry runs only the calls it left without
             # a result, as an in-run re-run runs only its chosen calls. With no result
-            # in, that is every call. A build retries whole.
-            missing = executions_without_result(job, attempt.attempt_number)
-            if missing:
+            # in, it runs the same calls again. A build retries whole.
+            scope = (job.payload.get("metadata") or {}).get(
+                RERUN_EXECUTION_KEYS
+            ) or HostedHarnessExecution.no_workspace_objects.filter(
+                job=job
+            ).values_list("execution_key", flat=True)
+            if missing and len(missing) < len(scope):
                 job.payload = {
                     **job.payload,
                     "metadata": {

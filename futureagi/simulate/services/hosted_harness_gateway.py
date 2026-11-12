@@ -4380,12 +4380,9 @@ class HostedHarnessGateway:
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
         )
         attempts_in_cycle = attempt.attempt_number - cycle_start + 1
-        return (
-            domain in retry.get("retryable_domains", [])
-            and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
-            # A Run whose every call has its result has nothing left to run.
-            and executions_without_result(attempt.job, attempt.attempt_number) != []
-        )
+        return domain in retry.get(
+            "retryable_domains", []
+        ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
     def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
         """Keep the Run of an attempt whose every call delivered its result, whatever
@@ -4408,6 +4405,9 @@ class HostedHarnessGateway:
                 attempt.id,
                 attempt.provider_ref,
             )
+            return True
+        if attempt.terminal_reason == "terminal_event_lost":
+            # An earlier poll recorded this ending, and the sandbox outlived its delete.
             return True
         attempt.terminal_stage = "completed"
         attempt.terminal_reason = "terminal_event_lost"

@@ -3353,6 +3353,29 @@ def test_a_retry_after_a_loss_with_no_result_in_runs_every_call(
 
     assert job.state == HostedHarnessJob.State.RETRY_WAIT
     assert _dispatched(job) == ["scenario-1:0", "scenario-2:0"]
+    # Nothing narrowed, so the Run is not marked as a re-run of some of its calls.
+    assert "rerun_execution_keys" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_a_result_that_lands_before_cleanup_is_not_run_again(organization):
+    attempt = _delivered_run(organization, "run-loss-late-result", receipts=2)
+    # The gateway decided to retry while one result was still in flight.
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_stage="failed",
+        terminal_failure={"domain": "infrastructure", "code": "sandbox_unreachable"},
+    )
+
+    job = record_cleanup(
+        attempt.id,
+        provider_ref=str(attempt.provider_ref),
+        verified_absent=True,
+        retry_pending=True,
+        details={"provider": "test"},
+    )
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "sandbox_unreachable"
 
 
 @pytest.mark.django_db
