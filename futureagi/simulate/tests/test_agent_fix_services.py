@@ -2951,7 +2951,8 @@ class TestPullRequestEvals:
             source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
         )
         assert (
-            "The evals could not finish grading this trial; it was not checked by them."
+            "**Platform evals did not finish on this candidate,** so their results are missing."
+            " Review it closely before you merge."
             in self._body(
                 source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
             )
