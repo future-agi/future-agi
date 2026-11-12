@@ -459,9 +459,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    read and the approval. If the recheck after the approval, or the merge
    call, then fails, the controller re-reads the PR. When the head is no
    longer the reviewed head, it dismisses the approval this run posted, as the
-   App, with a fixed message. An answer of 422 or 404 means GitHub's
-   stale-approval rule already dismissed it, because the push came after the
-   approval. Any other failure posts one note asking a person to dismiss the
+   App, with a fixed message. An answer of 422 or 404 counts as done: usually
+   GitHub's stale-approval rule already dismissed it, because the push came
+   after the approval. Any other failure posts one note asking a person to dismiss the
    App's approval, and the run still fails with its original error. A failed
    re-read, or the same head, keeps the approval, so the next run reuses it.
    An approval from an earlier run is never withdrawn: it was posted while its
@@ -717,10 +717,10 @@ Widening the LOW allowlist can therefore require new entries. The test runs in
 the `policy-tests` job on every PR into `dev` that changes any workflow file
 or an autopilot file. A PR that changes a `dev` push filter or adds a `dev`
 push workflow may need a `post_merge_workflows` entry, and its `policy-tests`
-check fails until it has one. That check is not required (only `Backend Tests
-Pass` is), so it shows the drift on the PR that causes it but does not block
-the merge. Do not make it required: a path-filtered required check leaves
-every other PR pending. A workflow change that reaches `dev` another way, for
+check fails until it has one. `policy-tests` is not a required check and must
+not become one, because a path-filtered required check leaves every other PR
+pending. So it shows the drift on the PR that causes it but does not block
+the merge. A workflow change that reaches `dev` another way, for
 example a merge from `main`, is caught only at the next such PR.
 
 Those workflows execute their own trusted post-merge code and use their own
