@@ -268,9 +268,9 @@ class TestBuckets:
         ]
         assert (chosen["requested"], chosen["eligible"]) == (1, 1)
 
-    def test_a_run_refuses_a_case_certifying_dropped(self, user, workspace, storage):
-        from simulate.services.hosted_harness import HostedHarnessError
-
+    def test_a_run_holds_back_a_case_certifying_dropped(self, user, workspace, storage):
+        """Run all sends every key of the suite: a dropped case is held back and named,
+        and the rest still run."""
         environment = _ten_certified(
             user,
             workspace,
@@ -279,18 +279,18 @@ class TestBuckets:
             warnings=[{"code": "scenario_dropped", "keys": [LOOKUP_KEYS[0]]}],
         )
 
-        with pytest.raises(HostedHarnessError) as refused:
-            harness_readiness.select_for_run(
-                _pairing(environment),
-                keys=[LOOKUP_KEYS[0], LOOKUP_KEYS[1]],
-                trials=1,
-            )
-
-        assert (refused.value.code, refused.value.status_code) == (
-            "scenario_dropped",
-            422,
+        plan = harness_readiness.select_for_run(
+            _pairing(environment),
+            keys=[LOOKUP_KEYS[0], LOOKUP_KEYS[1]],
+            trials=1,
         )
-        assert refused.value.details == {"keys": [LOOKUP_KEYS[0]]}
+
+        assert plan.held == frozenset({LOOKUP_KEYS[0]})
+        assert (plan.view["requested"], plan.view["running"]) == (2, 1)
+        assert plan.view["held_back"]["by"] == {"scenario_dropped": 1}
+        assert plan.view["reasons"] == {
+            "scenario_dropped": "dropped when the pair was certified"
+        }
 
     def test_reset_needed_by_every_case_of_a_seeded_world_run(
         self, user, workspace, storage
