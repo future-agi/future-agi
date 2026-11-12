@@ -499,9 +499,9 @@ def _child_environment(job: dict[str, Any]) -> dict[str, str]:
 
     target = (job.get("spec") or {}).get("target") or {}
     for ref in (target.get("secret_refs") or {}).values():
-        value = _resolve_secret(ref)
-        if value and ref.get("key"):
-            env[str(ref["key"])] = value
+        secret_value = _resolve_secret(ref)
+        if secret_value and ref.get("key"):
+            env[str(ref["key"])] = secret_value
 
     # The DID is allocated after the job is built, so it cannot ride the
     # normal metadata.secret_env path. The SDK's inbound originator reads this

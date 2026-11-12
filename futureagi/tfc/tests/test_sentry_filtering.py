@@ -329,6 +329,62 @@ def test_scrub_event_redacts_log_call_arguments():
     }
 
 
+def test_scrub_event_rebuilds_the_formatted_log_line_from_scrubbed_arguments():
+    event = {
+        "logentry": {
+            "message": "bad input %s in %s",
+            "params": ["Input(customer_api_key='k')", "room r"],
+            "formatted": "bad input Input(customer_api_key='k') in room r",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == f"bad input {_REDACTED} in room r"
+
+
+def test_scrub_event_rebuilds_a_formatted_line_with_named_arguments():
+    event = {
+        "logentry": {
+            "message": "calling %(url)s with %(api_key)s",
+            "params": {"url": "https://example.test", "api_key": "sk-123"},
+            "formatted": "calling https://example.test with sk-123",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == (
+        f"calling https://example.test with {_REDACTED}"
+    )
+
+
+def test_scrub_event_keeps_a_log_line_with_no_arguments():
+    event = {
+        "logentry": {"message": "progress 100%", "params": [], "formatted": "progress 100%"}
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == "progress 100%"
+
+
+def test_scrub_event_drops_a_log_line_that_does_not_format():
+    event = {
+        "logentry": {"message": "no placeholder", "params": ["x"], "formatted": "x"}
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == _REDACTED
+
+
+def test_scrub_event_drops_a_formatted_line_that_names_a_key():
+    event = {"logentry": {"message": "m", "formatted": "token=abc"}}
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["API Key: abc", "access-key=abc", "Private-Key abc", "-----BEGIN PRIVATE KEY-----"],
+)
+def test_spaced_and_hyphenated_key_names_are_recognised(text):
+    assert _scrub_strings(text) == _REDACTED
+
+
 # Through the Temporal interceptor and a client set up like init_sentry
 
 
@@ -363,6 +419,13 @@ def _call_input(secret_values):
 class _RaisingNext:
     async def execute_activity(self, input):
         raise RuntimeError("activity failed")
+
+
+class _LoggingInputNext:
+    """Logs the activity's input as a log argument, the way a handler might."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error("bad input %s", input.args[0])
 
 
 class _LoggingNext:
@@ -400,6 +463,7 @@ async def _run_activity(next_interceptor, secret_values, before=None):
         max_breadcrumbs=100,
         include_source_context=True,
         include_local_variables=True,
+        max_value_length=16_384,
     )
     interceptor = SentryActivityInboundInterceptor(next_interceptor)
     activity_input = ExecuteActivityInput(
@@ -437,6 +501,13 @@ async def test_a_logged_error_event_leaks_no_input_secret():
     sent = await _run_activity(_LoggingNext(), secret_values)
     assert "threads" in sent[0]
     _assert_no_secret(sent, secret_values)
+
+
+async def test_a_logged_input_leaks_no_secret_in_the_formatted_line():
+    secret_values = _new_secret_values()
+    sent = await _run_activity(_LoggingInputNext(), secret_values)
+    _assert_no_secret(sent, secret_values)
+    assert sent[0]["logentry"]["message"] == "bad input %s"
 
 
 async def test_secrets_are_scrubbed_when_the_activity_breadcrumb_is_not_first():

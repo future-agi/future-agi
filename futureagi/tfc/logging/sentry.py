@@ -102,9 +102,14 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "api_key",
     "apikey",
     "api-key",
+    "api key",
     "x-api-key",
     "access_key",
+    "access-key",
+    "access key",
     "private_key",
+    "private-key",
+    "private key",
     "csrf",
     # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
     "samlresponse",
@@ -195,6 +200,15 @@ def _scrub_strings(value: Any, depth: int = 0) -> Any:
     return value
 
 
+def _formatted(message: Any, params: Any) -> str:
+    """A log line formatted from its scrubbed arguments, or redacted whole when it
+    can't be."""
+    try:
+        return str(message) % (tuple(params) if isinstance(params, list) else params)
+    except Exception:  # noqa: BLE001 - any shape that doesn't format is dropped
+        return _REDACTED
+
+
 def _scrub_event(event: dict) -> None:
     """
     Redact obvious secrets/PII in-place before the event leaves the process.
@@ -221,11 +235,20 @@ def _scrub_event(event: dict) -> None:
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
         event["contexts"] = _scrub_strings(contexts)
-    # A log call's arguments, such as an activity input passed to `%s`. The
-    # formatted message is left as it is.
+    # A log call's arguments, such as an activity input passed to `%s`, and the
+    # message formatted from them, which is rebuilt from the scrubbed arguments.
     logentry = event.get("logentry")
-    if isinstance(logentry, dict) and logentry.get("params") is not None:
-        logentry["params"] = _scrub_strings(logentry["params"])
+    if isinstance(logentry, dict):
+        if logentry.get("params") is not None:
+            logentry["params"] = _scrub_strings(logentry["params"])
+            # With no arguments the message was never %-formatted, so it stands.
+            if logentry["params"] and logentry.get("formatted") is not None:
+                logentry["formatted"] = _formatted(
+                    logentry.get("message"), logentry["params"]
+                )
+        formatted = logentry.get("formatted")
+        if isinstance(formatted, str) and _mentions_sensitive_key(formatted):
+            logentry["formatted"] = _REDACTED
 
     # Breadcrumbs carry whatever the caller logged, such as a Temporal
     # activity's input. The shape is a list or a dict with a "values" list.
