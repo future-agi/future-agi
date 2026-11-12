@@ -31,6 +31,12 @@ const { default: EnvironmentWorkspace } = await import(
 const { default: WorkspaceExecutionDetail } = await import(
   "../runs/WorkspaceExecutionDetail"
 );
+const { default: WorkspaceRunCompare } = await import(
+  "../runs/compare/WorkspaceRunCompare"
+);
+const { compareRunsResponse, RUN } = await import(
+  "src/api/simulate-environments/_fixtures/compareRuns"
+);
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
@@ -170,6 +176,7 @@ function renderWorkspace(entry) {
                 path="runs/:testId/:executionId"
                 element={<WorkspaceExecutionDetail />}
               />
+              <Route path="compare" element={<WorkspaceRunCompare />} />
             </Route>
             <Route
               path="/dashboard/simulate/environments"
@@ -661,6 +668,32 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // ...and the environment-workspace chrome around it is gone: no tab rail and
     // no header "Run simulation" button. The run page owns the viewport.
+    expect(
+      screen.queryByRole("tab", { name: /Contract/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Run simulation/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a run comparison as its own full page, with the workspace's environment", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      url.endsWith("/compare-runs/")
+        ? Promise.resolve({ data: compareRunsResponse() })
+        : base(url),
+    );
+
+    renderWorkspace(
+      `/dashboard/simulate/environments/job-done/compare?runs=${RUN.a},${RUN.b},${RUN.c}`,
+    );
+
+    expect(await screen.findAllByTestId("compare-run-pill")).toHaveLength(3);
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/job-done/compare-runs/",
+      expect.anything(),
+    );
     expect(
       screen.queryByRole("tab", { name: /Contract/ }),
     ).not.toBeInTheDocument();

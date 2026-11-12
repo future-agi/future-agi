@@ -102,7 +102,9 @@ class TestRunCallsV3Contract:
         [
             ({"filters": "{not json"}, "filters"),
             ({"filters": "[]"}, "filters"),
-            ({"filters": json.dumps({"persona": ["x"]})}, "filters"),
+            ({"filters": json.dumps({"accent": ["x"]})}, "filters"),
+            # Text filters only contain; the panel cannot send their negation.
+            ({"filters": json.dumps({"situation_not": ["x"]})}, "filters"),
             ({"filters": json.dumps({"status": ["green"]})}, "filters"),
             ({"filters": json.dumps({"status_not": ["green"]})}, "filters"),
             ({"filters": json.dumps({"outcome_not": ["passed"]})}, "filters"),
@@ -304,6 +306,12 @@ class TestRunCallsV3Contract:
                 "error",
                 "passed",
             ]
+
+            assert body["level_labels"] == {
+                "Shared goal": "Shared goal",
+                "Authored goal": "Authored goal",
+                "Receipt goal": "Receipt goal",
+            }
 
         whole = _get(auth_client, execution).json()["facets"]["sub_goal"]
         assert {"value": "Shared goal", "count": 3} in whole
@@ -518,6 +526,43 @@ class TestRunCallsV3NotFilters:
         assert matching == {str(calls[0].id), str(calls[1].id)}
         assert others == every - matching
 
+    def test_scenario_filters_read_the_authored_scenario(
+        self, auth_client, execution, calls, organization, workspace
+    ):
+        job = HostedHarnessJob.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=uuid.uuid4().hex,
+            request_digest="digest",
+            schema_version="1.6",
+            seed=1,
+            artifact_level="standard",
+            max_artifact_bytes=1024,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            scenario_count=1,
+            payload={},
+            run_test=execution.run_test,
+            test_execution=execution,
+        )
+        for call, name in zip(calls[:2], ["Ana", "Bo"], strict=True):
+            HostedHarnessScenario.no_workspace_objects.create(
+                job=job,
+                scenario_key=f"key-{call.id}",
+                call_execution=call,
+                instruction=f"Ask {name} about a REFUND",
+                persona={"name": name},
+            )
+        every = {str(call.id) for call in calls}
+
+        assert _ids(auth_client, execution, {"situation": ["refund"]}) == {
+            str(calls[0].id),
+            str(calls[1].id),
+        }
+        assert _ids(auth_client, execution, {"persona_not": ["Ana"]}) == every - {
+            str(calls[0].id)
+        }
+
     def test_is_not_combines_with_other_filters(
         self, auth_client, execution, sub_goal_calls
     ):
@@ -660,3 +705,20 @@ def test_a_check_run_names_its_fix_and_a_user_run_does_not(
 
     assert check_run["fix_run"] == {"id": str(fix.id), "label": "c2-target"}
     assert user_run["fix_run"] is None
+
+
+def test_level_labels_name_coverage_and_sub_goal_facets() -> None:
+    from simulate.services.run_results_v3_queries import facet_level_labels
+
+    facets = {
+        "goal": [{"value": "refund_flow", "count": 1}],
+        "attack": [{"value": "none", "count": 2}],
+        "task": [{"value": "account_lookup", "count": 1}],
+        "sub_goal": [{"value": "privacy_pii", "count": 1}],
+    }
+
+    assert facet_level_labels(facets) == {
+        "none": "No attack",
+        "account_lookup": "Account lookup",
+        "privacy_pii": "Personal data",
+    }

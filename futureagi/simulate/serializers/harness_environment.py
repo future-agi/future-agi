@@ -104,6 +104,8 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    pass_rate = serializers.FloatField(allow_null=True)
+    measured = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 
@@ -776,83 +778,6 @@ class HarnessRunPlanSerializer(serializers.Serializer):
             " is cached."
         ),
     )
-
-
-class HarnessCompareQuerySerializer(serializers.Serializer):
-    execution_id = serializers.UUIDField()
-    against_execution_id = serializers.UUIDField(
-        required=False,
-        help_text="The run to compare against; the previous completed run if absent.",
-    )
-
-
-class HarnessCompareSideSerializer(serializers.Serializer):
-    passed = serializers.IntegerField()
-    trials = serializers.IntegerField(help_text="Trials a verdict was reached on.")
-    undecided = serializers.IntegerField(
-        help_text="Trials that ran to an end but a sub-goal check was undecided."
-    )
-    pass_rate = serializers.FloatField(allow_null=True)
-    eval_pass_rate = serializers.FloatField(
-        allow_null=True, help_text="Context only; never decides the verdict."
-    )
-
-
-class HarnessCompareIntervalSerializer(serializers.Serializer):
-    low = serializers.FloatField()
-    high = serializers.FloatField()
-
-
-class HarnessComparePairSerializer(serializers.Serializer):
-    scenario_key = serializers.CharField()
-    scenario = serializers.CharField()
-    band = serializers.ChoiceField(
-        choices=("paired", "criteria_changed", "new", "not_applicable")
-    )
-    verdict = serializers.ChoiceField(
-        choices=("improved", "regressed", "no_meaningful_change", "inconclusive"),
-        allow_null=True,
-    )
-    difference = serializers.FloatField(
-        allow_null=True, help_text="Pass-rate change in percentage points."
-    )
-    interval = HarnessCompareIntervalSerializer(
-        allow_null=True, help_text="Newcombe 95% interval of the difference."
-    )
-    current = HarnessCompareSideSerializer(allow_null=True)
-    against = HarnessCompareSideSerializer(allow_null=True)
-    changed_sub_goals = serializers.ListField(child=serializers.CharField())
-    reason = serializers.CharField(allow_null=True)
-    removed_in = RunVersionLabelSerializer(allow_null=True)
-
-
-class HarnessCompareSummarySerializer(serializers.Serializer):
-    paired = serializers.IntegerField()
-    improved = serializers.IntegerField()
-    regressed = serializers.IntegerField()
-    no_meaningful_change = serializers.IntegerField()
-    inconclusive = serializers.IntegerField()
-    criteria_changed = serializers.IntegerField()
-    new = serializers.IntegerField()
-    not_applicable = serializers.IntegerField()
-    current_pass_rate = serializers.FloatField(allow_null=True)
-    against_pass_rate = serializers.FloatField(allow_null=True)
-    margin = serializers.FloatField()
-
-
-class HarnessCompareVersionsSerializer(serializers.Serializer):
-    current = HarnessRunPinnedVersionsSerializer()
-    against = HarnessRunPinnedVersionsSerializer(allow_null=True)
-
-
-class HarnessCompareSerializer(serializers.Serializer):
-    """Two runs of one environment, scenario by scenario."""
-
-    execution_id = serializers.UUIDField()
-    against_execution_id = serializers.UUIDField(allow_null=True)
-    pairs = HarnessComparePairSerializer(many=True)
-    summary = HarnessCompareSummarySerializer()
-    versions = HarnessCompareVersionsSerializer()
 
 
 class HarnessSuiteMemberSerializer(serializers.Serializer):

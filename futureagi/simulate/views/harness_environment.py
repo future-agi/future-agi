@@ -17,11 +17,13 @@ from simulate.selectors.held_back import (
     verify_run,
 )
 from simulate.selectors.runs import user_executions
+from simulate.serializers.compare_runs import (
+    HarnessCompareRunsQuerySerializer,
+    HarnessCompareRunsSerializer,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
-    HarnessCompareQuerySerializer,
-    HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
@@ -580,85 +582,95 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(preview_run(job, picks))
 
     @validated_request(
-        query_serializer=HarnessCompareQuerySerializer,
-        responses={200: HarnessCompareSerializer},
+        query_serializer=HarnessCompareRunsQuerySerializer,
+        responses={200: HarnessCompareRunsSerializer},
         reject_unknown_fields=True,
     )
-    @action(detail=True, methods=["get"], url_path="compare")
-    def compare(self, request, pk=None):
-        """Two runs of this environment, scenario by scenario; against defaults to
-        the previous completed run. Not gated on versioning: a run from before
-        versioning compares too, with null versions."""
+    @action(detail=True, methods=["get"], url_path="compare-runs")
+    def compare_runs(self, request, pk=None):
+        """2-8 finished runs of this environment, scenario version by scenario
+        version, with the run detail's search, filters and grouping. The first
+        run is the baseline. Not gated on versioning."""
+        from django.db.models import Count, Q
+
         from simulate.models import TestExecution
-        from simulate.services.run_results_v3_queries import (
-            build_run_comparison,
-            run_calls_queryset,
-        )
+        from simulate.selectors.run_resume import resume_states
+        from simulate.services.harness_versioning.read import run_version_labels
+        from simulate.services.run_compare_page import build_compare_page
+        from simulate.views.run_results_v3 import _execution_payload
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
         query = request.validated_query_data
-        wanted = [query["execution_id"], query.get("against_execution_id")]
+        wanted = query["runs"]
         # A run of this environment is one of its run test's executions.
-        runs = (
+        found = (
             {
                 one.id: one
-                for one in user_executions().filter(
-                    id__in=[one for one in wanted if one], run_test_id=job.run_test_id
+                for one in user_executions()
+                .filter(id__in=wanted, run_test_id=job.run_test_id)
+                .select_related(
+                    "run_test",
+                    "agent_definition",
+                    "agent_version",
+                    "run_test__agent_version",
+                    "hosted_harness_job",
                 )
             }
             if job.run_test_id
             else {}
         )
-        execution = runs.get(wanted[0])
-        against = runs.get(wanted[1]) if wanted[1] else None
-        if execution is None or (wanted[1] and against is None):
+        if len(found) != len(wanted):
             return Response(
                 {"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND
             )
-        if against is not None and against.id == execution.id:
-            return Response(
-                {"detail": "Pick another run to compare against"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        # Older or newer, as long as both completed: only a completed run has verdicts.
+        runs = [found[one] for one in wanted]
+        # Only a completed run has graded calls.
         ended = {
             TestExecution.ExecutionStatus.FAILED: "failed",
             TestExecution.ExecutionStatus.CANCELLED: "was cancelled",
         }
-        for run, name, unfinished in (
-            (execution, "This run", "Compare this run once it finishes"),
-            (
-                against,
-                "The run to compare against",
-                "Pick a finished run to compare against",
-            ),
-        ):
-            if run is None or run.status == TestExecution.ExecutionStatus.COMPLETED:
+        for run in runs:
+            if run.status == TestExecution.ExecutionStatus.COMPLETED:
                 continue
             details = {"execution_id": str(run.id)}
             if run.status in ended:
                 raise HostedHarnessError(
                     f"comparison_run_{run.status}",
-                    f"{name} {ended[run.status]} before its calls were graded",
+                    f"This run {ended[run.status]} before its calls were graded",
                     details=details,
                 )
             raise HostedHarnessError(
-                "comparison_run_unfinished", unfinished, details=details
+                "comparison_run_unfinished",
+                "Compare this run once it finishes",
+                details=details,
             )
-        comparison = build_run_comparison(
-            execution, run_calls_queryset(execution), against=against, with_pairs=True
+        page = build_compare_page(runs, query)
+        # The run detail's ordinal: its place among the run test's runs.
+        ordinals = (
+            user_executions()
+            .filter(run_test_id=job.run_test_id)
+            .aggregate(
+                **{
+                    f"run_{index}": Count(
+                        "id", filter=Q(created_at__lte=run.created_at)
+                    )
+                    for index, run in enumerate(runs)
+                }
+            )
         )
-        return Response(
-            {
-                "execution_id": str(execution.id),
-                "against_execution_id": comparison["previous_execution_id"],
-                "pairs": comparison["pairs"],
-                "summary": comparison["summary"],
-                "versions": comparison["versions"],
-            }
-        )
+        pinned = run_version_labels(wanted)
+        resumes = resume_states(runs)
+        for index, (run, line) in enumerate(zip(runs, page["runs"], strict=True)):
+            line["execution"] = _execution_payload(
+                run,
+                line.pop("execution_summary"),
+                ordinal=ordinals[f"run_{index}"],
+                pinned=pinned.get(str(run.id)) or {},
+                resume=resumes[run.id],
+            )
+        return Response(page)
 
     @validated_request(
         query_serializer=HarnessEnvironmentListQuerySerializer,

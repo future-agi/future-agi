@@ -2373,6 +2373,10 @@ class TestRunResultsV3Views:
                 self.timeouts.append(timeout)
                 raise RuntimeError("cache write refused")
 
+            def set_many(self, data, timeout):
+                self.timeouts.append(timeout)
+                raise RuntimeError("cache write refused")
+
         page_cache = RefusesWrites()
         monkeypatch.setattr("simulate.services.run_results_v3_page.cache", page_cache)
 

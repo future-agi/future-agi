@@ -2430,6 +2430,101 @@ def test_derivation_table(case):
     assert (scoring.csat_status, scoring.csat_reason) == csat
 
 
+def _settled_cases(count: int):
+    """Random stored shapes, clocked stamps included, from a fixed seed."""
+    import random
+
+    rng = random.Random(7)
+    stamps = [
+        None,
+        _ago(timedelta(days=1)),
+        _ago(timedelta(minutes=5)),
+        (NOW + timedelta(minutes=1)).isoformat(),
+        (NOW + EVAL_QUEUE_STAMP_SKEW + timedelta(minutes=1)).isoformat(),
+        (NOW + timedelta(hours=2)).isoformat(),
+        "not a stamp",
+    ]
+    entry_statuses = [
+        "pending",
+        "completed",
+        "failed",
+        "error",
+        "skipped",
+        "",
+        "running",
+    ]
+    for _ in range(count):
+        entries = {
+            eval_id: {
+                "status": rng.choice(entry_statuses),
+                **({"source": "harness"} if rng.random() < 0.2 else {}),
+            }
+            for eval_id in rng.sample(["a", "b", "c"], rng.randint(0, 3))
+        }
+        queued = {
+            eval_id: rng.choice(stamps[1:])
+            for eval_id in rng.sample(["a", "b", "c"], rng.randint(0, 3))
+        }
+        meta = {
+            "eval_started": rng.choice([None, True]),
+            "eval_completed": rng.choice([None, True, False]),
+            EVAL_QUEUED_KEY: queued,
+            EVAL_PROGRESS_KEY: rng.choice(stamps),
+            "csat_status": rng.choice(
+                [None, "pending", "running", "completed", "failed", "skipped"]
+            ),
+            CSAT_STAMP_KEY: rng.choice(stamps),
+        }
+        meta = {key: value for key, value in meta.items() if value is not None}
+        csat_scored = rng.random() < 0.2
+        yield (
+            _inp(
+                call_status=rng.choice(
+                    ["completed", "completed", "failed", "cancelled", "analyzing"]
+                ),
+                meta=meta,
+                entries=entries,
+                csat_scored=csat_scored,
+                has_csat_value=csat_scored or rng.random() < 0.2,
+                anchor=NOW - rng.choice([timedelta(days=1), timedelta(minutes=3)]),
+            ),
+            set(rng.sample(["a", "b", "c"], rng.randint(0, 3))),
+            set(rng.sample(["a", "b"], rng.randint(0, 2))),
+            rng.choice(["completed", "cancelled", "running"]),
+        )
+
+
+def test_settled_status_holds_at_every_later_time():
+    """A non-pending status ``scoring_settled`` accepts never moves with ``now``:
+    not past the cache window, not when a future stamp comes into range, not
+    a month later."""
+    from simulate.services.scoring_status import derive_call_scoring, scoring_settled
+
+    later = [timedelta(minutes=minutes) for minutes in range(0, 200, 1)] + [
+        timedelta(days=30)
+    ]
+    settled = clocked = 0
+    for inp, visible, runnable, run_status in _settled_cases(4000):
+        kwargs = {
+            "visible_ids": visible,
+            "runnable_ids": runnable,
+            "run_status": run_status,
+        }
+        scoring = derive_call_scoring(inp, now=NOW, **kwargs)
+        statuses = {
+            derive_call_scoring(inp, now=NOW + delta, **kwargs).status
+            for delta in later
+        }
+        if scoring.status != "pending" and scoring_settled(inp, scoring):
+            settled += 1
+            assert statuses == {scoring.status}, (inp, visible, runnable, run_status)
+        elif len(statuses) > 1:
+            clocked += 1
+    # The cases reach both sides: settled calls, and calls a clock moves.
+    assert settled > 500
+    assert clocked > 50
+
+
 @pytest.mark.django_db
 def test_stale_save_after_sweep_converges(run_test, eval_template):
     """A job's stale copy saved after a sweep never leaves a row pending for

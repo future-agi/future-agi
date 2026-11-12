@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from django.db.models import QuerySet
+
 from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
@@ -70,23 +72,33 @@ def unfinished_executions(job: HostedHarnessJob) -> list[HostedHarnessExecution]
     ]
 
 
-def resumable_job(test_execution: TestExecution) -> HostedHarnessJob | None:
-    """The saved-environment Run behind this run, if it is one a user can resume. A fix's
-    check run belongs to its fix, and only the fix may run it again."""
+def _resumable_jobs(execution_ids: list[Any]) -> QuerySet[HostedHarnessJob]:
     return (
         HostedHarnessJob.no_workspace_objects.filter(
-            test_execution_id=test_execution.id,
+            test_execution_id__in=execution_ids,
             environment__isnull=False,
             fix_run__isnull=True,
         )
         .select_related(
             "agent_version", "environment_version", "suite_version", "assembled_bundle"
         )
-        .first()
+        .order_by("pk")
     )
 
 
-def check_resume(test_execution: TestExecution) -> Resumable | ResumeRefused:
+def resumable_job(test_execution: TestExecution) -> HostedHarnessJob | None:
+    """The saved-environment Run behind this run, if it is one a user can resume. A fix's
+    check run belongs to its fix, and only the fix may run it again."""
+    return _resumable_jobs([test_execution.id]).first()
+
+
+# ``check_resume`` reads the run's job itself unless the caller already has it.
+_READ_JOB: Any = object()
+
+
+def check_resume(
+    test_execution: TestExecution, job: HostedHarnessJob | None = _READ_JOB
+) -> Resumable | ResumeRefused:
     """Whether a run can resume, the one rule its read and the POST share. Its transport and
     grading have ended, its job stopped or failed before every call finished, and some call
     was not charged. The job decides, not the run: after an in-run re-run the run settles
@@ -96,7 +108,8 @@ def check_resume(test_execution: TestExecution) -> Resumable | ResumeRefused:
             "rerun_in_progress",
             "this run is still running or grading; resume it once it finishes",
         )
-    job = resumable_job(test_execution)
+    if job is _READ_JOB:
+        job = resumable_job(test_execution)
     if job is None:
         return ResumeRefused("run_not_resumable", "this run cannot be resumed")
     if job.state not in INTERRUPTED_JOB_STATES:
@@ -110,11 +123,24 @@ def check_resume(test_execution: TestExecution) -> Resumable | ResumeRefused:
     return Resumable(job, unfinished)
 
 
-def resume_state(test_execution: TestExecution) -> ResumeState:
+def resume_states(executions: list[TestExecution]) -> dict[Any, ResumeState]:
+    """``resume_state`` of each run, their jobs read in one query."""
+    jobs: dict[Any, HostedHarnessJob] = {}
+    for job in _resumable_jobs([execution.id for execution in executions]):
+        jobs.setdefault(job.test_execution_id, job)
+    return {
+        execution.id: resume_state(execution, jobs.get(execution.id))
+        for execution in executions
+    }
+
+
+def resume_state(
+    test_execution: TestExecution, job: HostedHarnessJob | None = _READ_JOB
+) -> ResumeState:
     """How far a resumable run got, and its resumes. A live run costs no queries here, and
     the counts are read only for a job that stopped or failed."""
     history = list((test_execution.execution_metadata or {}).get(RESUMES) or [])
-    check = check_resume(test_execution)
+    check = check_resume(test_execution, job)
     if isinstance(check, ResumeRefused):
         return ResumeState(False, None, None, history)
     total = HostedHarnessExecution.no_workspace_objects.filter(job=check.job).count()

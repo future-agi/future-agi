@@ -33929,6 +33929,8 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        pass_rate: zod.number(),
+        measured: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -38468,6 +38470,8 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        pass_rate: zod.number(),
+        measured: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -38897,146 +38901,573 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
- * Two runs of this environment, scenario by scenario; against defaults to
-the previous completed run. Not gated on versioning: a run from before
-versioning compares too, with null versions.
+ * 2-8 finished runs of this environment, scenario version by scenario
+version, with the run detail's search, filters and grouping. The first
+run is the baseline. Not gated on versioning.
  */
-export const SimulateApiHarnessEnvironmentsCompareParams = zod.object({
+export const SimulateApiHarnessEnvironmentsCompareRunsParams = zod.object({
   id: zod.string(),
 });
 
-export const SimulateApiHarnessEnvironmentsCompareQueryParams = zod.object({
-  execution_id: zod.string().uuid(),
-  against_execution_id: zod
+export const simulateApiHarnessEnvironmentsCompareRunsQuerySearchDefault = ``;
+export const simulateApiHarnessEnvironmentsCompareRunsQueryFiltersDefault = {};
+export const simulateApiHarnessEnvironmentsCompareRunsQueryOrderingDefault = `movement`;
+export const simulateApiHarnessEnvironmentsCompareRunsQueryGroupByDefault = ``;
+export const simulateApiHarnessEnvironmentsCompareRunsQueryPageDefault = 1;
+
+export const simulateApiHarnessEnvironmentsCompareRunsQueryPageSizeDefault = 25;
+export const simulateApiHarnessEnvironmentsCompareRunsQueryPageSizeMax = 100;
+
+export const SimulateApiHarnessEnvironmentsCompareRunsQueryParams = zod.object({
+  search: zod
     .string()
-    .uuid()
-    .optional()
-    .describe(
-      "The run to compare against; the previous completed run if absent.",
-    ),
+    .default(simulateApiHarnessEnvironmentsCompareRunsQuerySearchDefault),
+  filters: zod
+    .string()
+    .default(simulateApiHarnessEnvironmentsCompareRunsQueryFiltersDefault),
+  ordering: zod
+    .enum(["movement", "scenario"])
+    .default(simulateApiHarnessEnvironmentsCompareRunsQueryOrderingDefault),
+  runs: zod
+    .string()
+    .min(1)
+    .describe("2-8 comma-separated run ids; the first is the baseline."),
+  group_by: zod
+    .enum(["goal", "sub_goal", "accent", "age", "attack", "task", "status"])
+    .default(simulateApiHarnessEnvironmentsCompareRunsQueryGroupByDefault),
+  page: zod
+    .number()
+    .min(1)
+    .default(simulateApiHarnessEnvironmentsCompareRunsQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsCompareRunsQueryPageSizeMax)
+    .default(simulateApiHarnessEnvironmentsCompareRunsQueryPageSizeDefault),
 });
 
-export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
-  execution_id: zod.string().uuid(),
-  against_execution_id: zod.string().uuid().nullable(),
-  pairs: zod.array(
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionAgentDiffersDefault =
+  false;
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionSelectedScenarioKeysDefault =
+  [];
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionTrialsDefault = 1;
+
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringNotApplicableMin = 0;
+
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringPendingMin = 0;
+
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringSucceededMin = 0;
+
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringFailedMin = 0;
+
+export const simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringTimedOutMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
+  baseline_execution_id: zod.string().uuid(),
+  runs: zod.array(
     zod.object({
-      scenario_key: zod.string().min(1),
-      scenario: zod.string().min(1),
-      band: zod.enum(["paired", "criteria_changed", "new", "not_applicable"]),
-      verdict: zod
-        .enum(["improved", "regressed", "no_meaningful_change", "inconclusive"])
-        .nullable(),
-      difference: zod
-        .number()
-        .nullable()
-        .describe("Pass-rate change in percentage points."),
-      interval: zod
-        .object({
-          low: zod.number(),
-          high: zod.number(),
-        })
-        .nullable()
-        .describe("Newcombe 95% interval of the difference."),
-      current: zod
-        .object({
+      execution: zod.object({
+        id: zod.string().uuid(),
+        run_test_id: zod.string().uuid(),
+        name: zod.string().min(1),
+        status: zod.string().min(1),
+        started_at: zod.string().datetime({ offset: true }),
+        completed_at: zod.string().datetime({ offset: true }),
+        ordinal: zod.number(),
+        agent_version: zod.string().min(1),
+        environment_version: zod
+          .object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).nullish(),
+          })
+          .nullish(),
+        suite_version: zod
+          .object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).nullish(),
+          })
+          .nullish(),
+        pinned_agent_version: zod
+          .object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).nullish(),
+          })
+          .nullish(),
+        agent_differs: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionAgentDiffersDefault,
+          ),
+        selected_scenario_keys: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionSelectedScenarioKeysDefault,
+          ),
+        trials: zod
+          .number()
+          .min(1)
+          .default(
+            simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemExecutionTrialsDefault,
+          ),
+        agent_type: zod.string().min(1),
+        resume: zod.object({
+          resumable: zod.boolean(),
+          finished: zod.number(),
+          unfinished: zod.number(),
+          history: zod.array(
+            zod.object({
+              at: zod.string().datetime({ offset: true }),
+              by: zod.string().uuid(),
+              calls: zod.number(),
+            }),
+          ),
+        }),
+        summary: zod.object({
+          total: zod.number(),
+          outcomes: zod.object({
+            queued: zod.number(),
+            in_progress: zod.number(),
+            passed: zod.number(),
+            failed: zod.number(),
+            error: zod.number(),
+            inconclusive: zod.number(),
+          }),
+          measured: zod.number(),
+          pass_rate: zod.number(),
+          duration: zod.object({
+            average: zod.number(),
+            p50: zod.number(),
+            p75: zod.number(),
+            p90: zod.number(),
+            p95: zod.number(),
+            p99: zod.number(),
+            measured: zod.number(),
+            total: zod.number(),
+          }),
+          latency: zod.object({
+            average: zod.number(),
+            p50: zod.number(),
+            p75: zod.number(),
+            p90: zod.number(),
+            p95: zod.number(),
+            p99: zod.number(),
+            measured: zod.number(),
+            total: zod.number(),
+          }),
+          tokens: zod.object({
+            average: zod.number(),
+            p50: zod.number(),
+            p75: zod.number(),
+            p90: zod.number(),
+            p95: zod.number(),
+            p99: zod.number(),
+            measured: zod.number(),
+            total: zod.number(),
+            total_value: zod.number(),
+          }),
+          cost_cents: zod.object({
+            average: zod.number(),
+            p50: zod.number(),
+            p75: zod.number(),
+            p90: zod.number(),
+            p95: zod.number(),
+            p99: zod.number(),
+            measured: zod.number(),
+            total: zod.number(),
+            total_value: zod.number(),
+          }),
+        }),
+        fix_run: zod
+          .object({
+            id: zod.string().uuid(),
+            label: zod.string(),
+          })
+          .optional(),
+      }),
+      is_baseline: zod.boolean(),
+      summary: zod.object({
+        total: zod.number(),
+        outcomes: zod.object({
+          queued: zod.number(),
+          in_progress: zod.number(),
           passed: zod.number(),
-          trials: zod.number().describe("Trials a verdict was reached on."),
-          undecided: zod
+          failed: zod.number(),
+          error: zod.number(),
+          inconclusive: zod.number(),
+        }),
+        measured: zod.number(),
+        pass_rate: zod.number(),
+        duration: zod.object({
+          average: zod.number(),
+          p50: zod.number(),
+          p75: zod.number(),
+          p90: zod.number(),
+          p95: zod.number(),
+          p99: zod.number(),
+          measured: zod.number(),
+          total: zod.number(),
+        }),
+        latency: zod.object({
+          average: zod.number(),
+          p50: zod.number(),
+          p75: zod.number(),
+          p90: zod.number(),
+          p95: zod.number(),
+          p99: zod.number(),
+          measured: zod.number(),
+          total: zod.number(),
+        }),
+        tokens: zod.object({
+          average: zod.number(),
+          p50: zod.number(),
+          p75: zod.number(),
+          p90: zod.number(),
+          p95: zod.number(),
+          p99: zod.number(),
+          measured: zod.number(),
+          total: zod.number(),
+          total_value: zod.number(),
+        }),
+        cost_cents: zod.object({
+          average: zod.number(),
+          p50: zod.number(),
+          p75: zod.number(),
+          p90: zod.number(),
+          p95: zod.number(),
+          p99: zod.number(),
+          measured: zod.number(),
+          total: zod.number(),
+          total_value: zod.number(),
+        }),
+        scoring: zod.object({
+          not_applicable: zod
             .number()
-            .describe(
-              "Trials that ran to an end but a sub-goal check was undecided.",
+            .min(
+              simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringNotApplicableMin,
             ),
-          pass_rate: zod.number().nullable(),
-          eval_pass_rate: zod
+          pending: zod
             .number()
-            .nullable()
-            .describe("Context only; never decides the verdict."),
-        })
-        .nullable(),
-      against: zod
-        .object({
-          passed: zod.number(),
-          trials: zod.number().describe("Trials a verdict was reached on."),
-          undecided: zod
-            .number()
-            .describe(
-              "Trials that ran to an end but a sub-goal check was undecided.",
+            .min(
+              simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringPendingMin,
             ),
-          pass_rate: zod.number().nullable(),
-          eval_pass_rate: zod
+          succeeded: zod
             .number()
-            .nullable()
-            .describe("Context only; never decides the verdict."),
-        })
-        .nullable(),
-      changed_sub_goals: zod.array(zod.string().min(1)),
-      reason: zod.string().min(1).nullable(),
-      removed_in: zod
-        .object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).nullish(),
-        })
-        .nullable(),
+            .min(
+              simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringSucceededMin,
+            ),
+          failed: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringFailedMin,
+            ),
+          timed_out: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsCompareRunsResponseRunsItemSummaryScoringTimedOutMin,
+            ),
+        }),
+      }),
+      status_counts: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      histograms: zod
+        .record(zod.string(), zod.array(zod.number()))
+        .describe("Per evaluation, matching calls' scores in ten 10% bands."),
     }),
   ),
-  summary: zod.object({
-    paired: zod.number(),
-    improved: zod.number(),
-    regressed: zod.number(),
-    no_meaningful_change: zod.number(),
-    inconclusive: zod.number(),
-    criteria_changed: zod.number(),
-    new: zod.number(),
-    not_applicable: zod.number(),
-    current_pass_rate: zod.number().nullable(),
-    against_pass_rate: zod.number().nullable(),
-    margin: zod.number(),
-  }),
-  versions: zod.object({
-    current: zod.object({
-      agent: zod
-        .object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).nullish(),
-        })
-        .nullable(),
-      environment: zod
-        .object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).nullish(),
-        })
-        .nullable(),
-      suite: zod
-        .object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).nullish(),
-        })
-        .nullable(),
+  evaluation_columns: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      kind: zod.enum(["evaluation", "sub_goal"]),
     }),
-    against: zod
-      .object({
-        agent: zod
-          .object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).nullish(),
-          })
-          .nullable(),
-        environment: zod
-          .object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).nullish(),
-          })
-          .nullable(),
-        suite: zod
-          .object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).nullish(),
-          })
-          .nullable(),
-      })
-      .nullable(),
+  ),
+  facets: zod.object({
+    goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    sub_goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    status: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    persona: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    age: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    attack: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    task: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
   }),
+  level_labels: zod.record(zod.string(), zod.string().min(1)),
+  changed_count: zod.number(),
+  count: zod.number(),
+  page: zod.number(),
+  page_size: zod
+    .number()
+    .describe(
+      "Rows a page holds at most: fewer when its rows hold many calls.",
+    ),
+  total_pages: zod.number(),
+  groups: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      label: zod.string().min(1),
+      row_ids: zod.array(zod.string().min(1)),
+      row_count: zod
+        .number()
+        .describe("The scenario rows in this group on every page."),
+      runs: zod
+        .record(
+          zod.string(),
+          zod.object({
+            total: zod.number(),
+            outcomes: zod.object({
+              queued: zod.number(),
+              in_progress: zod.number(),
+              passed: zod.number(),
+              failed: zod.number(),
+              error: zod.number(),
+              inconclusive: zod.number(),
+            }),
+            measured: zod.number(),
+            pass_rate: zod.number(),
+            duration: zod.object({
+              average: zod.number(),
+              p50: zod.number(),
+              p75: zod.number(),
+              p90: zod.number(),
+              p95: zod.number(),
+              p99: zod.number(),
+              measured: zod.number(),
+              total: zod.number(),
+            }),
+            latency: zod.object({
+              average: zod.number(),
+              p50: zod.number(),
+              p75: zod.number(),
+              p90: zod.number(),
+              p95: zod.number(),
+              p99: zod.number(),
+              measured: zod.number(),
+              total: zod.number(),
+            }),
+            tokens: zod.object({
+              average: zod.number(),
+              p50: zod.number(),
+              p75: zod.number(),
+              p90: zod.number(),
+              p95: zod.number(),
+              p99: zod.number(),
+              measured: zod.number(),
+              total: zod.number(),
+              total_value: zod.number(),
+            }),
+            cost_cents: zod.object({
+              average: zod.number(),
+              p50: zod.number(),
+              p75: zod.number(),
+              p90: zod.number(),
+              p95: zod.number(),
+              p99: zod.number(),
+              measured: zod.number(),
+              total: zod.number(),
+              total_value: zod.number(),
+            }),
+            key: zod.string().min(1),
+            label: zod.string().min(1),
+            result_ids: zod.array(zod.string().uuid()),
+            aggregates: zod.object({
+              csat: zod.number(),
+              turns: zod.number(),
+              latency_ms: zod.number(),
+              avg_stop_time_after_interruption: zod
+                .number()
+                .describe(
+                  "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+                ),
+              ai_interruptions: zod
+                .number()
+                .describe(
+                  "Mean AI interruption count per call, excluding unmeasured calls.",
+                ),
+              tokens: zod.number(),
+              evaluations: zod.object({}).passthrough(),
+            }),
+          }),
+        )
+        .describe(
+          "By run id: that run's calls page group for the same filters.",
+        ),
+    }),
+  ),
+  rows: zod.array(
+    zod.object({
+      row_id: zod.string().min(1),
+      scenario_key: zod.string().min(1),
+      scenario: zod.string().min(1),
+      use_case: zod.string().min(1),
+      persona: zod.string().min(1).nullable(),
+      persona_details: zod
+        .object({
+          name: zod.string().min(1),
+          voice: zod.string().min(1),
+          age: zod.string().min(1),
+          traits: zod.array(zod.string().min(1)),
+        })
+        .nullable(),
+      situation: zod.string().min(1).nullable(),
+      ideal_outcome: zod.string().min(1).nullable(),
+      calls: zod
+        .record(
+          zod.string(),
+          zod.array(
+            zod.object({
+              id: zod.string().uuid(),
+              scenario: zod.string().min(1),
+              scenario_details: zod.string().min(1),
+              goal: zod.string().min(1),
+              ideal_outcome: zod.string().min(1),
+              conversation_branch: zod.string().min(1),
+              persona: zod.string().min(1),
+              persona_details: zod.object({
+                name: zod.string().min(1),
+                voice: zod.string().min(1),
+                age: zod.string().min(1),
+                traits: zod.array(zod.string().min(1)),
+              }),
+              sub_goals: zod.array(zod.string().min(1)),
+              sub_goal_results: zod.array(
+                zod.object({
+                  name: zod.string().min(1),
+                  passed: zod.boolean(),
+                }),
+              ),
+              harness_outcome_status: zod.string().min(1),
+              source_scenario_key: zod.string().min(1),
+              trial_index: zod.number(),
+              outcome: zod.enum([
+                "queued",
+                "in_progress",
+                "passed",
+                "failed",
+                "inconclusive",
+                "error",
+              ]),
+              execution_status: zod.string().min(1),
+              modality: zod.string().min(1),
+              provider: zod.string().min(1),
+              started_at: zod.string().datetime({ offset: true }),
+              completed_at: zod.string().datetime({ offset: true }),
+              duration_seconds: zod.number(),
+              latency_ms: zod.number(),
+              avg_stop_time_after_interruption: zod
+                .number()
+                .describe(
+                  "Average stop time after caller interruption in milliseconds.",
+                ),
+              ai_interruption_count: zod.number(),
+              turn_count: zod.number(),
+              tokens: zod.number(),
+              cost_cents: zod.number(),
+              cost_breakdown_cents: zod.object({
+                stt: zod.number(),
+                llm: zod.number(),
+                tts: zod.number(),
+                storage: zod.number(),
+                customer: zod.number(),
+              }),
+              csat: zod.number(),
+              ended_reason: zod.string(),
+              error_message: zod.string(),
+              evaluations: zod.array(
+                zod.object({
+                  id: zod.string().min(1),
+                  name: zod.string().min(1),
+                  type: zod.string(),
+                  value: zod
+                    .object({})
+                    .passthrough()
+                    .describe("Any valid JSON value."),
+                  score: zod.number(),
+                  passed: zod.boolean(),
+                  reason: zod.string(),
+                  status: zod.enum([
+                    "pending",
+                    "succeeded",
+                    "failed",
+                    "timed_out",
+                    "skipped",
+                  ]),
+                }),
+              ),
+              scoring_status: zod.enum([
+                "not_applicable",
+                "pending",
+                "succeeded",
+                "failed",
+                "timed_out",
+              ]),
+              csat_status: zod.enum([
+                "not_applicable",
+                "pending",
+                "succeeded",
+                "failed",
+                "timed_out",
+                "skipped",
+              ]),
+              csat_reason: zod.string().min(1),
+              failure_domain: zod.enum([
+                "agent",
+                "simulator",
+                "environment",
+                "connectivity",
+                "infrastructure",
+                "grading",
+                "platform_sync",
+              ]),
+              failure_code: zod.string().min(1),
+            }),
+          ),
+        )
+        .describe(
+          "By run id, in trial order; empty when the run did not run it.",
+        ),
+      movement: zod.enum(["regressed", "improved", "mixed", "same"]),
+    }),
+  ),
 });
 
 /**
@@ -50645,6 +51076,8 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        pass_rate: zod.number().optional(),
+        measured: zod.number().optional(),
         environment_version: zod
           .object({
             id: zod.string().uuid().optional(),
@@ -54182,7 +54615,32 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         count: zod.number(),
       }),
     ),
+    persona: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    age: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    attack: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    task: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
   }),
+  level_labels: zod.record(zod.string(), zod.string().min(1)),
   status_counts: zod.object({
     queued: zod.number(),
     in_progress: zod.number(),

@@ -1,5 +1,7 @@
 """Deterministic, database-free preparation for each ASGI worker."""
 
+import gc
+
 from django.urls import URLResolver, get_resolver
 
 
@@ -23,3 +25,9 @@ def warm_http_urlconf() -> int:
             pattern for pattern in patterns if isinstance(pattern, URLResolver)
         )
     return pattern_count
+
+
+def freeze_startup_heap() -> None:
+    """Keep start-up objects out of every later full collection."""
+    gc.collect()
+    gc.freeze()

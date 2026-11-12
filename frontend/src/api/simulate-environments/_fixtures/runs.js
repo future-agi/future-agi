@@ -3,7 +3,7 @@
 // exercised without a real completed harness job. Real runs come from the
 // executions API (useEnvironmentRuns / executionToRun); this matches that same
 // run shape (id, label, status, startedAt, finishedAt, total, passed, failed,
-// agentVersion, durationS) so the summary renders it identically to a real run.
+// passRate, measured, agentVersion, durationS) so the summary renders it identically to a real run.
 // `executionId` is the id a row click routes into the reused product execution
 // detail. `scores` is the per-eval {key: 0–100} map the summary graph + eval
 // columns read — inline here (a real run derives it from its kpis instead).
@@ -22,6 +22,8 @@ export const MOCK_RUNS = [
     total: 12,
     passed: 4,
     failed: 0,
+    passRate: 100,
+    measured: 4,
     agentVersion: "v2",
     durationS: 9.4,
     scores: { task_success: 61, policy_adherence: 44 },
@@ -37,6 +39,8 @@ export const MOCK_RUNS = [
     total: 12,
     passed: 11,
     failed: 1,
+    passRate: 91.67,
+    measured: 12,
     agentVersion: "v2",
     durationS: 11.9,
     scores: { task_success: 58, policy_adherence: 39 },
@@ -52,6 +56,8 @@ export const MOCK_RUNS = [
     total: 12,
     passed: 7,
     failed: 5,
+    passRate: 58.33,
+    measured: 12,
     agentVersion: "v1",
     durationS: 13.2,
     scores: { task_success: 49, policy_adherence: 28 },

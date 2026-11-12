@@ -50,3 +50,15 @@ def test_wsgi_worker_warms_routes_after_application_setup(monkeypatch):
 
     assert module["application"] is application
     assert events == ["application_ready", "urlconf_warm"]
+
+
+def test_freeze_startup_heap_collects_then_freezes(monkeypatch):
+    """Garbage is collected first, so only live start-up objects are frozen."""
+
+    events = []
+    monkeypatch.setattr(asgi_startup.gc, "collect", lambda: events.append("collect"))
+    monkeypatch.setattr(asgi_startup.gc, "freeze", lambda: events.append("freeze"))
+
+    asgi_startup.freeze_startup_heap()
+
+    assert events == ["collect", "freeze"]

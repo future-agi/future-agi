@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -307,14 +307,17 @@ def _harness_scenarios(
     scenarios: dict[str, HostedHarnessScenario] = {}
     # all_objects, as the sub-goal filter and facet joins do: a pruned
     # scenario still describes the calls it ran.
-    executions = HostedHarnessExecution.all_objects.filter(
-        call_execution_id__in=call_ids
-    ).select_related("source_scenario")
+    # One row per call either way, so no ordering is needed.
+    executions = (
+        HostedHarnessExecution.all_objects.filter(call_execution_id__in=call_ids)
+        .order_by()
+        .select_related("source_scenario")
+    )
     for execution in executions:
         scenarios[str(execution.call_execution_id)] = execution.source_scenario
     for scenario in HostedHarnessScenario.all_objects.filter(
         call_execution_id__in=call_ids
-    ):
+    ).order_by():
         scenarios.setdefault(str(scenario.call_execution_id), scenario)
     # A pinned run shows its suite version's content, as its grouping does.
     keys = {}
@@ -366,6 +369,147 @@ def _row_dimensions(
     for row_id, column_name, value in cells:
         dimensions[str(row_id)][column_name] = value
     return dimensions
+
+
+def call_scenario_sources(
+    calls: list[CallExecution],
+) -> tuple[dict[str, HostedHarnessScenario], dict[str, dict[str, Any]]]:
+    """The harness scenario and dataset dimensions the row-level columns read."""
+    harness_scenarios = _harness_scenarios(calls)
+    dimensions = _row_dimensions(
+        calls,
+        {
+            str(scenario.dataset_row_id)
+            for scenario in harness_scenarios.values()
+            if scenario.dataset_row_id
+        },
+    )
+    return harness_scenarios, dimensions
+
+
+class _DatasetRow(NamedTuple):
+    dataset_row_id: Any
+
+
+def call_dataset_rows(
+    calls: list[CallExecution],
+) -> tuple[dict[str, _DatasetRow], dict[str, dict[str, Any]]]:
+    """``call_scenario_sources`` narrowed to the dataset row the row-level columns read.
+
+    Pinning never changes a scenario's dataset row, so the suite is not read.
+    """
+    call_ids = [call.id for call in calls]
+    rows: dict[str, Any] = {}
+    if call_ids:
+        # The execution's scenario wins, even when it has none; then the registration.
+        for call_id, row_id in (
+            HostedHarnessExecution.all_objects.filter(call_execution_id__in=call_ids)
+            .order_by()
+            .values_list("call_execution_id", "source_scenario__dataset_row_id")
+        ):
+            rows[str(call_id)] = row_id
+        for call_id, row_id in (
+            HostedHarnessScenario.all_objects.filter(call_execution_id__in=call_ids)
+            .order_by()
+            .values_list("call_execution_id", "dataset_row_id")
+        ):
+            rows.setdefault(str(call_id), row_id)
+    dataset_rows = {
+        call_id: _DatasetRow(row_id) for call_id, row_id in rows.items() if row_id
+    }
+    dimensions = _row_dimensions(
+        calls, {str(row.dataset_row_id) for row in dataset_rows.values()}
+    )
+    return dataset_rows, dimensions
+
+
+class _RowSources(NamedTuple):
+    metadata: dict[str, Any]
+    row_data: dict[str, Any]
+    row_dimensions: dict[str, Any]
+    scenario_dimensions: dict[str, Any]
+    scenario_metadata: dict[str, Any]
+    harness_scenario: HostedHarnessScenario | _DatasetRow | None
+
+
+def _row_sources(
+    call: CallExecution,
+    harness_scenarios: Mapping[str, HostedHarnessScenario | _DatasetRow],
+    dimensions: dict[str, dict[str, Any]],
+) -> _RowSources:
+    metadata = call_row_metadata(call)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    row_data = metadata.get("row_data")
+    row_data = row_data if isinstance(row_data, dict) else {}
+    row_id = str(call.row_id or metadata.get("row_id") or "")
+    harness_scenario = harness_scenarios.get(str(call.id))
+    return _RowSources(
+        metadata=metadata,
+        row_data=row_data,
+        row_dimensions=dimensions.get(row_id, {}),
+        scenario_dimensions=(
+            dimensions.get(str(harness_scenario.dataset_row_id), {})
+            if harness_scenario and harness_scenario.dataset_row_id
+            else {}
+        ),
+        scenario_metadata=(
+            call.scenario.metadata if isinstance(call.scenario.metadata, dict) else {}
+        ),
+        harness_scenario=harness_scenario,
+    )
+
+
+def row_level_columns(
+    call: CallExecution,
+    harness_scenarios: Mapping[str, HostedHarnessScenario | _DatasetRow],
+    dimensions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """A call row's scenario-level columns, as the run detail table shows them."""
+    return _shared_columns(call, _row_sources(call, harness_scenarios, dimensions))
+
+
+def _shared_columns(call: CallExecution, sources: _RowSources) -> dict[str, Any]:
+    metadata, row_data, row_dimensions = (
+        sources.metadata,
+        sources.row_data,
+        sources.row_dimensions,
+    )
+    persona_details = _persona_details(
+        metadata.get("persona")
+        or row_data.get("persona")
+        or row_dimensions.get("persona")
+        or sources.scenario_metadata.get("persona")
+    )
+    goal = (
+        getattr(call, "result_goal", None)
+        or metadata.get("use_case")
+        or metadata.get("goal")
+        or row_data.get("use_case")
+        or row_data.get("goal")
+        or row_dimensions.get("use_case")
+        or row_dimensions.get("goal")
+        or sources.scenario_metadata.get("use_case")
+        or sources.scenario_metadata.get("goal")
+        or call.scenario.name
+    )
+    ideal_outcome = (
+        row_data.get("outcome")
+        or sources.scenario_dimensions.get("outcome")
+        or row_dimensions.get("outcome")
+    )
+    situation = (
+        row_data.get("situation")
+        or sources.scenario_dimensions.get("situation")
+        or row_dimensions.get("situation")
+    )
+    return {
+        "scenario": call.scenario.name,
+        "scenario_details": str(situation) if situation else None,
+        "goal": str(goal),
+        "ideal_outcome": str(ideal_outcome) if ideal_outcome else None,
+        "persona": persona_details.get("name") if persona_details else None,
+        "persona_details": persona_details,
+    }
 
 
 def _authored_branches(
@@ -530,31 +674,45 @@ def _harness_columns(execution: TestExecution) -> list[dict[str, str]]:
     return columns
 
 
+def harness_columns_cache_key(execution: TestExecution) -> str | None:
+    """Where a completed run's harness-native columns are cached."""
+    if execution.status != TestExecution.ExecutionStatus.COMPLETED:
+        return None
+    version = execution.completed_at or execution.updated_at
+    return f"simulate:v3:harness-eval-columns:v2:{execution.id}:{version.timestamp()}"
+
+
 def build_evaluation_catalog(
     execution: TestExecution,
+    *,
+    configs: list[dict[str, Any]] | None = None,
+    cached_columns: Any = None,
 ) -> tuple[list[dict[str, str]], set[str]]:
-    """Return stable configured and harness-native columns for an execution."""
+    """Return stable configured and harness-native columns for an execution.
+
+    A caller of many runs passes the run test's ``configs`` and the run's
+    ``cached_columns`` entry, read once for all of them.
+    """
     # Configs can change after a run completes, so they must always be read
     # fresh; only the harness-native scan below is safe to cache.
-    configs = list(
-        SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).values("id", "name")
-    )
+    if configs is None:
+        configs = list(
+            SimulateEvalConfig.objects.filter(
+                run_test=execution.run_test, deleted=False
+            ).values("id", "name")
+        )
     configured_columns = [
         {"id": str(config["id"]), "name": str(config["name"]), "kind": "evaluation"}
         for config in configs
     ]
     live_eval_ids = {column["id"] for column in configured_columns}
 
-    harness_cache_key = None
     harness_columns = None
-    if execution.status == TestExecution.ExecutionStatus.COMPLETED:
-        version = execution.completed_at or execution.updated_at
-        harness_cache_key = (
-            f"simulate:v3:harness-eval-columns:v2:{execution.id}:{version.timestamp()}"
+    harness_cache_key = harness_columns_cache_key(execution)
+    if harness_cache_key:
+        harness_columns = (
+            cache.get(harness_cache_key) if cached_columns is None else cached_columns
         )
-        harness_columns = cache.get(harness_cache_key)
         # Treat any non-list value as a miss so a key collision can never
         # crash the table.
         if not isinstance(harness_columns, list):
@@ -602,7 +760,11 @@ def build_call_rows(
     *,
     runnable_ids: set[str] | None = None,
     now: datetime | None = None,
+    scenario_sources: (
+        tuple[dict[str, HostedHarnessScenario], dict[str, dict[str, Any]]] | None
+    ) = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """``scenario_sources``: ``call_scenario_sources`` read over these calls or more."""
     if calls is None:
         calls = list(
             CallExecution.objects.filter(test_execution=execution)
@@ -633,53 +795,19 @@ def build_call_rows(
             if eval_id in live_eval_ids
         }
         specs = {eval_id: live_evals[eval_id].spec for eval_id in live_eval_configs}
-    harness_scenarios = _harness_scenarios(calls)
-    dimensions = _row_dimensions(
-        calls,
-        {
-            str(scenario.dataset_row_id)
-            for scenario in harness_scenarios.values()
-            if scenario.dataset_row_id
-        },
-    )
+    harness_scenarios, dimensions = scenario_sources or call_scenario_sources(calls)
     authored_branches = _authored_branches(execution, calls)
     rows = []
     harness_columns: dict[str, dict[str, str]] = {}
     for call in calls:
-        metadata = call_row_metadata(call)
-        metadata = metadata if isinstance(metadata, dict) else {}
-        row_data = metadata.get("row_data")
-        row_data = row_data if isinstance(row_data, dict) else {}
-        row_id = str(call.row_id or metadata.get("row_id") or "")
-        row_dimensions = dimensions.get(row_id, {})
+        sources = _row_sources(call, harness_scenarios, dimensions)
+        metadata, row_data, row_dimensions = (
+            sources.metadata,
+            sources.row_data,
+            sources.row_dimensions,
+        )
         harness_scenario = harness_scenarios.get(str(call.id))
-        scenario_dimensions = (
-            dimensions.get(str(harness_scenario.dataset_row_id), {})
-            if harness_scenario and harness_scenario.dataset_row_id
-            else {}
-        )
-        scenario_metadata = (
-            call.scenario.metadata if isinstance(call.scenario.metadata, dict) else {}
-        )
-        persona_details = _persona_details(
-            metadata.get("persona")
-            or row_data.get("persona")
-            or row_dimensions.get("persona")
-            or scenario_metadata.get("persona")
-        )
-        persona = persona_details.get("name") if persona_details else None
-        goal = (
-            getattr(call, "result_goal", None)
-            or metadata.get("use_case")
-            or metadata.get("goal")
-            or row_data.get("use_case")
-            or row_data.get("goal")
-            or row_dimensions.get("use_case")
-            or row_dimensions.get("goal")
-            or scenario_metadata.get("use_case")
-            or scenario_metadata.get("goal")
-            or call.scenario.name
-        )
+        shared = _shared_columns(call, sources)
         receipt = metadata.get("hosted_harness_receipt")
         receipt = receipt if isinstance(receipt, dict) else {}
         raw_sub_goals = (
@@ -700,16 +828,6 @@ def build_call_rows(
                     "passed": held if isinstance(held, bool) else None,
                 }
             )
-        ideal_outcome = (
-            row_data.get("outcome")
-            or scenario_dimensions.get("outcome")
-            or row_dimensions.get("outcome")
-        )
-        situation = (
-            row_data.get("situation")
-            or scenario_dimensions.get("situation")
-            or row_dimensions.get("situation")
-        )
         conversation_branch = (
             authored_branches.get(str(call.id))
             or metadata.get("conversation_branch")
@@ -717,7 +835,7 @@ def build_call_rows(
             or row_data.get("branch")
             or row_dimensions.get("conversation_branch")
             or row_dimensions.get("branch")
-            or scenario_metadata.get("conversation_branch")
+            or sources.scenario_metadata.get("conversation_branch")
         )
         metrics = call.conversation_metrics_data or {}
         tokens = _number(metrics.get("total_tokens"))
@@ -751,15 +869,15 @@ def build_call_rows(
         rows.append(
             {
                 "id": str(call.id),
-                "scenario": call.scenario.name,
-                "scenario_details": str(situation) if situation else None,
-                "goal": str(goal),
-                "ideal_outcome": str(ideal_outcome) if ideal_outcome else None,
+                "scenario": shared["scenario"],
+                "scenario_details": shared["scenario_details"],
+                "goal": shared["goal"],
+                "ideal_outcome": shared["ideal_outcome"],
                 "conversation_branch": (
                     str(conversation_branch) if conversation_branch else None
                 ),
-                "persona": persona,
-                "persona_details": persona_details,
+                "persona": shared["persona"],
+                "persona_details": shared["persona_details"],
                 # TODO: drop once clients read sub_goal_results.
                 "sub_goals": [goal["name"] for goal in sub_goal_results],
                 "sub_goal_results": sub_goal_results,

@@ -837,41 +837,20 @@ export type ${jsonAlias} = JsonValueApi;`,
       "bundle_cached: boolean | null;",
       "HarnessRunPlanApi.bundle_cached nullable",
     );
-    // A compare side with no decided trials has no rate; a pair missing from one
-    // run has no verdict, interval or side; only a removed key has a reason.
-    for (const [typeName, fields] of [
-      [
-        "HarnessCompareSideApi",
-        ["  pass_rate: number;", "  eval_pass_rate: number;"],
-      ],
-      [
-        "HarnessComparePairApi",
-        [
-          "verdict: HarnessComparePairApiVerdict;",
-          "difference: number;",
-          "interval: HarnessCompareIntervalApi;",
-          "current: HarnessCompareSideApi;",
-          "against: HarnessCompareSideApi;",
-          "reason: string;",
-          "removed_in: RunVersionLabelApi;",
-        ],
-      ],
-      [
-        "HarnessCompareSummaryApi",
-        ["current_pass_rate: number;", "against_pass_rate: number;"],
-      ],
-      ["HarnessCompareVersionsApi", ["against: HarnessRunPinnedVersionsApi;"]],
-      ["HarnessCompareApi", ["against_execution_id: string;"]],
+    // A compare row's scenario-level columns are null when no call carries them.
+    for (const field of [
+      "persona: string;",
+      "persona_details: PersonaDetailsApi;",
+      "situation: string;",
+      "ideal_outcome: string;",
     ]) {
-      for (const field of fields) {
-        schemas = assertReplaceInNamedBlock(
-          schemas,
-          `export interface ${typeName} {`,
-          field,
-          field.replace(/;$/, " | null;"),
-          `${typeName}.${field.split(":")[0].trim()} nullable`,
-        );
-      }
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessCompareRowApi {",
+        field,
+        field.replace(/;$/, " | null;"),
+        `HarnessCompareRowApi.${field.split(":")[0].trim()} nullable`,
+      );
     }
     // A run's version labels are null for an unnumbered version, and its pins null
     // when it has none.
@@ -1295,56 +1274,18 @@ export type ${jsonAlias} = JsonValueApi;`,
         `SimulateApiHarnessEnvironmentsRunPlanResponse.${label} nullable`,
       );
     }
-    // The same nullable compare fields. Only a pair's sides have no nested object,
-    // and only the against run's versions may be null as a whole.
-    const compareResponse =
-      "export const SimulateApiHarnessEnvironmentsCompareResponse =";
-    for (const [pattern, label] of [
-      [
-        /("(?:interval|current|removed_in)": zod\.object\(\{[^{}]*\}\))/g,
-        "pair",
-      ],
-      [/("against": zod\.object\(\{(?:[^{}]|\{[^{}]*\})*\}\))/g, "against"],
-      [
-        /("(?:agent|environment|suite)": zod\.object\(\{[^{}]*\}\))/g,
-        "versions",
-      ],
-    ]) {
-      zod = assertReplaceRegexInNamedBlock(
-        zod,
-        compareResponse,
-        pattern,
-        "$1.nullable()",
-        `SimulateApiHarnessEnvironmentsCompareResponse.${label} nullable`,
-      );
-    }
-    for (const [anchor, label] of [
-      ['"against_execution_id": zod.string().uuid()', "against_execution_id"],
-      [
-        `"verdict": zod.enum(['improved', 'regressed', 'no_meaningful_change', 'inconclusive'])`,
-        "verdict",
-      ],
-      ['"difference": zod.number()', "difference"],
-      ['"pass_rate": zod.number()', "pass_rate"],
-      ['"eval_pass_rate": zod.number()', "eval_pass_rate"],
-      ['"reason": zod.string().min(1)', "reason"],
-      ['"current_pass_rate": zod.number()', "current_pass_rate"],
-      ['"against_pass_rate": zod.number()', "against_pass_rate"],
-      ['"label": zod.string().min(1).optional()', "label"],
-    ]) {
-      zod = assertReplaceInNamedBlock(
-        zod,
-        compareResponse,
-        anchor,
-        anchor.endsWith(".optional()")
-          ? anchor.replace(/\.optional\(\)$/, ".nullish()")
-          : `${anchor}.nullable()`,
-        `SimulateApiHarnessEnvironmentsCompareResponse.${label} nullable`,
-      );
-    }
+    // The same nullable compare row columns; only the row's own, not its calls'.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsCompareRunsResponse =",
+      /("use_case": zod\.string\(\)\.min\(1\),\s*"persona": zod\.string\(\)\.min\(1\))(,\s*"persona_details": zod\.object\(\{[^{}]*\}\))(,\s*"situation": zod\.string\(\)\.min\(1\))(,\s*"ideal_outcome": zod\.string\(\)\.min\(1\))/,
+      "$1.nullable()$2.nullable()$3.nullable()$4.nullable()",
+      "SimulateApiHarnessEnvironmentsCompareRunsResponse row columns nullable",
+    );
     for (const response of [
       "SimulateRunTestsExecutionsListResponse",
       "SimulateV3TestExecutionCallsResponse",
+      "SimulateApiHarnessEnvironmentsCompareRunsResponse",
     ]) {
       zod = assertReplaceRegexInNamedBlock(
         zod,
@@ -1506,7 +1447,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],

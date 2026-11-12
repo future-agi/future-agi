@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box, Stack, Typography, Button, TextField, MenuItem, Checkbox, ListItemText, CircularProgress,
 } from "@mui/material";
@@ -7,6 +8,8 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { RUNS_PAGE_SIZE } from "src/api/simulate-environments/runs";
+import { MAX_COMPARE_RUNS } from "src/api/simulate-environments/compareRuns";
+import { paths } from "src/routes/paths";
 import SectionCard from "../../../components/SectionCard";
 import { useRunsSummary } from "./useRunsSummary";
 import SummaryGraph from "./SummaryGraph";
@@ -14,14 +17,12 @@ import SummaryLegend from "./SummaryLegend";
 import SummaryTable from "./SummaryTable";
 import { dataColor } from "../runs.constants";
 import { countCoveredScenarios } from "./summaryData";
-import RunCompare from "./RunCompare";
 import { COMPARE_COPY } from "../../workspace.constants";
-
-const RUN_COMPARE_ENABLED = false;
+import { MIN_COMPARE_RUNS } from "../compare/compare.constants";
 
 // The Runs tab: every run of the environment as one summary — the eval-score
-// trend graph over the runs table. With versioning on, two finished runs can
-// be ticked and compared. Choosing a winner is a later phase,
+// trend graph over the runs table. Two to eight finished runs can be ticked
+// and compared on their own page. Choosing a winner is a later phase,
 // surfaced as "coming soon" so the shell matches the design without faking the
 // behaviour.
 // Title, legend, graph and the runs bar (~440px) plus ~320px of table rows.
@@ -43,12 +44,12 @@ export default function RunsSummary({
   const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
   // The selected rows themselves, so a selection survives paging.
   const [selected, setSelected] = useState([]);
-  const [comparing, setComparing] = useState(false);
-  // TODO: compare is hidden until its place in the product is decided.
-  const canCompare = RUN_COMPARE_ENABLED && !!env?.versioning?.enabled;
+  const navigate = useNavigate();
   const selectedIds = selected.map((r) => r.executionId);
   const canSelect = (row) =>
-    selected.length < 2 && !!row.executionId && row.runState === "finished";
+    selected.length < MAX_COMPARE_RUNS &&
+    !!row.executionId &&
+    row.runState === "finished";
   const toggleSelect = (row) =>
     setSelected((prev) =>
       prev.some((r) => r.executionId === row.executionId)
@@ -70,9 +71,16 @@ export default function RunsSummary({
     (s) => rows.find((r) => r.executionId === s.executionId) ?? s,
   );
   const comparable =
-    live.length === 2 && live.every((r) => r.runState === "finished");
-  // The newer run is the one compared; the older is what it is compared with.
-  const [current, against] = [...live].sort((a, b) => b.ordinal - a.ordinal);
+    live.length >= MIN_COMPARE_RUNS &&
+    live.every((r) => r.runState === "finished");
+  // The first run picked is the baseline the others are compared with.
+  const compare = () =>
+    navigate(
+      paths.dashboard.simulate.environments.compare(
+        env.id,
+        live.map((r) => r.executionId),
+      ),
+    );
   // The server counts over every run of the environment; the page-local
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
@@ -181,25 +189,21 @@ export default function RunsSummary({
           <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
             across {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"}
           </Typography>
-          {canCompare && (
-            <>
-              <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
-                {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
-              </Typography>
-              {selected.length > 0 && (
-                <Button size="small" onClick={() => setSelected([])} sx={{ flexShrink: 0 }}>
-                  {COMPARE_COPY.clear}
-                </Button>
-              )}
-              <Button
-                variant="outlined" size="small" disabled={!comparable}
-                onClick={() => setComparing(true)}
-                sx={{ flexShrink: 0 }}
-              >
-                {COMPARE_COPY.compare}
-              </Button>
-            </>
+          <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
+            {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
+          </Typography>
+          {selected.length > 0 && (
+            <Button size="small" onClick={() => setSelected([])} sx={{ flexShrink: 0 }}>
+              {COMPARE_COPY.clear}
+            </Button>
           )}
+          <Button
+            variant="outlined" size="small" disabled={!comparable}
+            onClick={compare}
+            sx={{ flexShrink: 0 }}
+          >
+            {COMPARE_COPY.compare}
+          </Button>
           <Button
             variant="outlined" size="small" onClick={() => onGo?.("evals")}
             startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
@@ -221,7 +225,9 @@ export default function RunsSummary({
 
         <SummaryTable
           rows={rows} evals={evals} onOpenRun={onOpenRun}
-          {...(canCompare && { selectedIds, canSelect, onToggleSelect: toggleSelect })}
+          selectedIds={selectedIds}
+          canSelect={canSelect}
+          onToggleSelect={toggleSelect}
         />
         {count > RUNS_PAGE_SIZE && (
           <Box sx={{ flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
@@ -238,18 +244,12 @@ export default function RunsSummary({
           </Box>
         )}
       </SectionCard>
-      {selected.length === 2 && (
-        <RunCompare
-          open={comparing} onClose={() => setComparing(false)}
-          env={env} current={current} against={against}
-        />
-      )}
     </Box>
   );
 }
 
 RunsSummary.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string, versioning: PropTypes.object }).isRequired,
+  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
   scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,

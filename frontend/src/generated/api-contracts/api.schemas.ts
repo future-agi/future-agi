@@ -17045,6 +17045,8 @@ export interface HarnessRunSummaryApi {
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
+  pass_rate: number;
+  measured: number;
   started_at: string;
   completed_at: string;
 }
@@ -19482,44 +19484,7 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
-export type HarnessComparePairApiBand =
-  (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
-
-export const HarnessComparePairApiBand = {
-  paired: "paired",
-  criteria_changed: "criteria_changed",
-  new: "new",
-  not_applicable: "not_applicable",
-} as const;
-
-export type HarnessComparePairApiVerdict =
-  (typeof HarnessComparePairApiVerdict)[keyof typeof HarnessComparePairApiVerdict];
-
-export const HarnessComparePairApiVerdict = {
-  improved: "improved",
-  regressed: "regressed",
-  no_meaningful_change: "no_meaningful_change",
-  inconclusive: "inconclusive",
-} as const;
-
-/**
- * Newcombe 95% interval of the difference.
- */
-export interface HarnessCompareIntervalApi {
-  low: number;
-  high: number;
-}
-
-export interface HarnessCompareSideApi {
-  passed: number;
-  /** Trials a verdict was reached on. */
-  trials: number;
-  /** Trials that ran to an end but a sub-goal check was undecided. */
-  undecided: number;
-  pass_rate: number | null;
-  /** Context only; never decides the verdict. */
-  eval_pass_rate: number | null;
-}
+export type HarnessCompareRunsApiLevelLabels = { [key: string]: string };
 
 export interface RunVersionLabelApi {
   readonly id?: string;
@@ -19527,55 +19492,417 @@ export interface RunVersionLabelApi {
   readonly label?: string | null;
 }
 
-export interface HarnessComparePairApi {
+export interface RunResumeEntryApi {
+  at: string;
+  by: string;
+  calls: number;
+}
+
+export interface RunResumeApi {
+  resumable: boolean;
+  finished: number;
+  unfinished: number;
+  history: RunResumeEntryApi[];
+}
+
+export interface OutcomeCountsApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface MetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+}
+
+export interface TotalMetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+  total_value: number;
+}
+
+export interface RunSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunFixRunApi {
+  id: string;
+  label: string;
+}
+
+export interface RunExecutionApi {
+  id: string;
+  run_test_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  started_at: string;
+  completed_at: string;
+  ordinal: number;
+  /** @minLength 1 */
+  agent_version: string;
+  environment_version?: RunVersionLabelApi | null;
+  suite_version?: RunVersionLabelApi | null;
+  pinned_agent_version?: RunVersionLabelApi | null;
+  agent_differs?: boolean;
+  selected_scenario_keys?: string[];
+  /** @minimum 1 */
+  trials?: number;
+  /** @minLength 1 */
+  agent_type: string;
+  resume: RunResumeApi;
+  summary: RunSummaryApi;
+  fix_run?: RunFixRunApi;
+}
+
+export interface SimulateRunV3ScoringCountsApi {
+  /** @minimum 0 */
+  not_applicable: number;
+  /** @minimum 0 */
+  pending: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  timed_out: number;
+}
+
+export interface SimulateRunV3CallsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  scoring: SimulateRunV3ScoringCountsApi;
+}
+
+/**
+ * Per evaluation, matching calls' scores in ten 10% bands.
+ */
+export type HarnessCompareRunApiHistograms = { [key: string]: number[] };
+
+export interface HarnessCompareRunApi {
+  execution: RunExecutionApi;
+  is_baseline: boolean;
+  summary: SimulateRunV3CallsSummaryApi;
+  status_counts: OutcomeCountsApi;
+  /** Per evaluation, matching calls' scores in ten 10% bands. */
+  histograms: HarnessCompareRunApiHistograms;
+}
+
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+export interface EvaluationColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  kind: EvaluationColumnApiKind;
+}
+
+export interface FacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+}
+
+export interface RunFacetsApi {
+  goal: FacetValueApi[];
+  sub_goal: FacetValueApi[];
+  status: FacetValueApi[];
+  persona: FacetValueApi[];
+  age: FacetValueApi[];
+  attack: FacetValueApi[];
+  task: FacetValueApi[];
+}
+
+export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
+
+export interface GroupAggregatesApi {
+  csat: number;
+  turns: number;
+  latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
+  tokens: number;
+  evaluations: GroupAggregatesApiEvaluations;
+}
+
+export interface RunGroupApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  result_ids: string[];
+  aggregates: GroupAggregatesApi;
+}
+
+/**
+ * By run id: that run's calls page group for the same filters.
+ */
+export type HarnessCompareGroupApiRuns = { [key: string]: RunGroupApi };
+
+export interface HarnessCompareGroupApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  row_ids: string[];
+  /** The scenario rows in this group on every page. */
+  row_count: number;
+  /** By run id: that run's calls page group for the same filters. */
+  runs: HarnessCompareGroupApiRuns;
+}
+
+export interface PersonaDetailsApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  voice: string;
+  /** @minLength 1 */
+  age: string;
+  traits: string[];
+}
+
+export interface SubGoalResultApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean | null;
+}
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
+  passed: "passed",
+  failed: "failed",
+  inconclusive: "inconclusive",
+  error: "error",
+} as const;
+
+export interface CostBreakdownApi {
+  stt: number;
+  llm: number;
+  tts: number;
+  storage: number;
+  customer: number;
+}
+
+export type SimulateRunV3EvaluationResultApiStatus =
+  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
+
+export const SimulateRunV3EvaluationResultApiStatus = {
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
+
+export interface SimulateRunV3EvaluationResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  type: string;
+  /** Any valid JSON value. */
+  value: SimulateRunV3EvaluationResultApiValue;
+  score: number;
+  passed: boolean;
+  reason: string;
+  status: SimulateRunV3EvaluationResultApiStatus;
+}
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  ended_reason: string;
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
+}
+
+export type HarnessCompareRowApiMovement =
+  (typeof HarnessCompareRowApiMovement)[keyof typeof HarnessCompareRowApiMovement];
+
+export const HarnessCompareRowApiMovement = {
+  regressed: "regressed",
+  improved: "improved",
+  mixed: "mixed",
+  same: "same",
+} as const;
+
+/**
+ * By run id, in trial order; empty when the run did not run it.
+ */
+export type HarnessCompareRowApiCalls = { [key: string]: RunCallApi[] };
+
+export interface HarnessCompareRowApi {
+  /** @minLength 1 */
+  row_id: string;
   /** @minLength 1 */
   scenario_key: string;
   /** @minLength 1 */
   scenario: string;
-  band: HarnessComparePairApiBand;
-  verdict: HarnessComparePairApiVerdict | null;
-  /** Pass-rate change in percentage points. */
-  difference: number | null;
-  interval: HarnessCompareIntervalApi | null;
-  current: HarnessCompareSideApi | null;
-  against: HarnessCompareSideApi | null;
-  changed_sub_goals: string[];
   /** @minLength 1 */
-  reason: string | null;
-  removed_in: RunVersionLabelApi | null;
+  use_case: string;
+  /** @minLength 1 */
+  persona: string | null;
+  persona_details: PersonaDetailsApi | null;
+  /** @minLength 1 */
+  situation: string | null;
+  /** @minLength 1 */
+  ideal_outcome: string | null;
+  /** By run id, in trial order; empty when the run did not run it. */
+  calls: HarnessCompareRowApiCalls;
+  movement: HarnessCompareRowApiMovement;
 }
 
-export interface HarnessCompareSummaryApi {
-  paired: number;
-  improved: number;
-  regressed: number;
-  no_meaningful_change: number;
-  inconclusive: number;
-  criteria_changed: number;
-  new: number;
-  not_applicable: number;
-  current_pass_rate: number | null;
-  against_pass_rate: number | null;
-  margin: number;
-}
-
-export interface HarnessRunPinnedVersionsApi {
-  agent: RunVersionLabelApi | null;
-  environment: RunVersionLabelApi | null;
-  suite: RunVersionLabelApi | null;
-}
-
-export interface HarnessCompareVersionsApi {
-  current: HarnessRunPinnedVersionsApi;
-  against: HarnessRunPinnedVersionsApi | null;
-}
-
-export interface HarnessCompareApi {
-  execution_id: string;
-  against_execution_id: string | null;
-  pairs: HarnessComparePairApi[];
-  summary: HarnessCompareSummaryApi;
-  versions: HarnessCompareVersionsApi;
+export interface HarnessCompareRunsApi {
+  baseline_execution_id: string;
+  runs: HarnessCompareRunApi[];
+  evaluation_columns: EvaluationColumnApi[];
+  facets: RunFacetsApi;
+  level_labels: HarnessCompareRunsApiLevelLabels;
+  changed_count: number;
+  count: number;
+  page: number;
+  /** Rows a page holds at most: fewer when its rows hold many calls. */
+  page_size: number;
+  total_pages: number;
+  groups: HarnessCompareGroupApi[];
+  rows: HarnessCompareRowApi[];
 }
 
 export type HarnessDraftItemApiStatus =
@@ -20116,6 +20443,12 @@ export const HarnessNudgeAnswerApiAnswer = {
 
 export interface HarnessNudgeAnswerApi {
   answer: HarnessNudgeAnswerApiAnswer;
+}
+
+export interface HarnessRunPinnedVersionsApi {
+  agent: RunVersionLabelApi | null;
+  environment: RunVersionLabelApi | null;
+  suite: RunVersionLabelApi | null;
 }
 
 export type HarnessRunWarningApiPiece =
@@ -23937,6 +24270,8 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
+  readonly pass_rate?: number;
+  readonly measured?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
@@ -25117,60 +25452,6 @@ export const CallExecutionV3DetailResponseApiCsatStatus = {
   skipped: "skipped",
 } as const;
 
-export interface PersonaDetailsApi {
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  voice: string;
-  /** @minLength 1 */
-  age: string;
-  traits: string[];
-}
-
-export interface SubGoalResultApi {
-  /** @minLength 1 */
-  name: string;
-  passed: boolean | null;
-}
-
-export interface CostBreakdownApi {
-  stt: number;
-  llm: number;
-  tts: number;
-  storage: number;
-  customer: number;
-}
-
-export type SimulateRunV3EvaluationResultApiStatus =
-  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
-
-export const SimulateRunV3EvaluationResultApiStatus = {
-  pending: "pending",
-  succeeded: "succeeded",
-  failed: "failed",
-  timed_out: "timed_out",
-  skipped: "skipped",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
-
-export interface SimulateRunV3EvaluationResultApi {
-  /** @minLength 1 */
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  type: string;
-  /** Any valid JSON value. */
-  value: SimulateRunV3EvaluationResultApiValue;
-  score: number;
-  passed: boolean;
-  reason: string;
-  status: SimulateRunV3EvaluationResultApiStatus;
-}
-
 export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
 
 export type SimulateRunV3FunctionCallApiResult = { [key: string]: unknown };
@@ -25595,38 +25876,6 @@ export interface AnalyticsExecutionApi {
   completed_at: string;
 }
 
-export interface OutcomeCountsApi {
-  queued: number;
-  in_progress: number;
-  passed: number;
-  failed: number;
-  error: number;
-  inconclusive: number;
-}
-
-export interface MetricStatsApi {
-  average: number;
-  p50: number;
-  p75: number;
-  p90: number;
-  p95: number;
-  p99: number;
-  measured: number;
-  total: number;
-}
-
-export interface TotalMetricStatsApi {
-  average: number;
-  p50: number;
-  p75: number;
-  p90: number;
-  p95: number;
-  p99: number;
-  measured: number;
-  total: number;
-  total_value: number;
-}
-
 export interface AnalyticsSummaryApi {
   total: number;
   outcomes: OutcomeCountsApi;
@@ -25818,245 +26067,7 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
-export interface RunResumeEntryApi {
-  at: string;
-  by: string;
-  calls: number;
-}
-
-export interface RunResumeApi {
-  resumable: boolean;
-  finished: number;
-  unfinished: number;
-  history: RunResumeEntryApi[];
-}
-
-export interface RunSummaryApi {
-  total: number;
-  outcomes: OutcomeCountsApi;
-  measured: number;
-  pass_rate: number;
-  duration: MetricStatsApi;
-  latency: MetricStatsApi;
-  tokens: TotalMetricStatsApi;
-  cost_cents: TotalMetricStatsApi;
-}
-
-export interface RunFixRunApi {
-  id: string;
-  label: string;
-}
-
-export interface RunExecutionApi {
-  id: string;
-  run_test_id: string;
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  status: string;
-  started_at: string;
-  completed_at: string;
-  ordinal: number;
-  /** @minLength 1 */
-  agent_version: string;
-  environment_version?: RunVersionLabelApi | null;
-  suite_version?: RunVersionLabelApi | null;
-  pinned_agent_version?: RunVersionLabelApi | null;
-  agent_differs?: boolean;
-  selected_scenario_keys?: string[];
-  /** @minimum 1 */
-  trials?: number;
-  /** @minLength 1 */
-  agent_type: string;
-  resume: RunResumeApi;
-  summary: RunSummaryApi;
-  fix_run?: RunFixRunApi;
-}
-
-export interface SimulateRunV3ScoringCountsApi {
-  /** @minimum 0 */
-  not_applicable: number;
-  /** @minimum 0 */
-  pending: number;
-  /** @minimum 0 */
-  succeeded: number;
-  /** @minimum 0 */
-  failed: number;
-  /** @minimum 0 */
-  timed_out: number;
-}
-
-export interface SimulateRunV3CallsSummaryApi {
-  total: number;
-  outcomes: OutcomeCountsApi;
-  measured: number;
-  pass_rate: number;
-  duration: MetricStatsApi;
-  latency: MetricStatsApi;
-  tokens: TotalMetricStatsApi;
-  cost_cents: TotalMetricStatsApi;
-  scoring: SimulateRunV3ScoringCountsApi;
-}
-
-export type RunCallApiOutcome =
-  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
-
-export const RunCallApiOutcome = {
-  queued: "queued",
-  in_progress: "in_progress",
-  passed: "passed",
-  failed: "failed",
-  inconclusive: "inconclusive",
-  error: "error",
-} as const;
-
-export type RunCallApiScoringStatus =
-  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
-
-export const RunCallApiScoringStatus = {
-  not_applicable: "not_applicable",
-  pending: "pending",
-  succeeded: "succeeded",
-  failed: "failed",
-  timed_out: "timed_out",
-} as const;
-
-export type RunCallApiCsatStatus =
-  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
-
-export const RunCallApiCsatStatus = {
-  not_applicable: "not_applicable",
-  pending: "pending",
-  succeeded: "succeeded",
-  failed: "failed",
-  timed_out: "timed_out",
-  skipped: "skipped",
-} as const;
-
-export type RunCallApiFailureDomain =
-  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
-
-export const RunCallApiFailureDomain = {
-  agent: "agent",
-  simulator: "simulator",
-  environment: "environment",
-  connectivity: "connectivity",
-  infrastructure: "infrastructure",
-  grading: "grading",
-  platform_sync: "platform_sync",
-} as const;
-
-export interface RunCallApi {
-  id: string;
-  /** @minLength 1 */
-  scenario: string;
-  /** @minLength 1 */
-  scenario_details: string;
-  /** @minLength 1 */
-  goal: string;
-  /** @minLength 1 */
-  ideal_outcome: string;
-  /** @minLength 1 */
-  conversation_branch: string;
-  /** @minLength 1 */
-  persona: string;
-  persona_details: PersonaDetailsApi;
-  sub_goals: string[];
-  sub_goal_results: SubGoalResultApi[];
-  /** @minLength 1 */
-  harness_outcome_status: string;
-  /** @minLength 1 */
-  source_scenario_key: string;
-  trial_index: number;
-  outcome: RunCallApiOutcome;
-  /** @minLength 1 */
-  execution_status: string;
-  /** @minLength 1 */
-  modality: string;
-  /** @minLength 1 */
-  provider: string;
-  started_at: string;
-  completed_at: string;
-  duration_seconds: number;
-  latency_ms: number;
-  /** Average stop time after caller interruption in milliseconds. */
-  avg_stop_time_after_interruption: number | null;
-  ai_interruption_count: number | null;
-  turn_count: number;
-  tokens: number;
-  cost_cents: number;
-  cost_breakdown_cents: CostBreakdownApi;
-  csat: number;
-  ended_reason: string;
-  error_message: string;
-  evaluations: SimulateRunV3EvaluationResultApi[];
-  scoring_status: RunCallApiScoringStatus;
-  csat_status: RunCallApiCsatStatus;
-  /** @minLength 1 */
-  csat_reason: string;
-  failure_domain: RunCallApiFailureDomain;
-  /** @minLength 1 */
-  failure_code: string;
-}
-
-export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
-
-export interface GroupAggregatesApi {
-  csat: number;
-  turns: number;
-  latency_ms: number;
-  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
-  avg_stop_time_after_interruption: number | null;
-  /** Mean AI interruption count per call, excluding unmeasured calls. */
-  ai_interruptions: number | null;
-  tokens: number;
-  evaluations: GroupAggregatesApiEvaluations;
-}
-
-export interface RunGroupApi {
-  total: number;
-  outcomes: OutcomeCountsApi;
-  measured: number;
-  pass_rate: number;
-  duration: MetricStatsApi;
-  latency: MetricStatsApi;
-  tokens: TotalMetricStatsApi;
-  cost_cents: TotalMetricStatsApi;
-  /** @minLength 1 */
-  key: string;
-  /** @minLength 1 */
-  label: string;
-  result_ids: string[];
-  aggregates: GroupAggregatesApi;
-}
-
-export interface FacetValueApi {
-  /** @minLength 1 */
-  value: string;
-  count: number;
-}
-
-export interface RunFacetsApi {
-  goal: FacetValueApi[];
-  sub_goal: FacetValueApi[];
-  status: FacetValueApi[];
-}
-
-export type EvaluationColumnApiKind =
-  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
-
-export const EvaluationColumnApiKind = {
-  evaluation: "evaluation",
-  sub_goal: "sub_goal",
-} as const;
-
-export interface EvaluationColumnApi {
-  /** @minLength 1 */
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  kind: EvaluationColumnApiKind;
-}
+export type RunCallsV3ResponseApiLevelLabels = { [key: string]: string };
 
 export interface RunCallsV3ResponseApi {
   execution: RunExecutionApi;
@@ -26068,6 +26079,7 @@ export interface RunCallsV3ResponseApi {
   results: RunCallApi[];
   groups: RunGroupApi[];
   facets: RunFacetsApi;
+  level_labels: RunCallsV3ResponseApiLevelLabels;
   status_counts: OutcomeCountsApi;
   evaluation_columns: EvaluationColumnApi[];
 }
@@ -39179,13 +39191,47 @@ export type SimulateApiHarnessEnvironmentsListParams = {
   agent_definition_id?: string;
 };
 
-export type SimulateApiHarnessEnvironmentsCompareParams = {
-  execution_id: string;
+export type SimulateApiHarnessEnvironmentsCompareRunsParams = {
+  search?: string;
+  filters?: string;
+  ordering?: SimulateApiHarnessEnvironmentsCompareRunsOrdering;
   /**
-   * The run to compare against; the previous completed run if absent.
+   * 2-8 comma-separated run ids; the first is the baseline.
+   * @minLength 1
    */
-  against_execution_id?: string;
+  runs: string;
+  group_by?: SimulateApiHarnessEnvironmentsCompareRunsGroupBy;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
 };
+
+export type SimulateApiHarnessEnvironmentsCompareRunsOrdering =
+  (typeof SimulateApiHarnessEnvironmentsCompareRunsOrdering)[keyof typeof SimulateApiHarnessEnvironmentsCompareRunsOrdering];
+
+export const SimulateApiHarnessEnvironmentsCompareRunsOrdering = {
+  movement: "movement",
+  scenario: "scenario",
+} as const;
+
+export type SimulateApiHarnessEnvironmentsCompareRunsGroupBy =
+  (typeof SimulateApiHarnessEnvironmentsCompareRunsGroupBy)[keyof typeof SimulateApiHarnessEnvironmentsCompareRunsGroupBy];
+
+export const SimulateApiHarnessEnvironmentsCompareRunsGroupBy = {
+  goal: "goal",
+  sub_goal: "sub_goal",
+  accent: "accent",
+  age: "age",
+  attack: "attack",
+  task: "task",
+  status: "status",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsNudgesParams = {
   /**

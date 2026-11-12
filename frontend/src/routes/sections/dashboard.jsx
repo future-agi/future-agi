@@ -339,6 +339,12 @@ const WorkspaceExecutionDetail = lazyWithRetry(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
     ),
 );
+const WorkspaceRunCompare = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/compare/WorkspaceRunCompare"
+    ),
+);
 const WorkspaceImprovementDetail = lazyWithRetry(
   () =>
     import(
@@ -1475,6 +1481,7 @@ export const dashboardRoutes = (
               path: "improvements/:fixId",
               element: <WorkspaceImprovementDetail />,
             },
+            { path: "compare", element: <WorkspaceRunCompare /> },
             {
               path: "runs/:testId/:executionId",
               element: <WorkspaceExecutionDetail />,

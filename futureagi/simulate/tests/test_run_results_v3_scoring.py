@@ -347,3 +347,45 @@ def test_active_call_ignores_previous_harness_verdict(execution_status):
     )
     expected = "queued" if execution_status in {"pending", "queued"} else "in_progress"
     assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.django_db
+def test_live_eval_specs_by_run_test_reads_each_run_tests_live_evals(
+    organization, workspace
+):
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import RunTest, SimulateEvalConfig
+    from simulate.services.run_results_v3_scoring import live_eval_specs_by_run_test
+
+    template = EvalTemplate.objects.create(
+        name="by-run-test",
+        organization=organization,
+        workspace=workspace,
+        config={"output": "score"},
+        output_type_normalized="percentage",
+        pass_threshold=0.7,
+    )
+    graded, other, bare = (
+        RunTest.objects.create(
+            name=name, organization=organization, workspace=workspace
+        )
+        for name in ("graded", "other", "bare")
+    )
+    kept = SimulateEvalConfig.objects.create(
+        name="kept", eval_template=template, run_test=graded, mapping={}
+    )
+    SimulateEvalConfig.objects.create(
+        name="removed", eval_template=template, run_test=graded, deleted=True
+    )
+    elsewhere = SimulateEvalConfig.objects.create(
+        name="elsewhere", eval_template=template, run_test=other, mapping={}
+    )
+
+    specs = live_eval_specs_by_run_test([graded.id, other.id, bare.id])
+
+    assert {key: list(value) for key, value in specs.items()} == {
+        graded.id: [str(kept.id)],
+        other.id: [str(elsewhere.id)],
+        bare.id: [],
+    }
+    assert specs[graded.id][str(kept.id)].spec.threshold == 0.7

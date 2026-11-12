@@ -28634,31 +28634,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/simulate/api/harness-environments/{id}/compare/": {
+    "/simulate/api/harness-environments/{id}/compare-runs/": {
       get: {
-        operationId: "simulate_api_harness-environments_compare",
+        operationId: "simulate_api_harness-environments_compare_runs",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
-          execution_id: {
-            required: true,
-            schema: {
-              type: "string",
-              format: "uuid",
-            },
-          },
-          against_execution_id: {
+          search: {
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              default: "",
+            },
+          },
+          filters: {
+            required: false,
+            schema: {
+              type: "string",
+              default: {},
+            },
+          },
+          ordering: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["movement", "scenario"],
+              default: "movement",
+            },
+          },
+          runs: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "goal",
+                "sub_goal",
+                "accent",
+                "age",
+                "attack",
+                "task",
+                "status",
+              ],
+              default: "",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              default: 1,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 25,
             },
           },
         },
         responses: {
           200: {
-            $ref: "#/definitions/HarnessCompare",
+            $ref: "#/definitions/HarnessCompareRuns",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -66248,38 +66296,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessCompare: {
+    HarnessCompareRuns: {
       required: [
-        "execution_id",
-        "against_execution_id",
-        "pairs",
-        "summary",
-        "versions",
+        "baseline_execution_id",
+        "runs",
+        "evaluation_columns",
+        "facets",
+        "level_labels",
+        "changed_count",
+        "count",
+        "page",
+        "page_size",
+        "total_pages",
+        "groups",
+        "rows",
       ],
       type: "object",
       properties: {
-        execution_id: {
-          title: "Execution id",
+        baseline_execution_id: {
+          title: "Baseline execution id",
           type: "string",
           format: "uuid",
         },
-        against_execution_id: {
-          title: "Against execution id",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        pairs: {
+        runs: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessComparePair",
+            $ref: "#/definitions/HarnessCompareRun",
           },
         },
-        summary: {
-          $ref: "#/definitions/HarnessCompareSummary",
+        evaluation_columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvaluationColumn",
+          },
         },
-        versions: {
-          $ref: "#/definitions/HarnessCompareVersions",
+        facets: {
+          $ref: "#/definitions/RunFacets",
+        },
+        level_labels: {
+          title: "Level labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        changed_count: {
+          title: "Changed count",
+          type: "integer",
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+        },
+        page_size: {
+          title: "Page size",
+          description:
+            "Rows a page holds at most: fewer when its rows hold many calls.",
+          type: "integer",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        groups: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCompareGroup",
+          },
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCompareRow",
+          },
         },
       },
     },
@@ -81204,6 +81298,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "results",
         "groups",
         "facets",
+        "level_labels",
         "status_counts",
         "evaluation_columns",
       ],
@@ -81245,6 +81340,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         facets: {
           $ref: "#/definitions/RunFacets",
+        },
+        level_labels: {
+          title: "Level labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
         },
         status_counts: {
           $ref: "#/definitions/OutcomeCounts",
@@ -93702,6 +93805,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_passed",
         "outcome_failed",
         "outcome_skipped",
+        "pass_rate",
+        "measured",
         "started_at",
         "completed_at",
       ],
@@ -93754,6 +93859,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
           type: "integer",
           "x-nullable": true,
         },
@@ -101291,22 +101406,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessComparePair: {
+    EvaluationColumn: {
+      required: ["id", "name", "kind"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
+        },
+      },
+    },
+    HarnessCompareGroup: {
+      required: ["key", "label", "row_ids", "row_count", "runs"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        row_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        row_count: {
+          title: "Row count",
+          description: "The scenario rows in this group on every page.",
+          type: "integer",
+        },
+        runs: {
+          title: "Runs",
+          description:
+            "By run id: that run's calls page group for the same filters.",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/RunGroup",
+          },
+        },
+      },
+    },
+    HarnessCompareRow: {
       required: [
+        "row_id",
         "scenario_key",
         "scenario",
-        "band",
-        "verdict",
-        "difference",
-        "interval",
-        "current",
-        "against",
-        "changed_sub_goals",
-        "reason",
-        "removed_in",
+        "use_case",
+        "persona",
+        "persona_details",
+        "situation",
+        "ideal_outcome",
+        "calls",
+        "movement",
       ],
       type: "object",
       properties: {
+        row_id: {
+          title: "Row id",
+          type: "string",
+          minLength: 1,
+        },
         scenario_key: {
           title: "Scenario key",
           type: "string",
@@ -101317,128 +101494,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
-        band: {
-          title: "Band",
+        use_case: {
+          title: "Use case",
           type: "string",
-          enum: ["paired", "criteria_changed", "new", "not_applicable"],
+          minLength: 1,
         },
-        verdict: {
-          title: "Verdict",
-          type: "string",
-          enum: [
-            "improved",
-            "regressed",
-            "no_meaningful_change",
-            "inconclusive",
-          ],
-          "x-nullable": true,
-        },
-        difference: {
-          title: "Difference",
-          description: "Pass-rate change in percentage points.",
-          type: "number",
-          "x-nullable": true,
-        },
-        interval: {
-          $ref: "#/definitions/HarnessCompareInterval",
-        },
-        current: {
-          $ref: "#/definitions/HarnessCompareSide",
-        },
-        against: {
-          $ref: "#/definitions/HarnessCompareSide",
-        },
-        changed_sub_goals: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        reason: {
-          title: "Reason",
+        persona: {
+          title: "Persona",
           type: "string",
           minLength: 1,
           "x-nullable": true,
         },
-        removed_in: {
-          $ref: "#/definitions/RunVersionLabel",
+        persona_details: {
+          $ref: "#/definitions/PersonaDetails",
+        },
+        situation: {
+          title: "Situation",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ideal_outcome: {
+          title: "Ideal outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        calls: {
+          title: "Calls",
+          description:
+            "By run id, in trial order; empty when the run did not run it.",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/RunCall",
+            },
+          },
+        },
+        movement: {
+          title: "Movement",
+          type: "string",
+          enum: ["regressed", "improved", "mixed", "same"],
         },
       },
     },
-    HarnessCompareSummary: {
+    HarnessCompareRun: {
       required: [
-        "paired",
-        "improved",
-        "regressed",
-        "no_meaningful_change",
-        "inconclusive",
-        "criteria_changed",
-        "new",
-        "not_applicable",
-        "current_pass_rate",
-        "against_pass_rate",
-        "margin",
+        "execution",
+        "is_baseline",
+        "summary",
+        "status_counts",
+        "histograms",
       ],
       type: "object",
       properties: {
-        paired: {
-          title: "Paired",
-          type: "integer",
+        execution: {
+          $ref: "#/definitions/RunExecution",
         },
-        improved: {
-          title: "Improved",
-          type: "integer",
+        is_baseline: {
+          title: "Is baseline",
+          type: "boolean",
         },
-        regressed: {
-          title: "Regressed",
-          type: "integer",
+        summary: {
+          $ref: "#/definitions/SimulateRunV3CallsSummary",
         },
-        no_meaningful_change: {
-          title: "No meaningful change",
-          type: "integer",
+        status_counts: {
+          $ref: "#/definitions/OutcomeCounts",
         },
-        inconclusive: {
-          title: "Inconclusive",
-          type: "integer",
-        },
-        criteria_changed: {
-          title: "Criteria changed",
-          type: "integer",
-        },
-        new: {
-          title: "New",
-          type: "integer",
-        },
-        not_applicable: {
-          title: "Not applicable",
-          type: "integer",
-        },
-        current_pass_rate: {
-          title: "Current pass rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        against_pass_rate: {
-          title: "Against pass rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        margin: {
-          title: "Margin",
-          type: "number",
+        histograms: {
+          title: "Histograms",
+          description:
+            "Per evaluation, matching calls' scores in ten 10% bands.",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "integer",
+            },
+          },
         },
       },
     },
-    HarnessCompareVersions: {
-      required: ["current", "against"],
+    RunFacets: {
+      required: [
+        "goal",
+        "sub_goal",
+        "status",
+        "persona",
+        "age",
+        "attack",
+        "task",
+      ],
       type: "object",
       properties: {
-        current: {
-          $ref: "#/definitions/HarnessRunPinnedVersions",
+        goal: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
         },
-        against: {
-          $ref: "#/definitions/HarnessRunPinnedVersions",
+        sub_goal: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        status: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        persona: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        age: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        attack: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        task: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
         },
       },
     },
@@ -110776,27 +110966,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    EvaluationColumn: {
-      required: ["id", "name", "kind"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["evaluation", "sub_goal"],
-        },
-      },
-    },
     OutcomeCounts: {
       required: [
         "queued",
@@ -111202,30 +111371,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    RunFacets: {
-      required: ["goal", "sub_goal", "status"],
-      type: "object",
-      properties: {
-        goal: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/FacetValue",
-          },
-        },
-        sub_goal: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/FacetValue",
-          },
-        },
-        status: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/FacetValue",
-          },
-        },
-      },
-    },
     RunGroup: {
       required: [
         "total",
@@ -111612,6 +111757,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
           type: "integer",
           readOnly: true,
           "x-nullable": true,
@@ -121409,60 +121566,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessCompareInterval: {
-      description: "Newcombe 95% interval of the difference.",
-      required: ["low", "high"],
+    FacetValue: {
+      required: ["value", "count"],
       type: "object",
       properties: {
-        low: {
-          title: "Low",
-          type: "number",
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
         },
-        high: {
-          title: "High",
-          type: "number",
+        count: {
+          title: "Count",
+          type: "integer",
         },
       },
-      "x-nullable": true,
-    },
-    HarnessCompareSide: {
-      required: [
-        "passed",
-        "trials",
-        "undecided",
-        "pass_rate",
-        "eval_pass_rate",
-      ],
-      type: "object",
-      properties: {
-        passed: {
-          title: "Passed",
-          type: "integer",
-        },
-        trials: {
-          title: "Trials",
-          description: "Trials a verdict was reached on.",
-          type: "integer",
-        },
-        undecided: {
-          title: "Undecided",
-          description:
-            "Trials that ran to an end but a sub-goal check was undecided.",
-          type: "integer",
-        },
-        pass_rate: {
-          title: "Pass rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        eval_pass_rate: {
-          title: "Eval pass rate",
-          description: "Context only; never decides the verdict.",
-          type: "number",
-          "x-nullable": true,
-        },
-      },
-      "x-nullable": true,
     },
     HarnessEnvironmentEvalInput: {
       required: ["key", "source", "label"],
@@ -126144,21 +126261,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
-        },
-      },
-    },
-    FacetValue: {
-      required: ["value", "count"],
-      type: "object",
-      properties: {
-        value: {
-          title: "Value",
-          type: "string",
-          minLength: 1,
-        },
-        count: {
-          title: "Count",
-          type: "integer",
         },
       },
     },
