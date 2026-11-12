@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.generics import RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
 
+from model_hub.utils.optimization_scope import optimization_metrics
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -42,7 +43,6 @@ from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.develop_optimisation import OptimizationDetailSerializer
-from model_hub.utils.optimization_scope import optimization_metrics
 from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from tfc.constants.api_calls import APICallTypeChoices

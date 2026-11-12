@@ -1,6 +1,6 @@
 """Explicit dataset scope for optimizer workers, which have no request context."""
 
-from django.db.models import Q
+from django.db.models import F, Q
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import UserEvalMetric
@@ -41,6 +41,10 @@ def optimization_metrics(optimization):
                 template__organization__isnull=True,
                 template__workspace__isnull=True,
             )
+        )
+        .filter(
+            Q(pinned_version__isnull=True)
+            | Q(pinned_version__eval_template_id=F("template_id"))
         )
         .select_related("template")
     )

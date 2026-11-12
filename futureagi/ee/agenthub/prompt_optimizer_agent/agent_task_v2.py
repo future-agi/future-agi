@@ -11,13 +11,13 @@ from tqdm import tqdm
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.model_config import ModelConfigs
 import structlog
+from model_hub.utils.optimization_scope import optimization_metrics
 
 logger = structlog.get_logger(__name__)
 
 PROMPT_OPTIMIZER_THREAD_WORKER_COUNT = 2
 
 from model_hub.models.develop_dataset import Column
-from model_hub.utils.optimization_scope import optimization_metrics
 from model_hub.views.eval_runner import EvaluationRunner
 
 try:

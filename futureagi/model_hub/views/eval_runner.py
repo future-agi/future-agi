@@ -901,7 +901,11 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
-        # get_fewshots = RAG()
+        # The feedback index is organization/template-wide, without a dataset
+        # ownership boundary. Optimizer runs must not consume another dataset's
+        # examples; omit RAG feedback until dataset-scoped retrieval is available.
+        if self.optimize is not None:
+            return []
         embedding_manager = EmbeddingManager()
 
         all_examples = []

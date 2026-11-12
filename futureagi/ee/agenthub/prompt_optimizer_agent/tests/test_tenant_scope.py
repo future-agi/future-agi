@@ -12,7 +12,11 @@ from ee.agenthub.prompt_optimizer_agent.agent_task_v2 import PromptOptimizer
 from ee.usage.models.usage import APICallLog, APICallType
 from model_hub.models.choices import CellStatus, OwnerChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, KnowledgeBaseFile, Row
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.tests.test_develop_optimisation_contracts import (
     create_dataset_with_column,
@@ -193,6 +197,47 @@ def test_default_workspace_and_system_templates_remain_usable(
     (_, score), evaluator = run_feedback(optimization)
     assert score == 80.0
     evaluator.return_value.run.assert_called_once()
+
+
+@pytest.mark.parametrize("own_version", [False, True])
+def test_pinned_version_must_belong_to_the_authorized_template(
+    neighboring_datasets, own_version
+):
+    dataset, column, other_dataset, other_column = neighboring_datasets
+    metric = make_metric(dataset, column)
+    template = (
+        metric.template
+        if own_version
+        else make_metric(other_dataset, other_column).template
+    )
+    version, _ = EvalTemplateVersion.objects.get_or_create(
+        eval_template=template,
+        version_number=1,
+        defaults={
+            "organization": template.organization,
+            "workspace": template.workspace,
+        },
+    )
+    metric.pinned_version = version
+    metric.save()
+    optimization = create_optimization(dataset, column, metric)
+    (_, score), evaluator = run_feedback(optimization)
+    assert score == (80.0 if own_version else 0.0)
+    assert evaluator.called is own_version
+
+
+def test_optimizer_does_not_retrieve_org_wide_feedback(neighboring_datasets):
+    from model_hub.views.eval_runner import EvaluationRunner
+
+    dataset, column, _, _ = neighboring_datasets
+    metric = make_metric(dataset, column)
+    optimization = create_optimization(dataset, column, metric)
+    runner = EvaluationRunner(metric.id, column=column, optimize=optimization)
+    runner.load_user_eval_metric()
+    with patch("model_hub.views.eval_runner.EmbeddingManager") as manager:
+        manager.return_value.process_examples.return_value = ["Other dataset feedback"]
+        assert runner.get_few_shot_examples(["question"], ["input"]) == []
+        manager.assert_not_called()
 
 
 def test_foreign_metric_link_cannot_run_or_write_usage(neighboring_datasets):
