@@ -21,8 +21,11 @@ const rowPath = (compareId: string, rowId: string) =>
 type Column = { id: string; name: string };
 type SourceRow = { row_id: string; input: string; output: string };
 type Dataset = { id: string; name: string; columns: Column[]; rows: SourceRow[] };
+// model_hub.utils.utils.get_diff words, as GenerateDiffText renders them.
+type DiffWord = { text: string; status: 'default' | 'removed' | 'added' };
+type CompareCell = { cell_value: string; cell_row_id: string; cell_diff_value?: DiffWord[] | null };
 // CompareDatasetResponseSerializer and the actual CompareData datasource envelope.
-type CompareRow = Record<string, string | { cell_value: string; cell_row_id: string }>;
+type CompareRow = Record<string, string | CompareCell>;
 type ComparePage = {
   status: boolean;
   result: {
@@ -37,14 +40,14 @@ type RowDetail = {
   result: { table: CompareRow[]; prev_row_id: string | null; next_row_id: string | null };
 };
 const cellValue = (row: CompareRow, columnId: string) =>
-  (row[columnId] as { cell_value: string }).cell_value;
+  (row[columnId] as CompareCell).cell_value;
 
 test('DATA-E2E-003: compared datasets show joined rows across both result blocks', {
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'DATA-E2E-003',
     area: 'datasets',
-    userGoal: 'Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail',
+    userGoal: 'Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail, including the word diff',
     steps: [
       'upload two synthetic CSV datasets with eleven shared inputs and one unmatched input each',
       'open Compare from the first dataset, select the second and join on input',
@@ -52,18 +55,21 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
       'scroll to the final joined row, alone in the second block, and verify that unmatched inputs are absent',
       'click the final joined row, read both outputs in row detail and step back across the block boundary with Prev',
       'close row detail, click the first joined row and confirm Prev is unavailable',
+      'switch the second output to Difference and read the first output removed and the second added',
     ],
     backendChecks: [
       'both uploaded datasets retain the actor scope and exact independently seeded input/output pairs in Postgres',
       'the browser comparison and API replay return exactly eleven joined pairs across ten-row blocks with one stable compare_id',
       'row detail requests return the clicked joined row with previous and next row ids that cross the block boundary and stop at the first and last rows',
+      'the row detail cell of the second output carries the planted word diff against the first output, and the first output carries none',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   // Two uploads: 2 * (UI_READY + ASYNC_JOB + UI_READY) = 360s.
   // Compare navigation + two result blocks: 3 * UI_READY = 180s.
-  // Row detail: last row, Prev, first row: 3 * UI_READY = 180s; 60s headroom.
-  test.setTimeout(780_000);
+  // Row detail: last row, Prev, first row, Difference: 4 * UI_READY = 240s;
+  // 60s headroom.
+  test.setTimeout(840_000);
   page.setDefaultTimeout(UI_READY);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const expected = Array.from({ length: SHARED }, (_, index) => {
@@ -277,6 +283,32 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
     await expectRowDetail(0, await firstLoaded);
     await expect(drawer.getByRole('button', { name: 'Prev', exact: true })).toBeDisabled();
     await expect(drawer.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+  }, { timeout: UI_READY });
+
+  await test.step('backend check 4: the second output shows its word diff against the first', async () => {
+    // CompareDatasetsView diffs each compared cell against the base dataset's
+    // cell; body.result.table equalled ordered[0] in the previous step.
+    expect((ordered[0][leftId] as CompareCell).cell_diff_value).toBeNull();
+    expect((ordered[0][rightId] as CompareCell).cell_diff_value).toEqual([
+      { text: joined[0].left, status: 'removed' },
+      { text: joined[0].right, status: 'added' },
+    ]);
+    const details = drawer.locator('table > tbody > tr').nth(1).locator(':scope > td');
+    await expect(details.nth(0).getByRole('tab', { name: 'Difference', exact: true })).toHaveCount(0);
+    const difference = details.nth(1).getByRole('tab', { name: 'Difference', exact: true });
+    await difference.click();
+    await expect(difference).toHaveAttribute('aria-selected', 'true');
+    // GenerateDiffText: one span per word, coloured by its get_diff status.
+    const removed = details.nth(1).getByText(joined[0].left, { exact: true });
+    const added = details.nth(1).getByText(joined[0].right, { exact: true });
+    await expect(removed).toBeVisible();
+    await expect(added).toBeVisible();
+    const background = (word: typeof removed) =>
+      word.evaluate(element => getComputedStyle(element).backgroundColor);
+    const [removedBackground, addedBackground] = [await background(removed), await background(added)];
+    expect([removedBackground, addedBackground]).not.toContain('rgba(0, 0, 0, 0)');
+    expect(removedBackground).not.toBe(addedBackground);
+    await testInfo.attach('row-detail-difference', { contentType: 'image/png', body: await page.screenshot() });
   }, { timeout: UI_READY });
   // actor, browser context and StateProbe are disposed by lib/fixtures.ts.
 });

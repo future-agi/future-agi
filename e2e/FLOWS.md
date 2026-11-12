@@ -816,9 +816,9 @@
 
 ### DATA-E2E-003 — compared datasets show joined rows across both result blocks
 
-**Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail
+**Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail, including the word diff
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:42`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:45`
 
 **Tags:** —
 
@@ -830,12 +830,14 @@
 4. scroll to the final joined row, alone in the second block, and verify that unmatched inputs are absent
 5. click the final joined row, read both outputs in row detail and step back across the block boundary with Prev
 6. close row detail, click the first joined row and confirm Prev is unavailable
+7. switch the second output to Difference and read the first output removed and the second added
 
 **Backend state verified:**
 
 - both uploaded datasets retain the actor scope and exact independently seeded input/output pairs in Postgres
 - the browser comparison and API replay return exactly eleven joined pairs across ten-row blocks with one stable compare_id
 - row detail requests return the clicked joined row with previous and next row ids that cross the block boundary and stop at the first and last rows
+- the row detail cell of the second output carries the planted word diff against the first output, and the first output carries none
 
 ## error-feed
 
