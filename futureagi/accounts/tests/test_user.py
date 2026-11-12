@@ -713,9 +713,7 @@ class TestManageRedisKeyAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert cache.get("timing_probe_key") is None
-        compare_digest.assert_any_call(
-            near_miss.encode(), settings.SECRET_KEY.encode()
-        )
+        compare_digest.assert_any_call(near_miss.encode(), settings.SECRET_KEY.encode())
 
     @pytest.mark.parametrize(
         "make_token",
