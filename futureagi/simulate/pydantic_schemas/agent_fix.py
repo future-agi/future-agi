@@ -126,8 +126,11 @@ class EngineBrief(BaseModel):
     # an earlier launch sent, and its budget starts from what the fix has committed.
     last_attempt: int
     committed_usd: float
-    # What a check run reserves of the fix's budget for each execution, its evals included.
+    # What a check run reserves of the fix's budget for each execution: a screen or the
+    # variations, which are never graded, and a run a winner's grading reads (the baseline
+    # repeats and a final check), its billed evals included.
     worst_case_usd_per_execution: float
+    worst_case_usd_per_graded_execution: float
     deadline_at: str
     # The source run's trials that failed a sub-goal on the targets the engine searches:
     # Diagnose reads them while Reproduce runs. Never a held-back target.

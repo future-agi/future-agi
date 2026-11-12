@@ -73,10 +73,13 @@ from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    canonical_digest,
     create_selected_harness_run,
     hash_secret,
+    register_attempt,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
@@ -2789,7 +2792,7 @@ class TestCheckRunEvalCost:
         assert run.fix_eval_cost_usd == Decimal("2.6250")
         assert source_run.fix_eval_cost_usd == 0
 
-    def test_a_check_run_s_reserve_covers_each_eval_a_winner_s_grading_may_run(
+    def test_a_graded_run_s_reserve_covers_each_eval_a_winner_s_grading_may_run(
         self, source_run, settings, temporal
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "1"
@@ -2797,9 +2800,52 @@ class TestCheckRunEvalCost:
         fix_run = _fix_run(source_run, budget_usd=1.5, spent_usd=Decimal("0.5"))
         _mapped_eval(source_run)
 
-        # $0.50 spent and $1.25 for the check: past the $1.50 limit with its eval in.
-        assert _refusal(_check, fix_run) == ("fix_budget_exhausted", 402)
-        assert engine_brief(fix_run).worst_case_usd_per_execution == 1.25
+        # $0.50 spent and $1.25 for the baseline: past the $1.50 limit with its eval in.
+        assert _refusal(_check, fix_run, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        brief = engine_brief(fix_run)
+        assert (
+            brief.worst_case_usd_per_execution,
+            brief.worst_case_usd_per_graded_execution,
+        ) == (1.0, 1.25)
+
+    def test_a_screen_holds_its_simulation_only_and_a_graded_run_its_evals_too(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        _mapped_eval(source_run)
+
+        _check(fix_run, label="c1-target-r1", version_id=candidate.agent_version_id)
+        assert committed_usd(fix_run) == Decimal("0.5")
+        _check(fix_run, label="variations")
+        assert committed_usd(fix_run) == Decimal("1.0")
+        _check(fix_run, label="baseline-r1")
+        _check(fix_run, label="c1-finalist-r1", version_id=candidate.agent_version_id)
+        assert committed_usd(fix_run) == Decimal("2.5")
+
+    def test_a_small_limit_still_takes_a_screen_its_evals_never_grade(
+        self, source_run, settings, temporal
+    ):
+        """Before evals counted, a screen reserved only its simulation; it still does."""
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run, budget_usd=0.6)
+        candidate = _candidate(fix_run)
+        _mapped_eval(source_run)
+
+        assert _refusal(_check, fix_run, label="baseline-r1") == (
+            "fix_budget_exhausted",
+            402,
+        )
+        screen = _check(
+            fix_run, label="c1-target-r1", version_id=candidate.agent_version_id
+        )
+        assert screen.fix_run_id == fix_run.id
 
 
 class TestPullRequestEvals:
@@ -2854,3 +2900,49 @@ class TestPullRequestEvals:
             (EvalReview(grading=EvalGrading.NONE), Outcome.FINALIST),
         ):
             assert "Platform evals" not in self._body(source_run, review, outcome)
+
+
+class TestCheckRunReceipts:
+    def test_a_check_run_s_hosted_receipt_starts_no_grading(self, source_run):
+        """A fix grades its check runs only once it has a winner: a check run's hosted
+        receipt queues no eval and no tool-call judge though its run test selects one, and
+        closes its call's eval side so a winner's grading can take it."""
+        fix_run = _fix_run(source_run)
+        _mapped_eval(source_run)
+        run = _check(fix_run)
+        attempt = register_attempt(
+            run.id, endpoint_base_url="https://harness.example.test"
+        ).attempt
+        execution = _executions(run).first()
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(run.id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "scenario_key": execution.execution_key,
+            "scenario_id": str(execution.source_scenario.scenario_id),
+            "scenario_attempt": 1,
+            "world_index": None,
+            "status": "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": None,
+            "failure": None,
+        }
+        body["digest"] = canonical_digest(body)
+
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            ingest_result_receipt(attempt, body)
+
+        dispatch.assert_not_called()
+        call = CallExecution.objects.get(id=execution.call_execution_id)
+        assert call.status == CallExecution.CallStatus.COMPLETED
+        assert (
+            call.call_metadata.get("eval_started"),
+            call.call_metadata.get("eval_completed"),
+        ) == (True, True)

@@ -40,6 +40,7 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     fix_lineage,
     graded_check_runs,
+    is_graded_label,
     ran_at,
     worst_case_usd_per_execution,
 )
@@ -282,14 +283,14 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     executions = len(request.scenario_keys) * request.trials
     if not replay:
         # Before the usage check, which counts against the organization's quota.
-        _require_budget(fix_run, executions)
+        _require_budget(fix_run, executions, request.label)
         require_harness_call_usage(environment)
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
         if finished is not None:
             return finished
         if not replay:
-            _require_budget(locked, executions)
+            _require_budget(locked, executions, request.label)
         run, created = create_selected_harness_run(
             environment,
             scenario_keys=request.scenario_keys,
@@ -399,9 +400,10 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
             )
 
 
-def _require_budget(fix_run: AgentFixRun, executions: int) -> None:
+def _require_budget(fix_run: AgentFixRun, executions: int, label: str) -> None:
     budget = Decimal(str(fix_run.request["budget_usd"]))
-    needed = committed_usd(fix_run) + executions * worst_case_usd_per_execution(fix_run)
+    worst = worst_case_usd_per_execution(fix_run, graded=is_graded_label(label))
+    needed = committed_usd(fix_run) + executions * worst
     if needed > budget:
         raise HostedHarnessError(
             "fix_budget_exhausted",

@@ -260,7 +260,12 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
-        worst_case_usd_per_execution=float(worst_case_usd_per_execution(fix_run)),
+        worst_case_usd_per_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=False)
+        ),
+        worst_case_usd_per_graded_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=True)
+        ),
         deadline_at=fix_deadline(fix_run).isoformat(),
         source_failures=source_failures(
             fix_run.source_run, request, variations_run(fix_run)
@@ -742,9 +747,17 @@ def _worst_case(evals: Any) -> Any:
     )
 
 
-def worst_case_usd_per_execution(fix_run: AgentFixRun) -> Decimal:
-    """What a check run reserves of the fix's budget for each execution."""
-    return _worst_case(_billed_evals(fix_run.environment.run_test_id).count())
+def is_graded_label(label: str) -> bool:
+    """Whether a winner's grading reads a check run with this label: the base version's
+    baseline repeats and a candidate's final check. No other check run is ever graded."""
+    return bool(_BASELINE_LABEL.match(label) or _FINALIST_LABEL.match(label))
+
+
+def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decimal:
+    """What a check run reserves of the fix's budget for each execution: its simulation,
+    and each billed eval only when a winner's grading reads the run."""
+    evals = _billed_evals(fix_run.environment.run_test_id).count() if graded else 0
+    return _worst_case(evals)
 
 
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
@@ -768,10 +781,18 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         ),
         0,
     )
+    graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
+        check_runs__fix_label__regex=_FINALIST_LABEL.pattern
+    )
+    per_execution = Case(
+        When(graded, then=_worst_case(evals)),
+        default=Value(_worst_case(0)),
+        output_field=money,
+    )
     held = Greatest(
         actual,
         ExpressionWrapper(
-            F("check_runs__scenario_count") * _worst_case(evals), output_field=money
+            F("check_runs__scenario_count") * per_execution, output_field=money
         ),
         output_field=money,
     )
