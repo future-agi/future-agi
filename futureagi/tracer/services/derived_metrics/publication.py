@@ -63,6 +63,60 @@ class MetricCheckpointLayoutPending(MetricVisibilityError):
     code = "committed_layout_pending"
 
 
+class MetricStatementTimeout(MetricVisibilityError):
+    """The client-side statement wall elapsed while packets were still pending."""
+
+
+# ClickHouse TIMEOUT_EXCEEDED: the server enforced the max_execution_time we set.
+SERVER_TIMEOUT_CODE = 159
+
+
+def statement_timed_out(exc):
+    """Only transport/statement walls, never a memory, storage or query error."""
+    from clickhouse_driver import errors
+
+    timeouts = (
+        MetricStatementTimeout,
+        TimeoutError,
+        getattr(errors, "SocketTimeoutError", TimeoutError),
+    )
+    if isinstance(exc, timeouts):
+        return True
+    return (
+        isinstance(exc, errors.ServerException)
+        and getattr(exc, "code", None) == SERVER_TIMEOUT_CODE
+    )
+
+
+def pass_bounded(lease, statement_deadline):
+    """Whether the reservation's monotonic pass deadline bounded a statement.
+
+    int() flooring of the server cap leaves at most one second of slack. The
+    60-second statement cap, a compaction wall or lease expiry are not ours.
+    """
+    deadline = getattr(lease, "deadline", None)
+    return (
+        deadline is not None
+        and statement_deadline is not None
+        and deadline <= statement_deadline + 1
+    )
+
+
+def cooperative_timeout(lease, statement_deadline, exc):
+    """Map a timeout caused by OUR pass-budget clamp to cooperative cancellation.
+
+    Only a statement/transport timeout of a statement whose wall was reduced to
+    the reservation's remaining pass budget qualifies (also ClickHouse's early
+    estimate against that reduced cap). Unclamped timeouts and every other
+    backend failure still fail. Callers have already discarded the connection.
+    """
+    if not statement_timed_out(exc) or not pass_bounded(lease, statement_deadline):
+        return None
+    from tracer.services.derived_metrics.lease import MetricPassDeadline
+
+    return MetricPassDeadline()
+
+
 @dataclass(frozen=True)
 class CheckpointPartition:
     partition: str
@@ -175,6 +229,23 @@ class ClickHousePublicationStore:
         self.client = client
         self.lease = lease
 
+    def _restore_transients(self):
+        """Rebuild checked session captures after the driver replaced the session.
+
+        Every exception discards the native connection (and therefore its
+        temporary tables). Retry paths such as bucket subdivision continue on a
+        new session; registered captures replay their immutable sources there.
+        """
+        relations = getattr(self, "_transient_relations", None)
+        if not relations or getattr(self, "_restoring", False):
+            return
+        self._restoring = True
+        try:
+            for relation in tuple(relations):
+                relation.ensure()
+        finally:
+            self._restoring = False
+
     @contextmanager
     def compaction_budget(self, deadline):
         """One invocation budget, including preparation, digesting and staging.
@@ -190,6 +261,7 @@ class ClickHousePublicationStore:
             self._compaction_deadline = previous
 
     def execute(self, sql, params=None, **kwargs):
+        self._restore_transients()
         deadline = getattr(self, "_compaction_deadline", None)
         if self.lease is not None:
             self.lease.keepalive()
@@ -208,6 +280,19 @@ class ClickHousePublicationStore:
                 raise MetricPassDeadline()
             raise MetricVisibilityError("checkpoint compaction deadline exceeded")
         statement_deadline = min(deadline, monotonic() + seconds)
+        try:
+            return self._bounded_execute(
+                sql, params, seconds, statement_deadline, **kwargs
+            )
+        except Exception as exc:
+            # The connection is already discarded. Our own remaining-budget
+            # clamp is a cooperative yield: resumable, not a refresh failure.
+            cancelled = cooperative_timeout(self.lease, statement_deadline, exc)
+            if cancelled is not None:
+                raise cancelled from exc
+            raise
+
+    def _bounded_execute(self, sql, params, seconds, statement_deadline, **kwargs):
         connection = self.client.connection
         old_connect = connection.connect_timeout
         old_receive = connection.send_receive_timeout
@@ -229,7 +314,7 @@ class ClickHousePublicationStore:
             while True:
                 remaining = statement_deadline - monotonic()
                 if remaining <= 0:
-                    raise MetricVisibilityError(
+                    raise MetricStatementTimeout(
                         "checkpoint compaction statement timed out"
                     )
                 socket.settimeout(min(old_receive, remaining))
@@ -478,14 +563,15 @@ class ClickHousePublicationStore:
 
 @contextmanager
 def pinned_read(store, project_id, *, metric_id=None, pin=None, now=None):
-    """Use ONE locked definition/head/remap and recheck revocation on completion.
+    """Freeze ONE definition/head/remap; native reads never own lifecycle locks.
 
-    The shared lifecycle lock spans the bounded CH reads. Thus erasure cannot
-    purge halfway through a multi-table request, even with a pre-existing queued
-    snapshot pin. Completed snapshots are a separate store and are not read here.
+    A live pin roots immutable history against GC. Erasure may revoke it and
+    purge during a multi-table read: the final serialized validation then rejects
+    the entire assembled response, never returns partial or pre-erasure evidence.
+    Completed snapshots are a separate store and are not read here.
     """
+    owned = pin is None
     with serialized_project(project_id):
-        owned = pin is None
         if owned:
             pin = capture_pin(
                 project_id,
@@ -497,11 +583,12 @@ def pinned_read(store, project_id, *, metric_id=None, pin=None, now=None):
         if str(pin.project_id) != str(project_id) or not pin.is_usable(now):
             raise MetricStateConflict("expired generation")
         manifest = pin.manifest
+    try:
         store.assert_visible(manifest)
-        try:
-            yield manifest, pin.definition_version
+        yield manifest, pin.definition_version
+        with serialized_project(project_id):
             if not pin.is_usable(now):
                 raise MetricStateConflict("expired generation")
-        finally:
-            if owned:
-                MetricGenerationPin.objects.filter(id=pin.id).delete()
+    finally:
+        if owned:
+            MetricGenerationPin.objects.filter(id=pin.id).delete()

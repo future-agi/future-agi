@@ -13,6 +13,7 @@ non-identifying progress (phase, day bounds, counts) and move the CAS token.
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 
 from django.db.models import F, Q
 from django.utils import timezone
@@ -41,6 +42,8 @@ from tracer.services.derived_metrics.storage import (
 
 MAX_HISTORY_DAYS = 90
 MAX_CHUNKS_PER_PASS = 3
+# Start no further chunk once a pass has run this long (reservation liveness).
+PASS_SOFT_SECONDS = 20
 PAGE_SIZE = 1000
 
 
@@ -61,6 +64,68 @@ def pending_versions(project_id):
         .select_related("metric")
         .order_by(F("backfill_updated_at").asc(nulls_first=True), "created_at", "id")
     )
+
+
+def serving_versions(project_id):
+    """Active, unrevoked versions: what reads can serve right now."""
+    return DerivedMetricVersion.objects.filter(
+        metric__project_id=project_id,
+        metric__deleted=False,
+        id=F("metric__active_version_id"),
+        pins_revoked_at__isnull=True,
+    )
+
+
+SWEEP_PHASE = "sweep"
+
+
+def _sweep_position(cursor):
+    """Identity + nonidentifying position shared by every participant cursor."""
+    return (
+        (cursor.get("sweep") or {}).get("id"),
+        cursor.get("start"),
+        cursor.get("total"),
+        cursor.get("done"),
+        repr(sorted((cursor.get("coverage") or {}).items())),
+    )
+
+
+def sweep_participants(project_id):
+    """(participants, shared cursor) of the in-progress initial sweep, else None.
+
+    One publication writes every participant's cursor, and scrubs strip the same
+    keyset from all of them, so participants never legitimately diverge. If they
+    somehow do, conservatively restart one sweep over the current pending set.
+    """
+    participants = [
+        d
+        for d in pending_versions(project_id)
+        if isinstance(d.backfill_cursor, dict)
+        and d.backfill_cursor.get("phase") == SWEEP_PHASE
+    ]
+    if not participants:
+        return None
+    if len({_sweep_position(d.backfill_cursor) for d in participants}) != 1:
+        return start_sweep(project_id)
+    return participants, deepcopy(participants[0].backfill_cursor)
+
+
+def start_sweep(project_id):
+    """Every pending version joins; later drafts wait and backfill afterwards."""
+    return list(pending_versions(project_id)), None
+
+
+def _sweep_done(cursor, checkpoint):
+    """Days of the window the sweep has passed (monotone, never complete early)."""
+    total = cursor["total"]
+    if checkpoint.phase == "complete":
+        return total
+    if checkpoint.phase != "sources":
+        return max(0, total - 1)
+    if checkpoint.day is None:
+        return 0
+    first = datetime.fromisoformat(cursor["start"]).date()
+    return max(0, min(total - 1, (checkpoint.day - first).days))
 
 
 def working_definitions(project_id, definitions=()):
@@ -1154,7 +1219,13 @@ class BackfillRunner:
         if not 1 <= max_chunks <= MAX_CHUNKS_PER_PASS:
             raise ValueError("backfill pass must contain one to three chunks")
         manifests = []
-        for _ in range(max_chunks):
+        started = monotonic()
+        for number in range(max_chunks):
+            if number and monotonic() - started >= PASS_SOFT_SECONDS:
+                # Each published chunk is durable; the next reservation resumes.
+                # Starting another page this late would only lengthen this one
+                # admission past its liveness budget, never add correctness.
+                break
             self.writer.lease.keepalive()
             definition = pending_versions(self.writer.lease.project_id).first()
             if definition is None:
@@ -1209,6 +1280,11 @@ class BackfillRunner:
                     resumable = True
             if resumable:
                 return writer.stage_and_publish(open_attempt)
+        sweep = sweep_participants(writer.lease.project_id)
+        if sweep:
+            # One shared initial-history sweep is in progress. Continue it for
+            # all of its participants, whichever pending version was picked.
+            return self.run_initial_sweep_page(sweep, now=now, cutoff=cutoff)
         definition.refresh_from_db()
         cursor = deepcopy(definition.backfill_cursor) or _initial_cursor(
             definition, now=now, retention_days=writer.retention_days()
@@ -1219,6 +1295,35 @@ class BackfillRunner:
         )
         if str(definition.id) not in {str(d.id) for d in definitions}:
             raise MetricStateConflict("backfill definition is no longer pending")
+        # History publication also serves incremental work. This prevents a bulk
+        # backfill from starving arrivals, and closes the final catch-up window.
+        # Discover first: an overflowing discovery must not waste a history read.
+        overflowed = False
+        try:
+            incremental = incremental_changes(
+                self.analytics, writer, head, definitions, now=now
+            )
+        except changes.arrivals.ContinuousCandidateOverflow:
+            # A large re-evaluation must make bounded progress, not retry the
+            # same overflowing arrival interval forever. Do not consume ANY
+            # arrival cursor until a complete retained-history pass publishes.
+            if not serving_versions(writer.lease.project_id).exists():
+                # Initial history: no version serves reads yet. One paged,
+                # project-wide sweep IS every pending version's backfill. Its
+                # pages publish definition progress and its completion
+                # activates them; repair never substitutes for that history.
+                return self.run_initial_sweep_page(
+                    start_sweep(writer.lease.project_id), now=now, cutoff=cutoff
+                )
+            # Serving versions exist: arrivals go to the durable repair sweep
+            # (other lanes), while THIS lane still publishes bounded history.
+            # Repair must not starve a new version's initial history.
+            if not MetricProjectRefresh.for_project(
+                writer.lease.project_id
+            ).pending_repair:
+                queue_bulk_change(writer.lease.project_id, now=now)
+            incremental = changes.ChangeBatch((), (), (), (), (), {})
+            overflowed = True
         if cursor["phase"] == "coverage":
             coverage = version_coverage_page(
                 self.analytics,
@@ -1249,24 +1354,11 @@ class BackfillRunner:
                 page_size=self.page_size,
                 cutoff=cutoff,
             )
-        # History publication also serves incremental work. This prevents a bulk
-        # backfill from starving arrivals, and closes the final catch-up window.
-        try:
-            incremental = incremental_changes(
-                self.analytics, writer, head, definitions, now=now
-            )
-        except changes.arrivals.ContinuousCandidateOverflow:
-            # A large re-evaluation must make bounded progress, not retry the
-            # same overflowing arrival interval forever. Do not consume ANY
-            # cursor until the full retained-history coverage has published.
-            if not MetricProjectRefresh.for_project(
-                writer.lease.project_id
-            ).pending_repair:
-                queue_bulk_change(writer.lease.project_id, now=now)
-            return self.run_repair_page(skip_incremental=True)
         batch = merge_changes(batch, incremental)
-        initial_publication = self._initial_publication(
-            definitions, head, incremental, now=now
+        initial_publication = (
+            None
+            if overflowed
+            else self._initial_publication(definitions, head, incremental, now=now)
         )
         return writer.refresh(
             batch,
@@ -1342,6 +1434,121 @@ class BackfillRunner:
                 }
             )
         return {"initial_empty_head": True, "backfills": intents}
+
+    def run_initial_sweep_page(self, sweep, *, now, cutoff):
+        """One bounded page of the paged form of the exhaustive initial proof.
+
+        While no version serves reads, every pending version is a working
+        definition of EVERY publication (pending_backfill stays set), so a full
+        retained-history pass visiting every physical source key is initial
+        history for all participants. Each page publishes their progress in
+        their own backfill cursors (CAS on each); the completing page activates
+        all of them in the same head-switch transaction and consumes arrival
+        cursors only up to the pass START, like a complete repair. A pass that
+        began on an empty head has no older committed rows to revisit, so its
+        source phase alone is complete. The project's repair cursor is untouched.
+        """
+        writer = self.writer
+        project_id = writer.lease.project_id
+        participants, cursor = sweep
+        if not participants:
+            raise MetricStateConflict("initial sweep has no pending participant")
+        state = MetricProjectRefresh.for_project(project_id)
+        head = state.head_manifest
+        if cursor is None:
+            cursor = _initial_cursor(
+                participants[0], now=now, retention_days=writer.retention_days()
+            )
+            cursor.update(
+                phase=SWEEP_PHASE,
+                day_end=cursor["start"],
+                sweep={"id": now.isoformat(), "empty_head": head is None},
+            )
+        committed = [str(a) for _, a in head.allowed_attempts()] if head else []
+        # A new pass starts at this page's `now` (its id), like a first repair.
+        checkpoint = (
+            changes.ReconciliationCheckpoint.from_dict(cursor["coverage"])
+            if cursor.get("coverage")
+            else None
+        )
+        page = changes.reconcile_page(
+            self.analytics,
+            org_id=writer.org_id,
+            project_id=project_id,
+            committed_attempts=committed,
+            now=now,
+            checkpoint=_retained_repair_checkpoint(checkpoint, cutoff=cutoff),
+            page_size=self.page_size,
+        )
+        proposed = page.checkpoint
+        if cursor["sweep"]["empty_head"] and proposed.phase in {
+            "dependencies",
+            "units",
+        }:
+            # Every committed dependency/lifecycle row was written by this very
+            # pass (or later arrivals beyond its start ceiling): nothing older
+            # can be vanished or divergent, so the source phase is the proof.
+            proposed = replace(
+                proposed,
+                phase="complete",
+                after=None,
+                completed_at=now,
+                completed_passes=proposed.completed_passes + 1,
+                covered_through=proposed.started_at,
+            )
+        complete = proposed.phase == "complete"
+        # Never the project's repair cursor/pending flag: those stay owned by
+        # repair. Arrivals are consumed only by the completing page.
+        batch = replace(page.changes, cursor_updates={})
+        if complete:
+            ceiling = changes.ns(proposed.started_at)
+            batch = replace(
+                batch,
+                cursor_updates={
+                    field: max(getattr(state, field), ceiling)
+                    for field in MetricProjectRefresh.MONOTONE_FIELDS
+                },
+            )
+        coverage = {
+            **proposed.to_dict(),
+            "keyset_start": _private_keyset_start(batch, proposed.phase, proposed.after)
+            or _committed_keyset_start(
+                writer, committed, proposed.phase, proposed.after
+            ),
+        }
+        done = _sweep_done(cursor, proposed)
+        intents = []
+        for definition in participants:
+            nxt = {
+                **cursor,
+                "coverage": coverage,
+                "done": done,
+                "expected_active": str(definition.metric.active_version_id)
+                if definition.metric.active_version_id
+                else None,
+            }
+            if complete:
+                nxt.update(phase="complete", day_end=cursor["start"])
+            intents.append(
+                {
+                    "version_id": str(definition.id),
+                    "expected": definition.backfill_cursor,
+                    "expected_updated_at": definition.backfill_updated_at.isoformat()
+                    if definition.backfill_updated_at
+                    else None,
+                    "next": nxt,
+                }
+            )
+        return writer.refresh(
+            batch,
+            working_definitions(project_id, pending_versions(project_id)),
+            self.scope,
+            start=changes.EPOCH,
+            end=now,
+            as_of=now,
+            purpose="backfill",
+            publication={"backfills": intents},
+        )
 
     def run_repair_page(self, *, skip_incremental=False):
         writer = self.writer

@@ -30,7 +30,9 @@ SPAN_CAPTURE_ROWS = 50_000
 SPAN_CAPTURE_BYTES = 64 * 1024 * 1024
 
 
-def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff=None):
+def require_retirement_evidence(
+    writer, head, definitions, *, draft=None, cutoff=None, proposed=None
+):
     """Prove coverage of every bucket this publication can replace or expire.
 
     A bounded backfill may use its generation-pinned frozen proposal to upgrade a
@@ -102,8 +104,14 @@ def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff
                 params["proof_dirty"] = dirty
         proposal_join, proposal_proof = "", ""
         if draft is not None:
-            proposed, bound = _proposal_rows(
-                writer, draft, head, FIELD_VALUES, "retirement_proof_proposed"
+            # The caller's pass-scoped proposal (sql, bindings) when it has one
+            # (overlay captured, head inline); never re-inline frozen bytes.
+            relation, bound = (
+                proposed
+                if proposed is not None
+                else _proposal_rows(
+                    writer, draft, head, FIELD_VALUES, "retirement_proof_proposed"
+                )
             )
             params = merge_bindings(
                 params,
@@ -115,7 +123,7 @@ def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff
             )
             proposal_join = (
                 " LEFT JOIN (SELECT bucket_start, count() AS proposed "
-                f"FROM ({proposed}) WHERE is_deleted = 0 AND level = 'span' "
+                f"FROM ({relation}) WHERE is_deleted = 0 AND level = 'span' "
                 "AND status != 'open' AND field_id = toUUID(%(proof_field)s) "
                 "AND field_version = %(proof_version)s GROUP BY bucket_start) p "
                 "ON t.bucket_start = p.bucket_start"
@@ -143,6 +151,25 @@ def require_retirement_evidence(writer, head, definitions, *, draft=None, cutoff
             raise MetricAdmissionUnproven(
                 "committed span evidence requires backfill before retirement"
             )
+
+
+QUARTER = timedelta(minutes=15)
+MAX_RUN_QUARTERS = 96
+
+
+def _bucket_runs(dirty):
+    """Coalesce sorted dirty quarter starts into runs of adjacent quarters.
+
+    Each run is a half-open [first, last + 15 min) window: exactly the union of
+    its quarters' windows, never a skipped (clean) quarter between them.
+    """
+    runs = []
+    for at in sorted(dirty):
+        if runs and runs[-1][1] == at and runs[-1][2] < MAX_RUN_QUARTERS:
+            runs[-1] = (runs[-1][0], at + QUARTER, runs[-1][2] + 1)
+        else:
+            runs.append((at, at + QUARTER, 1))
+    return [(start, end) for start, end, _ in runs]
 
 
 @contextmanager
@@ -243,11 +270,14 @@ def captured_span_fields(
         check_session()
         store.execute(f"CREATE TEMPORARY TABLE {name} ({schema}) ENGINE=Memory")
         count = size = 0
-        for at in dirty:
+        for at, until in _bucket_runs(dirty):
             writer.lease.keepalive()
             check_session()
+            # One compiler execution per run of ADJACENT dirty quarters: their
+            # half-open windows tile [at, until) exactly, and sampling ambiguity
+            # stays partitioned per quarter, so rows equal the per-quarter union.
             fields, params = span_values_select(
-                definition, scope, start=at, end=at + timedelta(minutes=15), as_of=as_of
+                definition, scope, start=at, end=until, as_of=as_of
             )
             if preserve_pruned:
                 previous_columns = ", ".join(
@@ -257,11 +287,16 @@ def captured_span_fields(
                     f"(SELECT {columns} FROM ({fields}) WHERE unit_id IN "
                     f"(SELECT unit_id FROM ({previous}) WHERE is_deleted = 0)) "
                     f"UNION ALL SELECT {previous_columns}, toUInt64(1) AS source_rows "
-                    f"FROM ({previous}) WHERE is_deleted = 0 AND bucket_start = %(capture_bucket)s "
+                    f"FROM ({previous}) WHERE is_deleted = 0 "
+                    "AND bucket_start >= %(capture_bucket)s "
+                    "AND bucket_start < %(capture_bucket_end)s "
                     f"AND unit_id NOT IN ({physical_keys})"
                 )
                 params = merge_bindings(
-                    params, previous_params, source_scope, {"capture_bucket": at}
+                    params,
+                    previous_params,
+                    source_scope,
+                    {"capture_bucket": at, "capture_bucket_end": until},
                 )
             if cutoff is not None:
                 fields = (

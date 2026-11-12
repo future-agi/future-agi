@@ -76,25 +76,16 @@ def capture_derived_metric_snapshot(run_id: str) -> None:
     max_retries=0,
 )
 def cleanup_derived_metric_snapshots() -> int:
-    from django.db.models import Q
-    from django.utils import timezone
-    from tracer.models.derived_metric import DerivedMetricRun
     from tracer.services.derived_metrics.erasure import sweep
-    from tracer.services.derived_metrics.snapshots import enqueue_capture
+    from tracer.services.derived_metrics.snapshots import (
+        enqueue_capture,
+        recoverable_captures,
+    )
 
     # Privacy cleanup is mandatory even after the rollout flag is turned off.
     completed = sweep(limit=10)
     if metrics_enabled():
-        pending = (
-            DerivedMetricRun.objects.filter(
-                Q(status="queued")
-                | Q(status="running", lease_expires_at__lte=timezone.now()),
-                kind="snapshot",
-                deleted_at__isnull=True,
-            )
-            .order_by("created_at")
-            .values_list("id", flat=True)[:10]
-        )
-        for run_id in pending:
+        # Never a completed namespace a (possibly failed) redaction reopened.
+        for run_id in recoverable_captures(limit=10):
             enqueue_capture(run_id)
     return completed

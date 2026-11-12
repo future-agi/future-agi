@@ -150,6 +150,7 @@ def snapshot_select(
     source_ctes: tuple[str, ...] = (),
     source_parameters: dict | None = None,
     include_evidence: bool = False,
+    quarter_ambiguity: bool = False,
 ) -> tuple[str, dict]:
     """Freeze one row per canonical selection unit, independently reducing inputs.
 
@@ -208,8 +209,13 @@ def snapshot_select(
         if definition.selection_unit == "span"
         else f"concat('{definition.selection_unit}:', {unit})"
     )
+    # Span-id sampling ambiguity is scoped to the window; a caller tiling one
+    # read over adjacent 15-minute windows keeps that scope per quarter.
+    ambiguity_scope = (
+        "s.id, toStartOfFifteenMinutes(s.start_time)" if quarter_ambiguity else "s.id"
+    )
     sampling_ambiguity = (
-        "uniqExact(s.trace_id) OVER (PARTITION BY s.id) > 1"
+        f"uniqExact(s.trace_id) OVER (PARTITION BY {ambiguity_scope}) > 1"
         if definition.selection_unit == "span"
         else "0"
     )

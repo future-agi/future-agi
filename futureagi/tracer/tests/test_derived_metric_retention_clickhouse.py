@@ -1724,16 +1724,29 @@ def test_finite_mixed_refresh_preserves_nonexpired_snapshot_pin(
                 **kwargs,
             )
     head = MetricProjectRefresh.for_project(scope.project).head_manifest
-    through = head.published_by.source_ceilings["private_cleanup_through"]
+    draft = head.published_by
+    # Nothing expires and every private owner link is proven retained, so the
+    # integrated retention plan publishes the draft itself: no replacement
+    # privacy checkpoint, no retention_replan abort, no revoked safe pin.
+    assert draft.purpose == "incremental"
+    assert not draft.source_ceilings.get("logical_expiry")
+    assert "private_cleanup_through" not in draft.source_ceilings
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=scope.project, abort_reason="retention_replan"
+    ).exists()
     predecessors = MetricAttemptLedgerChunk.objects.filter(
-        attempt__project_id=scope.project, attempt__generation__lte=through
+        attempt__project_id=scope.project, attempt__generation__lte=draft.generation
     )
     assert predecessors.exists() and pin.is_usable(now)
     later = writer.begin(ledger={"dirty_before": [{"unit_id": str(session)}]})
     MetricRefreshAttempt.abort(
         later.id, reason="injected_failure", **writer.lease.check()
     )
-    head = writer.compact()  # forwards the cleanup boundary through checkpoint/GC
+    # The crashed post-publication cleanup is retried (as the next retention
+    # pass does): every consumed private predecessor goes, newer work stays.
+    retention.purge_checkpoint(writer, draft, head)
+    assert not predecessors.exists()
+    head = writer.compact()
     writer.collect_garbage()
     assert not predecessors.exists()
     assert (
@@ -1755,6 +1768,87 @@ def test_finite_mixed_refresh_preserves_nonexpired_snapshot_pin(
             now=now,
         )[0]["value_number"]
         == 4
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_finite_mixed_refresh_computes_an_unowned_quarter_mate(
+    live_writer, workspace, observe_project
+):
+    """A dirty quarter's span fields include an UNTOUCHED conversation's span.
+
+    Span fields are rebuilt for whole dirty quarters, so this pass emits the
+    quarter-mate's span although only the first conversation changed. The mate
+    has no conversation row in the head or the draft: it was never processed
+    (as when it lies just past an initial-sweep page boundary). Its owner link
+    must not force a privacy checkpoint (which then left the next sweep page
+    unable to prove its span evidence, so definitions never activated): the
+    pass computes the mate's conversation in the same publication.
+    """
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    writer.retention_days = lambda: 90
+    conversation = definition_for(writer, workspace, observe_project)
+    conversation.metric.name = "Quarter-mate fixture"
+    conversation.metric.save(update_fields=["name"])
+    span = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    kwargs = {"start": now - timedelta(days=2), "end": now, "as_of": now}
+
+    def seed(session, trace, name, at, value):
+        seed_span_revision(writer, scope, trace, name, session, at, value, revision=1)
+        return Dependency(str(trace), name, str(session), str(session), "", "", at)
+
+    # A head already exists (an earlier conversation, another quarter).
+    earlier = uuid4()
+    dependency = seed(earlier, uuid4(), "earlier", now - timedelta(days=1), 2)
+    writer.refresh(
+        change_for(earlier, dependencies=(dependency,)),
+        [conversation, span],
+        scope,
+        **kwargs,
+    )
+    quarter = (now - timedelta(hours=12)).replace(minute=0, second=0, microsecond=0)
+    first, mate = uuid4(), uuid4()
+    dependency = seed(first, uuid4(), "first", quarter + timedelta(minutes=2), 4)
+    seed(mate, uuid4(), "mate", quarter + timedelta(minutes=9), 8)
+    manifest = writer.refresh(
+        change_for(first, cursor=2, dependencies=(dependency,)),
+        [conversation, span],
+        scope,
+        **kwargs,
+    )
+    draft = manifest.published_by
+    assert draft.purpose == "incremental"
+    assert not draft.source_ceilings.get("logical_expiry")
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=scope.project, abort_reason="retention_replan"
+    ).exists()
+    sql, params = committed_rows_select(
+        FIELD_VALUES, manifest, org_id=writer.org_id, project_id=scope.project
+    )
+    rows = writer.store.execute(
+        f"SELECT level, session_id, value_number FROM ({sql}) WHERE is_deleted = 0 "
+        "ORDER BY level, session_id",
+        params,
+    )
+    assert sorted(rows) == sorted(
+        [
+            ("conversation", str(earlier), 2.0),
+            ("conversation", str(first), 4.0),
+            ("conversation", str(mate), 8.0),
+            ("span", str(earlier), 2.0),
+            ("span", str(first), 4.0),
+            ("span", str(mate), 8.0),
+        ]
     )
 
 

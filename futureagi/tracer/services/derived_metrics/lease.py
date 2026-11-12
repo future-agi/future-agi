@@ -75,7 +75,22 @@ class ProjectLease:
             self.renew()
 
     def release(self):
-        MetricProjectRefresh.release_lease(self.project_id, **self.fence())
+        from tracer.services.derived_metrics.deletion_protocol import try_control_update
+
+        # An expired budget must not wait on a reader's refresh-row lock while
+        # retaining the independent fleet slot. The fenced lease expires safely
+        # if this nonblocking cleanup cannot acquire its row.
+        try_control_update(
+            MetricProjectRefresh.objects.filter(
+                project_id=self.project_id,
+                fencing_epoch=self.grant.fencing_epoch,
+                lease_token=self.grant.lease_token,
+            ),
+            lease_token=None,
+            lease_expires_at=None,
+            lease_holder="",
+            updated_at=self.clock(),
+        )
 
 
 @contextmanager
@@ -86,7 +101,10 @@ def project_lease(project_id, *, holder, ttl=DEFAULT_LEASE_TTL, clock=timezone.n
     if grant is None:
         raise MetricFencingError("project refresh already leased")
     lease = ProjectLease(grant, clock=clock)
+    from tracer.services.derived_metrics.deletion_protocol import lifecycle_lock_budget
+
     try:
-        yield lease
+        with lifecycle_lock_budget(lease):
+            yield lease
     finally:
         lease.release()

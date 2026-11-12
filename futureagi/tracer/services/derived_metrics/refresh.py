@@ -18,7 +18,7 @@ from time import monotonic
 from uuid import UUID
 
 from django.db import connection, transaction
-from django.db.models import BigIntegerField, Count, Max, Sum
+from django.db.models import BigIntegerField, Count, Max, Q, Sum
 from django.db.models.functions import Cast
 
 from tracer.models.derived_metric import (
@@ -151,6 +151,22 @@ class RefreshWriter:
 
     def begin(self, *, purpose="incremental", ceilings=None, versions=(), ledger=None):
         with serialized_project(self.lease.project_id):
+            self.lease.check()
+            from tracer.models.derived_metric import MetricErasureRequest
+
+            # No new attempt can race a whole-project physical purge. Erasure
+            # also fences leases at completion, invalidating discovery performed
+            # by workers that acquired a fresh lease while cleanup was pending.
+            if (
+                MetricErasureRequest.objects.filter(organization_key=self.org_id)
+                .filter(
+                    Q(scope_kind="organization")
+                    | Q(scope_kind="project", project_key=self.lease.project_id)
+                )
+                .exclude(status="done")
+                .exists()
+            ):
+                raise MetricStateConflict("project erasure is in progress")
             ceilings = dict(ceilings or {})
             head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
             inherited = (
@@ -545,8 +561,12 @@ class RefreshWriter:
                     "sha256": payload.digest,
                 }
             )
+        oldest = self.retention_evidence(attempt)
+        shard = self.store.identity()
+        if attempt.purpose != "compaction" and attempt.parent_manifest_id:
+            self.store.assert_visible(attempt.parent_manifest)
         with serialized_project(attempt.project_id):
-            self.check_current_retention(attempt)
+            self.check_current_retention(attempt, oldest)
             if attempt.state != "verified":
                 MetricRefreshAttempt.transition(
                     attempt.id,
@@ -572,7 +592,6 @@ class RefreshWriter:
                 else {}
             )
             if attempt.purpose != "compaction" and parent_receipts:
-                self.store.assert_visible(attempt.parent_manifest)
                 from tracer.services.derived_metrics.compaction_ranges import (
                     RECEIPT_BYTES,
                     canonical,
@@ -621,7 +640,7 @@ class RefreshWriter:
                 cursors=cursors,
                 source_cut=source_cut,
                 visibility_receipts={
-                    "shard": self.store.identity(),
+                    "shard": shard,
                     "batches": receipts,
                     **(
                         {"format": 2, "ranges": range_receipts}
@@ -670,20 +689,92 @@ class RefreshWriter:
                 )
             return manifest
 
-    def check_current_retention(self, attempt):
-        """Revalidate proposed fields under the publication/capture lock.
+    def retention_evidence(self, attempt):
+        """Read immutable proposal minima outside all lifecycle/policy locks.
 
-        Policy reads are not a cached pin-time value. A shrink or a clock crossing
-        requires a fresh expiry plan, never exact-byte publication of expired
-        evidence. Ordinary compaction is a copy of the old state, not discovery;
-        its successor refresh performs the integrated expiry transition.
+        The attempt roots its parent against GC. Revocation aborts the attempt;
+        the final publication CAS rejects observations made across erasure.
         """
+        if attempt.source_ceilings.get("range_compaction"):
+            from tracer.services.derived_metrics.compaction_ranges import (
+                range_retention_evidence,
+            )
+
+            return range_retention_evidence(self, attempt)
+        if self.retention_days is None or (
+            attempt.purpose == "compaction"
+            and not attempt.source_ceilings.get("logical_expiry")
+            and "as_of" not in attempt.source_ceilings
+        ):
+            return None
+        from tracer.services.derived_metrics.retention import (
+            ProposalCaptures,
+            _current_tables,
+            retention_cutoff,
+        )
+
+        if (
+            not attempt.source_ceilings.get("retention_floor")
+            and retention_cutoff(self.retention_days(), now=self.lease.clock()) is None
+        ):
+            # The final locked policy read must still reject a concurrent shrink.
+            return "unlimited"
+        with ProposalCaptures(self, attempt, attempt.parent_manifest) as captures:
+            return self._retention_minimum(attempt, captures, _current_tables)
+
+    def _retention_minimum(self, attempt, captures, current_tables):
+        tables = [FIELD_VALUES, *current_tables(self, attempt.parent_manifest, attempt)]
+        if any(v.get("level") == "span" for v in attempt.metric_versions):
+            tables.append(SOURCE_DEPENDENCIES)
+        starts = (
+            [
+                datetime.fromisoformat(str(entry["unit_start"]))
+                for chunk in attempt.ledger_chunks.filter(part="membership_preimage")
+                for entry in chunk.payload
+                if entry.get("unit_start")
+            ]
+            if any(v.get("level") == "span" for v in attempt.metric_versions)
+            else []
+        )
+        if attempt.parent_manifest_id is None and not any(self.plans(attempt)):
+            # An initial empty, sealed proposal has neither a committed source
+            # nor frozen physical rows. Its durable ledger proves emptiness;
+            # still validate any span recovery preimages against the final policy.
+            return min(starts) if starts else None
+        private_relations = []
+        for table in tables:
+            if attempt.purpose == "compaction":
+                # A checkpoint's frozen rows ARE its complete relation: the
+                # minimum of per-batch minima, one bounded batch per statement.
+                private_relations.extend(
+                    payload_select(
+                        table,
+                        [FrozenRows.from_plan(plan)],
+                        prefix=f"policy_{number}",
+                    )
+                    for number, plan in enumerate(
+                        self.plans(attempt, kind=TABLE_KIND[table.name])
+                    )
+                )
+            else:
+                # A delta's collapsed proposal, its overlay captured once.
+                private_relations.append(captures.proposal(table))
+        for sql, bound in private_relations:
+            oldest = self.store.execute(
+                f"SELECT minOrNull(unit_start) FROM ({sql})", bound
+            )[0][0]
+            if oldest is not None:
+                starts.append(oldest)
+        return min(starts) if starts else None
+
+    def check_current_retention(self, attempt, oldest):
+        """Revalidate current policy/clock in the final short publication transaction."""
         if attempt.source_ceilings.get("range_compaction"):
             from tracer.services.derived_metrics.compaction_ranges import (
                 check_range_policy,
             )
 
-            return check_range_policy(self, attempt)
+            return check_range_policy(self, attempt, oldest)
         if self.retention_days is None or (
             attempt.purpose == "compaction"
             and not attempt.source_ceilings.get("logical_expiry")
@@ -692,101 +783,21 @@ class RefreshWriter:
             return
         from django.apps import apps
 
-        from tracer.services.derived_metrics.retention import (
-            _current_tables,
-            _proposal_rows,
-            retention_cutoff,
-        )
+        from tracer.services.derived_metrics.retention import retention_cutoff
 
-        # Serialize real org-policy UPDATEs through the final head switch, while
-        # retaining the project's established capture/publication lock order.
         apps.get_model(
             "accounts", "Organization"
         )._base_manager.select_for_update().get(id=self.org_id)
         cutoff = retention_cutoff(self.retention_days(), now=self.lease.clock())
         floors = [
             datetime.fromisoformat(str(value))
-            for value in (
-                attempt.source_ceilings.get("retention_floor"),
-                cutoff,
-            )
+            for value in (attempt.source_ceilings.get("retention_floor"), cutoff)
             if value
         ]
-        if not floors:
-            return
-        cutoff = max(floors)
-        if attempt.purpose == "compaction":
-            fields, params = payload_select(
-                FIELD_VALUES,
-                [
-                    FrozenRows.from_plan(p)
-                    for p in self.plans(attempt, kind="field_values")
-                ],
-                prefix="policy_fields",
-            )
-        else:
-            fields, params = _proposal_rows(
-                self, attempt, attempt.parent_manifest, FIELD_VALUES, "policy_fields"
-            )
-        private_relations = [(fields, params)]
-        for table in _current_tables(self, attempt.parent_manifest, attempt):
-            if attempt.purpose == "compaction":
-                facts, bound = payload_select(
-                    table,
-                    [
-                        FrozenRows.from_plan(p)
-                        for p in self.plans(attempt, kind=TABLE_KIND[table.name])
-                    ],
-                    prefix="policy_" + table.name,
-                )
-            else:
-                facts, bound = _proposal_rows(
-                    self,
-                    attempt,
-                    attempt.parent_manifest,
-                    table,
-                    "policy_" + table.name,
-                )
-            private_relations.append((facts, bound))
-        if any(v.get("level") == "span" for v in attempt.metric_versions):
-            if attempt.purpose == "compaction":
-                dependencies, bound = payload_select(
-                    SOURCE_DEPENDENCIES,
-                    [
-                        FrozenRows.from_plan(p)
-                        for p in self.plans(attempt, kind="source_dependencies")
-                    ],
-                    prefix="policy_dependencies",
-                )
-            else:
-                dependencies, bound = _proposal_rows(
-                    self,
-                    attempt,
-                    attempt.parent_manifest,
-                    SOURCE_DEPENDENCIES,
-                    "policy_dependencies",
-                )
-            private_relations.append((dependencies, bound))
-            # Span fields and their old memberships in the private recovery
-            # ledger must obey the same current horizon
-            # as the proposed dependency relation, even after a start correction.
-            if any(
-                entry.get("unit_start")
-                and datetime.fromisoformat(str(entry["unit_start"])) < cutoff
-                for chunk in attempt.ledger_chunks.filter(part="membership_preimage")
-                for entry in chunk.payload
-            ):
-                raise MetricRetentionChanged(
-                    "retention policy changed; replan required"
-                )
-        for sql, bound in private_relations:
-            if self.store.execute(
-                f"SELECT count() FROM ({sql}) WHERE unit_start < toDateTime64(%(policy_cutoff)s, 6, 'UTC')",
-                {**bound, "policy_cutoff": cutoff},
-            )[0][0]:
-                raise MetricRetentionChanged(
-                    "retention policy changed; replan required"
-                )
+        if floors and (
+            oldest == "unlimited" or (oldest is not None and oldest < max(floors))
+        ):
+            raise MetricRetentionChanged("retention policy changed; replan required")
 
     def submit(self, attempt, batch, table, payload):
         """Register BEFORE sending; only a synchronous server response drains it.
@@ -933,7 +944,6 @@ class RefreshWriter:
                 return None
             if head.revoked_at is not None:
                 raise MetricStateConflict("expired base requires source rebuild")
-            self.store.assert_visible(head)
             pending = head.published_by.source_ceilings.get("recovery_pending", False)
             handoff = {}
             if pending:
@@ -949,6 +959,7 @@ class RefreshWriter:
             from tracer.services.derived_metrics.backfill import obsolete_versions
 
             obsolete = obsolete_versions(self.lease.project_id, now=self.lease.clock())
+        self.store.assert_visible(head)
         for table in TABLE_KINDS.values():
             prefix = "field" if table == FIELD_VALUES else "metric"
             versioned = table in {FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS}
@@ -1011,9 +1022,9 @@ class RefreshWriter:
         A one-shot DELETE is insufficient: an old INSERT can arrive afterward.
         Repeating this maintenance pass also under unlimited retention makes
         those forever-excluded physical payloads collectible without retaining
-        their informational ancestry. The project lock prevents a new valid
-        attempt from being allocated during the registered-attempt snapshot and
-        synchronous mutations. B10 must schedule maintenance even on idle data.
+        their informational ancestry. The project lock freezes both the registered
+        attempts and allocation high-water; native mutations cannot touch a later
+        allocation. B10 must schedule maintenance even on idle data.
         """
         from tracer.services.derived_metrics.storage import TABLES
 
@@ -1023,26 +1034,30 @@ class RefreshWriter:
                     project_id=self.lease.project_id
                 ).values_list("id", flat=True)
             ) or (UUID(int=0),)
-            params = {
-                "gc_org": str(self.org_id),
-                "gc_project": str(self.lease.project_id),
-                "gc_registered": registered,
-            }
-            predicate = (
-                "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
-                "AND attempt_id NOT IN %(gc_registered)s"
-            )
-            for table in TABLES.values():
-                # An empty namespace needs no synchronous mutation/part rewrite.
-                # This is only a no-op optimization, never a drained-write proof:
-                # late excluded inserts are still reaped on the next scheduled pass.
-                if self.store.execute(
-                    f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
-                ):
-                    self.store.execute(
-                        f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync=2",
-                        params,
-                    )
+            through = MetricProjectRefresh.objects.get(
+                project_id=self.lease.project_id
+            ).generation_high_water
+        params = {
+            "gc_org": str(self.org_id),
+            "gc_project": str(self.lease.project_id),
+            "gc_registered": registered,
+            "gc_through": through,
+        }
+        predicate = (
+            "org_id = toUUID(%(gc_org)s) AND project_id = toUUID(%(gc_project)s) "
+            "AND generation <= %(gc_through)s AND attempt_id NOT IN %(gc_registered)s"
+        )
+        for table in TABLES.values():
+            # An empty namespace needs no synchronous mutation/part rewrite.
+            # This is only a no-op optimization, never a drained-write proof:
+            # late excluded inserts are still reaped on the next scheduled pass.
+            if self.store.execute(
+                f"SELECT 1 FROM {table.name} WHERE {predicate} LIMIT 1", params
+            ):
+                self.store.execute(
+                    f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync=2",
+                    params,
+                )
 
     def refresh(
         self,
@@ -1180,6 +1195,10 @@ class RefreshWriter:
         publication=None,
     ):
         """Compile B03/B04 proposals into one complete, durable refresh plan."""
+        # A discovery batch is valid only for the lease epoch that read it.
+        # Project/organization erasure invalidates that lease even without a head
+        # or an open attempt. Never inspect/transfer cached private recovery first.
+        self.lease.check()
         if (
             self.workspace_id is None
             or str(scope.project) != str(self.lease.project_id)
@@ -1271,6 +1290,7 @@ class RefreshWriter:
         if head and len(head.delta_attempt_ids) >= MAX_DELTAS_BEFORE_COMPACTION:
             self.compact()
         with serialized_project(self.lease.project_id):
+            self.lease.check()
             head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
             inherited_floor = (
                 head.published_by.source_ceilings.get("retention_floor")
@@ -1364,22 +1384,28 @@ class RefreshWriter:
         if len(ids) > MAX_PASS_UNITS:
             raise ValueError("replacement owner set exceeds pass cap")
         if any(d.level == "span" for d in definitions):
+            from tracer.services.derived_metrics.span_evidence import (
+                freeze_span_fields,
+            )
+
             self._span_dirty_keys(attempt, change, head, source_ids)
+            for definition in definitions:
+                if definition.level == "span":
+                    freeze_span_fields(
+                        self,
+                        attempt,
+                        head,
+                        definition,
+                        scope,
+                        as_of=as_of,
+                        cutoff=cutoff,
+                    )
+            if any(d.level == "conversation" for d in definitions):
+                owners = self._unowned_span_sessions(attempt, head, ids)
+                if len(ids | owners) <= MAX_PASS_UNITS:
+                    ids |= owners
         for definition in definitions:
             if definition.level == "span":
-                from tracer.services.derived_metrics.span_evidence import (
-                    freeze_span_fields,
-                )
-
-                freeze_span_fields(
-                    self,
-                    attempt,
-                    head,
-                    definition,
-                    scope,
-                    as_of=as_of,
-                    cutoff=cutoff,
-                )
                 continue
             for offset in range(0, len(ids), MAX_BATCH_ROWS):
                 candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
@@ -1619,13 +1645,34 @@ class RefreshWriter:
         # BL01-Q must qualify and byte-bound current-fact maintenance before
         # it joins production refreshes. Copying full message inputs here can
         # exceed the batch cap even when the scalar metric payload is small.
-        field_payloads = [
-            FrozenRows.from_plan(p) for p in self.plans(attempt, kind="field_values")
-        ]
-        overlay, overlay_params = payload_select(
-            FIELD_VALUES, field_payloads, prefix="overlay"
-        )
-        if field_payloads:
+        from tracer.services.derived_metrics.retention import ProposalCaptures
+
+        with ProposalCaptures(self, attempt, head) as captures:
+            attempt = self._finish_proposal(
+                attempt,
+                head,
+                definitions,
+                captures,
+                cutoff=cutoff,
+                as_of=as_of,
+                settle_minutes=settle_minutes,
+            )
+        self.seal(attempt, cursors=dict(change.cursor_updates), publication=publication)
+        manifest = self.stage_and_publish(attempt)
+        if cutoff is not None:
+            from tracer.services.derived_metrics.retention import purge_checkpoint
+
+            purge_checkpoint(self, attempt, manifest)
+        return manifest
+
+    def _finish_proposal(
+        self, attempt, head, definitions, captures, *, cutoff, as_of, settle_minutes
+    ):
+        """Lifecycle, buckets and retention over ONE captured field overlay."""
+        has_fields = any(True for _ in self.plans(attempt, kind="field_values"))
+        # The draft's frozen field batches, captured once (one batch per INSERT).
+        overlay, overlay_params = captures.overlay(FIELD_VALUES)
+        if has_fields:
             # Retain ALL existing checked proposals, including losers and
             # both open predicates. R01 changes only the prior lookup domain;
             # a separate all-proposal scratch stream is deferred to R03.
@@ -1682,14 +1729,9 @@ class RefreshWriter:
                 head,
                 retirement_definitions(self, head, definitions),
                 cutoff,
+                captures=captures,
             )
-        self.seal(attempt, cursors=dict(change.cursor_updates), publication=publication)
-        manifest = self.stage_and_publish(attempt)
-        if cutoff is not None:
-            from tracer.services.derived_metrics.retention import purge_checkpoint
-
-            purge_checkpoint(self, attempt, manifest)
-        return manifest
+        return attempt
 
     def _unproven_source_admission(
         self, head, source_page, query, params, old_sql, old_params, floor
@@ -1823,6 +1865,64 @@ class RefreshWriter:
                 )
                 result[key] = dependency
         return tuple(result.values())
+
+    def _unowned_span_sessions(self, attempt, head, ids):
+        """Owners of this pass's span fields that no conversation row anchors.
+
+        Span fields are rebuilt for WHOLE dirty quarters, so a pass also emits
+        spans of conversations it never touched: e.g. a quarter-mate just past
+        an initial-sweep page boundary. Neither the head nor the draft then has
+        a conversation row for that owner, so retention cannot prove the owner
+        link retained and forces a privacy checkpoint (then the next page can
+        no longer prove its span evidence, and the definitions never
+        activate). Such owners are computed in this same pass instead: their
+        conversation values read every span of the session from source.
+        Owners with ANY committed conversation row (live, deleted or expired)
+        keep their existing retention semantics.
+        """
+        sessions = set()
+        # The draft's frozen field batches (PG ledger, not yet physical), one
+        # bounded batch per statement.
+        for number, plan in enumerate(self.plans(attempt, kind="field_values")):
+            batch, params = payload_select(
+                FIELD_VALUES,
+                [FrozenRows.from_plan(plan)],
+                prefix=f"span_owner_{number}",
+            )
+            sessions.update(
+                row[0]
+                for row in self.store.execute(
+                    f"SELECT DISTINCT session_id FROM ({batch}) "
+                    "WHERE level = 'span' AND notEmpty(session_id)",
+                    params,
+                )
+            )
+        sessions = sorted(sessions - set(ids))
+        if not sessions:
+            return set()
+        anchored = set()
+        for membership in iter_key_membership_batches(
+            FIELD_VALUES,
+            fixed={"level": ("conversation",)},
+            columns="unit_id",
+            values=sessions,
+            max_items=MAX_BATCH_ROWS,
+        ):
+            fields, fp = committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                key_in=membership,
+                param_prefix="span_owner_head",
+            )
+            anchored.update(
+                row[0]
+                for row in self.store.execute(
+                    f"SELECT DISTINCT unit_id FROM ({fields})", fp
+                )
+            )
+        return set(sessions) - anchored
 
     def _span_dirty_keys(self, attempt, change, head, source_ids):
         """Nominate old/new starts without treating mutable starts as identity."""

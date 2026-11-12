@@ -52,7 +52,11 @@ from tracer.models.derived_metric import (
     MetricRefreshAttempt,
 )
 from tracer.models.project import Project
-from tracer.services.derived_metrics.deletion_protocol import project_lock
+from tracer.services.derived_metrics.deletion_protocol import (
+    lifecycle_lock_budget,
+    project_lock,
+    try_control_update,
+)
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.lease import (
     DEFAULT_LEASE_TTL,
@@ -275,7 +279,7 @@ def _project_admission(
             return
         if expiry_id is None:
             yield metrics_enabled(project=project_id) and (
-                Project.no_workspace_objects.select_for_update()
+                Project.no_workspace_objects.select_for_update(skip_locked=True)
                 .filter(pk=project_id)
                 .exists()
             )
@@ -284,7 +288,7 @@ def _project_admission(
         # hidden state. Lock its parent alone, retaining the normal lock order.
         state = (
             MetricProjectRefresh.objects.select_related("project")
-            .select_for_update(of=("project",))
+            .select_for_update(of=("project",), skip_locked=True)
             .filter(project_id=project_id, project__deleted=False)
             .first()
         )
@@ -338,6 +342,12 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
             job = f"cleanup:{expiry_id}" if expiry_id else purpose
             with _project_admission(state.project_id, expiry_id) as admitted:
                 if not admitted:
+                    continue
+                if (
+                    not MetricProjectRefresh.objects.select_for_update(skip_locked=True)
+                    .filter(pk=state.pk)
+                    .exists()
+                ):
                     continue
                 grant = MetricProjectRefresh.take_lease(
                     state.project_id,
@@ -405,11 +415,12 @@ def record_failure(reservation: Reservation, *, now: datetime, code: str) -> Non
     if code not in {"metric_dispatch_failed", "metric_refresh_failed"}:
         raise ValueError("unsupported metric failure code")
     grant = reservation.grant
-    MetricProjectRefresh.objects.filter(
-        project_id=grant.project_id,
-        fencing_epoch=grant.fencing_epoch,
-        lease_token=grant.lease_token,
-    ).update(
+    try_control_update(
+        MetricProjectRefresh.objects.filter(
+            project_id=grant.project_id,
+            fencing_epoch=grant.fencing_epoch,
+            lease_token=grant.lease_token,
+        ),
         last_error_at=now,
         last_error_code=code,
         consecutive_failures=F("consecutive_failures") + 1,
@@ -435,8 +446,11 @@ def _queued_reservation(reservation: Reservation):
 
 def _release_queued(reservation: Reservation) -> None:
     # Rejection and duplicate delivery must not release a running/replacement job.
-    _queued_reservation(reservation).update(
-        lease_token=None, lease_expires_at=None, lease_holder=""
+    try_control_update(
+        _queued_reservation(reservation),
+        lease_token=None,
+        lease_expires_at=None,
+        lease_holder="",
     )
 
 
@@ -461,7 +475,11 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
             except Exception:
                 # A lost enqueue response may already have a running consumer.
                 # Catch inside the transaction so its claim is not rolled back.
-                if _queued_reservation(reservation).select_for_update().exists():
+                if (
+                    _queued_reservation(reservation)
+                    .select_for_update(skip_locked=True)
+                    .exists()
+                ):
                     record_failure(
                         reservation, now=clock(), code="metric_dispatch_failed"
                     )
@@ -514,7 +532,7 @@ def execute_reservation(
     if not metrics_enabled(project=lease.project_id):
         _release_queued(reservation)
         return False
-    with execution_slot(lease.project_id) as admitted:
+    with execution_slot(lease.project_id) as admitted, lifecycle_lock_budget(lease):
         if not admitted:
             _release_queued(reservation)
             return False
@@ -561,12 +579,14 @@ def execute_reservation(
             # must not inherit the OLD failure's exponential backoff when yielding.
             # Do not acknowledge Run now until the requested pass really finishes.
             if claimed:
-                MetricProjectRefresh.objects.filter(
-                    project_id=lease.project_id,
-                    fencing_epoch=lease.grant.fencing_epoch,
-                    lease_token=lease.grant.lease_token,
-                ).exclude(head_manifest_id=previous_head).update(
-                    consecutive_failures=0, last_error_code=""
+                try_control_update(
+                    MetricProjectRefresh.objects.filter(
+                        project_id=lease.project_id,
+                        fencing_epoch=lease.grant.fencing_epoch,
+                        lease_token=lease.grant.lease_token,
+                    ).exclude(head_manifest_id=previous_head),
+                    consecutive_failures=0,
+                    last_error_code="",
                 )
             return False
         except MetricFencingError:
@@ -630,22 +650,27 @@ class NativeMetricAnalytics:
         self, query, params, *, timeout_ms, settings, server_execution_cap_ms=None
     ):
         from tracer.services.clickhouse.query_service import QueryResult
+        from tracer.services.derived_metrics.publication import cooperative_timeout
 
         if self.lease is not None:
             self.lease.keepalive()
             timeout_ms = min(timeout_ms, self.lease.remaining_seconds() * 1000)
         started = monotonic()
-        rows, columns = self.client.execute(
-            query,
-            params,
-            with_column_types=True,
-            settings={
-                **settings,
-                "max_execution_time": max(
-                    0.001, min(timeout_ms, server_execution_cap_ms or timeout_ms) / 1000
-                ),
-            },
-        )
+        cap = max(0.001, min(timeout_ms, server_execution_cap_ms or timeout_ms) / 1000)
+        try:
+            rows, columns = self.client.execute(
+                query,
+                params,
+                with_column_types=True,
+                settings={**settings, "max_execution_time": cap},
+            )
+        except Exception as exc:
+            # A server timeout of a statement whose cap was reduced to the
+            # reservation's remaining pass budget is a cooperative yield.
+            cancelled = cooperative_timeout(self.lease, started + cap, exc)
+            if cancelled is not None:
+                raise cancelled from exc
+            raise
         names = [name for name, _ in columns]
         progress = self.client.last_query.progress
         return QueryResult(

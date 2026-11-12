@@ -597,16 +597,9 @@ def shape_result(row: dict, *, include_uncertainty: bool) -> dict:
 def read_results(run, rollup="overall", after="", limit=50, include_uncertainty=False):
     if getattr(run, "kind", "run") != "snapshot":
         return _read_results(run, rollup, after, limit, include_uncertainty)
-    from tracer.services.derived_metrics.deletion_protocol import serialized_project
+    from tracer.services.derived_metrics.snapshots import snapshot_read
 
-    with serialized_project(run.definition.metric.project_id):
-        current = (
-            DerivedMetricRun.objects.select_related("definition__metric")
-            .filter(pk=run.pk)
-            .first()
-        )
-        if current is None:
-            raise MetricInputError("This run is no longer available.")
+    with snapshot_read(run) as current:
         return _read_results(current, rollup, after, limit, include_uncertainty)
 
 

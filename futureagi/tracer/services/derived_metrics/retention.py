@@ -6,12 +6,14 @@ is different: without unit lineage in retired parts we conservatively discard
 project aggregate history. This is the design's safe fallback, not subtraction.
 
 Callers schedule expiry independently of arrivals and retry failed mutations.
-A purge holds the same project synchronization as publication and pin capture.
+Purge planning uses the same short serialization as publication/pin capture;
+native mutations use immutable, generation-bounded namespaces and write receipts.
 The original manifest is revoked before any physical deletion. Audit hashes are
 never rewritten; terminal private replay/preimage chunks can be deleted whole.
 """
 
-from contextlib import nullcontext
+import json
+from contextlib import ExitStack, nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -201,6 +203,120 @@ def _delete(store, table, predicate, params):
     )
 
 
+class ProposalCaptures:
+    """Pass-scoped session captures of one PREPARED proposal (SessionCapture).
+
+    Only BOUNDED inputs are materialized: a draft's frozen batches (one batch
+    per INSERT) and the retained-owner set. The committed head side of every
+    proposal stays an inline committed_rows_select over immutable allowlisted
+    attempts: it is the project's whole retained history, so copying it would
+    put a hard ceiling on every finite-retention refresh. Later statements,
+    including each 500-row freeze page, name the captured relations instead of
+    repeating inline RowBinary bytes or the owner subquery, so per-statement
+    SQL is bounded independently of the proposal's size.
+    """
+
+    def __init__(self, writer, draft, head):
+        self.writer, self.draft, self.head = writer, draft, head
+        self._stack = ExitStack()
+        self._captures = {}
+        self._inline_owners = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self._stack.__exit__(*exc)
+
+    def _capture(self, key, schema, sources, role):
+        from tracer.services.derived_metrics.frozen_relations import SessionCapture
+
+        if key not in self._captures:
+            self._captures[key] = self._stack.enter_context(
+                SessionCapture(
+                    self.writer.store, schema=schema, sources=sources, role=role
+                )
+            )
+        return self._captures[key]
+
+    def overlay(self, table, attempt=None):
+        """One attempt's frozen batches for one table, never a mutable read."""
+        from tracer.services.derived_metrics.publication import FrozenRows
+        from tracer.services.derived_metrics.refresh import TABLE_KIND, payload_select
+
+        attempt = attempt or self.draft
+        writer = self.writer
+
+        def sources():
+            for number, plan in enumerate(
+                writer.plans(attempt, kind=TABLE_KIND[table.name])
+            ):
+                yield payload_select(
+                    table, [FrozenRows.from_plan(plan)], prefix=f"capture_{number}"
+                )
+
+        capture = self._capture(
+            ("overlay", str(attempt.id), table.name), table.schema, sources, "overlay"
+        )
+        return capture.select, {}
+
+    def proposal(self, table):
+        """Committed head collapsed with this draft's overlay (one generation)."""
+        writer = self.writer
+        current, params = committed_rows_select(
+            table, self.head, org_id=writer.org_id, project_id=writer.lease.project_id
+        )
+        overlay, _ = self.overlay(table)
+        return (
+            f"SELECT * FROM (({current}) UNION ALL ({overlay})) "
+            f"ORDER BY generation DESC, {table.version_column} DESC "
+            f"LIMIT 1 BY {', '.join(table.logical_key)}",
+            params,
+        )
+
+    def fields(self):
+        """The proposed FIELD_VALUES relation: committed head inline, overlay captured.
+
+        Never a session copy of the head: retained history (every definition,
+        version and tombstone) is unbounded, while the overlay is one pass.
+        """
+        return self.proposal(FIELD_VALUES)
+
+    def owners(self, cutoff, parameter="retire_cutoff"):
+        """Conversations whose earliest proposed anchor is retained (or all).
+
+        Exactly _owner_relation with the caller's cutoff BINDING (the same
+        parameter every other retention predicate of the pass compares with),
+        captured once when it fits the capture budget. A larger owner set is
+        that relation inline: callers bind the cutoff and the head bindings
+        with their fields bindings. Slower, never a refresh that cannot publish.
+        """
+        from tracer.services.derived_metrics.frozen_relations import (
+            FrozenRelationOverflow,
+        )
+
+        key = ("owners", str(cutoff), parameter)
+        if key in self._inline_owners:
+            return self._inline_owners[key]
+        fields, params = self.fields()
+        if cutoff is None:
+            sql = (
+                f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+                "GROUP BY unit_id"
+            )
+        else:
+            sql = _owner_relation(fields, parameter)
+            params = {**params, parameter: cutoff}
+        try:
+            capture = self._capture(
+                key, (("unit_id", "String"),), lambda: [(sql, params)], "owners"
+            )
+        except FrozenRelationOverflow:
+            self._inline_owners[key] = sql
+            return sql
+        return capture.select
+
+
 def _proposal_overlay(writer, attempt, table, prefix):
     """Raw frozen rows, so callers can bound keys BEFORE proposal collapse."""
     from tracer.services.derived_metrics.publication import FrozenRows
@@ -302,24 +418,29 @@ def _classify_recovery(
     return result, blocked
 
 
-def _current_retained(fields, cutoff_parameter):
-    # Facts do not confer new anchor authority. Retain private payload only for
-    # a proven retained conversation, and never keep an expired member itself.
+def _owner_relation(fields, cutoff_parameter):
     return (
-        f"unit_start >= toDateTime64(%({cutoff_parameter})s, 6, 'UTC') "
-        "AND canonical_session_id IN ("
         f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
         "GROUP BY unit_id HAVING min(unit_start) >= "
-        f"toDateTime64(%({cutoff_parameter})s, 6, 'UTC'))"
+        f"toDateTime64(%({cutoff_parameter})s, 6, 'UTC')"
     )
 
 
-def _retained_fields(fields, predicate, cutoff_parameter):
+def _current_retained(fields, cutoff_parameter, owners=None):
+    # Facts do not confer new anchor authority. Retain private payload only for
+    # a proven retained conversation, and never keep an expired member itself.
+    # A captured owner set is this exact relation, executed once per pass.
+    owners = owners or _owner_relation(fields, cutoff_parameter)
+    return (
+        f"unit_start >= toDateTime64(%({cutoff_parameter})s, 6, 'UTC') "
+        f"AND canonical_session_id IN ({owners})"
+    )
+
+
+def _retained_fields(fields, predicate, cutoff_parameter, owners=None):
     """A retained span may not keep an expired/unproven owner's private IDs."""
     owner_retained = (
-        f"session_id IN (SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
-        "GROUP BY unit_id HAVING min(unit_start) >= "
-        f"toDateTime64(%({cutoff_parameter})s, 6, 'UTC'))"
+        f"session_id IN ({owners or _owner_relation(fields, cutoff_parameter)})"
     )
     return (
         "SELECT * REPLACE("
@@ -357,25 +478,119 @@ def _current_tables(writer, head, draft=None):
 
 
 def _current_expiry_required(
-    writer, head, fields, params, *, draft=None, cutoff_parameter
+    writer, head, fields, params, *, draft=None, cutoff_parameter, captures=None
 ):
+    owners = None
     for table in _current_tables(writer, head, draft):
-        sql, bound = (
-            _proposal_rows(writer, draft, head, table, "expiry_" + table.name)
-            if draft is not None
-            else committed_rows_select(
+        if captures is not None and owners is None:
+            owners = captures.owners(params[cutoff_parameter], cutoff_parameter)
+        if draft is not None and captures is not None:
+            sql, bound = captures.proposal(table)
+        elif draft is not None:
+            sql, bound = _proposal_rows(
+                writer, draft, head, table, "expiry_" + table.name
+            )
+        else:
+            sql, bound = committed_rows_select(
                 table, head, org_id=writer.org_id, project_id=writer.lease.project_id
             )
-        )
+        retained = _current_retained(fields, cutoff_parameter, owners)
         if writer.store.execute(
-            f"SELECT count() FROM (SELECT 1 FROM ({sql}) WHERE NOT ({_current_retained(fields, cutoff_parameter)}) LIMIT 1)",
+            f"SELECT count() FROM (SELECT 1 FROM ({sql}) WHERE NOT ({retained}) LIMIT 1)",
             {**params, **bound},
         )[0][0]:
             return True
     return False
 
 
-def retirement_plan(writer, draft, head, definitions, cutoff):
+def _require_retention_definitions(writer, definitions):
+    for definition in definitions:
+        definition_id = getattr(definition, "id", None)
+        if (
+            definition_id is not None
+            and not DerivedMetricVersion.objects.filter(
+                id=definition_id,
+                metric_id=definition.metric_id,
+                version=definition.version,
+                metric__project_id=writer.lease.project_id,
+                metric__organization_id=writer.org_id,
+                metric__deleted=False,
+                pins_revoked_at__isnull=True,
+            ).exists()
+        ):
+            raise MetricStateConflict("retention definition is expired or deleted")
+
+
+OWNER_KEYS = (
+    "unit_id",
+    "canonical_session_id",
+    "raw_session_id",
+    "canonical_user_id",
+    "raw_user_id",
+)
+
+
+def _owner_entries(ledger):
+    """Ledger entries that carry a private owner identity, as comparable bytes."""
+    return {
+        part: sorted(
+            json.dumps(entry, sort_keys=True, default=str)
+            for entry in entries
+            if any(entry.get(key) for key in OWNER_KEYS)
+        )
+        for part, entries in ledger.items()
+    }
+
+
+def _span_proposal_cleanup_required(
+    writer, captures, fields, params, cutoff, ledger, definitions
+):
+    """Whether the span checkpoint would change ANY private byte of the proposal.
+
+    The checkpoint transform is an identity exactly when: no proposed (committed
+    or draft) dependency outside a retained conversation keeps an owner link or
+    an expired start; every proposed lifecycle row still has a field; and the
+    draft ledger's owner-bearing entries all classify as retained, unchanged.
+    Span fields with unproven owners and expired units are already part of
+    logical expiry. Anything else keeps the complete privacy checkpoint.
+    """
+    owners = captures.owners(cutoff)
+    dependencies, bound = captures.proposal(SOURCE_DEPENDENCIES)
+    owner_columns = (
+        "raw_session_id",
+        "canonical_session_id",
+        "raw_user_id",
+        "canonical_user_id",
+    )
+    if writer.store.execute(
+        f"SELECT count() FROM (SELECT 1 FROM ({dependencies}) "
+        f"WHERE canonical_session_id NOT IN ({owners}) AND ("
+        "unit_start < toDateTime64(%(retire_cutoff)s, 6, 'UTC') OR "
+        + " OR ".join(f"notEmpty({c})" for c in owner_columns)
+        + ") LIMIT 1)",
+        {**params, **bound},
+    )[0][0]:
+        return True
+    states, bound = captures.proposal(UNIT_STATE)
+    if writer.store.execute(
+        f"SELECT count() FROM (SELECT 1 FROM ({states}) WHERE (level, unit_id) "
+        f"NOT IN (SELECT level, unit_id FROM ({fields})) LIMIT 1)",
+        {**params, **bound},
+    )[0][0]:
+        return True
+    classified, blocked = _classify_recovery(
+        writer,
+        ledger,
+        fields,
+        params,
+        cutoff,
+        spans=any(d.level == "span" for d in definitions),
+        strict=False,
+    )
+    return blocked or _owner_entries(classified) != _owner_entries(ledger)
+
+
+def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     """Convert proposed anchor changes to one complete privacy checkpoint.
 
     Old and new anchors are considered BEFORE publication. Expiring proposals
@@ -383,16 +598,31 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     bucket is rebuilt without the old field. No reader can observe an interim
     expired field or both its live and retired contribution. The draft is PG-only
     and its private bytes are purged with the predecessor revisions after publish.
+    The draft overlay and the retained-owner set are captured once per pass;
+    the committed head side of the proposal stays inline (never a copy).
     """
-    from tracer.services.derived_metrics.publication import FrozenRows
-    from tracer.services.derived_metrics.refresh import payload_select
+    if captures is None:
+        with ProposalCaptures(writer, draft, head) as owned:
+            return _retirement_plan(writer, draft, head, definitions, cutoff, owned)
+    return _retirement_plan(writer, draft, head, definitions, cutoff, captures)
+
+
+def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
     from tracer.services.derived_metrics.span_evidence import (
         require_retirement_evidence,
     )
     from tracer.services.derived_metrics.unit_reads import field_recipe
 
-    require_retirement_evidence(writer, head, definitions, draft=draft, cutoff=cutoff)
-    fields, params = _proposal_rows(writer, draft, head, FIELD_VALUES, "retire_fields")
+    fields, params = captures.fields()
+    params = dict(params)
+    require_retirement_evidence(
+        writer,
+        head,
+        definitions,
+        draft=draft,
+        cutoff=cutoff,
+        proposed=(fields, dict(params)),
+    )
     params["retire_cutoff"] = cutoff
     expired = (
         f"SELECT DISTINCT level, unit_id FROM ({fields}) "
@@ -403,23 +633,52 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
     )
     current_cleanup = _current_expiry_required(
-        writer, head, fields, params, draft=draft, cutoff_parameter="retire_cutoff"
+        writer,
+        head,
+        fields,
+        params,
+        draft=draft,
+        cutoff_parameter="retire_cutoff",
+        captures=captures,
     )
     logical_expiry = bool(
         span_dirty
         or _current_expiry_required(
-            writer, head, fields, params, cutoff_parameter="retire_cutoff"
+            writer,
+            head,
+            fields,
+            params,
+            cutoff_parameter="retire_cutoff",
+            captures=captures,
         )
         or writer.store.execute(f"SELECT count() FROM ({expired})", params)[0][0]
         or (
             span_definitions
-            and _span_owner_cleanup_required(writer, head, fields, params, cutoff)
+            and _span_owner_cleanup_required(
+                writer, head, fields, params, cutoff, captures.owners(cutoff)
+            )
         )
     )
-    if not logical_expiry and not span_definitions and not current_cleanup:
-        overlay, overlay_params = _proposal_overlay(
-            writer, draft, FIELD_VALUES, "retire_fields"
+    draft_ledger = {}
+    if span_definitions and not logical_expiry and not current_cleanup:
+        for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
+            draft_ledger.setdefault(chunk.part, []).extend(chunk.payload)
+    if (
+        not logical_expiry
+        and not current_cleanup
+        and not (
+            span_definitions
+            and _span_proposal_cleanup_required(
+                writer, captures, fields, params, cutoff, draft_ledger, definitions
+            )
         )
+    ):
+        # Provably an identity transform: no expired unit, no current-fact or
+        # lifecycle cleanup, and (with span recipes) no proposed owner link or
+        # private preimage the span checkpoint would drop or blank. Publishing
+        # the draft itself is then byte-for-byte the same retained state; its
+        # consumed ledger is purged after publication exactly like a successor's.
+        overlay, overlay_params = captures.overlay(FIELD_VALUES)
         for definition in definitions:
             if definition.level != "user":
                 writer._freeze_buckets(draft, head, definition, overlay, overlay_params)
@@ -435,9 +694,10 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
             "dirty_before",
             [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
         )
+    owners = captures.owners(cutoff)
     retained = (
         _retained_fields(
-            fields, f"(level, unit_id) NOT IN ({expired})", "retire_cutoff"
+            fields, f"(level, unit_id) NOT IN ({expired})", "retire_cutoff", owners
         )
         if span_definitions
         else f"SELECT * FROM ({fields}) WHERE (level, unit_id) NOT IN ({expired})"
@@ -459,22 +719,36 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     )
     if blocked:
         raise MetricStateConflict("retention proposal lacks complete membership")
-    attempt = writer.begin(
-        purpose="compaction",
-        ceilings={
-            **draft.source_ceilings,
-            **({"retention_floor": cutoff} if logical_expiry else {}),
-            "logical_expiry": logical_expiry,
-            # PG-only drafts can contain owner preimages that the safe span
-            # checkpoint no longer needs. GC must finish their cleanup after a
-            # publication-before-purge crash, without revoking retained pins or
-            # deleting newer failed work that this publication never consumed.
-            "private_cleanup_through": draft.generation,
-        },
-        versions=draft.metric_versions,
-        ledger=ledger,
-    )
-    live_payloads = writer.freeze(attempt, FIELD_VALUES, retained, params)
+    with serialized_project(writer.lease.project_id):
+        # Classification copied private bytes without a lifecycle lock. A
+        # revocation need not change the lease or the head id. Recheck both the
+        # base and draft before registering ANY durable successor/private chunks.
+        current = MetricProjectRefresh.for_project(
+            writer.lease.project_id
+        ).head_manifest
+        if (current.id if current else None) != (head.id if head else None) or (
+            current is not None and current.revoked_at is not None
+        ):
+            raise MetricStateConflict("retention base changed or expired")
+        MetricRefreshAttempt._locked_open(
+            draft.id, state=MetricRefreshAttempt.State.PREPARED, **writer.lease.check()
+        )
+        _require_retention_definitions(writer, definitions)
+        # Registration and recovery transfer commit together. A subsequent
+        # revocation now sees and aborts this successor before it can append.
+        attempt = writer.begin(
+            purpose="compaction",
+            ceilings={
+                **draft.source_ceilings,
+                **({"retention_floor": cutoff} if logical_expiry else {}),
+                "logical_expiry": logical_expiry,
+                # GC must scrub consumed PG-only drafts even when safe pins stay.
+                "private_cleanup_through": draft.generation,
+            },
+            versions=draft.metric_versions,
+            ledger=ledger,
+        )
+    writer.freeze(attempt, FIELD_VALUES, retained, params, collect_payloads=False)
     retired, rp = committed_rows_select(
         RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
     )
@@ -525,11 +799,13 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         params["retire_handled"] = tuple((UUID(m), v) for m, v in sorted(supplied))
     writer.freeze(attempt, RETIRED_PARTS, untouched, params)
     for table in (UNIT_STATE, SOURCE_DEPENDENCIES):
-        sql, bound = _proposal_rows(writer, draft, head, table, "retire_" + table.name)
+        sql, bound = captures.proposal(table)
+        # Retained conversation rows are exactly the captured owner set: a
+        # conversation not in expired has no anchor before the cutoff.
         predicate = (
             f"(level, unit_id) IN (SELECT level, unit_id FROM ({retained}))"
             if table == UNIT_STATE
-            else f"canonical_session_id IN (SELECT unit_id FROM ({retained}) WHERE level = 'conversation')"
+            else f"canonical_session_id IN ({owners})"
         )
         selected = f"SELECT * FROM ({sql}) WHERE {predicate}"
         if table == SOURCE_DEPENDENCIES and any(d.level == "span" for d in definitions):
@@ -538,16 +814,17 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     # Pruning a PREPARED auxiliary proposal does not revoke unrelated retained
     # captures: only previously published private evidence sets logical_expiry.
     for table in _current_tables(writer, head, draft):
-        sql, bound = _proposal_rows(writer, draft, head, table, "retire_" + table.name)
+        sql, bound = captures.proposal(table)
         writer.freeze(
             attempt,
             table,
-            f"SELECT * FROM ({sql}) WHERE {_current_retained(fields, 'retire_cutoff')}",
+            f"SELECT * FROM ({sql}) WHERE "
+            f"{_current_retained(fields, 'retire_cutoff', owners)}",
             {**params, **bound},
             collect_payloads=False,
         )
     # Carry anonymous history plus this pass's direct span replacements.
-    buckets, bp = _proposal_rows(writer, draft, head, BUCKET_TOTALS, "retire_buckets")
+    buckets, bp = captures.proposal(BUCKET_TOTALS)
     recomputed = tuple(
         (UUID(str(d.metric_id)), d.version) for d in definitions if d.level != "user"
     )
@@ -570,14 +847,10 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         )
         bp.update(retire_recomputed=recomputed, retire_dirty=list(dirty))
     writer.freeze(attempt, BUCKET_TOTALS, buckets, bp)
-    live, lp = payload_select(FIELD_VALUES, live_payloads, prefix="retire_live")
-    retired_payloads = [
-        FrozenRows.from_plan(p)
-        for p in writer.plans(attempt, kind="bucket_retired_parts")
-    ]
-    new_retired, nrp = payload_select(
-        RETIRED_PARTS, retired_payloads, prefix="retire_anonymous"
-    )
+    # Exactly the successor's frozen live fields and anonymous parts, captured
+    # once (one batch per INSERT) rather than inlined into every bucket page.
+    live, lp = captures.overlay(FIELD_VALUES, attempt=attempt)
+    new_retired, nrp = captures.overlay(RETIRED_PARTS, attempt=attempt)
     for definition in definitions:
         if definition.level != "user":
             writer._freeze_buckets(
@@ -684,8 +957,6 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None or head.revoked_at:
             raise MetricStateConflict("retention cleanup requires a safe checkpoint")
-        writer.store.assert_visible(head)
-        shard = writer.store.identity()
         keep = {a for _, a in head.allowed_attempts()}
         # Publication-time revocation removed every affected old pin. Preserve
         # safe POST-expiry states that a later compaction superseded while a new
@@ -713,17 +984,25 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
         for retained in MetricReadManifest.objects.filter(id__in=roots):
             keep.update(a for _, a in retained.allowed_attempts())
         keep = tuple(keep) or (UUID(int=0),)
-        complete = True
-        for obligation in pending.order_by("requested_at"):
-            # Recovery can enter here without purge_checkpoint, including a
-            # crash immediately after logical publication. Attempt TTL is not
-            # permission to retain expired PG preimages or frozen replay bytes.
-            recovery_attempt = (
-                head.published_by
-                if head.published_by.source_ceilings.get("recovery_pending")
-                else None
-            )
-            through = obligation.store_payload["through_generation"]
+        obligations = list(pending.order_by("requested_at"))
+    # Safe roots were frozen under serialization. New attempts have generations
+    # above every obligation; new captures can only pin these roots or their
+    # descendants. Revoked old namespaces cannot register new submissions.
+    writer.store.assert_visible(head)
+    shard = writer.store.identity()
+    complete = True
+    for obligation in obligations:
+        # Recovery can enter here without purge_checkpoint, including a
+        # crash immediately after logical publication. Attempt TTL is not
+        # permission to retain expired PG preimages or frozen replay bytes.
+        recovery_attempt = (
+            head.published_by
+            if head.published_by.source_ceilings.get("recovery_pending")
+            else None
+        )
+        through = obligation.store_payload["through_generation"]
+        with serialized_project(project_id):
+            writer.lease.check()
             _purge_terminal_payloads(
                 project_id,
                 recovery_attempt=recovery_attempt,
@@ -735,79 +1014,82 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
                 through_generation=through,
             ).exists():
                 raise MetricStateConflict("physical expiry private scrub is incomplete")
-            if obligation.store_payload.get("shard") != shard:
-                raise MetricStateConflict("physical expiry shard is not proven")
-            params = {
-                "purge_org": str(writer.org_id),
-                "purge_project": str(project_id),
-                "purge_through": through,
-                "purge_keep": keep,
-            }
-            predicate = (
-                "org_id = toUUID(%(purge_org)s) AND project_id = toUUID(%(purge_project)s) "
-                "AND generation <= %(purge_through)s AND attempt_id NOT IN %(purge_keep)s"
-            )
-            tables = (
-                FIELD_VALUES,
-                TABLES["metric_field_values_checkpoint"],
-                SOURCE_DEPENDENCIES,
-                UNIT_STATE,
-            )
-            # Preserve the existing core receipt shape; current-list stores get
-            # their own verification count under the same quiescence barrier.
-            core_table_count = len(tables)
-            tables = (*tables, *LIST_CURRENT_TABLES)
-            # Prompt scrub, even while an old submission may still land.
-            for table in tables:
-                _delete(writer.store, table, predicate, params)
-            submissions = MetricErasureRequest.objects.filter(
-                project_key=project_id,
-                store_payload__protocol="metric_submission",
-                store_payload__generation__lte=through,
-            )
-            if submissions.exclude(
-                status="done", receipts__synchronous_response__drained=1
-            ).exists():
-                complete = False
-                continue
-            # Registration is fenced under the same project lock: no new old-
-            # namespace submission can appear after this barrier observation.
-            for table in tables:
-                _delete(writer.store, table, predicate, params)
-                if writer.store.execute(
-                    f"SELECT count() FROM {table.name} WHERE {predicate}", params
-                ) != [(0,)]:
-                    raise MetricStateConflict("physical expiry scrub is incomplete")
-            MetricErasureRequest.objects.filter(id=obligation.id).update(
-                status="done",
-                completed_at=now or writer.lease.clock(),
-                receipts={
-                    "write_barrier": {"drained": submissions.count()},
-                    "final_scrub": {
-                        "verified_tables": core_table_count,
-                        "remaining": 0,
-                        "private_payloads_remaining": 0,
-                    },
-                    "current_facts_scrub": {
-                        "verified_tables": len(LIST_CURRENT_TABLES),
-                        "remaining": 0,
-                    },
+        if obligation.store_payload.get("shard") != shard:
+            raise MetricStateConflict("physical expiry shard is not proven")
+        params = {
+            "purge_org": str(writer.org_id),
+            "purge_project": str(project_id),
+            "purge_through": through,
+            "purge_keep": keep,
+        }
+        predicate = (
+            "org_id = toUUID(%(purge_org)s) AND project_id = toUUID(%(purge_project)s) "
+            "AND generation <= %(purge_through)s AND attempt_id NOT IN %(purge_keep)s"
+        )
+        tables = (
+            FIELD_VALUES,
+            TABLES["metric_field_values_checkpoint"],
+            SOURCE_DEPENDENCIES,
+            UNIT_STATE,
+        )
+        # Preserve the existing core receipt shape; current-list stores get
+        # their own verification count under the same quiescence barrier.
+        core_table_count = len(tables)
+        tables = (*tables, *LIST_CURRENT_TABLES)
+        # Prompt scrub, even while an old submission may still land.
+        for table in tables:
+            _delete(writer.store, table, predicate, params)
+        submissions = MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_submission",
+            store_payload__generation__lte=through,
+        )
+        if submissions.exclude(
+            status="done", receipts__synchronous_response__drained=1
+        ).exists():
+            complete = False
+            continue
+        # Logical publication already aborted old writers under the lifecycle
+        # key. Their dispatch registration revalidates that state, so no new old-
+        # namespace submission can appear after this barrier observation.
+        for table in tables:
+            _delete(writer.store, table, predicate, params)
+            if writer.store.execute(
+                f"SELECT count() FROM {table.name} WHERE {predicate}", params
+            ) != [(0,)]:
+                raise MetricStateConflict("physical expiry scrub is incomplete")
+        MetricErasureRequest.objects.filter(id=obligation.id).update(
+            status="done",
+            completed_at=now or writer.lease.clock(),
+            receipts={
+                "write_barrier": {"drained": submissions.count()},
+                "final_scrub": {
+                    "verified_tables": core_table_count,
+                    "remaining": 0,
+                    "private_payloads_remaining": 0,
                 },
-            )
-            # Omission debts are discharged only by this verified all-revisions
-            # scrub, never just by losing their last row in the current head.
-            MetricErasureRequest.objects.filter(
-                project_key=project_id,
-                store_payload__protocol="metric_omission",
-                store_payload__through_generation__lte=through,
-            ).exclude(status="done").update(
-                status="done",
-                completed_at=now or writer.lease.clock(),
-                receipts={"expiry_scrub": {"through_generation": through}},
-            )
-            # Namespace receipts have served their proof; no private rows or
-            # unbounded per-write history is required after completion.
-            submissions.delete()
+                "current_facts_scrub": {
+                    "verified_tables": len(LIST_CURRENT_TABLES),
+                    "remaining": 0,
+                },
+            },
+        )
+        # Omission debts are discharged only by this verified all-revisions
+        # scrub, never just by losing their last row in the current head.
+        MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_omission",
+            store_payload__through_generation__lte=through,
+        ).exclude(status="done").update(
+            status="done",
+            completed_at=now or writer.lease.clock(),
+            receipts={"expiry_scrub": {"through_generation": through}},
+        )
+        # Namespace receipts have served their proof; no private rows or
+        # unbounded per-write history is required after completion.
+        submissions.delete()
+    with serialized_project(project_id):
+        writer.lease.check()
         replan = (
             MetricErasureRequest.objects.filter(
                 project_key=project_id, store_payload__protocol="metric_policy_replan"
@@ -846,8 +1128,14 @@ def _span_dependencies(sql, retained_conversation, cutoff_parameter):
     )
 
 
-def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
+def _span_owner_cleanup_required(
+    writer, head, fields, field_params, cutoff, owners=None
+):
     """A retained span does not prove retention of its private owner links."""
+    inline_owners = (
+        f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+        "GROUP BY unit_id HAVING min(unit_start) >= %(span_owner_cutoff)s"
+    )
     dependencies, params = committed_rows_select(
         SOURCE_DEPENDENCIES,
         head,
@@ -871,8 +1159,9 @@ def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
         or writer.store.execute(
             f"SELECT count() FROM ({fields}) WHERE level = 'span' "
             "AND (notEmpty(session_id) OR notEmpty(user_id)) "
-            f"AND session_id NOT IN (SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
-            "GROUP BY unit_id HAVING min(unit_start) >= %(span_owner_cutoff)s)",
+            # A pass's captured owner set IS this relation (exact cutoff):
+            # one collapse of the proposal per statement, not two.
+            f"AND session_id NOT IN ({owners or inline_owners})",
             {**field_params, "span_owner_cutoff": cutoff},
         )[0][0]
     )
@@ -967,14 +1256,8 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None:
             return {"unlimited": False, "purged": False}
-        writer.store.assert_visible(head)
         if head.revoked_at:
             raise MetricStateConflict("expired base requires source rebuild")
-        from tracer.services.derived_metrics.span_evidence import (
-            require_retirement_evidence,
-        )
-
-        require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
         # Classification below performs ClickHouse reads without a PG
         # transaction. Keep predecessors open (and therefore GC-rooted) until
         # their complete, policy-safe handoff is durable in the successor.
@@ -986,6 +1269,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             ).values_list("id", flat=True)
         )
         recovery = writer.abort_stale(abort=False)
+    writer.store.assert_visible(head)
+    from tracer.services.derived_metrics.span_evidence import (
+        require_retirement_evidence,
+    )
+
+    require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
     params = {
         "expiry_cutoff": cutoff,
         "expiry_project": str(project_id),
@@ -1057,21 +1346,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         current = MetricProjectRefresh.for_project(project_id).head_manifest
         if current is None or current.id != head.id or current.revoked_at is not None:
             raise MetricStateConflict("retention base changed or expired")
-        for definition in definitions:
-            definition_id = getattr(definition, "id", None)
-            if (
-                definition_id is not None
-                and not DerivedMetricVersion.objects.filter(
-                    id=definition_id,
-                    metric_id=definition.metric_id,
-                    version=definition.version,
-                    metric__project_id=project_id,
-                    metric__organization_id=writer.org_id,
-                    metric__deleted=False,
-                    pins_revoked_at__isnull=True,
-                ).exists()
-            ):
-                raise MetricStateConflict("retention definition is expired or deleted")
+        _require_retention_definitions(writer, definitions)
         # Register the successor under the same lock as these fresh checks:
         # subsequent revocations must abort it before any copy can publish.
         attempt = writer.begin(
@@ -1259,28 +1534,21 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             params=params,
         )
     if span_definitions:
-        from tracer.services.derived_metrics.publication import FrozenRows
-        from tracer.services.derived_metrics.refresh import payload_select
-
-        new_live, nlp = _proposal_overlay(writer, attempt, FIELD_VALUES, "expiry_live")
-        new_retired, nrp = payload_select(
-            RETIRED_PARTS,
-            [
-                FrozenRows.from_plan(p)
-                for p in writer.plans(attempt, kind="bucket_retired_parts")
-            ],
-            prefix="expiry_anonymous",
-        )
-        for definition in span_definitions:
-            writer._freeze_buckets(
-                attempt,
-                head,
-                definition,
-                new_live,
-                nlp,
-                complete_fields=True,
-                retired_override=(new_retired, nrp),
-            )
+        # The checkpoint's complete live fields and anonymous parts, captured
+        # once (one frozen batch per INSERT), never inlined into bucket pages.
+        with ProposalCaptures(writer, attempt, head) as captures:
+            new_live, nlp = captures.overlay(FIELD_VALUES, attempt=attempt)
+            new_retired, nrp = captures.overlay(RETIRED_PARTS, attempt=attempt)
+            for definition in span_definitions:
+                writer._freeze_buckets(
+                    attempt,
+                    head,
+                    definition,
+                    new_live,
+                    nlp,
+                    complete_fields=True,
+                    retired_override=(new_retired, nrp),
+                )
     writer.seal(attempt, cursors={"pending_expiry": False})
     manifest = writer.stage_and_publish(attempt)
     # Revocations and cleanup intent are ALREADY committed with this manifest.
@@ -1343,98 +1611,96 @@ def purge_by_scope(store, request, *, writer=None):
                 raise MetricStateConflict(
                     "subject erasure requires a usable source manifest"
                 )
-            store.assert_visible(head)
-            ids = tuple(request.subject_ids)
-            params["erase_subjects"] = ids
-            field_predicate = (
-                "user_id IN %(erase_subjects)s"
-                if kind == "users"
-                else "(session_id IN %(erase_subjects)s OR unit_id IN %(erase_subjects)s)"
-            )
-            # Retention can scrub an unproven span-owner link while retaining
-            # the younger span. Without that lineage, subject erasure must drop
-            # unknown-owner span evidence conservatively, never guess it is safe.
-            owner = "user_id" if kind == "users" else "session_id"
-            field_predicate = (
-                f"({field_predicate} OR (level = 'span' AND {owner} = ''))"
-            )
-            dep_predicate = (
-                "(raw_user_id IN %(erase_subjects)s OR canonical_user_id IN %(erase_subjects)s)"
-                if kind == "users"
-                else "(raw_session_id IN %(erase_subjects)s OR canonical_session_id IN %(erase_subjects)s)"
-            )
-            fields, fp = committed_rows_select(
-                FIELD_VALUES,
-                head,
-                org_id=request.organization_key,
-                project_id=request.project_key,
-            )
-            deps, dp = committed_rows_select(
-                SOURCE_DEPENDENCIES,
-                head,
-                org_id=request.organization_key,
-                project_id=request.project_key,
-            )
-            params.update(fp)
-            params.update(dp)
-            # Unassignable multi-user conversations still carry the erased user's
-            # evidence: remove that conversation, rather than leaking its maps.
-            victims = store.execute(
-                f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} "
-                f"UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate} "
-                f"UNION DISTINCT SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE {dep_predicate}",
-                params,
-            )
-            for table in LIST_CURRENT_TABLES:
-                facts, bound = committed_rows_select(
-                    table,
-                    head,
-                    org_id=request.organization_key,
-                    project_id=request.project_key,
-                )
-                victims.extend(
-                    store.execute(
-                        f"SELECT DISTINCT canonical_session_id FROM ({facts}) WHERE {dep_predicate}",
-                        {**params, **bound},
-                    )
-                )
-            params["erase_units"] = tuple(row[0] for row in victims) or ("",)
             attempt = writer.begin(
                 purpose="compaction", ceilings={"erasure": str(request.id)}
             )
+        store.assert_visible(head)
+        ids = tuple(request.subject_ids)
+        params["erase_subjects"] = ids
+        field_predicate = (
+            "user_id IN %(erase_subjects)s"
+            if kind == "users"
+            else "(session_id IN %(erase_subjects)s OR unit_id IN %(erase_subjects)s)"
+        )
+        # Retention can scrub an unproven span-owner link while retaining
+        # the younger span. Without that lineage, subject erasure must drop
+        # unknown-owner span evidence conservatively, never guess it is safe.
+        owner = "user_id" if kind == "users" else "session_id"
+        field_predicate = f"({field_predicate} OR (level = 'span' AND {owner} = ''))"
+        dep_predicate = (
+            "(raw_user_id IN %(erase_subjects)s OR canonical_user_id IN %(erase_subjects)s)"
+            if kind == "users"
+            else "(raw_session_id IN %(erase_subjects)s OR canonical_session_id IN %(erase_subjects)s)"
+        )
+        fields, fp = committed_rows_select(
+            FIELD_VALUES,
+            head,
+            org_id=request.organization_key,
+            project_id=request.project_key,
+        )
+        deps, dp = committed_rows_select(
+            SOURCE_DEPENDENCIES,
+            head,
+            org_id=request.organization_key,
+            project_id=request.project_key,
+        )
+        params.update(fp)
+        params.update(dp)
+        # Unassignable multi-user conversations still carry the erased user's
+        # evidence: remove that conversation, rather than leaking its maps.
+        victims = store.execute(
+            f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} "
+            f"UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate} "
+            f"UNION DISTINCT SELECT toJSONString(tuple(trace_id, span_id)) FROM ({deps}) WHERE {dep_predicate}",
+            params,
+        )
+        for table in LIST_CURRENT_TABLES:
+            facts, bound = committed_rows_select(
+                table,
+                head,
+                org_id=request.organization_key,
+                project_id=request.project_key,
+            )
+            victims.extend(
+                store.execute(
+                    f"SELECT DISTINCT canonical_session_id FROM ({facts}) WHERE {dep_predicate}",
+                    {**params, **bound},
+                )
+            )
+        params["erase_units"] = tuple(row[0] for row in victims) or ("",)
+        writer.freeze(
+            attempt,
+            FIELD_VALUES,
+            f"SELECT * FROM ({fields}) WHERE NOT ({field_predicate}) AND unit_id NOT IN %(erase_units)s",
+            params,
+        )
+        for table in (SOURCE_DEPENDENCIES, UNIT_STATE):
+            sql, p = committed_rows_select(
+                table,
+                head,
+                org_id=request.organization_key,
+                project_id=request.project_key,
+            )
+            predicate = (
+                dep_predicate
+                if table == SOURCE_DEPENDENCIES
+                else "unit_id IN %(erase_units)s"
+            )
             writer.freeze(
                 attempt,
-                FIELD_VALUES,
-                f"SELECT * FROM ({fields}) WHERE NOT ({field_predicate}) AND unit_id NOT IN %(erase_units)s",
-                params,
+                table,
+                f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
+                {**p, **params},
             )
-            for table in (SOURCE_DEPENDENCIES, UNIT_STATE):
-                sql, p = committed_rows_select(
-                    table,
-                    head,
-                    org_id=request.organization_key,
-                    project_id=request.project_key,
-                )
-                predicate = (
-                    dep_predicate
-                    if table == SOURCE_DEPENDENCIES
-                    else "unit_id IN %(erase_units)s"
-                )
-                writer.freeze(
-                    attempt,
-                    table,
-                    f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
-                    {**p, **params},
-                )
-            for table in LIST_CURRENT_TABLES:
-                writer.freeze_current(
-                    attempt,
-                    table,
-                    head,
-                    where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
-                    params=params,
-                )
-            writer.seal(attempt)
+        for table in LIST_CURRENT_TABLES:
+            writer.freeze_current(
+                attempt,
+                table,
+                head,
+                where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
+                params=params,
+            )
+        writer.seal(attempt)
         manifest = writer.stage_and_publish(attempt)
         with serialized_project(request.project_key):
             old = list(
@@ -1442,31 +1708,44 @@ def purge_by_scope(store, request, *, writer=None):
                 .exclude(id=manifest.id)
                 .values_list("id", flat=True)
             )
+            writer.lease.check()
+            current = MetricProjectRefresh.for_project(
+                request.project_key
+            ).head_manifest
+            if current is None or current.id != manifest.id or current.revoked_at:
+                raise MetricStateConflict("subject erasure checkpoint changed")
             revoke_generations(request.project_key, reason="erased", manifest_ids=old)
+        writer.lease.check()
+        for table in TABLES.values():
+            if table.name.startswith("metric_field_values") or table in (
+                SOURCE_DEPENDENCIES,
+                UNIT_STATE,
+                *LIST_CURRENT_TABLES,
+            ):
+                # Every old generation was revoked, and the new complete
+                # checkpoint contains ALL unrelated live rows. Collect ALL
+                # older evidence, not just a rediscovered id list: this also
+                # makes interruption after field purge restart-safe for state
+                # and dependency rows that have no surviving field lineage.
+                predicate = "attempt_id != toUUID(%(erase_new)s)"
+            else:
+                predicate = "1"  # no surviving per-unit lineage in anonymous parts
+            _delete(
+                store,
+                table,
+                base + " AND generation <= %(erase_through)s AND (" + predicate + ")",
+                {
+                    **params,
+                    "erase_new": str(attempt.id),
+                    "erase_through": attempt.generation,
+                },
+            )
         with serialized_project(request.project_key):
             writer.lease.check()
-            for table in TABLES.values():
-                if table.name.startswith("metric_field_values") or table in (
-                    SOURCE_DEPENDENCIES,
-                    UNIT_STATE,
-                    *LIST_CURRENT_TABLES,
-                ):
-                    # Every old generation was revoked, and the new complete
-                    # checkpoint contains ALL unrelated live rows. Collect ALL
-                    # older evidence, not just a rediscovered id list: this also
-                    # makes interruption after field purge restart-safe for state
-                    # and dependency rows that have no surviving field lineage.
-                    predicate = "attempt_id != toUUID(%(erase_new)s)"
-                else:
-                    predicate = "1"  # no surviving per-unit lineage in anonymous parts
-                _delete(
-                    store,
-                    table,
-                    base + " AND (" + predicate + ")",
-                    {**params, "erase_new": str(attempt.id)},
-                )
-            _purge_terminal_payloads(request.project_key)
-            return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
+            _purge_terminal_payloads(
+                request.project_key, through_generation=attempt.generation
+            )
+        return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
     if kind not in {"organization", "project", "metric", "version"}:
         raise ValueError("unsupported live erasure scope")
     # Parent-independent intents may reach this path after the project vanished.
@@ -1495,6 +1774,15 @@ def purge_by_scope(store, request, *, writer=None):
                     definition_version_ids=list(versions.values_list("id", flat=True)),
                 )
             else:
+                # Discovery happens BEFORE an attempt exists and may already
+                # hold private dependency preimages in memory. Abort/revoke alone
+                # cannot fence that writer (including a project with NO head).
+                # Invalidate its durable lease in this same lifecycle boundary;
+                # registration/append require the old epoch+token and must fail.
+                # A later worker takes a new epoch and rediscovers current source.
+                MetricProjectRefresh.objects.filter(project_id=project).update(
+                    lease_token=None, lease_expires_at=None, lease_holder=""
+                )
                 revoke_generations(project, reason="erased")
             _purge_terminal_payloads(project)
     for table in TABLES.values():

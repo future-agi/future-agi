@@ -1,6 +1,7 @@
 # ruff: noqa: F811 -- shared isolated CH/PG fixtures
 """Refresh integration, whole buckets, source merges, crashes and oracle changes."""
 
+import math
 from datetime import UTC, datetime, timedelta
 from random import Random
 from uuid import UUID, uuid4
@@ -921,10 +922,14 @@ def test_batched_whole_writer_histories_with_independent_source_oracle(
                 len(pairs),
                 numerator,
                 sum(1 / p for _, p in pairs),
-                len(set(values)),
+                # A sketch metric keeps only ITS sketch; the other physical
+                # column is deliberately empty (distinct count 0, no quantile).
+                0 if definition.kind == "percentile" else len(set(values)),
                 # Small t-digest populations use the lower observed .5 rank,
                 # not the interpolated arithmetic median of an even population.
-                sorted(values)[(len(values) - 1) // 2],
+                None
+                if definition.kind == "unique_count"
+                else sorted(values)[(len(values) - 1) // 2],
             )
         return expected, buckets
 
@@ -964,7 +969,10 @@ def test_batched_whole_writer_histories_with_independent_source_oracle(
         assert set(actual) == set(expected_buckets)
         for key, values in expected_buckets.items():
             assert actual[key][:4] == pytest.approx(values[:4])
-            assert actual[key][4] == pytest.approx(values[4], abs=0.05)
+            if values[4] is None:
+                assert math.isnan(actual[key][4]), (key, actual[key])
+            else:
+                assert actual[key][4] == pytest.approx(values[4], abs=0.05)
 
     prior = ()
     for step in range(4):

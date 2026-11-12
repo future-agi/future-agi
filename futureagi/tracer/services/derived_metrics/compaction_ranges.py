@@ -178,7 +178,6 @@ def check_source(writer, attempt, *, state):
         != parent.id
     ):
         raise MetricStateConflict("compaction source is no longer usable")
-    writer.store.assert_visible(parent)
     return current
 
 
@@ -398,6 +397,8 @@ def prepare_ranges(writer, attempt, *, target_rows=RANGE_ROWS):
 
     if connection.in_atomic_block:
         raise MetricStateConflict("range preparation requires durable boundaries")
+    writer.store.assert_visible(attempt.parent_manifest)
+    shard = writer.store.identity()
     for kind, table in TABLE_KINDS.items():
         for ordinal, region in enumerate_regions(
             writer, attempt, table, target_rows=target_rows
@@ -424,7 +425,7 @@ def prepare_ranges(writer, attempt, *, target_rows=RANGE_ROWS):
                         ]
                     ),
                     schema_sha256=schema_fingerprint(table),
-                    shard_identity=writer.store.identity(),
+                    shard_identity=shard,
                     algorithm=ALGORITHM,
                     **writer.lease.check(),
                 )
@@ -457,11 +458,16 @@ def prepare_ranges(writer, attempt, *, target_rows=RANGE_ROWS):
                 )
                 sql, params = stamped_select(writer, attempt, row, table)
                 row.plan_sha256 = fingerprint([descriptor(row), sql, params])
-                expected = digest_select(writer.store, table, sql, params, row)
-                if expected["count"] != count:
-                    raise MetricVisibilityError(
-                        "checkpoint source changed during preparation"
-                    )
+            expected = digest_select(writer.store, table, sql, params, row)
+            if expected["count"] != count:
+                raise MetricVisibilityError(
+                    "checkpoint source changed during preparation"
+                )
+            with (
+                transaction.atomic(durable=True),
+                serialized_project(attempt.project_id),
+            ):
+                check_source(writer, attempt, state="prepared")
                 MetricCompactionRange.freeze(
                     row.id,
                     count=count,
@@ -571,21 +577,12 @@ def current_range_cutoff(writer, attempt):
     return cutoff
 
 
-def check_submission_policy(writer, attempt, row, table, sql, params):
-    """Do not submit a new private copy after a known policy/clock expiry."""
+def check_submission_policy(writer, attempt, row, oldest):
+    """Revalidate current policy after the unlocked immutable source observation."""
     from tracer.services.derived_metrics.refresh import MetricRetentionChanged
 
     cutoff = current_range_cutoff(writer, attempt)
-    if cutoff is None or not row.row_count or "unit_start" not in table.columns:
-        return
-    count, oldest = writer.store.execute(
-        f"SELECT count(), min(unit_start) FROM ({sql})", params
-    )[0]
-    if count != row.row_count:
-        raise MetricVisibilityError("checkpoint source changed before submission")
-    # Time can cross the boundary during that last scan even under the org lock.
-    cutoff = current_range_cutoff(writer, attempt)
-    if cutoff is not None and oldest < cutoff:
+    if oldest is not None and cutoff is not None and oldest < cutoff:
         raise MetricRetentionChanged("retention policy changed; replan required")
 
 
@@ -692,9 +689,10 @@ def stage_ranges(writer, attempt):
             raise MetricVisibilityError("checkpoint compaction deadline exceeded")
         table = TABLE_KINDS[row.table_kind]
         destination = physical_table(table, checkpoint=True)
+        shard = writer.store.identity()
         with transaction.atomic(durable=True), serialized_project(attempt.project_id):
             check_source(writer, attempt, state="staging")
-            if row.shard_identity != writer.store.identity():
+            if row.shard_identity != shard:
                 raise MetricVisibilityError("checkpoint range shard mismatch")
         if row.state == "verified":
             continue
@@ -759,10 +757,19 @@ def stage_ranges(writer, attempt):
             if destination == FIELD_CHECKPOINT
             else None
         )
+        oldest = None
+        if row.row_count and "unit_start" in table.columns:
+            count, oldest = writer.store.execute(
+                f"SELECT count(), min(unit_start) FROM ({sql})", params
+            )[0]
+            if count != row.row_count:
+                raise MetricVisibilityError(
+                    "checkpoint source changed before submission"
+                )
         query_id = "metric-range-insert-" + uuid4().hex
         with transaction.atomic(durable=True), serialized_project(attempt.project_id):
             check_source(writer, attempt, state="staging")
-            check_submission_policy(writer, attempt, row, table, sql, params)
+            check_submission_policy(writer, attempt, row, oldest)
             MetricCompactionRange.begin_insert(row.id, **writer.lease.check())
             submission = _intent(
                 organization_id=writer.org_id,
@@ -810,20 +817,11 @@ def visibility_receipts(attempt):
     return [] if root is None else [{"attempt": str(attempt.id), "registry": root}]
 
 
-def check_range_policy(writer, attempt):
-    """Final checked destination scan, with a clock/policy read after the last range."""
-    from tracer.services.derived_metrics.refresh import (
-        TABLE_KINDS,
-        MetricRetentionChanged,
-    )
+def range_retention_evidence(writer, attempt):
+    """Observe verified destination minima outside lifecycle serialization."""
+    from tracer.services.derived_metrics.refresh import TABLE_KINDS
 
-    if not connection.in_atomic_block:
-        raise MetricStateConflict("range policy validation requires publication lock")
-    check_source(
-        writer, attempt, state=MetricRefreshAttempt.objects.get(id=attempt.id).state
-    )
     validate_registry(attempt, verified=True)
-    current_range_cutoff(writer, attempt)
     oldest = None
     for row in (
         attempt.compaction_ranges.select_related("attempt")
@@ -842,6 +840,19 @@ def check_range_policy(writer, attempt):
                 "verified checkpoint range changed before publication"
             )
         oldest = start if oldest is None else min(oldest, start)
+    return oldest
+
+
+def check_range_policy(writer, attempt, oldest):
+    """The final source/registry/policy CAS contains no native observations."""
+    from tracer.services.derived_metrics.refresh import MetricRetentionChanged
+
+    if not connection.in_atomic_block:
+        raise MetricStateConflict("range policy validation requires publication lock")
+    check_source(
+        writer, attempt, state=MetricRefreshAttempt.objects.get(id=attempt.id).state
+    )
+    validate_registry(attempt, verified=True)
     cutoff = current_range_cutoff(writer, attempt)
     writer.lease.check()
     if oldest is not None and cutoff is not None and oldest < cutoff:
@@ -879,7 +890,6 @@ def _compact_ranges(writer, *, deadline, target_rows):
             return None
         if head.revoked_at is not None:
             raise MetricStateConflict("expired base requires source rebuild")
-        writer.store.assert_visible(head)
         pending_layout = (
             MetricErasureRequest.objects.filter(
                 deletion_key=f"checkpoint-layout:{head.checkpoint_attempt_id}",
@@ -929,6 +939,7 @@ def _compact_ranges(writer, *, deadline, target_rows):
                         "recovery_pending": pending,
                     },
                 )
+    writer.store.assert_visible(head)
     if pending_layout:
         writer._publish_compaction(attempt, deadline=deadline)
         transaction.on_commit(writer.collect_garbage)

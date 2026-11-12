@@ -520,6 +520,8 @@ def span_values_select(definition, scope, *, start, end, as_of):
         unit_predicate="(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)",
         source_ctes=(window_keys,),
         include_evidence=True,
+        # Bucket captures may tile adjacent quarters into one window.
+        quarter_ambiguity=True,
     )
     params["unit_settle_minutes"] = 0
     return _field_projection(

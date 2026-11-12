@@ -6,12 +6,20 @@ The project lock fences dispatch against erasure, publication and parent deletio
 Completed captures have no TTL. Only explicit erasure changes their frozen inputs.
 """
 
-from contextlib import contextmanager, nullcontext
+import hashlib
+from contextlib import contextmanager, nullcontext, suppress
 from datetime import timedelta
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import (
+    InterfaceError,
+    OperationalError,
+    connection,
+    connections,
+    transaction,
+)
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -25,7 +33,6 @@ from tracer.models.derived_metric import (
 from tracer.services.derived_metrics.deletion_protocol import (
     _intent,
     capture_pin,
-    project_dispatch_fence,
     serialized_project,
 )
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
@@ -223,6 +230,39 @@ def _current(run):
     return current
 
 
+@contextmanager
+def snapshot_read(run):
+    """Reject an assembled response if deletion/redaction changed its namespace."""
+    project_id = run.definition.metric.project_id
+    with serialized_project(project_id):
+        current = (
+            DerivedMetricRun.objects.select_related("definition__metric")
+            .filter(pk=run.id, status="complete", deleted_at__isnull=True)
+            .first()
+        )
+        if current is None:
+            raise MetricInputError("This snapshot is no longer available.")
+        revision = (current.attempt_id, current.result_id, current.changed_at)
+    yield current
+    with serialized_project(project_id):
+        from tracer.services.derived_metrics.service import _authorized_metric
+
+        final = (
+            DerivedMetricRun.objects.select_related("definition__metric")
+            .filter(
+                pk=run.id,
+                status="complete",
+                deleted_at__isnull=True,
+                attempt_id=revision[0],
+                result_id=revision[1],
+                changed_at=revision[2],
+            )
+            .first()
+        )
+        if final is None or not _authorized_metric(final.definition.metric):
+            raise MetricInputError("This snapshot changed while it was being read.")
+
+
 def _submission_done(submission, proof):
     MetricErasureRequest.objects.filter(pk=submission.id).update(
         status="done", completed_at=timezone.now(), receipts={proof: {"drained": 1}}
@@ -254,10 +294,10 @@ def _no_reconnect(store):
 def _write(store, run, sql, params, *, capturing=False, private=False):
     """prepared -> dispatching -> drained, each phase durable before the next.
 
-    The session fence uses the lifecycle lock's key. Drains can retire prepared
-    intents (including a process killed immediately after insertion), and a late
-    worker MUST re-read that retirement before dispatch. Once dispatching commits,
-    neither a client exception nor an empty process list proves no write happened.
+    Drains can retire prepared intents, even while the native clock probe is
+    blocked. A short transaction serializes that retirement with the committed
+    dispatching decision. No lifecycle lock spans native I/O. Once dispatching
+    commits, neither an exception nor an empty process list proves drainage.
     """
     if connection.in_atomic_block:
         raise RuntimeError("snapshot dispatch requires independent committed phases")
@@ -276,35 +316,45 @@ def _write(store, run, sql, params, *, capturing=False, private=False):
             "query_id": "metric-snapshot-" + uuid4().hex,
         },
     )
-    with project_dispatch_fence(scope.project), _no_reconnect(store):
-        submission.refresh_from_db()
-        if submission.status == "done":
-            raise MetricStateConflict("snapshot submission was fenced")
+    with _no_reconnect(store):
         try:
-            current = _current(run)
-            if capturing:
-                from tracer.services.derived_metrics.erasure import capture_blocked
-                from tracer.services.derived_metrics.service import (
-                    _authorized_metric,
-                    _requester_can_run,
-                )
-
-                if (
-                    not current.pin
-                    or not current.pin.is_usable()
-                    or capture_blocked(current.definition.metric)
-                    or not _authorized_metric(current.definition.metric)
-                    or not _requester_can_run(current)
-                ):
-                    raise MetricStateConflict("expired capture")
+            # Validate before opening the native connection, then revalidate at
+            # the dispatch CAS: deletion/revocation may finish during the probe.
+            _current(run)
             clock = _server_clock(store)
+            with serialized_project(scope.project):
+                submission.refresh_from_db()
+                if submission.status == "done":
+                    raise MetricStateConflict("snapshot submission was fenced")
+                current = _current(run)
+                if capturing:
+                    from tracer.services.derived_metrics.erasure import capture_blocked
+                    from tracer.services.derived_metrics.service import (
+                        _authorized_metric,
+                        _requester_can_run,
+                    )
+
+                    if (
+                        not current.pin
+                        or not current.pin.is_usable()
+                        or capture_blocked(current.definition.metric)
+                        or not _authorized_metric(current.definition.metric)
+                        or not _requester_can_run(current)
+                    ):
+                        raise MetricStateConflict("expired capture")
+                submission.store_payload.update(phase="dispatching", server_clock=clock)
+                MetricErasureRequest.objects.filter(pk=submission.id).update(
+                    store_payload=submission.store_payload
+                )
         except Exception:
-            _submission_done(submission, "not_submitted")
+            with serialized_project(scope.project):
+                submission.refresh_from_db()
+                if (
+                    submission.status != "done"
+                    and submission.store_payload.get("phase") == "prepared"
+                ):
+                    _submission_done(submission, "not_submitted")
             raise
-        submission.store_payload.update(phase="dispatching", server_clock=clock)
-        MetricErasureRequest.objects.filter(pk=submission.id).update(
-            store_payload=submission.store_payload
-        )
         # Private key ranges disable query logging and use restart recovery for
         # ambiguous IO. Keep the marker even for failures before native submission.
         store.client.execute(
@@ -333,14 +383,18 @@ def arm_submission_recovery(submission_id, *, store):
     job = MetricErasureRequest.objects.get(
         pk=submission_id, store_payload__protocol=SUBMISSION_PROTOCOL
     )
-    with project_dispatch_fence(job.project_key):
+    if job.status == "done":
+        return
+    before = job.store_payload.get("server_clock")
+    if not before or job.store_payload.get("transport") != "native_no_reconnect":
+        raise MetricStateConflict("legacy snapshot sender drainage is not proven")
+    after = _server_clock(store)
+    with serialized_project(job.project_key):
         job.refresh_from_db()
         if job.status == "done":
             return
-        before = job.store_payload.get("server_clock")
-        if not before or job.store_payload.get("transport") != "native_no_reconnect":
-            raise MetricStateConflict("legacy snapshot sender drainage is not proven")
-        after = _server_clock(store)
+        if job.store_payload.get("server_clock") != before:
+            raise MetricStateConflict("snapshot recovery observation changed")
         if after["server"] != before["server"]:
             raise MetricStateConflict("snapshot native server changed")
         job.store_payload["server_clock"] = after
@@ -349,8 +403,17 @@ def arm_submission_recovery(submission_id, *, store):
         )
 
 
-def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
+def drain_submissions(
+    store, *, organization_id, project_id=None, run_id=None, snapshot_ids=None
+):
     """Recover prepared work, or require terminal IO/restart proof for ambiguity.
+
+    snapshot_ids (an iterable or a lazily evaluated queryset of snapshot keys)
+    narrows a run's drain to those attempt namespaces. Retiring a prepared
+    submission fences its sender for good, so cleanup of one capture attempt
+    must never drain a live successor attempt of the same run: every capture
+    attempt writes under its own unique snapshot_id, which _write stamps on
+    each submission. Whole-run deletion, erasure and redaction drain run-wide.
 
     Operational recovery: if a dispatching query never reached the server (or
     its query log expired), restart the configured single native server, then
@@ -370,6 +433,8 @@ def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
         jobs = jobs.filter(project_key=project_id)
     if run_id:
         jobs = jobs.filter(run_key=run_id)
+    if snapshot_ids is not None:
+        jobs = jobs.filter(snapshot_key__in=snapshot_ids)
     for job in jobs:
         with serialized_project(job.project_key):
             job.refresh_from_db()
@@ -378,34 +443,42 @@ def drain_submissions(store, *, organization_id, project_id=None, run_id=None):
             if job.store_payload.get("phase") == "prepared":
                 _submission_done(job, "not_submitted")
                 continue
-            query_id = job.store_payload["query_id"]
-            active = store.execute(
-                "SELECT count() FROM system.processes WHERE query_id = %(query_id)s",
-                {"query_id": query_id},
-            )[0][0]
-            terminal = store.execute(
-                "SELECT count() FROM system.query_log WHERE query_id = %(query_id)s AND type IN ('QueryFinish', 'ExceptionBeforeStart', 'ExceptionWhileProcessing')",
-                {"query_id": query_id},
-            )[0][0]
-            if not active and terminal:
-                _submission_done(job, "terminal_query")
-                continue
-            before = job.store_payload.get("server_clock")
+            observed_payload = job.store_payload
+        # Native observations may stall. The durable dispatching receipt, not
+        # lock ownership, prevents physical erasure from certifying completion.
+        query_id = observed_payload["query_id"]
+        active = store.execute(
+            "SELECT count() FROM system.processes WHERE query_id = %(query_id)s",
+            {"query_id": query_id},
+        )[0][0]
+        terminal = store.execute(
+            "SELECT count() FROM system.query_log WHERE query_id = %(query_id)s AND type IN ('QueryFinish', 'ExceptionBeforeStart', 'ExceptionWhileProcessing')",
+            {"query_id": query_id},
+        )[0][0]
+        proof = "terminal_query" if not active and terminal else None
+        before = observed_payload.get("server_clock")
+        if (
+            proof is None
+            and not active
+            and before
+            and observed_payload.get("transport") == "native_no_reconnect"
+        ):
+            after = _server_clock(store)
+            # Two seconds cover integer-clock rounding; false negatives wait
+            # for a later operator restart, never turn absence into proof.
             if (
-                not active
-                and before
-                and job.store_payload.get("transport") == "native_no_reconnect"
+                after["server"] == before["server"]
+                and after["uptime"] < before["uptime"]
+                and after["time"] - after["uptime"] > before["time"] + 2
             ):
-                after = _server_clock(store)
-                # Two seconds cover integer-clock rounding; false negatives wait
-                # for a later operator restart, never turn absence into proof.
-                if (
-                    after["server"] == before["server"]
-                    and after["uptime"] < before["uptime"]
-                    and after["time"] - after["uptime"] > before["time"] + 2
-                ):
-                    _submission_done(job, "server_restart")
-                    continue
+                proof = "server_restart"
+        with serialized_project(job.project_key):
+            job.refresh_from_db()
+            if job.status == "done":
+                continue
+            if proof and job.store_payload == observed_payload:
+                _submission_done(job, proof)
+                continue
             raise MetricStateConflict("snapshot write drainage is not yet proven")
 
 
@@ -421,26 +494,87 @@ def delete_rows(store, table, predicate, params):
         raise MetricStateConflict("snapshot physical deletion is incomplete")
 
 
-def purge_run(store, *, organization_id, project_id, run_id, snapshot_id):
+def fenced_delete_rows(store, run, table, predicate, params):
+    """A DELETE that could reach a successor attempt's rows is a submission.
+
+    The per-run execution gate is only best-effort exclusion: its connection
+    can drop while this worker is paused. A namespace a successor REUSES (run
+    results, a redaction's shared sketch states) is therefore deleted through
+    the durable dispatch protocol of THIS run attempt: its committed dispatch
+    CAS rejects an attempt replaced during the pause before any native I/O,
+    and a takeover's drain must observe this DELETE's terminal record before it
+    writes. The SQL carries no subject identities, so it stays query-logged.
+    """
+    names = {name for name in params if f"%({name})s" in predicate}
+    bound = {name: params[name] for name in names}
+    _write(
+        store,
+        run,
+        f"ALTER TABLE {table} DELETE WHERE {predicate} SETTINGS mutations_sync = 2",
+        bound,
+    )
+    if store.execute(f"SELECT count() FROM {table} WHERE {predicate}", bound) != [(0,)]:
+        raise MetricStateConflict("snapshot physical deletion is incomplete")
+
+
+def purge_run(
+    store, *, organization_id, project_id, run_id, snapshot_id, result_id=None
+):
+    """Whole-run erasure, or ONLY an attempt's immutable physical namespace.
+
+    Capture setup/failure must pass result_id. A stale worker can continue after
+    losing its PostgreSQL gate, so neither its DELETE nor its cleanup outbox may
+    address the shared run namespace. Explicit deletion still collects ALL runs.
+
+    An attempt-only purge also drains ONLY that attempt's submissions. The
+    takeover records the detached attempt's cleanup while its successor starts
+    capturing, and the erasure sweep runs that cleanup concurrently: a run-wide
+    drain would retire the successor's prepared submissions (its dispatch CAS
+    then fails it for good) or block on its dispatching ones.
+    """
     params = {
         "org": str(organization_id),
         "project": str(project_id),
         "run": str(run_id),
         "snapshot": str(snapshot_id),
+        "result": str(result_id),
     }
     base = "org_id = toUUID(%(org)s) AND project_id = toUUID(%(project)s)"
+    if result_id is not None and snapshot_id is None:
+        # Never widen an attempt cleanup to the run: fail closed instead.
+        raise MetricStateConflict("snapshot attempt namespace is unknown")
     drain_submissions(
-        store, organization_id=organization_id, project_id=project_id, run_id=run_id
+        store,
+        organization_id=organization_id,
+        project_id=project_id,
+        run_id=run_id,
+        snapshot_ids=None if result_id is None else (snapshot_id,),
     )
+    result_predicate = " AND run_id = toUUID(%(run)s)"
+    if result_id is not None:
+        result_predicate += " AND result_id = toUUID(%(result)s)"
     for table in ("derived_metric_results", "derived_metric_commits"):
-        delete_rows(store, table, base + " AND run_id = toUUID(%(run)s)", params)
-    if snapshot_id:
+        delete_rows(store, table, base + result_predicate, params)
+    snapshots = {snapshot_id} if snapshot_id else set()
+    if result_id is None:
+        # Whole-run deletion also owns abandoned attempts. Their immutable input
+        # keys survive both takeover and PG parent cascades in the outbox.
+        snapshots.update(
+            MetricErasureRequest.objects.filter(
+                organization_key=organization_id,
+                project_key=project_id,
+                run_key=run_id,
+                snapshot_key__isnull=False,
+            ).values_list("snapshot_key", flat=True)
+        )
+    for key in snapshots:
+        # Sketch states and typed units share the attempt's snapshot namespace.
         for table in (BUCKET_TABLE, UNIT_TABLE, "derived_metric_inputs"):
             delete_rows(
                 store,
                 table,
                 base + " AND snapshot_id = toUUID(%(snapshot)s)",
-                params,
+                {**params, "snapshot": str(key)},
             )
 
 
@@ -557,7 +691,9 @@ def _rollup_ranges(store, run, rollup, *, unit_range=False):
 
 
 def commit_results(store, run, *, capturing=False):
-    result_id = uuid4()
+    # Allocated durably BEFORE native IO. Setup/failure cleanup can therefore
+    # target this attempt even if its result pointer was never published.
+    result_id = run.attempt_id
     mixed_scope, unaligned_sessions = store.client.execute(
         f"SELECT minIf(sampling_scope, notEmpty(sampling_scope)) != "
         f"maxIf(sampling_scope, notEmpty(sampling_scope)), "
@@ -622,24 +758,181 @@ def commit_results(store, run, *, capturing=False):
         )
 
 
+@contextmanager
+def snapshot_execution_gate(run_id):
+    """Best-effort execution exclusion, NOT a physical deletion fence.
+
+    The independent transaction works through transaction-mode pooling and avoids
+    duplicate work while alive. Connection loss releases it without stopping the
+    native worker. Attempt-qualified namespaces below provide the durable safety
+    boundary even when takeover occurs before that worker notices the loss.
+    """
+    database = connections["default"].copy(alias="metric_snapshot_execution")
+    key = int.from_bytes(
+        hashlib.sha256(f"metric-snapshot-execution:{run_id}".encode()).digest()[:8],
+        "big",
+        signed=True,
+    )
+    try:
+        database.set_autocommit(False)
+        with database.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+            yield cursor.fetchone()[0]
+    finally:
+        try:
+            # A disconnected gate is expected to permit takeover. Closing the
+            # connection also rolls back; never mask the worker's fenced result.
+            with suppress(InterfaceError, OperationalError):
+                database.rollback()
+        finally:
+            database.close()
+
+
+REDACTION_PROTOCOL = "metric_snapshot_redaction"
+
+
+def redaction_children(run_id):
+    """Redaction children of one run that have not finished (failed included)."""
+    return MetricErasureRequest.objects.filter(
+        run_key=run_id, store_payload__protocol=REDACTION_PROTOCOL
+    ).exclude(status="done")
+
+
+def redaction_owned(run):
+    """A COMPLETED run whose namespace a redaction child has reopened.
+
+    Redaction flips a completed run back to running (a fresh attempt fences
+    its earlier senders) and keeps completed_at set: it stamps one at the flip
+    if a historical row lacks it, and commit_results stamps it again on
+    completion. Such a run's frozen inputs and results are a live namespace,
+    never an abandoned capture: no claim may detach it and no erasure parent
+    may fail or purge it, even after the redaction child failed or lost its
+    gate connection.
+
+    For a saved snapshot the two fields are proof on their own: only a
+    redaction reopens a completed snapshot (a capture claim never touches one,
+    and a capture attempt has no completed_at). A legacy raw run is ALSO
+    reopened by recompute (queued, then running, with its old completed_at
+    still set), so for it only an unfinished redaction child of that run
+    proves ownership. Recompute never creates one, and a failed child stays
+    unfinished until its retry completes.
+    """
+    if run.status != "running" or run.completed_at is None:
+        return False
+    if run.kind == "snapshot":
+        return True
+    return redaction_children(run.id).exists()
+
+
+def recoverable_captures(limit=10):
+    """Queued captures and expired capture attempts, never redaction-owned runs."""
+    return (
+        DerivedMetricRun.objects.filter(
+            Q(status="queued")
+            | Q(status="running", lease_expires_at__lte=timezone.now()),
+            kind="snapshot",
+            deleted_at__isnull=True,
+            completed_at__isnull=True,
+        )
+        .order_by("created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+
+
+ATTEMPT_CLEANUP_PROTOCOL = "metric_snapshot_attempt_cleanup"
+
+
+def _capture_cleanup(run):
+    """The durable purge obligation of ONE capture attempt's namespaces.
+
+    Recorded only once that attempt is detached for good: atomically with the
+    takeover that replaces it, by an erasure parent that fails it under the
+    lifecycle lock, or by its own worker after its failure. An attempt never
+    becomes live again, so the set of namespaces these obligations name only
+    grows and never includes a live attempt (see _detached_namespaces).
+    """
+    return _intent(
+        organization_id=run.definition.metric.organization_id,
+        project_id=run.definition.metric.project_id,
+        scope="run",
+        metric_key=run.definition.metric_id,
+        run_key=run.id,
+        snapshot_key=run.snapshot_id,
+        result_key=run.attempt_id,
+        deletion_key=f"capture-attempt:{run.id}:{run.attempt_id}",
+        store_payload={"protocol": ATTEMPT_CLEANUP_PROTOCOL},
+    )
+
+
+def _detached_namespaces(run_id):
+    """Snapshot keys of this run's detached capture attempts, evaluated lazily.
+
+    A capture's setup drain must wait for every earlier attempt's senders
+    (an old commit could otherwise land after ours), but it must never retire
+    a LIVE attempt's prepared submission. A stale worker can reach its setup
+    drain after a successor took over, so "every attempt but mine" is wrong:
+    the stale worker's own view of "mine" is the dead attempt. Detachment is
+    durable and monotone instead. A successor's claim records its predecessor
+    here in the same transaction that replaces it, so a live successor sees
+    every earlier attempt, and a stale worker never sees the live one.
+    """
+    return MetricErasureRequest.objects.filter(
+        run_key=run_id,
+        store_payload__protocol=ATTEMPT_CLEANUP_PROTOCOL,
+        snapshot_key__isnull=False,
+    ).values("snapshot_key")
+
+
 def execute_snapshot(run_id, *, store=None, policy=None):
+    with snapshot_execution_gate(run_id) as held:
+        if held:
+            return _execute_snapshot(run_id, store=store, policy=policy)
+
+
+def _execute_snapshot(run_id, *, store=None, policy=None):
     run = (
         DerivedMetricRun.objects.select_related("definition__metric", "pin__manifest")
         .filter(pk=run_id, kind="snapshot")
         .first()
     )
-    if run is None or run.deleted_at or run.status in {"complete", "failed"}:
+    if (
+        run is None
+        or run.deleted_at
+        or run.status in {"complete", "failed"}
+        or run.completed_at is not None
+    ):
         return
     scope = scope_for(run)
     with serialized_project(scope.project):
         run.refresh_from_db()
         if run.status == "running" and run.lease_expires_at > timezone.now():
             return
-        if run.status not in {"queued", "running"} or run.deleted_at:
+        if (
+            run.status not in {"queued", "running"}
+            or run.deleted_at
+            # A redaction reopened this COMPLETED namespace. Even with its
+            # gate gone and its lease expired, it is not an abandoned capture:
+            # detaching it would purge the frozen inputs and let the redaction
+            # retry commit an empty snapshot from a fresh namespace.
+            or run.completed_at is not None
+        ):
             return
+        if run.attempt_id:
+            # Persist the old namespace BEFORE detaching it, including attempts
+            # whose worker died before it could record a failure obligation.
+            _capture_cleanup(run)
         run.status, run.attempt_id = "running", uuid4()
+        run.snapshot_id, run.result_id = uuid4(), None
         run.lease_expires_at = timezone.now() + timedelta(minutes=15)
-        run.save(update_fields=["status", "attempt_id", "lease_expires_at"])
+        run.save(
+            update_fields=[
+                "status",
+                "attempt_id",
+                "snapshot_id",
+                "result_id",
+                "lease_expires_at",
+            ]
+        )
     with nullcontext(store) if store else snapshot_store() as connection:
         try:
             from tracer.services.derived_metrics.service import (
@@ -654,26 +947,34 @@ def execute_snapshot(run_id, *, store=None, policy=None):
                 raise MetricStateConflict("expired capture")
             with serialized_project(scope.project):
                 _current(run)
-                drain_submissions(
-                    connection,
-                    organization_id=scope.organization,
-                    project_id=scope.project,
-                    run_id=run.id,
-                )
-                _assert_retained(
-                    connection,
-                    run,
-                    run.pin.manifest if run.pin else None,
-                    policy or _policy,
-                )
-                connection.assert_visible(run.pin.manifest)
-                purge_run(
-                    connection,
-                    organization_id=scope.organization,
-                    project_id=scope.project,
-                    run_id=run.id,
-                    snapshot_id=run.snapshot_id,
-                )
+            # Every claim receives fresh input/result namespaces. Even if our
+            # gate backend disconnects and a successor completes while paused
+            # here (or in a native DELETE), cleanup can touch only OUR attempt.
+            # Dispatch receipts independently fence INSERTs against erasure.
+            # Drain only DETACHED attempts: if we are stale by now, a run-wide
+            # drain would retire our live successor's prepared submissions.
+            drain_submissions(
+                connection,
+                organization_id=scope.organization,
+                project_id=scope.project,
+                run_id=run.id,
+                snapshot_ids=_detached_namespaces(run.id),
+            )
+            _assert_retained(
+                connection,
+                run,
+                run.pin.manifest if run.pin else None,
+                policy or _policy,
+            )
+            connection.assert_visible(run.pin.manifest)
+            purge_run(
+                connection,
+                organization_id=scope.organization,
+                project_id=scope.project,
+                run_id=run.id,
+                snapshot_id=run.snapshot_id,
+                result_id=run.attempt_id,
+            )
             start = run.window_start
             while start < run.window_end:
                 end = min(start + timedelta(days=30), run.window_end)
@@ -687,9 +988,10 @@ def execute_snapshot(run_id, *, store=None, policy=None):
                     )
                     _write(connection, run, sql, params, capturing=True)
                 start = end
-            with serialized_project(scope.project):
-                _assert_retained(connection, run, run.pin.manifest, policy or _policy)
+            _assert_retained(connection, run, run.pin.manifest, policy or _policy)
             if is_sketch(run.definition):
+                # Native completeness probe, deliberately outside the lifecycle
+                # lock; commit_results revalidates the attempt before publishing.
                 assert_complete_capture(connection, run)
             commit_results(connection, run, capturing=True)
         except Exception as exc:
@@ -707,18 +1009,14 @@ def execute_snapshot(run_id, *, store=None, policy=None):
                     else "capture_failed"
                 ),
             )
-            # Even partial writes belong to a durable parent-independent cleanup.
-            _intent(
-                organization_id=scope.organization,
-                project_id=scope.project,
-                scope="run",
-                metric_key=run.definition.metric_id,
-                run_key=run.id,
-                snapshot_key=run.snapshot_id,
-                deletion_key=f"failed-capture:{run.id}",
-            )
+            # Even partial writes belong to a durable attempt-only cleanup.
+            _capture_cleanup(run)
         finally:
-            MetricGenerationPin.objects.filter(pk=run.pin_id).delete()
+            with serialized_project(scope.project):
+                if DerivedMetricRun.objects.filter(
+                    pk=run.id, attempt_id=run.attempt_id
+                ).exists():
+                    MetricGenerationPin.objects.filter(pk=run.pin_id).delete()
 
 
 def delete_snapshot(metric, snapshot_id, user):
