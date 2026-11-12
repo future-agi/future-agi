@@ -3,20 +3,23 @@ import React, { useState } from "react";
 import { useSnackbar } from "notistack";
 import { Stack, TextField, Typography } from "@mui/material";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
-import { useChangeVersion } from "src/api/agents/agentDetail";
+import { useAgentVersion, useChangeVersion } from "src/api/agents/agentDetail";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { LabeledField } from "./bits";
+import CurrentVersionShell from "./CurrentVersionShell";
+
+const nextLabel = (agent) => `v${(agent.versionCount || 0) + 1}`;
 
 /**
  * A new version of a built-in agent from an edited prompt. The same prompt
  * again makes no version: the server answers with the one that already stands
  * for it.
  */
-export default function AddVersionDialog({ agent, open, onClose }) {
+function AddVersionForm({ agent, open, startPrompt, onClose }) {
   const { enqueueSnackbar } = useSnackbar();
   const change = useChangeVersion(agent.id);
-  const [prompt, setPrompt] = useState(agent.description || "");
-  const next = `v${(agent.versionCount || 0) + 1}`;
+  const [prompt, setPrompt] = useState(startPrompt);
+  const next = nextLabel(agent);
 
   const submit = () => {
     change.mutate(
@@ -68,6 +71,38 @@ export default function AddVersionDialog({ agent, open, onClose }) {
         </LabeledField>
       </Stack>
     </ModalWrapper>
+  );
+}
+
+AddVersionForm.propTypes = {
+  agent: PropTypes.object.isRequired,
+  open: PropTypes.bool.isRequired,
+  startPrompt: PropTypes.string.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
+
+export default function AddVersionDialog({ agent, open, onClose }) {
+  const version = useAgentVersion(agent.id, agent.activeVersionId);
+  if (agent.activeVersionId && (version.isLoading || version.isError)) {
+    return (
+      <CurrentVersionShell
+        title={`Add version ${nextLabel(agent)}`}
+        isError={version.isError}
+        onClose={onClose}
+      />
+    );
+  }
+  const startPrompt = agent.activeVersionId
+    ? version.data?.config?.description || ""
+    : agent.description || "";
+  return (
+    <AddVersionForm
+      key={agent.activeVersionId || "none"}
+      agent={agent}
+      open={open}
+      startPrompt={startPrompt}
+      onClose={onClose}
+    />
   );
 }
 

@@ -4,6 +4,7 @@ import AddVersionDialog from "../AddVersionDialog";
 
 const mockSnackbar = vi.fn();
 const mockMutate = vi.fn();
+const mockVersion = { current: {} };
 
 vi.mock("notistack", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -11,6 +12,7 @@ vi.mock("notistack", async (importOriginal) => ({
 }));
 
 vi.mock("src/api/agents/agentDetail", () => ({
+  useAgentVersion: () => mockVersion.current,
   useChangeVersion: () => ({ mutate: mockMutate, isPending: false }),
 }));
 
@@ -20,9 +22,11 @@ const AGENT = {
   versionCount: 2,
 };
 
-const renderDialog = () => {
+const LIVE_AGENT = { ...AGENT, description: "old", activeVersionId: "ver-2" };
+
+const renderDialog = (agent = AGENT) => {
   const onClose = vi.fn();
-  render(<AddVersionDialog agent={AGENT} open onClose={onClose} />);
+  render(<AddVersionDialog agent={agent} open onClose={onClose} />);
   return onClose;
 };
 
@@ -31,9 +35,43 @@ const save = () => screen.getByRole("button", { name: "Save as v3" });
 beforeEach(() => {
   mockSnackbar.mockReset();
   mockMutate.mockReset();
+  mockVersion.current = { isLoading: false, isError: false };
 });
 
 describe("AddVersionDialog", () => {
+  it("starts from the production version's prompt", () => {
+    mockVersion.current = {
+      isLoading: false,
+      isError: false,
+      data: { config: { description: "live prompt" } },
+    };
+    renderDialog(LIVE_AGENT);
+    expect(screen.getByTestId("add-version-prompt")).toHaveValue("live prompt");
+  });
+
+  it("starts from the agent's prompt when nothing is in production", () => {
+    renderDialog();
+    expect(screen.getByTestId("add-version-prompt")).toHaveValue(
+      "You are a booking assistant.",
+    );
+  });
+
+  it("shows a spinner while the production version loads", () => {
+    mockVersion.current = { isLoading: true, isError: false };
+    renderDialog(LIVE_AGENT);
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByTestId("add-version-prompt")).not.toBeInTheDocument();
+  });
+
+  it("says when the production version couldn't load", () => {
+    mockVersion.current = { isLoading: false, isError: true };
+    renderDialog(LIVE_AGENT);
+    expect(
+      screen.getByText(/Couldn't load this agent's current version/),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("add-version-prompt")).not.toBeInTheDocument();
+  });
+
   it("saves the edited prompt as a new version", () => {
     mockMutate.mockImplementation((_body, { onSuccess }) =>
       onSuccess({ version: { version_name_display: "v3" }, up_to_date: false }),
