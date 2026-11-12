@@ -48739,6 +48739,12 @@
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -134238,14 +134244,6 @@
                 "versions_updated": {
                     "title": "Versions updated",
                     "type": "integer",
-                    "readOnly": true
-                },
-                "skipped_agent_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "format": "uuid"
-                    },
                     "readOnly": true
                 }
             }

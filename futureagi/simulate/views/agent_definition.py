@@ -40,19 +40,20 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    delete_agents,
     is_masked,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
 )
 from simulate.services.agent_overview import (
-    agent_ids_in_environments,
     annotate_agent_rows,
     environment_refs,
     filter_agent_rows,
     observability_on,
     recent_agent_runs,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -62,6 +63,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -83,6 +85,13 @@ from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
+
+
+def _conflict(exc: HostedHarnessError) -> Response:
+    return Response(
+        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
+        status=exc.status_code,
+    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -211,6 +220,7 @@ class AgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionBulkDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -221,37 +231,23 @@ class AgentDefinitionView(APIView):
         """
         try:
             agent_ids = request.validated_data["agent_ids"]
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
+
+            updated_agents, updated_versions = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
             )
-
-            with transaction.atomic():
-                agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids, organization=organization
-                )
-                skipped = agent_ids_in_environments(agents)
-                deletable = [
-                    agent_id for agent_id in agent_ids if agent_id not in skipped
-                ]
-
-                updated_agents = agents.filter(id__in=deletable).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=deletable,
-                    organization=organization,
-                ).update(deleted=True, deleted_at=timezone.now())
 
             response_data = {
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
-                "skipped_agent_ids": sorted(skipped, key=str),
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to delete agents: {str(e)}"

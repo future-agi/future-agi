@@ -4,15 +4,16 @@ from typing import Any
 from uuid import UUID
 
 from django.db.models import (
+    BooleanField,
     Case,
     CharField,
     Count,
-    Exists,
     F,
     OuterRef,
     Q,
     QuerySet,
     Subquery,
+    Value,
     When,
     Window,
 )
@@ -38,7 +39,7 @@ _ENVIRONMENT_CONDITIONS = {
     "with": Q(_environment_count__gt=0),
     "without": Q(_environment_count=0),
 }
-_OBSERVE_CONDITIONS = {"linked": _OBSERVE_LINKED, "not_linked": ~_OBSERVE_LINKED}
+_OBSERVE_CONDITIONS = {"linked": Q(_observed=True), "not_linked": Q(_observed=False)}
 _FILTER_CONDITIONS = {
     "agent_type": lambda value: Q(agent_type=value),
     "source": lambda value: Q(_source=value),
@@ -100,12 +101,27 @@ def annotate_agent_rows(
             When(_agent_kind="source", then=F("_build_source_kind")),
             default=F("provider"),
             output_field=CharField(),
-        )
+        ),
+        _observed=Case(
+            When(_OBSERVE_LINKED, then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
     )
 
 
-def agent_ids_in_environments(queryset: QuerySet[AgentDefinition]) -> set[UUID]:
-    return set(queryset.filter(Exists(_environments())).values_list("id", flat=True))
+def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
+    rows = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            run_test__agent_definition_id__in=agent_ids,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        )
+        .values("run_test__agent_definition_id")
+        .annotate(total=Count("id"))
+    )
+    return {row["run_test__agent_definition_id"]: row["total"] for row in rows}
 
 
 def filter_agent_rows(

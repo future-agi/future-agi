@@ -27157,6 +27157,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -49881,14 +49884,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         versions_updated: {
           title: "Versions updated",
           type: "integer",
-          readOnly: true,
-        },
-        skipped_agent_ids: {
-          type: "array",
-          items: {
-            type: "string",
-            format: "uuid",
-          },
           readOnly: true,
         },
       },

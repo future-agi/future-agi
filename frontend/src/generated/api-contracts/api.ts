@@ -56371,6 +56371,11 @@ export type simulateAgentDefinitionsDeleteResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56378,7 +56383,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56387,6 +56392,7 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
+  | simulateAgentDefinitionsDeleteResponse409
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {

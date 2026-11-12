@@ -262,6 +262,8 @@ def test_list_filters_by_type_source_environments_and_observe_project(
     assert _names(auth_client, observe="not_linked") == [
         name for name in everyone if name != "Observed"
     ]
+    assert _names(auth_client, observe=["linked", "not_linked"]) == everyone
+    assert _names(auth_client, observe=["not_linked", "linked"]) == everyone
     assert _names(
         auth_client, source="bland", environments="without", observe="not_linked"
     ) == ["Project Gone", "Switched Off"]
@@ -275,14 +277,41 @@ def test_list_rejects_a_filter_value_it_does_not_know(auth_client):
 
 
 @pytest.mark.django_db
-def test_bulk_delete_skips_agents_still_used_in_an_environment(
+def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
     auth_client, organization, workspace
 ):
-    in_use = _agent(organization, workspace, "In Use")
-    kept_version = in_use.create_version(
+    tested = _agent(organization, workspace, "Northwind")
+    _environment(tested, 1)
+    _environment(tested, 2)
+    also_tested = _agent(organization, workspace, "Harbor Hotels")
+    _environment(also_tested, 3)
+    idle = _agent(organization, workspace, "Spare")
+    idle_version = idle.create_version(
         description="p", commit_message="v1", status="active"
     )
-    _environment(in_use, 1)
+
+    response = auth_client.delete(
+        AGENTS,
+        {"agent_ids": [str(idle.id), str(tested.id), str(also_tested.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.json()["code"] == "agent_in_use"
+    assert response.json()["error"] == (
+        "Northwind is tested by 2 environments and Harbor Hotels by 1 environment."
+        " Delete those environments first."
+    )
+    for row in (tested, also_tested, idle, idle_version):
+        row.refresh_from_db()
+        assert row.deleted is False
+    assert _names(auth_client) == ["Harbor Hotels", "Northwind", "Spare"]
+
+
+@pytest.mark.django_db
+def test_bulk_delete_removes_idle_agents_with_their_versions(
+    auth_client, organization, workspace
+):
     free = _agent(organization, workspace, "Free")
     free_version = free.create_version(
         description="p", commit_message="v1", status="active"
@@ -290,29 +319,23 @@ def test_bulk_delete_skips_agents_still_used_in_an_environment(
     left_behind = _agent(organization, workspace, "Environment Gone")
     gone = _environment(left_behind, 2)
     HostedHarnessJob.all_objects.filter(id=gone.id).update(deleted=True)
+    already_gone = _agent(organization, workspace, "Already Gone")
+    AgentDefinition.objects.filter(id=already_gone.id).update(deleted=True)
 
     response = auth_client.delete(
         AGENTS,
-        {"agent_ids": [str(in_use.id), str(free.id), str(left_behind.id)]},
+        {"agent_ids": [str(free.id), str(left_behind.id), str(already_gone.id)]},
         format="json",
     )
 
     assert response.status_code == status.HTTP_200_OK, response.content
     body = response.json()
-    assert (
-        body["agents_updated"],
-        body["versions_updated"],
-        body["skipped_agent_ids"],
-    ) == (2, 1, [str(in_use.id)])
-    for row in (in_use, kept_version, free, free_version, left_behind):
+    assert (body["agents_updated"], body["versions_updated"]) == (2, 1)
+    assert "skipped_agent_ids" not in body
+    for row in (free, free_version, left_behind):
         row.refresh_from_db()
-    assert (in_use.deleted, kept_version.deleted) == (False, False)
-    assert (free.deleted, free_version.deleted, left_behind.deleted) == (
-        True,
-        True,
-        True,
-    )
-    assert _names(auth_client) == ["In Use"]
+        assert row.deleted is True
+    assert _names(auth_client) == []
 
 
 @pytest.mark.django_db

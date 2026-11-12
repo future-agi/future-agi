@@ -16572,7 +16572,6 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly message?: string;
   readonly agents_updated?: number;
   readonly versions_updated?: number;
-  readonly skipped_agent_ids?: readonly string[];
 }
 
 /**

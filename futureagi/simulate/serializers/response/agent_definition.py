@@ -269,16 +269,12 @@ class AgentRunsResponseSerializer(serializers.Serializer):
 class AgentDefinitionBulkDeleteResponseSerializer(serializers.Serializer):
     """
     Response serializer for DELETE /agent-definitions/ (bulk delete).
-    Shape: {"message": "...", "agents_updated": N, "versions_updated": N,
-    "skipped_agent_ids": [...]}
+    Shape: {"message": "...", "agents_updated": N, "versions_updated": N}
     """
 
     message = serializers.CharField(read_only=True)
     agents_updated = serializers.IntegerField(read_only=True)
     versions_updated = serializers.IntegerField(read_only=True)
-    skipped_agent_ids = serializers.ListField(
-        child=serializers.UUIDField(), read_only=True
-    )
 
 
 class AgentDefinitionDeleteResponseSerializer(serializers.Serializer):

@@ -1,4 +1,6 @@
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
@@ -253,3 +255,46 @@ def resolve_stored_api_key(
             return None
 
     return key
+
+
+def _environments_phrase(total: int) -> str:
+    return f"{total} environment{'s' if total != 1 else ''}"
+
+
+def _in_use_message(in_use: list[tuple[str, int]]) -> str:
+    first_name, first_total = in_use[0]
+    parts = [f"{first_name} is tested by {_environments_phrase(first_total)}"]
+    parts += [f"{name} by {_environments_phrase(total)}" for name, total in in_use[1:]]
+    listed = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return f"{listed}. Delete those environments first."
+
+
+def delete_agents(organization, agent_ids) -> tuple[int, int]:
+    from simulate.services.agent_overview import environment_counts
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    with transaction.atomic():
+        agents = list(
+            AgentDefinition.objects.select_for_update(of=("self",))
+            .filter(id__in=agent_ids, organization=organization, deleted=False)
+            .order_by("id")
+        )
+        counts = environment_counts([agent.id for agent in agents])
+        in_use = [
+            (agent.agent_name, counts[agent.id])
+            for agent in agents
+            if counts.get(agent.id)
+        ]
+        if in_use:
+            raise HostedHarnessError(
+                "agent_in_use", _in_use_message(in_use), status_code=409
+            )
+        ids = [agent.id for agent in agents]
+        now = timezone.now()
+        agents_deleted = AgentDefinition.objects.filter(id__in=ids).update(
+            deleted=True, deleted_at=now, updated_at=now
+        )
+        versions_deleted = AgentVersion.objects.filter(
+            agent_definition_id__in=ids
+        ).update(deleted=True, deleted_at=now, updated_at=now)
+    return agents_deleted, versions_deleted

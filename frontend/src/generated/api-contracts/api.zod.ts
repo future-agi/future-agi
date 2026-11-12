@@ -33509,7 +33509,6 @@ export const SimulateAgentDefinitionsDeleteResponse = zod.object({
   message: zod.string().min(1).optional(),
   agents_updated: zod.number().optional(),
   versions_updated: zod.number().optional(),
-  skipped_agent_ids: zod.array(zod.string().uuid()).optional(),
 });
 
 /**
