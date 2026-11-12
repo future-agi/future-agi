@@ -174,6 +174,24 @@ changes none of them.
     `refresh-disposable-domains.yml`. These jobs name no environment yet (a
     workflow change), so the organisation secrets must stay until they do.
 
+  A job that reads the key must run code only from refs that need a
+  person's review. It never checks out and runs a ref that a dispatcher
+  chooses. Two jobs run code from another branch, so the custody also
+  depends on that branch:
+  - `sdk-sync.yml` runs `sdkgen/*.py` from futureagi-sdk `dev`. Its
+    `sdk-base` input accepts only `dev`, and the first step checks it before
+    any token or checkout. The one dispatch so far (run 41805312254, 4 Nov)
+    used `feat/sdk-docs-reference`; that value now fails the run. To sync a
+    feature branch, run `sdkgen/sync_contract.py` and `sdkgen/generate.py` on
+    that branch locally. futureagi-sdk `dev` needs one approval from the
+    organisation ruleset today. But Actions approvals are on there and
+    last-push approval is off (read-only check, 12 Nov), so one writer can
+    still merge into it alone. Turn Actions approvals off and add a
+    last-push ruleset on futureagi-sdk `dev` too, after the
+    `release-please.yml` change described under "Actions approvals off".
+  - `refresh-disposable-domains.yml` runs `scripts/generate_disposable_domains.py`
+    from this repository's `dev`, which the last-push ruleset above covers.
+
   Other readers are docs `changelog-sync.yml`, agent-learning-kit
   `publish-pypi.yml` (`release-pr`, `deployment-bump`) and futureagi-sdk
   `promote.yml` (on `dev`), `release-please.yml` and `publish.yml` job `docs`
@@ -248,8 +266,9 @@ changed by this lane.
 
 ## Release PR merge policy
 
-`release-autopilot.yml` wakes every 15 minutes, when **Backend CI** completes, or
-on a dispatch from the default branch. Scheduled runs can be delayed by GitHub.
+`release-autopilot.yml` wakes every 15 minutes, when **Backend CI** or **E2E CI**
+completes, or on a dispatch from the default branch. These two workflows produce
+the two required checks. Scheduled runs can be delayed by GitHub.
 A workflow completion is only a wake-up signal; its result and artifacts are not
 trusted as evidence. No PR code or artifacts are executed with a write token.
 The workflow has two jobs. `check` decides with a read-only token and no
@@ -331,13 +350,46 @@ The latest attempt for each check name/App and each status context wins; multipl
 producers of one required name must all succeed. Unlisted checks are advisory to
 this policy; GitHub branch protection can still block the merge independently.
 
-**End-to-end is required.** Since 12 Nov 2026, branch protection on main and dev
-requires both "Backend Tests Pass" and "E2E Tests Pass". So the policy always
-requires both, whatever `RELEASE_AUTOPILOT_REQUIRED_CHECKS` says; that variable
-can only add names. On a release PR, the E2E stack jobs are skipped by their path
-filter and "E2E Tests Pass" (`if: always()`) still concludes success, so release
-PRs do not wait on the end-to-end suite. A green backend check is not evidence
-that E2E passed.
+**End-to-end is required.** Since 12 Nov 2026, branch protection on main
+requires both "Backend Tests Pass" and "E2E Tests Pass", and dev also requires
+"Python Lint Pass". So the policy always requires both, whatever
+`RELEASE_AUTOPILOT_REQUIRED_CHECKS` says; that variable can only add names. A
+green backend check is not evidence that E2E passed.
+
+**Every release PR runs the full E2E suite.** release-please changes
+`deploy/helm/futureagi/Chart.yaml`, which matches `deploy/**` in the `any` path
+filter of `e2e-ci.yml`, so `e2e (distributed)` runs on every release head. On
+the five release heads from v1.55.0 to v1.58.0 (27 Oct to 3 Nov) it ran for 44
+to 67 minutes (read-only check, 12 Nov). A reviewer's read-only count found it
+ran on all 16 release heads from #3256 to #3720, and "E2E Tests Pass" failed
+on the final head of 3 of them. The suite starts again after each
+release-please force-push. So a release PR waits about an hour for E2E, and
+then the cooldown, before it can merge.
+
+The suite also runs futureagi-sdk's live tests. The SDK ref is the
+futureagi-sdk branch named like the PR's head branch, if one exists, else the
+base branch (`main`). futureagi-sdk has had its own `release-please--branches--main`
+since 4 Nov, and does not delete it after a merge. So release heads now test
+against that SDK branch, not futureagi-sdk `main`. On v1.57.0 and v1.58.0
+(2 and 3 Nov) that branch did not exist yet. The suite used futureagi-sdk
+`main`, which then lacked `sdkgen/local_api_key.py`, and "E2E Tests Pass"
+failed for a reason no re-run could clear. Dev's `e2e-ci.yml` keeps the same
+order but skips a ref that lacks the live-test files.
+
+**When a required check fails, the release waits.** The autopilot does not
+retry, comment or fail. Its run stays green and the step summary says
+"required check did not succeed on this head", with the check's name. While a
+check is still running, it says "required checks have not finished on this
+head". A person then does one of these:
+
+- re-runs the failed jobs; the re-run's completion wakes the autopilot,
+  and once it passes, a later poll merges;
+- fixes the cause, for example in futureagi-sdk, and re-runs;
+- or an administrator merges by hand. Main's protection does not bind
+  administrators; the release App cannot merge past a red required check.
+
+**Update branch** is not a remedy. It is a person's push, so the autopilot
+then leaves that release to a person (see "Who pushed").
 
 The policy re-reads the PR around each evidence collection and repeats the whole
 decision, including contents, the push check and case-insensitive holds, after
@@ -388,7 +440,9 @@ approval. New steps then fetch full history and execute the policy from `main`:
    count, because only tag-push runs are read.
 3. Count every added, edited, deleted or renamed migration or schema file since
    that baseline: `futureagi/*/migrations/*.py` and `*.sql`, nested
-   `futureagi/ee/**/migrations/`, `ee/**/migrations/`, and the ClickHouse schema
+   `futureagi/ee/**/migrations/`, `ee/**/migrations/` (a top-level `ee/` folder in
+   this repository; none exists today, and it is not the `future-agi/ee`
+   repository), and the ClickHouse schema
    sources: every `.sql` file under `futureagi/tracer/services/clickhouse/`
    (the live `v2/schema/` directory, `v2/observed_catalog/schema.sql`, the legacy
    `schema/` and `oss_cdc_migrations/`) and the files that apply it (`schema.py`,
@@ -521,6 +575,47 @@ database state or evidence about independently changed external EE code. The
 deployment-side pending-migration check remains mandatory; migrations are never
 run by this bot.
 
+**What neither count sees: the `future-agi/ee` repository.** The hosted
+backend image is `futureagi/future-agi-ee`. ee's `release-image.yml` builds it
+from ee `main` when `dispatch-ee` sends the `platform-release` event. ee has its
+own Django app with migrations (`control_plane/migrations/`), installed when
+`CLOUD_DEPLOYMENT` names a cloud region (`futureagi/tfc/settings/settings.py`).
+Neither the guard's count nor the bump's count includes them. So a release
+with only an ee migration can use `production-auto`, and its bump says
+`Migrations: 0 new files`. The bump job cannot count them reliably:
+
+- `dispatch-ee` sends only the version. ee builds whatever its `main` is when
+  its run starts.
+- The image records no source commit. `Dockerfile.ee` sets only the
+  `base.name` and `source` labels.
+- ee pushes its git tag after the image, and keeps an existing tag when a
+  re-dispatch rebuilds the image. So the tag can be missing at bump time, or
+  older than the image.
+- The bump job's token covers `future-agi/deployment` only.
+
+Writing `unknown` on every bump would send every release to a person, so the
+bump does not do that. The stop is the deployment's migration check. Before
+any upgrade, the pipeline runs `python manage.py migrate --check --noinput`
+from the candidate backend image with the backend's environment
+(`scripts/deploy/migration_check_job.py` in `future-agi/deployment`; read from
+code, not run). It sees every installed Django app, ee's included, and stops
+the first region at `migration-check-failed`. A third-party app's migrations
+from a dependency bump are in the same position. What that check does not
+cover:
+
+- It does not stop the bump PR from merging without a person. After such a
+  merge, every later automatic deploy, including config PRs and sandbox pins,
+  stops at the same check until a person applies the migrations in both
+  regions.
+- Schema outside Django, such as ClickHouse tables. ee has none today. Its
+  SQL under `internal/scripts/` is operator scripts, which hosted pods do not
+  run.
+
+ee's own workflow detects new ee migrations (`has_migrations`), but writes the
+result only into ee's release notes. Counting them here needs an ee change
+first: a label on the image that identifies its migration files, which the
+bump could compare between the pinned and the new backend digest.
+
 ## Hold, audit and rollout
 
 - To hold a release before merge, add `release-hold` to the release PR. Displayed
@@ -583,8 +678,10 @@ installing `PyYAML==6.0.3`, including Git histories, every merge predicate,
 case-insensitive holds before/after approval, content/mode/version rejection,
 immutable Git API evidence, current-SHA status handling, transaction rechecks,
 idempotent audit/approval, approver App identity, refused merges, environment
-decisions, the release-branch push check, the workflow's job split and action
-pins, and the bump job itself. Its count, bump, verify and `Open bump PR`
+decisions, the release-branch push check, the reason given for a red or running
+required check, the workflow's job split, wake-up triggers and action pins,
+`sdk-sync.yml`'s base and version checks (its real first step runs under
+`bash -e`), and the bump job itself. Its count, bump, verify and `Open bump PR`
 steps run in workflow order on synthetic values files shaped like the
 producer's: only the 12 `COMMON_PATHS` tags, the three digests and the
 repositories the step checks. The count runs real `git` over a blob-less clone
@@ -595,9 +692,14 @@ write the same files and lines. Only the last step's `git` and `gh` are stubs.
 Run workload tests only in E2B or CI, not on the shared development host.
 
 **CI wiring:** the `Release script checks` workflow
-(`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
-every `scripts/test_*.py` when `release-images.yml`, `release-autopilot.yml`, this
-script or its tests change. Its `paths` filter does not list
+(`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and,
+from `scripts/`, runs three test modules by name: `test_release_autopilot`,
+`test_release_error_feed_worker` and `test_verify_platform_image_tags`. It runs
+when `release-images.yml`, `release-autopilot.yml`, `sdk-sync.yml`, the three
+scripts or their tests change. Other `scripts/test_*.py` files run in their own
+workflows with their own tools: `python-lint.yml` runs the lint-gate test with
+ruff, `test-integrity.yml` runs its own self-test, and `standalone-ci.yml` runs
+the install smoke test. A test guards this list. The `paths` filter does not list
 `.github/workflows/build-image-multiarch.yml`,
 `futureagi/tracer/services/clickhouse/**` or the two grouping schema files. A
 rename of that workflow's `publish` job (one of the two jobs that prove a release
