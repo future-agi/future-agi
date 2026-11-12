@@ -23,7 +23,13 @@ const BASE = `/simulate/api/harness-environments/${ENV}/evidence-imports/${IMPOR
 
 const part = (status, reason = "") => ({ status, reason });
 const parts = {
-  transcript: part("present"),
+  transcript: {
+    ...part("present"),
+    turns: [
+      { role: "user", text: "Refund my order", trace_id: "t1" },
+      { role: "assistant", text: "Done", trace_id: "t1" },
+    ],
+  },
   tool_calls: part("missing", "No tool spans in this session."),
   tool_inputs: part("missing"),
   tool_outputs: part("missing"),
@@ -40,12 +46,6 @@ const item = (overrides = {}) => ({
   changed_since_import: false,
   scenario_key: null,
   new_checks: [],
-  transcript: {
-    turns: [
-      { role: "user", text: "Refund my order", trace_id: "t1" },
-      { role: "assistant", text: "Done", trace_id: "t1" },
-    ],
-  },
   ...parts,
   ...overrides,
 });
@@ -101,16 +101,70 @@ beforeEach(() => {
 describe("EvidenceReviewDrawer", () => {
   it("says what each source holds and lacks, and what redaction replaces", async () => {
     renderDrawer();
+    expect(screen.getByText("Loading this import…")).toBeInTheDocument();
     const card = await screen.findByTestId("evidence-case-c1");
-    expect(within(card).getByText("Transcript: present")).toBeInTheDocument();
-    expect(within(card).getByText("Tool calls: missing")).toBeInTheDocument();
+    // Named by what the user asked, never by the source's id.
     expect(
-      within(card).getByText("Starting state: missing"),
+      within(card).getByText("Refund my order", { selector: "h6" }),
     ).toBeInTheDocument();
+    expect(card).not.toHaveTextContent("session-1");
+    // Each reason is on the card, not behind a hover; step 2 explains the
+    // starting state once.
+    expect(card).toHaveTextContent("Has: Transcript; Labels");
+    expect(card).toHaveTextContent(
+      "Missing: Tool calls (No tool spans in this session); Tool inputs; Tool outputs; Starting state",
+    );
+    expect(card).not.toHaveTextContent("Observe never records it");
     expect(screen.getByText(/2 values of personal data/)).toBeInTheDocument();
     // Production evidence carries no simulated label.
     expect(screen.queryByTestId("evidence-simulated")).toBeNull();
     expect(within(card).queryByText(/^Simulated /)).toBeNull();
+  });
+
+  it("shows a long conversation's first and last turns and counts the rest", async () => {
+    const turn = (role, text) => ({ role, text, trace_id: "t1" });
+    evidence = bundle({
+      cases: [
+        item({
+          transcript: {
+            turns: [
+              turn("assistant", "Hello, how can I help?"),
+              turn(
+                "user",
+                `I was charged twice ${"for the same order ".repeat(8)}`,
+              ),
+              turn("assistant", "Let me look."),
+              turn("user", "Thanks"),
+              turn("assistant", "Refunded."),
+            ],
+          },
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    // The first user message, cut at a word.
+    expect(
+      within(card).getByText(
+        "I was charged twice for the same order for the same order for the same order for the same…",
+      ),
+    ).toBeInTheDocument();
+    expect(within(card).getByText("… 3 more turns")).toBeInTheDocument();
+    expect(card).toHaveTextContent("Agent: Hello, how can I help?");
+    expect(card).toHaveTextContent("Agent: Refunded.");
+    expect(card).not.toHaveTextContent("Let me look.");
+  });
+
+  it("names a case with no recorded conversation by its kind", async () => {
+    evidence = bundle({
+      source_kind: "call",
+      cases: [item({ transcript: { turns: [] } })],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(
+      within(card).getByText("Call with no recorded conversation"),
+    ).toBeInTheDocument();
   });
 
   it("warns when only basic redaction ran", async () => {
@@ -143,11 +197,39 @@ describe("EvidenceReviewDrawer", () => {
     );
   });
 
-  it("asks what the new scenarios should be, and drafts the chosen regression test", async () => {
+  it("makes no choice for a source that records no outcome", async () => {
+    evidence = bundle({
+      cases: [
+        item({ labels: part("missing", "Nobody labelled this source.") }),
+      ],
+    });
     axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
     renderDrawer();
     const choice = await screen.findByRole("combobox", {
-      name: /^What should the new scenarios be\?/,
+      name: /^What should this case's scenario be\?/,
+    });
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
+    expect(
+      screen.getByText(/^Nothing in this source records how it ended/),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 1 scenario" }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
+        case_ids: ["c1"],
+        shows: {},
+      }),
+    );
+  });
+
+  it("asks what the case's scenario should be, and drafts the chosen regression test", async () => {
+    axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
+    renderDrawer();
+    const choice = await screen.findByRole("combobox", {
+      name: /^What should this case's scenario be\?/,
     });
     expect(choice).toHaveTextContent(
       "Reproduce the failure as a regression test",
@@ -195,7 +277,7 @@ describe("EvidenceReviewDrawer", () => {
     }
     // Simulated evidence makes tests, never regression tests.
     const [choice] = screen.getAllByRole("combobox", {
-      name: /^What should the new scenarios be\?/,
+      name: /^What should this case's scenario be\?/,
     });
     expect(choice).toHaveTextContent("Reproduce the failure as a test");
     await userEvent.click(choice);
@@ -203,6 +285,7 @@ describe("EvidenceReviewDrawer", () => {
       .getAllByRole("option")
       .map((option) => option.textContent);
     expect(options).toEqual([
+      "Not set: the builder judges from the evidence",
       "Reproduce the failure as a test",
       "Keep this success as a test",
       "A test from partial evidence",
@@ -230,21 +313,22 @@ describe("EvidenceReviewDrawer", () => {
     expect(within(card).getByText("Your transcript")).toBeInTheDocument();
     expect(within(card).queryByText(/^Simulated /)).toBeNull();
     expect(screen.getByText("1 transcript you added")).toBeInTheDocument();
+    // The mark is fixed at import; the notice says how to change it.
     expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
-      "You did not mark these transcripts as production",
+      "Not marked as production, so these become tests, not regression tests. To change this, discard the import and import again with the box ticked.",
     );
     expect(
       screen.getByText(
-        "1 value of personal data was replaced with tokens when the transcripts were stored.",
+        "1 value of personal data was replaced with placeholders when the transcripts were stored.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/^A transcript never records the records/),
+      screen.getByText(/^A transcript doesn't hold the seed records/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Observe never records/)).toBeNull();
+    expect(screen.queryByText(/^Observe doesn't record/)).toBeNull();
     expect(
       screen.getByRole("combobox", {
-        name: /^What should the new scenarios be\?/,
+        name: /^What should this case's scenario be\?/,
       }),
     ).toHaveTextContent("Reproduce the failure as a test");
   });
@@ -252,11 +336,12 @@ describe("EvidenceReviewDrawer", () => {
   it("reviews dataset rows as the person's, with each row's expected outcome", async () => {
     evidence = bundle({
       source_kind: "dataset",
+      dataset_id: "d1",
       production: false,
       cases: [
         item({
           source_id: "row-1",
-          name: "Row 1 · Support evals",
+          name: "Row from Support evals",
           tool_calls: part("missing", "A dataset row carries no tool calls."),
           expected_outcome: {
             ...part("present"),
@@ -267,31 +352,42 @@ describe("EvidenceReviewDrawer", () => {
     });
     renderDrawer();
     const card = await screen.findByTestId("evidence-case-c1");
-    // Titled by its place and dataset; its id stays visible beneath.
-    expect(within(card).getByText("Row 1 · Support evals")).toBeInTheDocument();
-    expect(within(card).getByText("row-1")).toBeInTheDocument();
-    expect(within(card).getByText("Dataset row")).toBeInTheDocument();
+    // Titled by what the user asked; its dataset beneath, with a way to open
+    // it, and never the row id.
     expect(
-      within(card).getByText("Expected outcome: present"),
+      within(card).getByText("Refund my order", { selector: "h6" }),
     ).toBeInTheDocument();
+    expect(card).toHaveTextContent("Row from Support evals · Open in dataset");
+    expect(
+      within(card).getByRole("link", { name: "Open in dataset" }),
+    ).toHaveAttribute("href", "/dashboard/develop/d1?tab=data");
+    expect(card).not.toHaveTextContent("row-1");
+    expect(within(card).getByText("Dataset row")).toBeInTheDocument();
+    expect(card).toHaveTextContent("Has: Transcript; Labels; Expected outcome");
     expect(
       within(card).getByTestId("evidence-expected-outcome"),
     ).toHaveTextContent("Expected outcome: Refuse the second refund.");
+    // What the builder makes follows the expected outcome, not the policy alone.
+    expect(
+      within(card).getByText(
+        /^Keeps: the situation.*Makes: what should have happened, from the expected outcome column; the environment's rules win a conflict\.$/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("1 row from a dataset")).toBeInTheDocument();
     expect(screen.getByTestId("evidence-dataset")).toHaveTextContent(
-      "You did not mark these rows as production",
+      "Not marked as production, so these become tests, not regression tests.",
     );
     // Rows are read live, so redaction is what it will replace, not what it did.
     expect(
       screen.getByText(/will be replaced with tokens/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/^A dataset row never records the records/),
+      screen.getByText(/^A dataset row doesn't hold the seed records/),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evidence-transcript")).toBeNull();
     expect(
       screen.getByRole("combobox", {
-        name: /^What should the new scenarios be\?/,
+        name: /^What should this case's scenario be\?/,
       }),
     ).toHaveTextContent("Reproduce the failure as a test");
   });
@@ -337,7 +433,7 @@ describe("EvidenceReviewDrawer", () => {
     );
     expect(
       screen.getByRole("combobox", {
-        name: /^What should the new scenarios be\?/,
+        name: /^What should this case's scenario be\?/,
       }),
     ).toHaveTextContent("Reproduce the failure as a regression test");
   });
@@ -351,12 +447,18 @@ describe("EvidenceReviewDrawer", () => {
     expect(screen.queryByRole("button", { name: /^Draft / })).toBeNull();
     expect(
       screen.queryByRole("combobox", {
-        name: /^What should the new scenarios be\?/,
+        name: /^What should this case's scenario be\?/,
       }),
     ).toBeNull();
     expect(
       screen.getByRole("button", { name: "Save 0 to the suite" }),
     ).toBeDisabled();
+    expect(
+      screen.getByText(/This can take up to 90 minutes; you can close this/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Draft scenarios first, then add them here."),
+    ).toBeNull();
   });
 
   it("shows a blocked case as blocked, with its reason", async () => {
@@ -380,6 +482,13 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       screen.getByText("No case is waiting to be drafted."),
     ).toBeInTheDocument();
+    // Nothing to add, and the disabled add says why.
+    expect(
+      screen.getByRole("button", { name: "Save 0 to the suite" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Draft scenarios first, then add them here."),
+    ).toBeInTheDocument();
   });
 
   it("says when Observe no longer keeps a source", async () => {
@@ -395,7 +504,12 @@ describe("EvidenceReviewDrawer", () => {
   it("saves drafted cases to the suite when nothing else is unsaved", async () => {
     evidence = bundle({
       cases: [
-        item({ status: "drafted", scenario_key: "evidence-abc123abc123" }),
+        item({
+          status: "drafted",
+          scenario_key: "evidence-abc123abc123",
+          scenario_name: "Refund a double charge",
+          new_checks: [{ name: "refund_issued", what: "a refund was issued" }],
+        }),
       ],
     });
     axios.post.mockResolvedValue({
@@ -405,9 +519,14 @@ describe("EvidenceReviewDrawer", () => {
       },
     });
     renderDrawer();
-    expect(
-      await screen.findByText("evidence-abc123abc123"),
-    ).toBeInTheDocument();
+    // The scenario's title and what each new check checks, not their ids.
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(card).toHaveTextContent("Scenario: Refund a double charge");
+    expect(card).toHaveTextContent(
+      "New check added by this import: a refund was issued",
+    );
+    expect(card).not.toHaveTextContent("evidence-abc123abc123");
+    expect(card).not.toHaveTextContent("refund_issued");
     expect(screen.queryByTestId("evidence-beside")).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Save 1 to the suite" }),

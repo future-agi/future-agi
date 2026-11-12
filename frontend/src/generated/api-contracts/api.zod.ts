@@ -40222,7 +40222,7 @@ export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem =
       .string()
       .min(1)
       .describe(
-        "The Observe project's or dataset's name; null for transcripts.",
+        "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
       ),
     source_available: zod
       .boolean()
@@ -40239,9 +40239,9 @@ export const SimulateApiHarnessEnvironmentsListEvidenceImportsResponseItem =
       )
       .describe("Cases already added to the suite."),
     status: zod
-      .enum(["waiting", "drafting", "drafted", "partly_added"])
+      .enum(["waiting", "drafting", "drafted", "partly_added", "blocked"])
       .describe(
-        "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.",
+        "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
       ),
     created_at: zod.string().datetime({ offset: true }),
     can_discard: zod
@@ -40426,6 +40426,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       scenario_key: zod
         .string()
         .describe("The drafted scenario's key, once drafted."),
+      scenario_name: zod
+        .string()
+        .describe(
+          "The drafted scenario's title, once drafted; blank when the builder gave none.",
+        ),
       new_checks: zod
         .array(
           zod
@@ -40752,6 +40757,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           scenario_key: zod
             .string()
             .describe("The drafted scenario's key, once drafted."),
+          scenario_name: zod
+            .string()
+            .describe(
+              "The drafted scenario's title, once drafted; blank when the builder gave none.",
+            ),
           new_checks: zod
             .array(
               zod

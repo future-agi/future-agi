@@ -19,8 +19,9 @@ import { seedEnvironment } from '../../lib/environment-seed';
 // One browser action's first-paint budget (see README "UI_READY").
 const UI_READY = 60_000;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
-const ROW_TEXT = /^1 transcript · waiting to be drafted · saved /;
-const DISCARD_TITLE = 'Discard this import?';
+// A transcript import's row and its discard confirm name its first transcript.
+const rowText = (name: string) => new RegExp(`^1 transcript: ${name} · waiting to be drafted · imported `);
+const discardTitle = (name: string) => `Discard “1 transcript: ${name}”?`;
 // Routes, pinned from simulate/views/harness_environment.py: the list is the create route's GET,
 // the discard the one import's DELETE.
 const imports = (env: string) => `/simulate/api/harness-environments/${env}/evidence-imports/`;
@@ -82,7 +83,7 @@ test(
       // Check 1.
       expect(await rows.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid'))))
         .toEqual([`draft-import-${b}`, `draft-import-${a}`]);
-      for (const id of [b, a]) await expect(row(id).getByText(ROW_TEXT)).toBeVisible();
+      for (const [id, name] of [[b, names.b], [a, names.a]]) await expect(row(id).getByText(rowText(name))).toBeVisible();
       const answer = await actor.api.get<Listed[]>(imports(env));
       expect(answer.map(({ id, source_kind, status, case_count }) => ({ id, source_kind, status, case_count })))
         .toEqual([b, a].map((id) => ({ id, source_kind: 'transcript', status: 'waiting', case_count: 1 })));
@@ -113,7 +114,7 @@ test(
     sent.length = 0;
     await test.step('discard B', async () => {
       await row(b).getByRole('button', { name: 'Discard' }).click();
-      const dialog = page.getByRole('dialog').filter({ hasText: DISCARD_TITLE });
+      const dialog = page.getByRole('dialog').filter({ hasText: discardTitle(names.b) });
       await expect(dialog).toBeVisible({ timeout: UI_READY });
       const answered = page.waitForResponse((r) => r.url().endsWith(`${imports(env)}${b}/`)
         && r.request().method() === 'DELETE', { timeout: UI_READY });

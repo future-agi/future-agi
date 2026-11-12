@@ -1,32 +1,51 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
 
-const columns = Array.from({ length: 12 }, (_, n) => ({
+const all = Array.from({ length: 12 }, (_, n) => ({
   field: `col-${n}`,
   headerName: `c${n}`,
   dataType: "text",
 }));
+const state = vi.hoisted(() => ({ columns: [], read: null }));
 vi.mock("src/api/develop/develop-detail", () => ({
-  useDatasetColumnConfig: () => columns,
+  useDatasetColumnConfig: () => state.columns,
+  getDatasetQueryOptions: (id) => ({
+    queryKey: ["dataset", id],
+    queryFn: state.read,
+  }),
 }));
 
 const { default: DatasetColumnsFields } = await import(
   "../DatasetColumnsFields"
 );
 
-describe("DatasetColumnsFields", () => {
-  it("offers no more label columns than the backend reads", async () => {
-    const labels = columns.slice(1, 11).map((one) => one.field);
-    render(
-      <DatasetColumnsFields
-        datasetId="d1"
-        value={{ conversation: "col-0", labels, expected: "" }}
-        onChange={() => {}}
-      />,
-    );
+const renderFields = (value) =>
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <DatasetColumnsFields datasetId="d1" value={value} onChange={() => {}} />
+    </QueryClientProvider>,
+  );
 
+beforeEach(() => {
+  state.columns = all;
+  state.read = () => Promise.resolve({});
+});
+
+describe("DatasetColumnsFields", () => {
+  it("offers no more label columns than the backend reads, and says so", async () => {
+    const labels = all.slice(1, 11).map((one) => one.field);
+    renderFields({ conversation: "col-0", labels, expected: "" });
+
+    expect(
+      screen.getByText(
+        "Read as context for the builder, such as intent. Up to 10.",
+      ),
+    ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("combobox", { name: /^Label columns/ }),
     );
@@ -39,5 +58,21 @@ describe("DatasetColumnsFields", () => {
       "aria-disabled",
       "true",
     );
+  });
+
+  it("says when the dataset's columns could not be loaded, not loading forever", async () => {
+    state.columns = [];
+    state.read = () => Promise.reject(new Error("boom"));
+    renderFields({ conversation: "", labels: [], expected: "" });
+
+    expect(
+      screen.getByText("Loading this dataset's columns…"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Couldn't load this dataset's columns. Close this and try again in a moment.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading this dataset's columns…")).toBeNull();
   });
 });

@@ -228,6 +228,11 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     scenario_key = serializers.CharField(
         allow_blank=True, help_text="The drafted scenario's key, once drafted."
     )
+    scenario_name = serializers.CharField(
+        allow_blank=True,
+        help_text="The drafted scenario's title, once drafted; blank when the "
+        "builder gave none.",
+    )
     new_checks = EvidenceNewCheckSerializer(
         many=True,
         help_text="Checks this case adds to the environment when it is added: each "
@@ -324,7 +329,8 @@ class EvidenceImportListItemSerializer(serializers.Serializer):
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     source_name = serializers.CharField(
         allow_null=True,
-        help_text="The Observe project's or dataset's name; null for transcripts.",
+        help_text="The Observe project's or dataset's name; a transcript import's "
+        "first transcript name, or null when it has none.",
     )
     source_available = serializers.BooleanField(
         help_text="False once the Observe project or dataset was deleted."
@@ -334,9 +340,10 @@ class EvidenceImportListItemSerializer(serializers.Serializer):
         min_value=0, help_text="Cases already added to the suite."
     )
     status = serializers.ChoiceField(
-        choices=("waiting", "drafting", "drafted", "partly_added"),
+        choices=("waiting", "drafting", "drafted", "partly_added", "blocked"),
         help_text="drafting: the builder is drafting its cases now. partly_added: "
-        "some cases were added and some can still be.",
+        "some cases were added and some can still be. blocked: only blocked cases "
+        "are left, to retry by importing again or to discard.",
     )
     created_at = serializers.DateTimeField()
     can_discard = serializers.BooleanField(

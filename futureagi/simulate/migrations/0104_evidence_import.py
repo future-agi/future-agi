@@ -147,6 +147,10 @@ class Migration(migrations.Migration):
                     models.CharField(blank=True, default="", max_length=255),
                 ),
                 (
+                    "scenario_name",
+                    models.CharField(blank=True, default="", max_length=255),
+                ),
+                (
                     "proposal_object_key",
                     models.CharField(blank=True, default="", max_length=512),
                 ),

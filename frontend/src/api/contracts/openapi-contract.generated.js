@@ -63778,7 +63778,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_name: {
           title: "Source name",
           description:
-            "The Observe project's or dataset's name; null for transcripts.",
+            "The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.",
           type: "string",
           minLength: 1,
           "x-nullable": true,
@@ -63802,9 +63802,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           description:
-            "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.",
+            "drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.",
           type: "string",
-          enum: ["waiting", "drafting", "drafted", "partly_added"],
+          enum: ["waiting", "drafting", "drafted", "partly_added", "blocked"],
         },
         created_at: {
           title: "Created at",
@@ -99711,6 +99711,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "reason",
         "source_available",
         "scenario_key",
+        "scenario_name",
         "new_checks",
         "changed_since_import",
         "trace_ids",
@@ -99767,6 +99768,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         scenario_key: {
           title: "Scenario key",
           description: "The drafted scenario's key, once drafted.",
+          type: "string",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description:
+            "The drafted scenario's title, once drafted; blank when the builder gave none.",
           type: "string",
         },
         new_checks: {

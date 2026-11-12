@@ -158,10 +158,10 @@ class TestCreate:
             str(rows[0].id),
             str(rows[1].id),
         ]
-        # A row is named by its place and its dataset, not its id.
+        # A row is named by its dataset, not its id.
         assert [first["name"], second["name"]] == [
-            "Row 1 · Support evals",
-            "Row 2 · Support evals",
+            "Row from Support evals",
+            "Row from Support evals",
         ]
         assert (first["status"], first["source_available"]) == ("pending", True)
         assert first["changed_since_import"] is False
@@ -303,8 +303,8 @@ class TestLive:
 
         assert (first["status"], first["reason"]) == ("unavailable", ROW_UNAVAILABLE)
         assert first["source_available"] is False
-        # Still named, so the person can tell which row went.
-        assert first["name"] == "Row 1 · Support evals"
+        # Still says where it came from.
+        assert first["name"] == "Row from Support evals"
         assert first["expected_outcome"]["status"] == "missing"
         assert second["status"] == "pending"
 
@@ -481,6 +481,10 @@ class TestRefused:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["error"] == "dataset_column_not_found"
+        # No column id: the person picks the columns again.
+        assert response.json()["message"] == (
+            "A picked column is no longer in this dataset; pick the columns again"
+        )
         assert not EvidenceImport.no_workspace_objects.exists()
 
     def test_an_audio_conversation_is_refused_as_out_of_scope(

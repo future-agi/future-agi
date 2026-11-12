@@ -10,9 +10,10 @@ import {
 } from "src/api/simulate-environments/evidenceImports";
 import { EVIDENCE_COPY, errorText } from "./evidence.constants";
 
-// The environment's imports a person can still finish, saved to pick up later:
+// The environment's imports a person can still finish, kept to pick up later:
 // Resume opens one's review where it stopped, Discard drops what was never
-// added. Shown only while there is one.
+// added. An import with blocked cases stays until discarded, so its reasons
+// stay readable. Shown only while there is one.
 export default function DraftImports({ envId, onResume }) {
   const { data } = useEvidenceImports(envId);
   const discard = useDiscardEvidenceImport(envId);
@@ -44,7 +45,7 @@ export default function DraftImports({ envId, onResume }) {
             {[
               EVIDENCE_COPY.importSource(item),
               EVIDENCE_COPY.importStatus[item.status],
-              EVIDENCE_COPY.saved(fToNow(item.created_at)),
+              EVIDENCE_COPY.imported(fToNow(item.created_at)),
             ].join(" · ")}
           </Typography>
           <Link
@@ -76,7 +77,7 @@ export default function DraftImports({ envId, onResume }) {
         <ConfirmDialog
           open
           onClose={() => setAsked(null)}
-          title={EVIDENCE_COPY.discardTitle}
+          title={EVIDENCE_COPY.discardTitle(asked)}
           content={
             <Stack spacing={1.5}>
               <Typography variant="body2">

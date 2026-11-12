@@ -11,6 +11,7 @@ import {
   IconButton,
   Link,
   Tab,
+  Tooltip,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -392,17 +393,24 @@ export default function RunDetail({
           </Button>
         )}
         {improvable.length > 0 && (
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={() => {
-              setFixTargets(improvable);
-              setFixLaunching(true);
-            }}
-            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={15} />}
+          <Tooltip
+            describeChild
+            title={`Starts from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
           >
-            Improve agent
-          </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setFixTargets(improvable);
+                setFixLaunching(true);
+              }}
+              startIcon={
+                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+              }
+            >
+              Improve agent
+            </Button>
+          </Tooltip>
         )}
         {!fixRun && (
           <Button

@@ -1,12 +1,20 @@
 import PropTypes from "prop-types";
-import { Box, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Link,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import StatusBadge from "src/components/status-badge";
-import CustomTooltip from "src/components/tooltip";
+import { RouterLink } from "src/routes/components";
 import {
   CASE_ROLE,
   EVIDENCE_COPY,
   PART_LABELS,
-  PART_ROLE,
+  caseShowsDefault,
+  cutAtWord,
 } from "./evidence.constants";
 
 const PARTS = Object.keys(PART_LABELS);
@@ -15,12 +23,87 @@ const partsOf = (kind) =>
   kind === "dataset"
     ? PARTS
     : PARTS.filter((part) => part !== "expected_outcome");
+// A part the source holds, whole or in part; any other status is missing.
+const HELD = new Set(["present", "partial", "truncated"]);
+const TITLE_CHARS = 90;
 const PREVIEW_CHARS = 240;
 
-const clip = (text) =>
-  text && text.length > PREVIEW_CHARS
-    ? `${text.slice(0, PREVIEW_CHARS)}…`
-    : text;
+// A case is named by what the user asked, as the person saw it.
+const caseTitle = (item, kind) => {
+  const turns = item.transcript?.turns ?? [];
+  const first = turns.find((turn) => turn.role === "user") ?? turns[0];
+  const text = (first?.text ?? "").replace(/\s+/g, " ").trim();
+  return text ? cutAtWord(text, TITLE_CHARS) : EVIDENCE_COPY.untitled(kind);
+};
+
+// A part with its reason beside it. Step 2 explains the starting state, so
+// its reason is not repeated on every case.
+const partText = (item, part) => {
+  const reason = part === "starting_state" ? "" : item[part]?.reason;
+  return reason
+    ? `${PART_LABELS[part]} (${reason.replace(/\.$/, "")})`
+    : PART_LABELS[part];
+};
+
+function PartsLine({ label, item, parts }) {
+  if (!parts.length) return null;
+  return (
+    <Typography variant="body2" color="text.secondary">
+      <strong>{label}</strong>{" "}
+      {parts.map((part) => partText(item, part)).join("; ")}
+    </Typography>
+  );
+}
+
+PartsLine.propTypes = {
+  label: PropTypes.string.isRequired,
+  item: PropTypes.object.isRequired,
+  parts: PropTypes.arrayOf(PropTypes.string).isRequired,
+};
+
+function Turn({ turn }) {
+  return (
+    <Typography
+      variant="body2"
+      sx={{ whiteSpace: "pre-wrap", color: "text.secondary" }}
+    >
+      <strong>{turn.role === "user" ? "User" : "Agent"}:</strong>{" "}
+      {cutAtWord(turn.text, PREVIEW_CHARS)}
+    </Typography>
+  );
+}
+
+Turn.propTypes = { turn: PropTypes.object.isRequired };
+
+// Where a case came from, under its title: a dataset row's dataset, with a way
+// to open it; a transcript's name as the person gave it.
+function Origin({ item, kind, datasetHref }) {
+  if (!item.name) return null;
+  return (
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      noWrap
+      component="div"
+    >
+      {item.name}
+      {kind === "dataset" && datasetHref && item.source_available ? (
+        <>
+          {" · "}
+          <Link component={RouterLink} href={datasetHref} underline="hover">
+            {EVIDENCE_COPY.openInDataset}
+          </Link>
+        </>
+      ) : null}
+    </Typography>
+  );
+}
+
+Origin.propTypes = {
+  item: PropTypes.object.isRequired,
+  kind: PropTypes.string,
+  datasetHref: PropTypes.string,
+};
 
 // One imported case: what its source holds and lacks, what became of it, and —
 // while it waits — what the person wants its new scenario to be. A simulated
@@ -31,12 +114,20 @@ export default function EvidenceCaseCard({
   kind,
   simulated,
   production,
+  datasetHref,
   shows,
   onShowsChange,
 }) {
   const turns = item.transcript?.turns ?? [];
-  const preview =
-    turns.length > 1 ? [turns[0], turns[turns.length - 1]] : turns;
+  const hidden = Math.max(turns.length - 2, 0);
+  const parts = partsOf(kind);
+  const held = parts.filter((part) => HELD.has(item[part]?.status));
+  const missing = parts.filter((part) => !HELD.has(item[part]?.status));
+  const choice = shows ?? caseShowsDefault(item);
+  // What the builder makes follows the row's expected outcome when it has one.
+  const details = HELD.has(item.expected_outcome?.status)
+    ? EVIDENCE_COPY.showsDetailExpected
+    : EVIDENCE_COPY.showsDetail;
   return (
     <Box
       sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
@@ -45,19 +136,9 @@ export default function EvidenceCaseCard({
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="subtitle2" noWrap>
-            {item.name || item.source_id}
+            {caseTitle(item, kind)}
           </Typography>
-          {/* A row's id under its name, to find it in the dataset. */}
-          {kind === "dataset" && item.name ? (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              noWrap
-              component="div"
-            >
-              {item.source_id}
-            </Typography>
-          ) : null}
+          <Origin item={item} kind={kind} datasetHref={datasetHref} />
         </Box>
         {simulated ? (
           <StatusBadge
@@ -106,34 +187,17 @@ export default function EvidenceCaseCard({
           {EVIDENCE_COPY.changed}
         </Typography>
       ) : null}
-      <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mb: 1 }}>
-        {partsOf(kind).map((part) => (
-          <CustomTooltip
-            key={part}
-            title={item[part]?.reason || ""}
-            show={Boolean(item[part]?.reason)}
-          >
-            <span>
-              <StatusBadge
-                role={PART_ROLE[item[part]?.status] || "neutral"}
-                label={`${PART_LABELS[part]}: ${item[part]?.status ?? "missing"}`}
-                size="sm"
-                variant="badge"
-              />
-            </span>
-          </CustomTooltip>
-        ))}
+      <Stack spacing={0.25} sx={{ mb: 1 }}>
+        <PartsLine label={EVIDENCE_COPY.has} item={item} parts={held} />
+        <PartsLine label={EVIDENCE_COPY.missing} item={item} parts={missing} />
       </Stack>
-      {preview.map((turn, index) => (
-        <Typography
-          key={`${turn.trace_id}-${index}`}
-          variant="body2"
-          sx={{ whiteSpace: "pre-wrap", color: "text.secondary" }}
-        >
-          <strong>{turn.role === "user" ? "User" : "Agent"}:</strong>{" "}
-          {clip(turn.text)}
+      {turns.length ? <Turn turn={turns[0]} /> : null}
+      {hidden ? (
+        <Typography variant="body2" color="text.disabled">
+          {EVIDENCE_COPY.moreTurns(hidden)}
         </Typography>
-      ))}
+      ) : null}
+      {turns.length > 1 ? <Turn turn={turns[turns.length - 1]} /> : null}
       {item.expected_outcome?.text ? (
         <Typography
           variant="body2"
@@ -141,18 +205,18 @@ export default function EvidenceCaseCard({
           data-testid="evidence-expected-outcome"
         >
           <strong>{EVIDENCE_COPY.expectedOutcome}:</strong>{" "}
-          {clip(item.expected_outcome.text)}
+          {cutAtWord(item.expected_outcome.text, PREVIEW_CHARS)}
         </Typography>
       ) : null}
       {item.status === "drafted" || item.status === "added" ? (
         <Box sx={{ mt: 1 }}>
           <Typography variant="body2">
-            {EVIDENCE_COPY.scenarioKey}: <code>{item.scenario_key}</code>
+            {EVIDENCE_COPY.scenario}:{" "}
+            <strong>{item.scenario_name || item.scenario_key}</strong>
           </Typography>
           {(item.new_checks ?? []).map((check) => (
             <Typography key={check.name} variant="body2" color="info.main">
-              {EVIDENCE_COPY.newCheck}: <strong>{check.name}</strong>
-              {check.what ? ` — ${check.what}` : ""}
+              {EVIDENCE_COPY.newCheck}: {check.what || check.name}
             </Typography>
           ))}
         </Box>
@@ -162,12 +226,15 @@ export default function EvidenceCaseCard({
           select
           size="small"
           label={EVIDENCE_COPY.shows}
-          value={shows}
+          value={choice}
           onChange={(event) => onShowsChange(item.id, event.target.value)}
-          helperText={EVIDENCE_COPY.showsDetail[shows]}
+          helperText={details[choice || "unset"]}
+          SelectProps={{ displayEmpty: true }}
+          InputLabelProps={{ shrink: true }}
           fullWidth
           sx={{ mt: 1.5 }}
         >
+          <MenuItem value="">{EVIDENCE_COPY.showsUnset}</MenuItem>
           {Object.entries(
             production
               ? EVIDENCE_COPY.showsOptions
@@ -188,6 +255,7 @@ EvidenceCaseCard.propTypes = {
   kind: PropTypes.oneOf(["session", "call", "transcript", "dataset"]),
   simulated: PropTypes.bool,
   production: PropTypes.bool,
+  datasetHref: PropTypes.string,
   shows: PropTypes.string,
   onShowsChange: PropTypes.func,
 };

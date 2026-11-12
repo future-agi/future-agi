@@ -5,7 +5,11 @@ import LoadingButton from "@mui/lab/LoadingButton";
 import { useSnackbar } from "notistack";
 import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
-import { EVIDENCE_COPY, errorText } from "./evidence.constants";
+import {
+  EVIDENCE_COPY,
+  caseShowsDefault,
+  errorText,
+} from "./evidence.constants";
 import {
   isEvidenceCaseDrafted,
   isEvidenceCaseWaiting,
@@ -14,6 +18,7 @@ import {
   useEvidenceImport,
 } from "src/api/simulate-environments/evidenceImports";
 import { useDrafts } from "src/api/simulate-environments/versions";
+import { paths } from "src/routes/paths";
 
 function Section({ title, children, sectionRef }) {
   return (
@@ -83,11 +88,14 @@ export default function EvidenceReviewDrawer({
     target?.scrollIntoView?.({ block: "start" });
   }, [data]);
 
+  // A case left unset sends no choice: the builder judges from the evidence.
   const onDraft = () =>
     draft.mutate({
       caseIds: waiting.map((one) => one.id),
       shows: Object.fromEntries(
-        waiting.map((one) => [one.id, shows[one.id] || "failure"]),
+        waiting
+          .map((one) => [one.id, shows[one.id] ?? caseShowsDefault(one)])
+          .filter(([, value]) => value),
       ),
     });
 
@@ -119,7 +127,7 @@ export default function EvidenceReviewDrawer({
 
         {isLoading ? (
           <Typography variant="body2" sx={{ mt: 2 }}>
-            …
+            {EVIDENCE_COPY.loading}
           </Typography>
         ) : null}
         {error ? (
@@ -164,7 +172,12 @@ export default function EvidenceReviewDrawer({
                   kind={kind}
                   simulated={Boolean(data.simulated)}
                   production={Boolean(data.production)}
-                  shows={shows[one.id] || "failure"}
+                  datasetHref={
+                    dataset && data.dataset_id
+                      ? `${paths.dashboard.develop}/${data.dataset_id}?tab=data`
+                      : null
+                  }
+                  shows={shows[one.id]}
                   onShowsChange={
                     data.drafting
                       ? undefined
@@ -248,6 +261,11 @@ export default function EvidenceReviewDrawer({
                     : EVIDENCE_COPY.addClean(drafted.length)}
                 </LoadingButton>
               </Box>
+              {!drafted.length && !data.drafting ? (
+                <Typography variant="body2" color="text.secondary">
+                  {EVIDENCE_COPY.noneDrafted}
+                </Typography>
+              ) : null}
               {add.error ? (
                 <Alert severity="error">{errorText(add.error)}</Alert>
               ) : null}

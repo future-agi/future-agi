@@ -78,18 +78,26 @@ describe("DraftImports", () => {
       item({
         id: "44444444-4444-4444-4444-444444444444",
         source_kind: "transcript",
-        source_name: null,
+        source_name: "Refund call",
         case_count: 2,
         status: "drafted",
+      }),
+      item({
+        id: "55555555-5555-5555-5555-555555555555",
+        source_kind: "transcript",
+        source_name: null,
+        case_count: 1,
+        status: "blocked",
       }),
     ];
     const { onResume } = renderStrip();
 
     const strip = await screen.findByTestId("draft-imports");
     expect(strip).toHaveTextContent("Draft imports");
+    // Nothing was saved: the time is when it was imported.
     expect(
       within(screen.getByTestId(`draft-import-${listed[0].id}`)).getByText(
-        /^3 sessions from Support agent · waiting to be drafted · saved /,
+        /^3 sessions from Support agent · waiting to be drafted · imported /,
       ),
     ).toBeInTheDocument();
     expect(
@@ -97,9 +105,16 @@ describe("DraftImports", () => {
         /^1 row from Support evals \(source deleted\) · partly added · /,
       ),
     ).toBeInTheDocument();
+    // A transcript import is named by its first transcript.
     expect(
       within(screen.getByTestId(`draft-import-${listed[2].id}`)).getByText(
-        /^2 transcripts · drafted, not added · /,
+        /^2 transcripts: Refund call and 1 more · drafted, not added · /,
+      ),
+    ).toBeInTheDocument();
+    // Only blocked cases left: still listed, with the way to retry.
+    expect(
+      within(screen.getByTestId(`draft-import-${listed[3].id}`)).getByText(
+        /^1 transcript · blocked: import again to retry · /,
       ),
     ).toBeInTheDocument();
 
@@ -119,8 +134,10 @@ describe("DraftImports", () => {
 
     await userEvent.click(within(row).getByRole("button", { name: "Discard" }));
     const dialog = screen.getByRole("dialog");
+    // The confirm names the import it discards.
+    expect(dialog).toHaveTextContent("Discard “3 sessions from Support agent”?");
     expect(dialog).toHaveTextContent(
-      "Its cases are removed, and nothing joins the suite.",
+      "Its cases are removed, and nothing joins the suite. The sources stay in Observe.",
     );
     expect(axios.delete).not.toHaveBeenCalled();
     listed = [];
@@ -144,8 +161,28 @@ describe("DraftImports", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Discard" }));
 
     expect(screen.getByRole("dialog")).toHaveTextContent(
-      "Its 1 case not added are discarded. The 2 already added stay in the suite.",
+      "Its 1 case not added is discarded. The 2 already added stay in the suite.",
     );
+  });
+
+  it.each([
+    [
+      { source_kind: "transcript", source_name: null, case_count: 1 },
+      "The transcripts' stored text is deleted with it.",
+    ],
+    [
+      { source_kind: "dataset", source_name: "Support evals" },
+      "The rows stay in Support evals.",
+    ],
+  ])("says what a discard does to its sources: %o", async (kind, says) => {
+    listed = [item(kind)];
+    renderStrip();
+    const row = await screen.findByTestId(`draft-import-${listed[0].id}`);
+
+    await userEvent.click(within(row).getByRole("button", { name: "Discard" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(says);
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("stay in Observe");
   });
 
   it("cannot discard while the builder drafts", async () => {

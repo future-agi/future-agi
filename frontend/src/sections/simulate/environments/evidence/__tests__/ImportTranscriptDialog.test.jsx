@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
 
+const nav = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal()),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => nav.navigate,
 }));
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn() },
@@ -56,6 +57,39 @@ const file = (text, name, type) =>
 
 beforeEach(() => {
   axios.post.mockReset();
+  nav.navigate.mockReset();
+});
+
+describe("ImportEvidenceButton", () => {
+  it("offers a way in for each source the hint names", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ImportEvidenceButton envId={ENV} onImported={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Import evidence" }),
+    );
+    expect(
+      screen.getByText(/or rows in a dataset, then choose Create environment test/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open a dataset" }),
+    );
+    expect(nav.navigate).toHaveBeenLastCalledWith("/dashboard/develop");
+    await userEvent.click(screen.getByRole("button", { name: "Open Observe" }));
+    expect(nav.navigate).toHaveBeenLastCalledWith("/dashboard/observe");
+  });
+
+  it("says what a transcript import replaces and keeps", async () => {
+    await openDialog();
+    expect(
+      screen.getByText(
+        /Emails, phone numbers, card and ID numbers are replaced with placeholders before anything is stored\. An import keeps up to 60,000 characters\.$/,
+      ),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("ImportTranscriptDialog", () => {

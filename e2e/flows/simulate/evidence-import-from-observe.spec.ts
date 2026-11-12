@@ -181,8 +181,9 @@ test(
       await expect(cards).toHaveCount(2, { timeout: UI_READY });
       for (const card of await cards.all()) {
         await expect(card).toContainText('Waiting');
-        await expect(card).toContainText('Transcript: present');
-        await expect(card).toContainText('Starting state: missing');
+        // EvidenceCaseCard.jsx: one "Has:" and one "Missing:" line, parts in PART_LABELS order.
+        await expect(card).toContainText('Has: Transcript');
+        await expect(card).toContainText(/Missing: .*Starting state/);
       }
       await expect(review).toContainText(NOT_EXACT_REPLAY);
     });

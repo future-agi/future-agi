@@ -19,6 +19,10 @@ vi.mock("src/utils/axios", () => ({
 const dataset = vi.hoisted(() => ({ columns: [] }));
 vi.mock("src/api/develop/develop-detail", () => ({
   useDatasetColumnConfig: () => dataset.columns,
+  getDatasetQueryOptions: (id) => ({
+    queryKey: ["dataset", id],
+    queryFn: () => Promise.resolve({}),
+  }),
 }));
 
 const { default: axios } = await import("src/utils/axios");

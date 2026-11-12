@@ -15,6 +15,8 @@ export const MAX_EVIDENCE_SOURCES = 20;
 export const MAX_LABEL_COLUMNS = 10;
 // The longest transcript the backend reads, in characters.
 export const MAX_TRANSCRIPT_CHARS = 500_000;
+// What one import keeps of its sources, in characters (MAX_IMPORT_CHARS).
+export const MAX_IMPORT_KEPT_CHARS = 60_000;
 export const TRANSCRIPT_NAME_CHARS = 120;
 // How often the review asks again while the builder drafts.
 const DRAFTING_POLL_MS = 10_000;

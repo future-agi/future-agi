@@ -157,9 +157,11 @@ class EvidenceImportCase(BaseModel):
     # SHA-256 of what the source held when the import was made; blank when it
     # held nothing the project still keeps.
     digest = models.CharField(max_length=64, blank=True, default="")
-    # The scenario the builder drafted for the case: its key, its folder (suite
-    # files only, never the environment's) and the environment it was proved on.
+    # The scenario the builder drafted for the case: its key and title, its
+    # folder (suite files only, never the environment's) and the environment it
+    # was proved on.
     scenario_key = models.CharField(max_length=255, blank=True, default="")
+    scenario_name = models.CharField(max_length=255, blank=True, default="")
     proposal_object_key = models.CharField(max_length=512, blank=True, default="")
     environment_hash = models.CharField(max_length=128, blank=True, default="")
     # Checks the builder added to the environment's catalogue for this scenario,

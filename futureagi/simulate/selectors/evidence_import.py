@@ -14,7 +14,8 @@ import hashlib
 import json
 from dataclasses import asdict, replace
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
+from django.db.models.fields.json import KeyTextTransform
 
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
@@ -51,15 +52,18 @@ MAX_FINDINGS = 1000
 DOCUMENT_LINE_CHARS = 1000
 # Unfinished imports an environment lists, newest first.
 MAX_OPEN_IMPORTS = 50
-# Cases a person can still draft or add.
+# Cases a person still has to act on: draft, add, or retry by importing again
+# (a blocked case). An import stays listed while it has one.
 OPEN_CASE_STATUSES = (
     EvidenceImportCase.Status.PENDING,
     EvidenceImportCase.Status.DRAFTED,
+    EvidenceImportCase.Status.BLOCKED,
 )
 
 STATE_MISSING = (
-    "Observe does not record the records the agent's tools read before the "
-    "conversation. Supply them, or label the starting state synthetic."
+    "Observe doesn't record the seed records the agent's tools read before the "
+    "conversation. The draft labels what it assumes synthetic; add the real "
+    "records to the scenario after drafting."
 )
 BASIC_REDACTION = (
     "Names and addresses were not checked. Emails, phone numbers, card and ID "
@@ -71,16 +75,18 @@ CUT_TO_FIT = "Cut to fit the import's size; the start is kept."
 TRANSCRIPT_NO_TOOLS = "A transcript carries no tool calls."
 TRANSCRIPT_NO_LABELS = "A transcript carries no labels."
 TRANSCRIPT_STATE_MISSING = (
-    "A transcript does not record the records the agent's tools read before the "
-    "conversation. Supply them, or label the starting state synthetic."
+    "A transcript doesn't hold the seed records the agent's tools read before the "
+    "conversation. The draft labels what it assumes synthetic; add the real "
+    "records to the scenario after drafting."
 )
 ROW_UNAVAILABLE = "The row or its dataset was deleted."
 ROW_NOT_FOUND = "No row with this id in the dataset."
 ROW_NO_TOOLS = "A dataset row carries no tool calls."
 ROW_NO_LABELS = "No label column was picked, or this row's label cells are empty."
 ROW_STATE_MISSING = (
-    "A dataset row does not record the records the agent's tools read before the "
-    "conversation. Supply them, or label the starting state synthetic."
+    "A dataset row doesn't hold the seed records the agent's tools read before the "
+    "conversation. The draft labels what it assumes synthetic; add the real "
+    "records to the scenario after drafting."
 )
 NO_EXPECTED = "Only a dataset's expected outcome column records one."
 ROW_NO_EXPECTED = "No column was picked as the expected outcome, or it was deleted."
@@ -173,8 +179,8 @@ def environment_evidence_import(
 
 def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
     """The environment's imports a person can still finish, newest first: those
-    with a case to draft or add, or being drafted. Read from what the import
-    stores only: no source is read again and nothing is redacted."""
+    with a case to draft, add or retry, or being drafted. Read from what the
+    import stores only: no source is read again and nothing is redacted."""
     imports = (
         EvidenceImport.no_workspace_objects.filter(
             environment=environment, deleted=False
@@ -188,6 +194,18 @@ def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
             drafted_count=Count(
                 "cases", filter=Q(cases__status=EvidenceImportCase.Status.DRAFTED)
             ),
+            pending_count=Count(
+                "cases", filter=Q(cases__status=EvidenceImportCase.Status.PENDING)
+            ),
+            # The first transcript's name, as the person gave it (redacted).
+            transcript_name=Subquery(
+                EvidenceImportCase.no_workspace_objects.filter(
+                    evidence_import=OuterRef("pk")
+                )
+                .order_by("position")
+                .annotate(given=KeyTextTransform("name", "transcript"))
+                .values("given")[:1]
+            ),
         )
         .filter(Q(open_count__gt=0) | Q(drafting_job__isnull=False))
         .select_related("project", "dataset")
@@ -199,7 +217,7 @@ def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
             "source_kind": one.source_kind,
             "source_name": source.name
             if (source := one.project or one.dataset)
-            else None,
+            else one.transcript_name or None,
             # A transcript's text is stored, so it never goes missing.
             "source_available": source is None or not source.deleted,
             "case_count": one.case_count,
@@ -215,6 +233,9 @@ def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
 def _open_status(evidence_import) -> str:
     if evidence_import.drafting_job_id is not None:
         return "drafting"
+    # Listed, yet nothing to draft or add: only blocked cases are left.
+    if not evidence_import.pending_count and not evidence_import.drafted_count:
+        return "blocked"
     if evidence_import.added_count:
         return "partly_added"
     if evidence_import.drafted_count:
@@ -599,9 +620,9 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
 
 
 def _row_name(evidence_import: EvidenceImport, case: EvidenceImportCase) -> str:
-    """What a dataset row is called in the review: its place in the import and its
-    dataset, since a row id says nothing to a person."""
-    return f"Row {case.position + 1} · {evidence_import.dataset.name}"
+    """What a dataset row is called in the review: its dataset, since a row id
+    says nothing to a person."""
+    return f"Row from {evidence_import.dataset.name}"
 
 
 def _case(
@@ -634,6 +655,7 @@ def _case(
             "reason": reason if pending or not case.reason else case.reason,
             "source_available": False,
             "scenario_key": case.scenario_key,
+            "scenario_name": case.scenario_name,
             "new_checks": _new_checks(case),
             "changed_since_import": None,
             "trace_ids": [],
@@ -656,6 +678,7 @@ def _case(
         "reason": case.reason,
         "source_available": True,
         "scenario_key": case.scenario_key,
+        "scenario_name": case.scenario_name,
         "new_checks": _new_checks(case),
         # Unknown when either side could not be read in full. A transcript has
         # no source to read again, so it is never known.

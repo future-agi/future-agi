@@ -321,6 +321,7 @@ describe("evidence review bundles match the published contract", () => {
     reason: "",
     source_available: true,
     scenario_key: "",
+    scenario_name: "",
     new_checks: [],
     changed_since_import: false,
     trace_ids: [],
@@ -418,9 +419,19 @@ describe("the environment's unfinished imports", () => {
   };
 
   it("matches the published contract, list and discard", () => {
+    // A transcript import is named by its first transcript; one with only
+    // blocked cases left stays listed.
+    const blocked = {
+      ...listed,
+      id: "66666666-6666-6666-6666-666666666666",
+      source_kind: "transcript",
+      source_name: "Refund call",
+      added_count: 0,
+      status: "blocked",
+    };
     const list = validateContractedResponse({
       status: 200,
-      data: [listed],
+      data: [listed, blocked],
       config: { method: "get", url: BASE },
     });
     expect(list.skipped).toBeFalsy();

@@ -199,10 +199,14 @@ def test_the_last_save_keeps_each_case_as_a_proposal_and_nothing_else(
 
     drafted, blocked = _refreshed(cases)
     assert (drafted.status, drafted.scenario_key) == ("drafted", key_one)
+    # The title the builder gave the scenario, for the review to show.
+    assert drafted.scenario_name == key_one
     assert drafted.environment_hash == environment.environment_version.hash
-    assert blocked.status == "blocked"
-    assert blocked.reason.startswith(evidence_drafts.NO_SCENARIO)
-    assert "earlier refund record" in blocked.reason
+    assert (blocked.status, blocked.reason) == (
+        "blocked",
+        f"{evidence_drafts.NO_SCENARIO} Builder's reply: "
+        '"I need the earlier refund record."',
+    )
     files = archives.read_archive(archives.get_archive(drafted.proposal_object_key))
     # The case's folder only: no environment file (contract, world, catalogue).
     assert set(files) == {

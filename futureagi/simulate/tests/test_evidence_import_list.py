@@ -71,21 +71,34 @@ class TestList:
         drafted = _import(environment, ["drafted", "pending"])
         partly = _import(environment, ["added", "drafted"])
         drafting = _import(environment, ["pending"], drafting=environment)
-        # Finished: nothing is left to draft or add.
-        _import(environment, ["added", "blocked"])
+        # A blocked case stays reachable: retried by importing again, or discarded.
+        partly_blocked = _import(environment, ["added", "blocked"])
+        blocked = _import(environment, ["blocked", "unavailable"])
+        # Finished: nothing is left to draft, add or retry.
         _import(environment, ["unavailable"])
         _import(environment, ["added", "discarded"])
 
         listed = _list(client, environment)
 
         assert [(one["id"], one["status"]) for one in listed] == [
+            (str(blocked.id), "blocked"),
+            (str(partly_blocked.id), "blocked"),
             (str(drafting.id), "drafting"),
             (str(partly.id), "partly_added"),
             (str(drafted.id), "drafted"),
             (str(waiting.id), "waiting"),
         ]
-        assert [one["can_discard"] for one in listed] == [False, True, True, True]
+        assert [one["can_discard"] for one in listed] == [
+            True,
+            True,
+            False,
+            True,
+            True,
+            True,
+        ]
         assert [(one["case_count"], one["added_count"]) for one in listed] == [
+            (2, 0),
+            (2, 1),
             (1, 0),
             (2, 1),
             (2, 0),
@@ -97,7 +110,14 @@ class TestList:
     ):
         observe = _import(environment, ["pending"], project=project)
         rows = _import(environment, ["pending"], dataset=dataset)
-        transcript = _import(environment, ["pending"])
+        transcript = _import(environment, ["pending", "pending"])
+        unnamed = _import(environment, ["pending"])
+        # A transcript import is named by its first transcript, as the person
+        # named it.
+        for position, name in enumerate(["Refund call", "Second call"]):
+            EvidenceImportCase.objects.filter(
+                evidence_import=transcript, position=position
+            ).update(transcript={"name": name, "turns": []})
 
         def sources():
             return {
@@ -112,7 +132,8 @@ class TestList:
         assert sources() == {
             str(observe.id): ("session", "Support agent", True),
             str(rows.id): ("dataset", "Support evals", True),
-            str(transcript.id): ("transcript", None, True),
+            str(transcript.id): ("transcript", "Refund call", True),
+            str(unnamed.id): ("transcript", None, True),
         }
 
         Project.objects.filter(id=project.id).update(deleted=True)
@@ -121,7 +142,8 @@ class TestList:
         assert sources() == {
             str(observe.id): ("session", "Support agent", False),
             str(rows.id): ("dataset", "Support evals", False),
-            str(transcript.id): ("transcript", None, True),
+            str(transcript.id): ("transcript", "Refund call", True),
+            str(unnamed.id): ("transcript", None, True),
         }
 
     def test_another_environments_imports_are_not_listed(
@@ -167,7 +189,7 @@ class TestDiscard:
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
         assert EvidenceImport.no_workspace_objects.filter(id=made.id).exists()
-        assert _statuses(made) == ["added", "discarded", "discarded", "blocked"]
+        assert _statuses(made) == ["added", "discarded", "discarded", "discarded"]
         assert _list(client, environment) == []
 
     def test_it_is_refused_while_the_builder_drafts(self, client, environment):

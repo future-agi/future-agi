@@ -131,7 +131,8 @@ def _check_columns(dataset: Dataset, columns: DatasetColumns) -> None:
             if column is None:
                 raise HostedHarnessError(
                     "dataset_column_not_found",
-                    f"Column {column_id} is not a column of this dataset",
+                    "A picked column is no longer in this dataset; pick the "
+                    "columns again",
                     details={"column": role},
                 )
             if column.data_type in MEDIA_TYPES:

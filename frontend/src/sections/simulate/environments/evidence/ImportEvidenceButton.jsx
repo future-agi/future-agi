@@ -8,9 +8,9 @@ import { paths } from "src/routes/paths";
 import { EVIDENCE_COPY } from "./evidence.constants";
 import ImportTranscriptDialog from "./ImportTranscriptDialog";
 
-// The Scenarios tab's way in: Observe evidence is picked where it lives, in
-// Observe, and its import opens back here for review. A transcript the person
-// has is added here, and its review opens at once.
+// The Scenarios tab's way in: Observe evidence and dataset rows are picked
+// where they live, and their import opens back here for review. A transcript
+// the person has is added here, and its review opens at once.
 export default function ImportEvidenceButton({ envId, onImported }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -43,6 +43,13 @@ export default function ImportEvidenceButton({ envId, onImported }) {
               }}
             >
               {EVIDENCE_COPY.addTranscript}
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => navigate(paths.dashboard.develop)}
+            >
+              {EVIDENCE_COPY.openDataset}
             </Button>
             <Button
               variant="contained"

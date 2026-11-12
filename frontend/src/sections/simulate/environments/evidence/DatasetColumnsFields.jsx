@@ -1,7 +1,11 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
 import { Alert, MenuItem, Stack, TextField, Typography } from "@mui/material";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import { useQuery } from "@tanstack/react-query";
+import {
+  getDatasetQueryOptions,
+  useDatasetColumnConfig,
+} from "src/api/develop/develop-detail";
 import { MAX_LABEL_COLUMNS } from "src/api/simulate-environments/evidenceImports";
 import { EVIDENCE_COPY } from "./evidence.constants";
 
@@ -13,6 +17,10 @@ const MEDIA_TYPES = new Set(["audio", "image", "images", "document"]);
 // the labels and the expected outcome. Each column is picked at most once.
 export default function DatasetColumnsFields({ datasetId, value, onChange }) {
   const all = useDatasetColumnConfig(datasetId, true, true);
+  // The same query the columns come from (one request): its failure state.
+  const { isError } = useQuery(
+    getDatasetQueryOptions(datasetId, 0, [], [], "", { enabled: true }),
+  );
   const columns = useMemo(
     () =>
       all
@@ -24,6 +32,9 @@ export default function DatasetColumnsFields({ datasetId, value, onChange }) {
   const others = (...taken) =>
     columns.filter((one) => !taken.flat().includes(one.id));
 
+  if (isError && !all.length) {
+    return <Alert severity="error">{EVIDENCE_COPY.columnsError}</Alert>;
+  }
   if (!all.length) {
     return (
       <Typography variant="body2" color="text.secondary">
@@ -62,6 +73,7 @@ export default function DatasetColumnsFields({ datasetId, value, onChange }) {
         select
         size="small"
         label={EVIDENCE_COPY.labelColumns}
+        helperText={EVIDENCE_COPY.labelColumnsHelp}
         value={value.labels}
         SelectProps={{ multiple: true }}
         onChange={(event) => set({ labels: event.target.value })}

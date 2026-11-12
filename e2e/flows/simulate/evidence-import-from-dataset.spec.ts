@@ -31,8 +31,8 @@ const UI_READY = 60_000;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
 const ACTION = 'Create environment test';
 const DIALOG_BODY = /rows? from this dataset become a draft import/;
-const NOT_PRODUCTION = /You did not mark these rows as production/;
-const NOT_EXACT_REPLAY = /A dataset row never records the records/;
+const NOT_PRODUCTION = /Not marked as production, so these become tests, not regression tests/;
+const NOT_EXACT_REPLAY = /A dataset row doesn't hold the seed records/;
 const CHANGED = 'The source changed since it was imported.';
 // Routes, pinned from model_hub/urls.py and simulate/views/harness_environment.py.
 const CREATE_DATASET = '/model-hub/develops/create-empty-dataset/';
@@ -233,7 +233,8 @@ test(
       for (const [index, rowId] of rowIds.slice(0, 2).entries()) {
         await expect(card(again, rowId)).toContainText('Dataset row');
         await expect(card(again, rowId)).not.toContainText('from production');
-        await expect(card(again, rowId)).toContainText('Expected outcome: present');
+        // EvidenceCaseCard.jsx: one "Has:" line, parts in PART_LABELS order.
+        await expect(card(again, rowId)).toContainText('Has: Transcript; Labels; Expected outcome');
         await expect(card(again, rowId).getByTestId('evidence-expected-outcome')).toHaveText(
           `Expected outcome: ${expected[index]}`);
         await expect(card(again, rowId)).not.toContainText(CHANGED);

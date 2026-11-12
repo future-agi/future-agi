@@ -26,7 +26,7 @@ import { seedEnvironment } from '../../lib/environment-seed';
 const UI_READY = 60_000;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
 const DIALOG_BODY = /Paste a transcript or upload files/;
-const NOT_PRODUCTION = /You did not mark these transcripts as production/;
+const NOT_PRODUCTION = /Not marked as production, so these become tests, not regression tests/;
 const NOT_EXACT_REPLAY = /the test is not an exact replay/;
 // The import route, pinned from simulate/views/harness_environment.py (`evidence-imports/`).
 const imports = (env: string) => `/simulate/api/harness-environments/${env}/evidence-imports/`;
@@ -164,7 +164,8 @@ test(
       await expect(card).toContainText(name);
       await expect(card).toContainText('Your transcript');
       await expect(card).not.toContainText('from production');
-      await expect(card).toContainText('Tool calls: missing');
+      // EvidenceCaseCard.jsx: one "Missing:" line, parts in PART_LABELS order.
+      await expect(card).toContainText('Missing: Tool calls');
       await expect(review).toContainText('1 transcript you added');
       await expect(review.getByTestId('evidence-transcript')).toContainText(NOT_PRODUCTION);
       await expect(review).toContainText(NOT_EXACT_REPLAY);

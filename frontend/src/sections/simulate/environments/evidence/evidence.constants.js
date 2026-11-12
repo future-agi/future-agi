@@ -1,5 +1,7 @@
 import {
   MAX_EVIDENCE_SOURCES,
+  MAX_IMPORT_KEPT_CHARS,
+  MAX_LABEL_COLUMNS,
   MAX_TRANSCRIPT_CHARS,
 } from "src/api/simulate-environments/evidenceImports";
 
@@ -13,10 +15,15 @@ export const IMPORT_PARAM = "import";
 
 export const EVIDENCE_ACTION_ID = "create-environment-test";
 
+// A transcript or dataset import nobody marked as production: the mark is
+// fixed at import, so changing it means importing again.
+const NOT_PRODUCTION_NOTICE =
+  "Not marked as production, so these become tests, not regression tests. To change this, discard the import and import again with the box ticked.";
+
 export const EVIDENCE_COPY = {
   action: "Create environment test",
   actionTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} to import at once`,
-  actionAll: "Pick the items to import; Select all is not supported here",
+  actionAll: "Tick them one by one; Select all isn't available here",
   actionNoProject: "Open a project to import its evidence",
   dialogTitle: "Create environment test",
   dialogBody: (count, kind) =>
@@ -27,11 +34,14 @@ export const EVIDENCE_COPY = {
   conversationHelp:
     'Chat messages as JSON, or lines that start "User:" or "Agent:". Audio-only rows are not supported yet.',
   labelColumns: "Label columns (optional)",
+  labelColumnsHelp: `Read as context for the builder, such as intent. Up to ${MAX_LABEL_COLUMNS}.`,
   expectedColumn: "Expected outcome column (optional)",
   expectedHelp:
-    "What should happen. The scenario's expected behaviour is written from it; where it contradicts the agent's policy, the policy wins.",
+    "What should happen. The scenario's expected behaviour is written from it; the environment's rules win a conflict.",
   noColumn: "None",
   columnsLoading: "Loading this dataset's columns…",
+  columnsError:
+    "Couldn't load this dataset's columns. Close this and try again in a moment.",
   noTextColumn:
     "This dataset has no text or JSON column to read a conversation from. Audio-only rows are not supported yet.",
   rowsProduction: "These rows come from production",
@@ -49,10 +59,11 @@ export const EVIDENCE_COPY = {
   importHint:
     "Pick sessions or calls in Observe, or rows in a dataset, then choose Create environment test. Or add a transcript you have: paste it or upload files. The import opens here for review.",
   openObserve: "Open Observe",
+  openDataset: "Open a dataset",
   addTranscript: "Add a transcript",
   transcriptTitle: "Add a transcript",
   transcriptBody:
-    'Paste a transcript or upload files: JSON messages, lines that start "User:" or "Agent:", or CSV with a role and a text column. Personal data is replaced with tokens before anything is stored, and only what fits the import\'s size is kept.',
+    `Paste a transcript or upload files: JSON messages, lines that start "User:" or "Agent:", or CSV with a role and a text column. Emails, phone numbers, card and ID numbers are replaced with placeholders before anything is stored. An import keeps up to ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters.`,
   pasteLabel: "Transcript",
   nameLabel: "Name",
   pastedName: "Pasted transcript",
@@ -86,17 +97,18 @@ export const EVIDENCE_COPY = {
   datasetNotice: (production) =>
     production
       ? "You said these rows come from production, so each case is regression evidence. They are read from the dataset again each time, not recordings Observe made."
-      : "You did not mark these rows as production: their scenarios are tests, and never claim a customer did this.",
+      : NOT_PRODUCTION_NOTICE,
   transcriptNotice: (production) =>
     production
       ? "You said these transcripts come from production, so each case is regression evidence. They are your transcripts, not recordings Observe made."
-      : "You did not mark these transcripts as production: their scenarios are tests, and never claim a customer did this.",
+      : NOT_PRODUCTION_NOTICE,
   // A Simulator project's sources are our own simulations, never production evidence.
   simulated: (kind) => `Simulated ${kind}, not production`,
   simulatedNotice: (kind) =>
     `These ${kind}s come from a Simulator project: they are simulations, not production. The scenarios drafted from them never claim a customer did this.`,
   notFound: "This import is not available.",
-  loadError: "Couldn't read this import from Observe. Try again in a moment.",
+  loadError: "Couldn't load this import. Try again in a moment.",
+  loading: "Loading this import…",
   stepEvidence: "1. Evidence",
   stepState: "2. Starting state",
   stepDraft: "3. Drafted scenarios",
@@ -107,9 +119,11 @@ export const EVIDENCE_COPY = {
       : "No personal data was found.",
   redactionStored: (total) =>
     total
-      ? `${total} value${total === 1 ? "" : "s"} of personal data ${total === 1 ? "was" : "were"} replaced with tokens when the transcripts were stored.`
+      ? `${total} value${total === 1 ? "" : "s"} of personal data ${total === 1 ? "was" : "were"} replaced with placeholders when the transcripts were stored.`
       : "No personal data was found when the transcripts were stored.",
-  shows: "What should the new scenarios be?",
+  shows: "What should this case's scenario be?",
+  // No outcome recorded: nothing claims a failure or a success for the person.
+  showsUnset: "Not set: the builder judges from the evidence",
   showsOptions: {
     failure: "Reproduce the failure as a regression test",
     success: "Keep this success as a regression test",
@@ -124,6 +138,8 @@ export const EVIDENCE_COPY = {
   },
   // What each choice keeps from the evidence, and what the builder makes up.
   showsDetail: {
+    unset:
+      "Nothing in this source records how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it; pick one above if you know.",
     failure:
       "Keeps: the situation, what the user said and the failure evidence. Makes: what should have happened, written from the policy, never copied from the agent's answer.",
     success:
@@ -131,17 +147,30 @@ export const EVIDENCE_COPY = {
     partial:
       "Keeps: only what the record does show. Makes: checks for that part; anything it does not show is labelled synthetic.",
   },
+  // A dataset row's expected outcome is what a person wrote should happen: the
+  // builder writes the expected behaviour from it, not from the policy alone.
+  showsDetailExpected: {
+    unset:
+      "Nothing in this row records how it ended. Keeps: what the row shows. Makes: checks from the expected outcome column; pick one above if you know.",
+    failure:
+      "Keeps: the situation, what the user said and the failure evidence. Makes: what should have happened, from the expected outcome column; the environment's rules win a conflict.",
+    success:
+      "Keeps: the workflow that worked, step by step. Makes: checks from the expected outcome column.",
+    partial:
+      "Keeps: only what the row does show. Makes: checks from the expected outcome column for that part; anything the row does not show is labelled synthetic.",
+  },
   startingState:
-    "Observe never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+    "Observe doesn't record the seed records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels the rest synthetic. Add the real records to the scenario after drafting; the test is not an exact replay.",
   startingStateDataset:
-    "A dataset row never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the row shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+    "A dataset row doesn't hold the seed records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the row shows and labels the rest synthetic. Add the real records to the scenario after drafting; the test is not an exact replay.",
   startingStateTranscript:
-    "A transcript never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the transcript shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+    "A transcript doesn't hold the seed records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the transcript shows and labels the rest synthetic. Add the real records to the scenario after drafting; the test is not an exact replay.",
   draft: (n) => `Draft ${n} scenario${n === 1 ? "" : "s"}`,
   drafting: (n) => `Drafting ${n} imported case${n === 1 ? "" : "s"}`,
   draftingBody:
-    "The environment's builder is writing a scenario for each case. Changing the environment meanwhile can block the drafted cases.",
+    "The environment's builder is writing a scenario for each case. This can take up to 90 minutes; you can close this and come back. Changing the environment meanwhile can block the drafted cases.",
   noneWaiting: "No case is waiting to be drafted.",
+  noneDrafted: "Draft scenarios first, then add them here.",
   drafted: "Drafted",
   blocked: "Blocked",
   added: "Added to the suite",
@@ -149,12 +178,18 @@ export const EVIDENCE_COPY = {
   pending: "Waiting",
   discarded: "Discarded",
   newCheck: "New check added by this import",
-  scenarioKey: "Scenario",
+  scenario: "Scenario",
+  has: "Has:",
+  missing: "Missing:",
+  moreTurns: (n) => `… ${n} more turn${n === 1 ? "" : "s"}`,
+  untitled: (kind) =>
+    `${kind[0].toUpperCase()}${kind.slice(1)} with no recorded conversation`,
   provenanceUnavailable:
     "Provenance unavailable: Observe no longer keeps this source.",
   provenanceUnavailableRow:
     "Provenance unavailable: the dataset no longer holds this row.",
   expectedOutcome: "Expected outcome",
+  openInDataset: "Open in dataset",
   changed: "The source changed since it was imported.",
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,
@@ -188,7 +223,12 @@ export const EVIDENCE_COPY = {
     const n = item.case_count;
     const plural = n === 1 ? "" : "s";
     const gone = item.source_available ? "" : " (source deleted)";
-    if (item.source_kind === "transcript") return `${n} transcript${plural}`;
+    if (item.source_kind === "transcript") {
+      const more = n > 1 ? ` and ${n - 1} more` : "";
+      return item.source_name
+        ? `${n} transcript${plural}: ${item.source_name}${more}`
+        : `${n} transcript${plural}`;
+    }
     if (item.source_kind === "dataset")
       return `${n} row${plural} from ${item.source_name}${gone}`;
     return `${n} ${item.source_kind}${plural} from ${item.source_name}${gone}`;
@@ -198,17 +238,22 @@ export const EVIDENCE_COPY = {
     drafting: "drafting",
     drafted: "drafted, not added",
     partly_added: "partly added",
+    blocked: "blocked: import again to retry",
   },
-  saved: (when) => `saved ${when}`,
+  imported: (when) => `imported ${when}`,
   resume: "Resume",
   discard: "Discard",
   discardBusy: "Drafting is running; discard it once drafting ends.",
-  discardTitle: "Discard this import?",
+  discardTitle: (item) => `Discard “${EVIDENCE_COPY.importSource(item)}”?`,
   discardBody: (item) => {
     const left = item.case_count - item.added_count;
-    return item.added_count
-      ? `Its ${left} case${left === 1 ? "" : "s"} not added are discarded. The ${item.added_count} already added stay in the suite.`
-      : "Its cases are removed, and nothing joins the suite. A transcript's stored text is deleted with it.";
+    if (item.added_count)
+      return `Its ${left} case${left === 1 ? "" : "s"} not added ${left === 1 ? "is" : "are"} discarded. The ${item.added_count} already added stay in the suite.`;
+    if (item.source_kind === "transcript")
+      return "Its cases are removed, and nothing joins the suite. The transcripts' stored text is deleted with it.";
+    if (item.source_kind === "dataset")
+      return `Its cases are removed, and nothing joins the suite. The rows stay in ${item.source_name}.`;
+    return "Its cases are removed, and nothing joins the suite. The sources stay in Observe.";
   },
 };
 
@@ -220,15 +265,6 @@ export const PART_LABELS = {
   labels: "Labels",
   starting_state: "Starting state",
   expected_outcome: "Expected outcome",
-};
-
-// A part's status as a StatusBadge role.
-export const PART_ROLE = {
-  present: "success",
-  partial: "warning",
-  truncated: "warning",
-  missing: "neutral",
-  unreadable: "danger",
 };
 
 // A case's status as a StatusBadge role; a blocked case never reads as passed.
@@ -255,6 +291,20 @@ export const guessFormat = (name, text) => {
   if (header.includes(",") && /\b(role|speaker)\b/.test(header)) return "csv";
   return "text";
 };
+
+// Text at most `length` long, cut at the last word that fits.
+export const cutAtWord = (text, length) => {
+  if (!text || text.length <= length) return text;
+  const head = text.slice(0, length + 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > 0 ? head.slice(0, space) : text.slice(0, length)).trimEnd()}…`;
+};
+
+// Labels record how a source ended; without them, no choice is made for the person.
+export const caseShowsDefault = (item) =>
+  ["present", "partial", "truncated"].includes(item.labels?.status)
+    ? "failure"
+    : "";
 
 export const errorText = (error) =>
   EVIDENCE_COPY.errors[error?.error] ||

@@ -19982,7 +19982,7 @@ export const EvidenceImportListItemApiSourceKind = {
 } as const;
 
 /**
- * drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be.
+ * drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard.
  */
 export type EvidenceImportListItemApiStatus =
   (typeof EvidenceImportListItemApiStatus)[keyof typeof EvidenceImportListItemApiStatus];
@@ -19992,13 +19992,14 @@ export const EvidenceImportListItemApiStatus = {
   drafting: "drafting",
   drafted: "drafted",
   partly_added: "partly_added",
+  blocked: "blocked",
 } as const;
 
 export interface EvidenceImportListItemApi {
   id: string;
   source_kind: EvidenceImportListItemApiSourceKind;
   /**
-   * The Observe project's or dataset's name; null for transcripts.
+   * The Observe project's or dataset's name; a transcript import's first transcript name, or null when it has none.
    * @minLength 1
    */
   source_name: string;
@@ -20011,7 +20012,7 @@ export interface EvidenceImportListItemApi {
    * @minimum 0
    */
   added_count: number;
-  /** drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. */
+  /** drafting: the builder is drafting its cases now. partly_added: some cases were added and some can still be. blocked: only blocked cases are left, to retry by importing again or to discard. */
   status: EvidenceImportListItemApiStatus;
   created_at: string;
   /** False while the builder drafts its cases. Discarding an import with added cases discards only the cases not added. */
@@ -20290,6 +20291,8 @@ export interface EvidenceImportCaseApi {
   source_available: boolean;
   /** The drafted scenario's key, once drafted. */
   scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
   /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
   new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
