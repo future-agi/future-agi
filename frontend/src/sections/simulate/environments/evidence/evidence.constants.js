@@ -52,8 +52,9 @@ export const EVIDENCE_COPY = {
   environmentsLoading: "Loading your environments…",
   environmentsError:
     "Couldn't load your environments. Close this and try again in a moment.",
-  create: "Import",
-  creating: "Importing…",
+  // The action and the button that confirms it share one name.
+  create: "Create environment test",
+  creating: "Creating…",
   importButton: "Import evidence",
   importHintTitle: "Import evidence",
   importHint:
@@ -115,7 +116,7 @@ export const EVIDENCE_COPY = {
   stepAdd: "4. Add to the suite",
   redactionReady: (total) =>
     total
-      ? `${total} value${total === 1 ? "" : "s"} of personal data will be replaced with tokens before anything becomes scenario text.`
+      ? `${total} value${total === 1 ? "" : "s"} of personal data will be replaced with placeholders before anything becomes scenario text.`
       : "No personal data was found.",
   redactionStored: (total) =>
     total
@@ -194,9 +195,9 @@ export const EVIDENCE_COPY = {
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,
   besideNotice:
-    "The environment has unsaved changes. These cases join them and stay unsaved until you press Save in the draft bar. Until then, Fix my agent cannot write new variations.",
+    "The environment has unsaved changes. These cases join them and stay unsaved until you press Save in the draft bar. Until you save, Epoch can't write new variations.",
   besideAdded: (n) =>
-    `${n} case${n === 1 ? " is" : "s are"} in the unsaved changes. Press Save in the draft bar to make ${n === 1 ? "it" : "them"} live; until then, Fix my agent cannot write new variations.`,
+    `${n} case${n === 1 ? " is" : "s are"} in the unsaved changes. Press Save in the draft bar to make ${n === 1 ? "it" : "them"} live. Until you save, Epoch can't write new variations.`,
   goToSave: "Go to Save",
   added_: (n) => `${n} case${n === 1 ? "" : "s"} added to the suite`,
   addedToDraft: (n) =>

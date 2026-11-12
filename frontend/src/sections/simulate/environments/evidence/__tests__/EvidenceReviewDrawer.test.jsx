@@ -573,7 +573,7 @@ describe("EvidenceReviewDrawer", () => {
     const onClose = vi.fn();
     renderDrawer({ onClose });
     expect(await screen.findByTestId("evidence-beside")).toHaveTextContent(
-      /Fix my agent cannot write new variations/,
+      /Until you save, Epoch can't write new variations\./,
     );
     expect(screen.queryByRole("button", { name: "Go to Save" })).toBeNull();
     await userEvent.click(
@@ -592,7 +592,7 @@ describe("EvidenceReviewDrawer", () => {
     );
     // The cases are added, not live: the notice stays and leads to Save.
     expect(await screen.findByTestId("evidence-beside")).toHaveTextContent(
-      /1 case is in the unsaved changes\. Press Save in the draft bar/,
+      "1 case is in the unsaved changes. Press Save in the draft bar to make it live. Until you save, Epoch can't write new variations.",
     );
     await userEvent.click(screen.getByRole("button", { name: "Go to Save" }));
     expect(onClose).toHaveBeenCalled();
