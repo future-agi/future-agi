@@ -87,7 +87,6 @@ export const paths = {
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
-      skills: `${ROOTS.DASHBOARD}/simulate/skills`,
       testCallDetails: (testId, executionId) =>
         `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
       harness: {

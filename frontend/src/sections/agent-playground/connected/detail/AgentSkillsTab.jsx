@@ -1,15 +1,10 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
   DialogContent,
   DialogTitle,
-  IconButton,
-  ListItemIcon,
-  Menu,
-  MenuItem,
   Stack,
   Table,
   TableBody,
@@ -18,38 +13,32 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import { enqueueSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ClosableDialog } from "src/components/custom-dialog";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
-import Iconify from "src/components/iconify";
 import {
   isSkillsDisabled,
-  useAttachedSkills,
-  useCodeSkillFiles,
-  useCodeSkills,
-  useCopyCodeSkill,
+  useAgentSkillFiles,
+  useAgentSkills,
 } from "src/api/simulate-skills/skills";
-import { paths } from "src/routes/paths";
-import SkillFilesPanel from "src/sections/simulate/skills/SkillFilesPanel";
-import { refLabel } from "src/sections/simulate/skills/skillLabels";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
+import SkillFilesPanel from "./SkillFilesPanel";
+import SkillsNotice from "./SkillsNotice";
+import { INTEGRATE_TRACING } from "./skillsCopy";
 import useAgentRoute from "./useAgentRoute";
 
-const openSkill = (skillId) =>
-  `${paths.dashboard.simulate.skills}?skill=${skillId}`;
-
-const kindLabel = (kind) => (kind === "context" ? "Agent context" : "Skill");
-
-const SCAN_STATUS_TEXT = {
+const STATUS_TEXT = {
   no_version: "This agent has no version yet.",
   not_scanned: "This version's code hasn't been read for skills.",
-  unsupported_source:
-    "Reading skills from a GitHub repository isn't available yet. Uploaded agents show them here.",
   source_missing: "The uploaded folder for this version is no longer stored.",
   too_large: "The uploaded folder is too large to read for skills.",
 };
+
+const unsupportedText = (sourceKind) =>
+  sourceKind === "github"
+    ? "Skills from GitHub agents arrive soon. Agents uploaded as a folder show them here now."
+    : "Skills are read from an agent's code, so only code agents have them.";
 
 const PROBLEM_TEXT = {
   frontmatter_missing: "No frontmatter",
@@ -62,6 +51,49 @@ const PROBLEM_TEXT = {
 
 const problemLabel = (problem) =>
   PROBLEM_TEXT[problem] || problem.replace(/_/g, " ");
+
+const RUNTIME_TEXT = {
+  claude:
+    "Read the way the Claude Agent SDK loads it: CLAUDE.md files, and AGENTS.md only when there is no CLAUDE.md.",
+  codex:
+    "Read the way Codex loads it: AGENTS.override.md or AGENTS.md in each folder.",
+  generic: "Read from the AGENTS.md files on the path to the agent's folder.",
+};
+
+const CODEX_CAP_NOTE =
+  "Codex reads up to 32 KiB of instructions, so the files after that limit are left out.";
+
+const loadText = (file) => {
+  const parts = [];
+  if (file.imported_from) parts.push(`Imported by ${file.imported_from}`);
+  parts.push(
+    file.on_demand ? `When working in ${file.folder}/` : "Always loaded",
+  );
+  return parts.join(" · ");
+};
+
+const importDepth = (file, byPath) => {
+  let depth = 0;
+  let current = file;
+  while (current?.imported_from && depth < 5) {
+    depth += 1;
+    current = byPath[current.imported_from];
+  }
+  return depth;
+};
+
+const USAGE_NOTE = {
+  no_calls:
+    "No calls with this version yet. Usage appears after its first run.",
+  unavailable: "Skill usage can't be read right now. Try again shortly.",
+};
+
+const usageText = (item, usage) => {
+  if (!item.readable) return problemLabel(item.problem);
+  if (usage?.state !== "instrumented" || item.observed_calls == null)
+    return "Not tracked";
+  return `${usage.calls} calls · ${item.observed_calls} observed`;
+};
 
 function SectionTitle({ title, description }) {
   return (
@@ -79,82 +111,22 @@ SectionTitle.propTypes = {
   description: PropTypes.string.isRequired,
 };
 
-function LibrarySkills({ agentId }) {
-  const navigate = useNavigate();
-  const { data, isLoading, isError, refetch } = useAttachedSkills(agentId);
+const itemShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  kind: PropTypes.string,
+  name: PropTypes.string.isRequired,
+  path: PropTypes.string.isRequired,
+  description: PropTypes.string,
+  version_number: PropTypes.number.isRequired,
+  readable: PropTypes.bool.isRequired,
+  problem: PropTypes.string,
+  observed_calls: PropTypes.number,
+});
 
-  if (isLoading) return <ContentSkeleton variant="rows" rows={3} />;
-  if (isError)
-    return (
-      <ErrorState title="Couldn't load this agent's skills" onRetry={refetch} />
-    );
-  if (!data?.length)
-    return (
-      <EmptyState
-        icon="solar:lightbulb-bolt-linear"
-        title="No library skills attached"
-        description="Skills in the agent's own code still load as before. Attach a library skill to manage its versions here."
-        action={
-          <Button
-            variant="contained"
-            onClick={() => navigate(paths.dashboard.simulate.skills)}
-          >
-            Open skills
-          </Button>
-        }
-      />
-    );
-
-  return (
-    <Table size="small">
-      <TableHead>
-        <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-          <TableCell>Skill</TableCell>
-          <TableCell>Kind</TableCell>
-          <TableCell>Attached as</TableCell>
-          <TableCell />
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {data.map((skill) => (
-          <TableRow
-            key={skill.skill_id}
-            hover
-            sx={{ height: ROW_HEIGHT.default }}
-          >
-            <TableCell>
-              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                {skill.name}
-              </Typography>
-            </TableCell>
-            <TableCell sx={{ color: "text.secondary" }}>
-              {kindLabel(skill.kind)}
-            </TableCell>
-            <TableCell sx={{ color: "text.secondary" }}>
-              {refLabel(skill)}
-            </TableCell>
-            <TableCell align="right">
-              <Button
-                size="small"
-                onClick={() => navigate(openSkill(skill.skill_id))}
-              >
-                Open
-              </Button>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-LibrarySkills.propTypes = {
-  agentId: PropTypes.string.isRequired,
-};
-
-function CodeSkillFilesDialog({ agentId, item, onClose }) {
-  const { data, isLoading, isError, refetch } = useCodeSkillFiles(
+function FilesDialog({ agentId, versionId, item, onClose }) {
+  const { data, isLoading, isError, refetch } = useAgentSkillFiles(
     agentId,
+    versionId,
     item?.id,
   );
   return (
@@ -164,7 +136,11 @@ function CodeSkillFilesDialog({ agentId, item, onClose }) {
       fullWidth
       maxWidth="md"
     >
-      <DialogTitle sx={{ typography: "m1" }}>{item?.name}</DialogTitle>
+      <DialogTitle sx={{ typography: "m1" }}>
+        {item
+          ? `${item.kind === "skill" ? item.name : item.path} v${item.version_number}`
+          : ""}
+      </DialogTitle>
       <DialogContent>
         {isLoading && <ContentSkeleton variant="panel" />}
         {isError && (
@@ -181,194 +157,225 @@ function CodeSkillFilesDialog({ agentId, item, onClose }) {
   );
 }
 
-CodeSkillFilesDialog.propTypes = {
+FilesDialog.propTypes = {
   agentId: PropTypes.string.isRequired,
-  item: PropTypes.shape({
-    id: PropTypes.string.isRequired,
-    name: PropTypes.string.isRequired,
-    path: PropTypes.string.isRequired,
-  }),
+  versionId: PropTypes.string,
+  item: itemShape,
   onClose: PropTypes.func.isRequired,
 };
 
-function CodeSkillMenu({ item, onOpen, onCopy, copying }) {
-  const [anchor, setAnchor] = useState(null);
-  const close = () => setAnchor(null);
+function SkillRows({ items, usage, onOpen }) {
   return (
-    <>
-      <IconButton
-        size="small"
-        aria-label={`Actions for ${item.name}`}
-        onClick={(event) => setAnchor(event.currentTarget)}
-      >
-        <Iconify icon="solar:menu-dots-bold" width={16} />
-      </IconButton>
-      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={close}>
-        <MenuItem
-          onClick={() => {
-            close();
-            onOpen(item);
-          }}
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:file-text-linear" width={16} />
-          </ListItemIcon>
-          Open files
-        </MenuItem>
-        <MenuItem
-          disabled={!item.readable || copying}
-          onClick={() => {
-            close();
-            onCopy(item);
-          }}
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:copy-linear" width={16} />
-          </ListItemIcon>
-          Copy to library
-        </MenuItem>
-      </Menu>
-    </>
-  );
-}
-
-CodeSkillMenu.propTypes = {
-  item: PropTypes.shape({
-    name: PropTypes.string.isRequired,
-    readable: PropTypes.bool.isRequired,
-  }).isRequired,
-  onOpen: PropTypes.func.isRequired,
-  onCopy: PropTypes.func.isRequired,
-  copying: PropTypes.bool.isRequired,
-};
-
-function CodeSkills({ agentId }) {
-  const { data, isLoading, isError, refetch } = useCodeSkills(agentId);
-  const copy = useCopyCodeSkill(agentId);
-  const [opened, setOpened] = useState(null);
-
-  const onCopy = async (item) => {
-    try {
-      const skill = await copy.mutateAsync(item.id);
-      enqueueSnackbar(
-        `Copied ${skill?.name || item.name} to the library as v1`,
-        {
-          variant: "success",
-        },
-      );
-    } catch (error) {
-      enqueueSnackbar(error?.message || "Could not copy this skill", {
-        variant: "error",
-      });
-    }
-  };
-
-  if (isLoading) return <ContentSkeleton variant="rows" rows={3} />;
-  if (isError)
-    return (
-      <ErrorState
-        title="Couldn't read the skills in this agent's code"
-        onRetry={refetch}
-      />
-    );
-  if (data?.status !== "scanned")
-    return (
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        {SCAN_STATUS_TEXT[data?.status] || SCAN_STATUS_TEXT.not_scanned}
-      </Typography>
-    );
-  if (!data.items.length)
-    return (
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        {`No skills or agent instructions in version ${data.agent_version_number}'s code.`}
-      </Typography>
-    );
-
-  return (
-    <>
-      <Table size="small">
-        <TableHead>
-          <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-            <TableCell>Name</TableCell>
-            <TableCell>Path</TableCell>
-            <TableCell>Kind</TableCell>
-            <TableCell>Status</TableCell>
-            <TableCell />
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {data.items.map((item) => (
-            <TableRow key={item.id} hover sx={{ height: ROW_HEIGHT.default }}>
-              <TableCell>
-                <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                  {item.name}
+    <Table size="small">
+      <TableHead>
+        <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+          <TableCell>Skill</TableCell>
+          <TableCell>Version</TableCell>
+          <TableCell>Path</TableCell>
+          <TableCell>Calls</TableCell>
+          <TableCell />
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {items.map((item) => (
+          <TableRow key={item.id} hover sx={{ height: ROW_HEIGHT.default }}>
+            <TableCell>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                {item.name}
+              </Typography>
+              {item.description ? (
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {item.description}
                 </Typography>
-              </TableCell>
-              <TableCell
-                sx={{ color: "text.secondary", fontFamily: "monospace" }}
+              ) : null}
+            </TableCell>
+            <TableCell>{`v${item.version_number}`}</TableCell>
+            <TableCell>
+              <Box
+                component="span"
+                sx={{ fontFamily: "monospace", color: "text.secondary" }}
               >
                 {item.path}
-              </TableCell>
-              <TableCell sx={{ color: "text.secondary" }}>
-                {kindLabel(item.kind)}
-              </TableCell>
-              <TableCell sx={{ color: "text.secondary" }}>
-                {item.readable ? "Readable" : problemLabel(item.problem)}
-              </TableCell>
-              <TableCell align="right">
-                <CodeSkillMenu
-                  item={item}
-                  onOpen={setOpened}
-                  onCopy={onCopy}
-                  copying={copy.isPending}
-                />
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <CodeSkillFilesDialog
-        agentId={agentId}
-        item={opened}
-        onClose={() => setOpened(null)}
-      />
-    </>
+              </Box>
+            </TableCell>
+            <TableCell sx={{ color: "text.secondary" }}>
+              {usageText(item, usage)}
+            </TableCell>
+            <TableCell align="right">
+              <Button size="small" onClick={() => onOpen(item)}>
+                Open files
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
-CodeSkills.propTypes = {
-  agentId: PropTypes.string.isRequired,
+SkillRows.propTypes = {
+  items: PropTypes.arrayOf(itemShape).isRequired,
+  usage: PropTypes.shape({
+    state: PropTypes.string.isRequired,
+    calls: PropTypes.number.isRequired,
+  }),
+  onOpen: PropTypes.func.isRequired,
+};
+
+const contextFileShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+  path: PropTypes.string.isRequired,
+  version_number: PropTypes.number.isRequired,
+  readable: PropTypes.bool.isRequired,
+  problem: PropTypes.string,
+  position: PropTypes.number.isRequired,
+  on_demand: PropTypes.bool.isRequired,
+  folder: PropTypes.string,
+  imported_from: PropTypes.string,
+});
+
+function ContextRows({ files, onOpen }) {
+  const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
+  return (
+    <Table size="small">
+      <TableHead>
+        <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+          <TableCell>File</TableCell>
+          <TableCell>When it loads</TableCell>
+          <TableCell>Version</TableCell>
+          <TableCell />
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {files.map((file) => (
+          <TableRow key={file.id} hover sx={{ height: ROW_HEIGHT.default }}>
+            <TableCell>
+              <Box sx={{ pl: importDepth(file, byPath) * 2 }}>
+                <Box
+                  component="span"
+                  sx={{ typography: "s1", fontFamily: "monospace" }}
+                >
+                  {file.path}
+                </Box>
+                {!file.readable && (
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {problemLabel(file.problem)}
+                  </Typography>
+                )}
+              </Box>
+            </TableCell>
+            <TableCell sx={{ color: "text.secondary" }}>
+              {loadText(file)}
+            </TableCell>
+            <TableCell>{`v${file.version_number}`}</TableCell>
+            <TableCell align="right">
+              <Button size="small" onClick={() => onOpen(file)}>
+                Open file
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+ContextRows.propTypes = {
+  files: PropTypes.arrayOf(contextFileShape).isRequired,
+  onOpen: PropTypes.func.isRequired,
 };
 
 export default function AgentSkillsTab() {
-  const { agentId } = useAgentRoute();
-  const { error } = useAttachedSkills(agentId);
+  const { agentId, versionId } = useAgentRoute();
+  const { data, isLoading, isError, error, refetch } = useAgentSkills(
+    agentId,
+    versionId,
+  );
+  const [opened, setOpened] = useState(null);
 
-  if (isSkillsDisabled(error))
+  if (isLoading) return <ContentSkeleton variant="rows" rows={4} />;
+  if (isError && isSkillsDisabled(error))
     return (
       <EmptyState
         icon="solar:lightbulb-bolt-linear"
-        title="The skills library isn't turned on"
-        description="Ask an admin to enable it for this workspace."
+        title="Skills aren't turned on"
+        description="Ask an admin to enable them for this workspace."
+      />
+    );
+  if (isError)
+    return (
+      <ErrorState title="Couldn't load this agent's skills" onRetry={refetch} />
+    );
+  if (data.status === "unsupported_source" || STATUS_TEXT[data.status])
+    return (
+      <EmptyState
+        icon="solar:lightbulb-bolt-linear"
+        title="No skills to show"
+        description={
+          data.status === "unsupported_source"
+            ? unsupportedText(data.source_kind)
+            : STATUS_TEXT[data.status]
+        }
       />
     );
 
+  const skills = data.items.filter((item) => item.kind === "skill");
+  const contextFiles = data.context?.files ?? [];
+  const usage = data.usage;
+  const versionNumber = data.agent_version?.version_number;
+
   return (
     <Stack spacing={3}>
+      {usage?.state === "not_instrumented" && (
+        <SkillsNotice icon="solar:info-circle-linear">
+          {INTEGRATE_TRACING}
+        </SkillsNotice>
+      )}
+      {USAGE_NOTE[usage?.state] && (
+        <SkillsNotice icon="solar:clock-circle-linear">
+          {USAGE_NOTE[usage.state]}
+        </SkillsNotice>
+      )}
       <Box>
         <SectionTitle
-          title="Attached from the library"
-          description="Library skills this agent loads, by tag or pinned version."
+          title="Skills"
+          description={`Read from agent v${versionNumber}'s code. A skill's version changes only when its files change.`}
         />
-        <LibrarySkills agentId={agentId} />
+        {skills.length ? (
+          <SkillRows items={skills} usage={usage} onOpen={setOpened} />
+        ) : (
+          <EmptyState
+            icon="solar:lightbulb-bolt-linear"
+            title="No skills in this version"
+            description="Folders with a SKILL.md in the agent's code appear here."
+          />
+        )}
       </Box>
-      <Box>
-        <SectionTitle
-          title="In this agent's code"
-          description="Found in the latest version's uploaded folder. Read-only here; change them by uploading a new version or copy one to the library."
-        />
-        <CodeSkills agentId={agentId} />
-      </Box>
+      {contextFiles.length > 0 && (
+        <Box>
+          <SectionTitle
+            title="Agent context"
+            description={`The instructions agent v${versionNumber} starts with, in the order they load. ${RUNTIME_TEXT[data.context.runtime] ?? ""}`}
+          />
+          {data.context.capped && (
+            <Box sx={{ mb: 1 }}>
+              <SkillsNotice icon="solar:info-circle-linear">
+                {CODEX_CAP_NOTE}
+              </SkillsNotice>
+            </Box>
+          )}
+          <ContextRows files={contextFiles} onOpen={setOpened} />
+        </Box>
+      )}
+      <FilesDialog
+        agentId={agentId}
+        versionId={versionId}
+        item={opened}
+        onClose={() => setOpened(null)}
+      />
     </Stack>
   );
 }

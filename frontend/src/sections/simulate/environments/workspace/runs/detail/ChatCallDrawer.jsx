@@ -13,6 +13,7 @@ import {
 
 import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import CallSkillsPanel from "./CallSkillsPanel";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
@@ -108,6 +109,7 @@ export default function ChatCallDrawer({
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
+  const showSkills = artifact === "skills" && Boolean(callTraces.skills);
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -185,16 +187,19 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value={showTraces ? "traces" : "transcript"}
+            value={showSkills ? "skills" : showTraces ? "traces" : "transcript"}
             onChange={(_, value) => setArtifact(value)}
             sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
+            {callTraces.skills ? <Tab value="skills" label="Skills" /> : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {showTraces ? (
+            {showSkills ? (
+              <CallSkillsPanel skills={callTraces.skills} />
+            ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
                   traces={callTraces.traces}

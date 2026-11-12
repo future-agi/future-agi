@@ -322,9 +322,6 @@ const RunTests = lazyWithRetry(
 const SimulateEnvironmentsHome = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
 );
-const SimulateSkillsHome = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/skills/SkillsHome"),
-);
 const SimulatePrebuiltEnvironments = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
@@ -1453,10 +1450,6 @@ export const dashboardRoutes = (
         {
           path: "environments",
           element: <SimulateEnvironmentsHome />,
-        },
-        {
-          path: "skills",
-          element: <SimulateSkillsHome />,
         },
         {
           path: "environments/templates",

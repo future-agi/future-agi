@@ -16,6 +16,7 @@ import {
   withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import CallSkillsPanel from "./CallSkillsPanel";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
 
@@ -112,11 +113,22 @@ export default function VoiceCallDrawer({
           />
         ),
       },
+      ...(callTraces.skills
+        ? [
+            {
+              label: "Skills",
+              value: "skills",
+              icon: "solar:lightbulb-bolt-linear",
+              content: <CallSkillsPanel skills={callTraces.skills} />,
+            },
+          ]
+        : []),
     ],
     [
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,
+      callTraces.skills,
       executionId,
       onTracePanelMountedChange,
     ],

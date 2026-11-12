@@ -55,7 +55,6 @@ import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
-import { runSkillsLine } from "src/sections/simulate/skills/skillLabels";
 
 /**
  * The designer-style run/execution detail page.
@@ -169,7 +168,6 @@ export default function RunDetail({
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
-  const skillsLine = runSkillsLine(identity?.skills);
   // The agent version this run was pinned to, else the one it was recorded with.
   const agentLabel =
     identity?.pinnedAgentVersion?.label ?? identity?.agentVersion ?? "-";
@@ -311,7 +309,6 @@ export default function RunDetail({
               ? ` · ${resumeState.unfinished} not finished`
               : ""}
             {startedLabel ? ` · started ${startedLabel}` : ""}
-            {skillsLine ? ` · Skills · ${skillsLine}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
         </Box>

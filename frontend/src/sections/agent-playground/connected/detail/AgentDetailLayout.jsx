@@ -38,6 +38,9 @@ export default function AgentDetailLayout() {
   const navigate = useNavigate();
   const { search } = useLocation();
   const { agentId, agent, query, versionId, selectVersion } = useAgentRoute();
+  const tabs = DETAIL_TABS.filter(
+    (t) => t.id !== "skills" || agent?.agentKind === "source",
+  );
   const match = useMatch(`${CONNECTED_AGENTS_PATH}/:agentId/:tab/*`);
   const tab = match?.params.tab;
 
@@ -112,14 +115,14 @@ export default function AgentDetailLayout() {
         >
           <CustomTabs
             sx={{ boxShadow: "none" }}
-            value={DETAIL_TABS.some((t) => t.id === tab) ? tab : false}
+            value={tabs.some((t) => t.id === tab) ? tab : false}
             onChange={(_, v) =>
               navigate(`${agentDetailPath(agentId, v)}${search}`)
             }
             variant="scrollable"
             scrollButtons={false}
           >
-            {DETAIL_TABS.map((t) => (
+            {tabs.map((t) => (
               <Tab key={t.id} value={t.id} label={tabLabel(t)} disableRipple />
             ))}
             {COMING_SOON_TABS.map((label) => (
