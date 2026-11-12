@@ -89,10 +89,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// Build cache key.
-	namespace := rc.Metadata["cache_namespace"]
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := cacheNamespace(rc)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
 
@@ -140,7 +137,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Request.Model); result != nil {
+			if result := p.semanticStore.Search(vec, semanticPartition(namespace, rc.Request)); result != nil {
 				rc.Response = result.Response
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
@@ -194,7 +191,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			p.semanticStore.Set(key, vec, rc.Request.Model, rc.Response, ttl)
+			p.semanticStore.Set(key, vec, semanticPartition(cacheNamespace(rc), rc.Request), rc.Response, ttl)
 		}
 	}
 
@@ -256,6 +253,68 @@ func extractLastUserMessage(req *models.ChatCompletionRequest) string {
 		return string(msg.Content)
 	}
 	return ""
+}
+
+// cacheNamespace is the x-agentcc-cache-namespace of the request, or "default".
+func cacheNamespace(rc *models.RequestContext) string {
+	if ns := rc.Metadata["cache_namespace"]; ns != "" {
+		return ns
+	}
+	return "default"
+}
+
+// semanticPartition scopes semantic cache entries. Only the last user message
+// is compared by similarity, so everything that message is answered in the
+// context of must match exactly: the cache namespace, the model, every other message (system and
+// developer instructions, earlier turns, tool results, anything after it) and
+// the last user message's non-text parts (images, audio, files). Requests that
+// differ in any of these never share an entry, however similar the question.
+func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
+	last := -1
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			last = i
+			break
+		}
+	}
+	h := fnv.New128a()
+	h.Write([]byte(namespace))
+	h.Write([]byte("|"))
+	for i, msg := range req.Messages {
+		if i == last {
+			h.Write([]byte("|last-user|"))
+			h.Write(nonTextParts(msg.Content))
+			continue
+		}
+		b, _ := json.Marshal(msg)
+		h.Write(b)
+		h.Write([]byte("\n"))
+	}
+	return req.Model + "|ctx=" + hex.EncodeToString(h.Sum(nil))
+}
+
+// nonTextParts returns the non-text content parts of a message, serialized,
+// or nil when the content is a plain string or text-only parts.
+func nonTextParts(content json.RawMessage) []byte {
+	var parts []json.RawMessage
+	if err := json.Unmarshal(content, &parts); err != nil {
+		return nil
+	}
+	var out []json.RawMessage
+	for _, part := range parts {
+		var head struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(part, &head) == nil && head.Type == "text" {
+			continue
+		}
+		out = append(out, part)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(out)
+	return b
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
