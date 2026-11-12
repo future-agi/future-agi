@@ -1,14 +1,19 @@
+import operator
+from functools import reduce
 from typing import Any
 from uuid import UUID
 
 from django.db.models import (
+    BooleanField,
     Case,
     CharField,
     Count,
     F,
     OuterRef,
+    Q,
     QuerySet,
     Subquery,
+    Value,
     When,
     Window,
 )
@@ -25,6 +30,25 @@ from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
 
 ENVIRONMENTS_PER_ROW = 5
+
+_OBSERVE_LINKED = Q(
+    observability_provider__enabled=True,
+    observability_provider__project__deleted=False,
+)
+_ENVIRONMENT_CONDITIONS = {
+    "with": Q(_environment_count__gt=0),
+    "without": Q(_environment_count=0),
+}
+_OBSERVE_CONDITIONS = {"linked": Q(_observed=True), "not_linked": Q(_observed=False)}
+_FILTER_CONDITIONS = {
+    "agent_type": lambda value: Q(agent_type=value),
+    "source": lambda value: Q(_source=value),
+    "environments": _ENVIRONMENT_CONDITIONS.__getitem__,
+    "observe": _OBSERVE_CONDITIONS.__getitem__,
+}
+
+AGENT_ENVIRONMENT_FILTERS = tuple(_ENVIRONMENT_CONDITIONS)
+AGENT_OBSERVE_FILTERS = tuple(_OBSERVE_CONDITIONS)
 
 
 def _environments() -> QuerySet[HostedHarnessJob]:
@@ -77,8 +101,36 @@ def annotate_agent_rows(
             When(_agent_kind="source", then=F("_build_source_kind")),
             default=F("provider"),
             output_field=CharField(),
-        )
+        ),
+        _observed=Case(
+            When(_OBSERVE_LINKED, then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
     )
+
+
+def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
+    rows = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            run_test__agent_definition_id__in=agent_ids,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        )
+        .values("run_test__agent_definition_id")
+        .annotate(total=Count("id"))
+    )
+    return {row["run_test__agent_definition_id"]: row["total"] for row in rows}
+
+
+def filter_agent_rows(
+    queryset: QuerySet[AgentDefinition], filters: dict[str, list[str]]
+) -> QuerySet[AgentDefinition]:
+    for field, condition in _FILTER_CONDITIONS.items():
+        if values := filters.get(field):
+            queryset = queryset.filter(reduce(operator.or_, map(condition, values)))
+    return queryset
 
 
 def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:

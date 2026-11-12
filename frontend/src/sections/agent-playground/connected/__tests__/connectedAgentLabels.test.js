@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  agentNames,
+  deleteBlockedReason,
+  deleteConfirmText,
+  deleteResultMessage,
+  filtersToRows,
   modalityIcon,
   humanize,
   modalityLabel,
+  rowsToFilters,
   sourceLabel,
   usedInLabel,
   versionsParts,
@@ -131,5 +137,89 @@ describe("versionsParts", () => {
       version: "",
       rest: "—",
     });
+  });
+});
+
+describe("deleteResultMessage", () => {
+  it("says how many were deleted", () => {
+    expect(deleteResultMessage(1)).toBe("1 agent deleted.");
+    expect(deleteResultMessage(3)).toBe("3 agents deleted.");
+  });
+});
+
+describe("agentNames", () => {
+  const agents = (...names) => names.map((name) => ({ name }));
+
+  it("lists up to three names and counts the rest", () => {
+    expect(agentNames(agents("Clinic"))).toBe("Clinic");
+    expect(agentNames(agents("Clinic", "Billing"))).toBe("Clinic and Billing");
+    expect(agentNames(agents("Clinic", "Billing", "Returns"))).toBe(
+      "Clinic, Billing and Returns",
+    );
+    expect(agentNames(agents("Clinic", "Billing", "Returns", "Refunds"))).toBe(
+      "Clinic, Billing and 2 more",
+    );
+  });
+
+  it("names the agents a delete removes", () => {
+    expect(deleteConfirmText(agents("Clinic"))).toBe(
+      "This deletes Clinic with all its versions.",
+    );
+    expect(deleteConfirmText(agents("Clinic", "Billing"))).toBe(
+      "This deletes Clinic and Billing with all their versions.",
+    );
+  });
+
+  it("names the agents that block a delete", () => {
+    expect(deleteBlockedReason([{ name: "Clinic", environmentCount: 1 }])).toBe(
+      "Clinic is still used in an environment. Delete those environments first.",
+    );
+    expect(
+      deleteBlockedReason([
+        { name: "Clinic", environmentCount: 1 },
+        { name: "Billing", environmentCount: 2 },
+      ]),
+    ).toBe(
+      "Clinic and Billing are still used in environments. Delete those environments first.",
+    );
+  });
+});
+
+describe("filter panel rows", () => {
+  it("turns panel rows into the list's query filters", () => {
+    expect(
+      rowsToFilters([
+        { field: "source", operator: "in", value: ["vapi", "retell"] },
+        { field: "source", operator: "in", value: ["vapi", "bland"] },
+        { field: "environments", operator: "in", value: "without" },
+        { field: "observe", operator: "in", value: [] },
+        { field: "owner", operator: "in", value: ["me"] },
+      ]),
+    ).toEqual({
+      source: ["vapi", "retell", "bland"],
+      environments: ["without"],
+    });
+    expect(rowsToFilters(null)).toBeNull();
+    expect(rowsToFilters([{ field: "source", value: [""] }])).toBeNull();
+  });
+
+  it("shows the query filters back as panel rows", () => {
+    expect(
+      filtersToRows({ agent_type: ["voice"], source: [], observe: ["linked"] }),
+    ).toEqual([
+      {
+        field: "agent_type",
+        fieldType: "string",
+        operator: "in",
+        value: ["voice"],
+      },
+      {
+        field: "observe",
+        fieldType: "string",
+        operator: "in",
+        value: ["linked"],
+      },
+    ]);
+    expect(filtersToRows(null)).toEqual([]);
   });
 });

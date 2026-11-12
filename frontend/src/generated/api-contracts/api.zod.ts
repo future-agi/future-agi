@@ -33334,7 +33334,10 @@ export const simulateAgentDefinitionsListQueryPageDefault = 1;
 
 export const SimulateAgentDefinitionsListQueryParams = zod.object({
   search: zod.string().default(simulateAgentDefinitionsListQuerySearchDefault),
-  agent_type: zod.enum(["voice", "text"]).optional(),
+  agent_type: zod.array(zod.enum(["voice", "text"])).optional(),
+  source: zod.array(zod.string().min(1)).optional(),
+  environments: zod.array(zod.enum(["with", "without"])).optional(),
+  observe: zod.array(zod.enum(["linked", "not_linked"])).optional(),
   agent_definition_id: zod.string().uuid().optional(),
   page: zod
     .number()
@@ -70802,7 +70805,9 @@ export const tracerSavedSqlQueryCreateBodyChartXMax = 128;
 
 export const tracerSavedSqlQueryCreateBodyChartYMax = 128;
 
-export const tracerSavedSqlQueryCreateBodyChartDefault = { type: "table" };
+export const tracerSavedSqlQueryCreateBodyChartDefault = {
+  type: "table" as const,
+};
 export const tracerSavedSqlQueryCreateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryCreateBodyWindowHoursMax = 744;
 
@@ -70872,7 +70877,7 @@ export const tracerSavedSqlQueryPartialUpdateBodyChartXMax = 128;
 export const tracerSavedSqlQueryPartialUpdateBodyChartYMax = 128;
 
 export const tracerSavedSqlQueryPartialUpdateBodyChartDefault = {
-  type: "table",
+  type: "table" as const,
 };
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursDefault = 24;
 export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursMax = 744;

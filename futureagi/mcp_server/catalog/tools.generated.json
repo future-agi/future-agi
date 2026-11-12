@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "6018fe21448f9826150fca0c554c2a94e342dc6bd3b01c5e103c7a5a7ffa0a48",
+  "source_contract_sha256": "606e30f04dcd3fecc224230153647d8ec00040a5f54d6288d1c7d0885b7b93ed",
   "tool_count": 111,
   "tools": [
     {
@@ -7052,18 +7052,41 @@
             "default": ""
           },
           "agent_type": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "voice",
-                  "text"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "voice",
+                "text"
+              ]
+            }
+          },
+          "source": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "environments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "with",
+                "without"
+              ]
+            }
+          },
+          "observe": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "linked",
+                "not_linked"
+              ]
+            }
           },
           "agent_definition_id": {
             "anyOf": [
@@ -7103,6 +7126,9 @@
           "query": [
             "search",
             "agent_type",
+            "source",
+            "environments",
+            "observe",
             "agent_definition_id",
             "page",
             "limit"

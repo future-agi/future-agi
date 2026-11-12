@@ -40,6 +40,7 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    delete_agents,
     is_masked,
     resolve_api_key_for_version,
     resolve_stored_api_key,
@@ -48,9 +49,11 @@ from simulate.services.agent_definition import (
 from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
+    filter_agent_rows,
     observability_on,
     recent_agent_runs,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -60,6 +63,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -81,6 +85,13 @@ from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
+
+
+def _conflict(exc: HostedHarnessError) -> Response:
+    return Response(
+        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
+        status=exc.status_code,
+    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -128,7 +139,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -154,8 +164,7 @@ class AgentDefinitionView(APIView):
                 _latest_version_id=Subquery(latest_version_id_subquery),
             )
 
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
+            agents = filter_agent_rows(agents, validated)
 
             # Apply search filter
             if search_query:
@@ -211,6 +220,7 @@ class AgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionBulkDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -222,18 +232,10 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
-
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+            updated_agents, updated_versions = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
+            )
 
             response_data = {
                 "message": "Agents deleted successfully",
@@ -244,6 +246,8 @@ class AgentDefinitionView(APIView):
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to delete agents: {str(e)}"

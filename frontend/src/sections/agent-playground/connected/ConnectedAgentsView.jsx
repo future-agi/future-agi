@@ -1,19 +1,34 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { enqueueSnackbar } from "notistack";
+import { useQueryClient } from "@tanstack/react-query";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { Box, Button, Stack, Typography } from "@mui/material";
-import { format } from "date-fns";
+import { LoadingButton } from "@mui/lab";
+import { relativeTime } from "src/utils/format-time";
 import SvgColor from "src/components/svg-color";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import { FilterButton } from "src/components/filter";
+import SelectionBar from "src/components/selection-bar";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import {
+  useConnectedAgents,
+  useDeleteConnectedAgents,
+} from "src/api/agents/connectedAgents";
+import {
+  CONNECTED_AGENT_FILTER_FIELDS,
+  deleteBlockedReason,
+  deleteConfirmText,
+  deleteResultMessage,
+  filtersToRows,
   modalityIcon,
   modalityLabel,
   sourceLabel,
+  rowsToFilters,
   usedInLabel,
   versionsParts,
 } from "./connectedAgentLabels";
@@ -129,17 +144,23 @@ const columns = [
     },
   },
   {
-    id: "createdAt",
-    accessorKey: "createdAt",
-    header: "Created at",
-    size: 180,
+    id: "updatedAt",
+    accessorKey: "updatedAt",
+    header: "Last updated",
+    size: 150,
     enableSorting: false,
     cell: ({ row }) => (
-      <CellText>
-        {row.original.createdAt
-          ? format(new Date(row.original.createdAt), "dd-MM-yyyy, h:mm a")
-          : "—"}
-      </CellText>
+      <CellText>{relativeTime(row.original.updatedAt)}</CellText>
+    ),
+  },
+  {
+    id: "createdAt",
+    accessorKey: "createdAt",
+    header: "Connected on",
+    size: 150,
+    enableSorting: false,
+    cell: ({ row }) => (
+      <CellText>{relativeTime(row.original.createdAt)}</CellText>
     ),
   },
 ];
@@ -151,22 +172,85 @@ const columns = [
  */
 export default function ConnectedAgentsView({ onConnect }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
+  const [filters, setFilters] = useState(null);
+  const filterRows = useMemo(() => filtersToRows(filters), [filters]);
   const search = useDebounce(query.trim(), 500);
+  const activeFilterCount = filters ? Object.keys(filters).length : 0;
 
   const { data, isLoading, isError } = useConnectedAgents({
     page,
     pageSize,
     search,
+    filters,
   });
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
   const total = data?.total ?? 0;
   // One-line rows: the name only.
   const rowHeight = ROW_HEIGHT.default;
 
-  if (!isLoading && !isError && !search && !query && total === 0) {
+  const [selected, setSelected] = useState([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteAgents = useDeleteConnectedAgents();
+  const rowSelection = useMemo(() => {
+    const ids = new Set(selected.map((agent) => agent.id));
+    return Object.fromEntries(
+      items.flatMap((agent, index) =>
+        ids.has(agent.id) ? [[index, true]] : [],
+      ),
+    );
+  }, [items, selected]);
+  const inUse = selected.filter((agent) => agent.environmentCount > 0);
+
+  useEffect(() => {
+    setSelected([]);
+  }, [page, pageSize, search, filters]);
+
+  const handleDelete = () => {
+    deleteAgents.mutate(
+      selected.map((agent) => agent.id),
+      {
+        onSuccess: ({ data: result }) => {
+          const deleted = result.agents_updated ?? 0;
+          const lastPage = Math.max(
+            0,
+            Math.ceil((total - deleted) / pageSize) - 1,
+          );
+          const pageGone = page > lastPage;
+          if (pageGone) setPage(lastPage);
+          queryClient.invalidateQueries({
+            queryKey: ["agents", "connected"],
+            refetchType: pageGone ? "none" : "active",
+          });
+          enqueueSnackbar(deleteResultMessage(deleted), {
+            variant: deleted ? "success" : "warning",
+          });
+          setSelected([]);
+          setConfirmDelete(false);
+        },
+        onError: (error) => {
+          enqueueSnackbar(
+            error?.statusCode === 409 && error?.message
+              ? error.message
+              : "Couldn't delete the selected agents",
+            { variant: "error" },
+          );
+        },
+      },
+    );
+  };
+
+  if (
+    !isLoading &&
+    !isError &&
+    !search &&
+    !query &&
+    !activeFilterCount &&
+    total === 0
+  ) {
     return (
       <EmptyState
         icon="solar:link-circle-linear"
@@ -208,6 +292,36 @@ export default function ConnectedAgentsView({ onConnect }) {
           placeholder="Search"
           sx={{ width: 250 }}
         />
+        <FilterButton
+          fields={CONNECTED_AGENT_FILTER_FIELDS}
+          value={filterRows}
+          onChange={(rows) => {
+            setFilters(rowsToFilters(rows));
+            setPage(0);
+          }}
+          showQueryTab={false}
+        />
+        <Box sx={{ flex: 1 }} />
+        {selected.length > 0 ? (
+          <SelectionBar
+            count={selected.length}
+            onCancel={() => setSelected([])}
+            actions={[
+              {
+                label: "Delete",
+                icon: "solar:trash-bin-trash-linear",
+                onClick: () => setConfirmDelete(true),
+                disabled: inUse.length > 0,
+                tooltip:
+                  inUse.length > 0 ? deleteBlockedReason(inUse) : undefined,
+              },
+            ]}
+          />
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Connected = we can reach it: its repo, platform, endpoint or traces.
+          </Typography>
+        )}
       </ListToolbar>
       <DataTable
         columns={columns}
@@ -216,11 +330,16 @@ export default function ConnectedAgentsView({ onConnect }) {
         rowCount={total}
         getRowId={(r) => r.id}
         rowHeight={rowHeight}
+        enableSelection
+        rowSelection={rowSelection}
+        onRowSelectionChange={(selection) =>
+          setSelected(items.filter((_, index) => selection[index]))
+        }
         onRowClick={(r) => navigate(`${CONNECTED_AGENTS_PATH}/${r.id}`)}
         emptyMessage={
           isError
             ? "Couldn't load connected agents"
-            : "No agents match your search"
+            : "No agents match your search or filters"
         }
       />
       <DataTablePagination
@@ -232,6 +351,27 @@ export default function ConnectedAgentsView({ onConnect }) {
           setPageSize(size);
           setPage(0);
         }}
+      />
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title={
+          selected.length === 1
+            ? `Delete ${selected[0].name}?`
+            : `Delete ${selected.length} agents?`
+        }
+        content={deleteConfirmText(selected)}
+        action={
+          <LoadingButton
+            variant="contained"
+            color="error"
+            size="small"
+            loading={deleteAgents.isPending}
+            onClick={handleDelete}
+          >
+            Delete
+          </LoadingButton>
+        }
       />
     </Box>
   );

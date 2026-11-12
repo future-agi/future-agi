@@ -48603,12 +48603,50 @@
                         "name": "agent_type",
                         "in": "query",
                         "required": false,
-                        "type": "string",
-                        "enum": [
-                            "voice",
-                            "text"
-                        ],
-                        "x-nullable": true
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "voice",
+                                "text"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "environments",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "with",
+                                "without"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "observe",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "linked",
+                                "not_linked"
+                            ]
+                        }
                     },
                     {
                         "name": "agent_definition_id",
@@ -48696,6 +48734,12 @@
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"

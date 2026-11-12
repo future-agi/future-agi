@@ -193,6 +193,151 @@ def test_list_counts_every_environment_and_lists_the_five_oldest(
     ]
 
 
+def _observed(agent, user, *, enabled=True):
+    project = Project.objects.create(
+        name=f"{agent.agent_name} observe",
+        organization=agent.organization,
+        workspace=agent.workspace,
+        model_type="GenerativeLLM",
+        trace_type="observe",
+        user=user,
+    )
+    row = ObservabilityProvider.objects.create(
+        project=project,
+        provider=ProviderChoices.VAPI,
+        enabled=enabled,
+        organization=agent.organization,
+        workspace=agent.workspace,
+    )
+    AgentDefinition.objects.filter(id=agent.id).update(observability_provider=row)
+    return project
+
+
+def _names(auth_client, **filters):
+    response = auth_client.get(AGENTS, {"limit": 50, **filters})
+    assert response.status_code == status.HTTP_200_OK, response.content
+    return sorted(row["agent_name"] for row in response.json()["results"])
+
+
+@pytest.mark.django_db
+def test_list_filters_by_type_source_environments_and_observe_project(
+    auth_client, organization, workspace, user
+):
+    _agent(organization, workspace, "Vapi Line")
+    retell = _agent(organization, workspace, "Retell Line", provider="retell")
+    AgentDefinition.objects.filter(id=retell.id).update(
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE
+    )
+    code = _agent(organization, workspace, "Harbor Hotels", provider="")
+    version = code.create_version(description="", commit_message="v1", status="active")
+    store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
+    _environment(code, 1, kind="archive")
+    observed = _agent(organization, workspace, "Observed", provider="bland")
+    _observed(observed, user)
+    switched_off = _agent(organization, workspace, "Switched Off", provider="bland")
+    _observed(switched_off, user, enabled=False)
+    project_gone = _agent(organization, workspace, "Project Gone", provider="bland")
+    project = _observed(project_gone, user)
+    Project.objects.filter(id=project.id).update(deleted=True)
+    everyone = sorted(
+        [
+            "Vapi Line",
+            "Retell Line",
+            "Harbor Hotels",
+            "Observed",
+            "Switched Off",
+            "Project Gone",
+        ]
+    )
+
+    assert _names(auth_client, agent_type="voice") == ["Retell Line"]
+    assert _names(auth_client, source=["vapi", "retell"]) == [
+        "Retell Line",
+        "Vapi Line",
+    ]
+    assert _names(auth_client, source="archive") == ["Harbor Hotels"]
+    assert _names(auth_client, environments="with") == ["Harbor Hotels"]
+    assert _names(auth_client, environments=["with", "without"]) == everyone
+    assert _names(auth_client, observe="linked") == ["Observed"]
+    assert _names(auth_client, observe="not_linked") == [
+        name for name in everyone if name != "Observed"
+    ]
+    assert _names(auth_client, observe=["linked", "not_linked"]) == everyone
+    assert _names(auth_client, observe=["not_linked", "linked"]) == everyone
+    assert _names(
+        auth_client, source="bland", environments="without", observe="not_linked"
+    ) == ["Project Gone", "Switched Off"]
+
+
+@pytest.mark.django_db
+def test_list_rejects_a_filter_value_it_does_not_know(auth_client):
+    response = auth_client.get(AGENTS, {"environments": "sometimes"})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "Northwind")
+    _environment(tested, 1)
+    _environment(tested, 2)
+    also_tested = _agent(organization, workspace, "Harbor Hotels")
+    _environment(also_tested, 3)
+    idle = _agent(organization, workspace, "Spare")
+    idle_version = idle.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+
+    response = auth_client.delete(
+        AGENTS,
+        {"agent_ids": [str(idle.id), str(tested.id), str(also_tested.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.json()["code"] == "agent_in_use"
+    assert response.json()["error"] == (
+        "Northwind is tested by 2 environments and Harbor Hotels by 1 environment."
+        " Delete those environments first."
+    )
+    for row in (tested, also_tested, idle, idle_version):
+        row.refresh_from_db()
+        assert row.deleted is False
+    assert _names(auth_client) == ["Harbor Hotels", "Northwind", "Spare"]
+
+
+@pytest.mark.django_db
+def test_bulk_delete_removes_idle_agents_with_their_versions(
+    auth_client, organization, workspace
+):
+    free = _agent(organization, workspace, "Free")
+    free_version = free.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    left_behind = _agent(organization, workspace, "Environment Gone")
+    gone = _environment(left_behind, 2)
+    HostedHarnessJob.all_objects.filter(id=gone.id).update(deleted=True)
+    already_gone = _agent(organization, workspace, "Already Gone")
+    AgentDefinition.objects.filter(id=already_gone.id).update(deleted=True)
+
+    response = auth_client.delete(
+        AGENTS,
+        {"agent_ids": [str(free.id), str(left_behind.id), str(already_gone.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    assert (body["agents_updated"], body["versions_updated"]) == (2, 1)
+    assert "skipped_agent_ids" not in body
+    for row in (free, free_version, left_behind):
+        row.refresh_from_db()
+        assert row.deleted is True
+    assert _names(auth_client) == []
+
+
 @pytest.mark.django_db
 def test_detail_reports_kind_source_count_and_the_switch(
     auth_client, organization, workspace, user
