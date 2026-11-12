@@ -248,10 +248,10 @@ def speech_response():
 
 class TestStandardSpeechBoundary:
     @pytest.mark.parametrize("model", OPENAI_TTS_MODELS)
-    def test_sync_speech_input_is_user_script_with_settings_intact(
-        self, model, upload
-    ):
-        context = tts_context(model, control_and_user(), run_prompt_config=OPENAI_CONFIG)
+    def test_sync_speech_input_is_user_script_with_settings_intact(self, model, upload):
+        context = tts_context(
+            model, control_and_user(), run_prompt_config=OPENAI_CONFIG
+        )
 
         with patch("litellm.speech", return_value=speech_response()) as speech:
             result = TTSHandler(context).execute_sync()
@@ -273,7 +273,9 @@ class TestStandardSpeechBoundary:
     async def test_async_speech_input_is_user_script_with_settings_intact(
         self, model, upload
     ):
-        context = tts_context(model, control_and_user(), run_prompt_config=OPENAI_CONFIG)
+        context = tts_context(
+            model, control_and_user(), run_prompt_config=OPENAI_CONFIG
+        )
 
         with patch(
             "litellm.aspeech", new_callable=AsyncMock, return_value=speech_response()
@@ -307,7 +309,9 @@ class TestStandardSpeechBoundary:
         assert kwargs["audioConfig"] == audio_config
 
     def test_empty_user_script_fails_before_speech_call_and_upload(self, upload):
-        context = tts_context("openai/tts-1", control_and_user("  "), run_prompt_config=OPENAI_CONFIG)
+        context = tts_context(
+            "openai/tts-1", control_and_user("  "), run_prompt_config=OPENAI_CONFIG
+        )
 
         with patch("litellm.speech") as speech:
             result = TTSHandler(context).execute_sync()
@@ -318,7 +322,9 @@ class TestStandardSpeechBoundary:
         upload.assert_not_called()
 
     async def test_empty_user_script_fails_before_async_speech_call(self, upload):
-        context = tts_context("openai/tts-1", control_and_user(""), run_prompt_config=OPENAI_CONFIG)
+        context = tts_context(
+            "openai/tts-1", control_and_user(""), run_prompt_config=OPENAI_CONFIG
+        )
 
         with patch("litellm.aspeech", new_callable=AsyncMock) as aspeech:
             result = await TTSHandler(context).execute_async()
@@ -328,7 +334,9 @@ class TestStandardSpeechBoundary:
         upload.assert_not_called()
 
     def test_provider_error_stays_a_failure(self, upload):
-        context = tts_context("openai/tts-1", control_and_user(), run_prompt_config=OPENAI_CONFIG)
+        context = tts_context(
+            "openai/tts-1", control_and_user(), run_prompt_config=OPENAI_CONFIG
+        )
 
         with patch("litellm.speech", side_effect=Exception("401 invalid api key")):
             result = TTSHandler(context).execute_sync()
@@ -380,8 +388,15 @@ class TestAudioPreviewUnchanged:
             return fallback_response()
 
         with (
-            patch("litellm.speech", side_effect=Exception("404 page not found")) as speech,
-            patch.object(AudioPreviewHandler, "execute_sync", autospec=True, side_effect=fake_fallback) as fallback,
+            patch(
+                "litellm.speech", side_effect=Exception("404 page not found")
+            ) as speech,
+            patch.object(
+                AudioPreviewHandler,
+                "execute_sync",
+                autospec=True,
+                side_effect=fake_fallback,
+            ) as fallback,
         ):
             result = TTSHandler(context).execute_sync()
 
@@ -401,8 +416,17 @@ class TestAudioPreviewUnchanged:
             return fallback_response()
 
         with (
-            patch("litellm.aspeech", new_callable=AsyncMock, side_effect=Exception("Invalid URL")) as aspeech,
-            patch.object(AudioPreviewHandler, "execute_async", autospec=True, side_effect=fake_fallback),
+            patch(
+                "litellm.aspeech",
+                new_callable=AsyncMock,
+                side_effect=Exception("Invalid URL"),
+            ) as aspeech,
+            patch.object(
+                AudioPreviewHandler,
+                "execute_async",
+                autospec=True,
+                side_effect=fake_fallback,
+            ),
         ):
             result = await TTSHandler(context).execute_async()
 
@@ -412,14 +436,22 @@ class TestAudioPreviewUnchanged:
         assert seen["messages"] == control_and_user()
         assert result.response == AUDIO_URL
 
-    def test_alias_fallback_generates_audio_through_real_completion_handler(self, upload):
+    def test_alias_fallback_generates_audio_through_real_completion_handler(
+        self, upload
+    ):
         context = tts_context(
-            ALIAS, copy.deepcopy(SYSTEM_ONLY), run_prompt_config={"voice": "nova", "format": "wav"}
+            ALIAS,
+            copy.deepcopy(SYSTEM_ONLY),
+            run_prompt_config={"voice": "nova", "format": "wav"},
         )
 
         with (
-            patch("litellm.speech", side_effect=Exception("404 page not found")) as speech,
-            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+            patch(
+                "litellm.speech", side_effect=Exception("404 page not found")
+            ) as speech,
+            patch(
+                "litellm.completion", return_value=completion_with_audio()
+            ) as completion,
         ):
             result = TTSHandler(context).execute_sync()
 
@@ -431,7 +463,9 @@ class TestAudioPreviewUnchanged:
         assert [m["role"] for m in kwargs["messages"]] == ["system", "user"]
         assert kwargs["modalities"] == ["text", "audio"]
         assert kwargs["audio"] == {"voice": "nova", "format": "wav"}
-        assert upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+        assert (
+            upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+        )
 
     async def test_alias_async_fallback_generates_audio_through_real_completion_handler(
         self, upload
@@ -439,9 +473,15 @@ class TestAudioPreviewUnchanged:
         context = tts_context(ALIAS, control_and_user())
 
         with (
-            patch("litellm.aspeech", new_callable=AsyncMock, side_effect=Exception("Invalid URL")),
             patch(
-                "litellm.acompletion", new_callable=AsyncMock, return_value=completion_with_audio()
+                "litellm.aspeech",
+                new_callable=AsyncMock,
+                side_effect=Exception("Invalid URL"),
+            ),
+            patch(
+                "litellm.acompletion",
+                new_callable=AsyncMock,
+                return_value=completion_with_audio(),
             ) as acompletion,
         ):
             result = await TTSHandler(context).execute_async()
@@ -449,14 +489,22 @@ class TestAudioPreviewUnchanged:
         assert result.failure is None, result.failure
         acompletion.assert_awaited_once()
         sent = acompletion.call_args.kwargs["messages"]
-        assert [m["role"] for m in sent] == ["system", "developer", "assistant", "tool", "user"]
+        assert [m["role"] for m in sent] == [
+            "system",
+            "developer",
+            "assistant",
+            "tool",
+            "user",
+        ]
         for text in CONTROL_TEXTS + [SCRIPT]:
             assert text in upload.call_args.kwargs["input_text"]
 
     def test_exact_audio_preview_model_sends_role_bearing_messages(self):
         context = tts_context("gpt-4o-audio-preview", control_and_user())
 
-        with patch("litellm.completion", side_effect=Exception("stop after payload")) as completion:
+        with patch(
+            "litellm.completion", side_effect=Exception("stop after payload")
+        ) as completion:
             result = TTSHandler(context).execute_sync()
 
         completion.assert_called_once()
@@ -473,7 +521,9 @@ class TestAudioPreviewUnchanged:
 
         with (
             patch("litellm.speech") as speech,
-            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+            patch(
+                "litellm.completion", return_value=completion_with_audio()
+            ) as completion,
         ):
             result = TTSHandler(context).execute_sync()
 
@@ -486,7 +536,9 @@ class TestAudioPreviewUnchanged:
             {"role": "user", "content": ""},
         ]
         assert kwargs["modalities"] == ["audio"]
-        assert upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+        assert (
+            upload.call_args.kwargs["input_text"].strip() == "Greet the caller warmly."
+        )
 
     async def test_vertex_gemini_tts_async_keeps_every_role_through_completion(
         self, upload
@@ -495,7 +547,9 @@ class TestAudioPreviewUnchanged:
 
         with (
             patch("litellm.aspeech", new_callable=AsyncMock) as aspeech,
-            patch("litellm.completion", return_value=completion_with_audio()) as completion,
+            patch(
+                "litellm.completion", return_value=completion_with_audio()
+            ) as completion,
         ):
             result = await TTSHandler(context).execute_async()
 
@@ -503,7 +557,13 @@ class TestAudioPreviewUnchanged:
         aspeech.assert_not_called()
         completion.assert_called_once()
         sent = completion.call_args.kwargs["messages"]
-        assert [m["role"] for m in sent] == ["system", "developer", "assistant", "tool", "user"]
+        assert [m["role"] for m in sent] == [
+            "system",
+            "developer",
+            "assistant",
+            "tool",
+            "user",
+        ]
         for text in CONTROL_TEXTS + [SCRIPT]:
             assert text in upload.call_args.kwargs["input_text"]
 
@@ -552,24 +612,29 @@ CUSTOM_PROVIDERS = {
         "model": "aura-2",
         "config": {"voice": "thalia", "encoding": "mp3"},
         "script": lambda req: req["text"],
-        "settings": lambda req: "model=aura-2-thalia-en" in req["_url"]
-        and "encoding=mp3" in req["_url"],
+        "settings": lambda req: (
+            "model=aura-2-thalia-en" in req["_url"] and "encoding=mp3" in req["_url"]
+        ),
     },
     "inworld": {
         "model": "inworld-tts-1",
         "config": {"voice": "Ashley", "temperature": 0.7},
         "script": lambda req: req["text"],
-        "settings": lambda req: req["voiceId"] == "Ashley"
-        and req["modelId"] == "inworld-tts-1"
-        and req["temperature"] == 0.7,
+        "settings": lambda req: (
+            req["voiceId"] == "Ashley"
+            and req["modelId"] == "inworld-tts-1"
+            and req["temperature"] == 0.7
+        ),
     },
     "rime": {
         "model": "arcana",
         "config": {"voice": "luna", "lang": "eng"},
         "script": lambda req: req["text"],
-        "settings": lambda req: req["speaker"] == "luna"
-        and req["modelId"] == "arcana"
-        and req["lang"] == "eng",
+        "settings": lambda req: (
+            req["speaker"] == "luna"
+            and req["modelId"] == "arcana"
+            and req["lang"] == "eng"
+        ),
     },
     "neuphonic": {
         "model": "neuphonic",
@@ -581,16 +646,20 @@ CUSTOM_PROVIDERS = {
         "model": "octave",
         "config": {"voice": "KORA", "format": "wav"},
         "script": lambda req: req["utterances"][0]["text"],
-        "settings": lambda req: req["utterances"][0]["voice"]["name"] == "KORA"
-        and req["format"] == {"type": "wav"},
+        "settings": lambda req: (
+            req["utterances"][0]["voice"]["name"] == "KORA"
+            and req["format"] == {"type": "wav"}
+        ),
     },
     "cartesia": {
         "model": "sonic-3",
         "config": {"voice": "Katie", "language": "en"},
         "script": lambda req: req["transcript"],
-        "settings": lambda req: req["model_id"] == "sonic-3"
-        and req["voice"]["mode"] == "id"
-        and req["language"] == "en",
+        "settings": lambda req: (
+            req["model_id"] == "sonic-3"
+            and req["voice"]["mode"] == "id"
+            and req["language"] == "en"
+        ),
     },
     "lmnt": {
         "model": "blizzard",
@@ -633,7 +702,10 @@ class TestCustomAdapterBoundary:
     ):
         spec = CUSTOM_PROVIDERS[provider]
         context = tts_context(
-            spec["model"], control_and_user(), provider=provider, run_prompt_config=spec["config"]
+            spec["model"],
+            control_and_user(),
+            provider=provider,
+            run_prompt_config=spec["config"],
         )
         handler = TTSHandler(context)
 
@@ -650,10 +722,15 @@ class TestCustomAdapterBoundary:
         assert upload.call_args.kwargs["input_text"] == SCRIPT
 
     @pytest.mark.parametrize("provider", sorted(CUSTOM_PROVIDERS))
-    async def test_async_provider_field_is_user_script(self, provider, provider_io, upload):
+    async def test_async_provider_field_is_user_script(
+        self, provider, provider_io, upload
+    ):
         spec = CUSTOM_PROVIDERS[provider]
         context = tts_context(
-            spec["model"], control_and_user(), provider=provider, run_prompt_config=spec["config"]
+            spec["model"],
+            control_and_user(),
+            provider=provider,
+            run_prompt_config=spec["config"],
         )
 
         result = await TTSHandler(context).execute_async()
@@ -668,7 +745,10 @@ class TestCustomAdapterBoundary:
     ):
         spec = CUSTOM_PROVIDERS[provider]
         context = tts_context(
-            spec["model"], control_and_user(" "), provider=provider, run_prompt_config=spec["config"]
+            spec["model"],
+            control_and_user(" "),
+            provider=provider,
+            run_prompt_config=spec["config"],
         )
 
         result = TTSHandler(context).execute_sync()
@@ -685,7 +765,12 @@ class TestCustomAdapterBoundary:
             {"role": "system", "content": "s" * 3000},
             {"role": "user", "content": user_text},
         ]
-        context = tts_context(spec["model"], messages, provider="inworld", run_prompt_config=spec["config"])
+        context = tts_context(
+            spec["model"],
+            messages,
+            provider="inworld",
+            run_prompt_config=spec["config"],
+        )
 
         result = TTSHandler(context).execute_sync()
 

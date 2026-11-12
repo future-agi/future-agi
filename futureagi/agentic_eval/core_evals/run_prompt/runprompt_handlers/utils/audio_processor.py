@@ -26,6 +26,7 @@ from tfc.utils.storage import (
     get_audio_duration,
     upload_audio_to_s3,
 )
+
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
@@ -112,7 +113,7 @@ class AudioProcessor:
         return input_text
 
     @staticmethod
-    def extract_literal_speech_script(messages: List[Dict[str, Any]]) -> str:
+    def extract_literal_speech_script(messages: list[dict[str, Any]]) -> str:
         """Speech script for literal TTS: user-role text only.
 
         System, developer, assistant, tool, unknown and missing roles are
