@@ -28219,6 +28219,14 @@ export const DerivedMetricVersionApiBackfillStatus = {
   failed: "failed",
 } as const;
 
+export type DerivedMetricVersionApiHistoryMode =
+  (typeof DerivedMetricVersionApiHistoryMode)[keyof typeof DerivedMetricVersionApiHistoryMode];
+
+export const DerivedMetricVersionApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
 export type DerivedMetricVersionApiValueLabels = { [key: string]: unknown };
 
 export type DerivedMetricVersionApiSampling = { [key: string]: unknown };
@@ -28277,6 +28285,8 @@ export interface DerivedMetricVersionApi {
    * @maximum 2147483647
    */
   backfill_days_total?: number;
+  history_mode?: DerivedMetricVersionApiHistoryMode;
+  coverage_start?: string;
   activated_at?: string;
   readonly needs_rebuild?: boolean;
   readonly created_at?: string;
@@ -28876,6 +28886,17 @@ export interface MetricActivationRequestApi {
   expected_active_id: string;
 }
 
+/**
+ * forward: started with no history; values exist from coverage_start
+ */
+export type MetricReadProvenanceApiHistoryMode =
+  (typeof MetricReadProvenanceApiHistoryMode)[keyof typeof MetricReadProvenanceApiHistoryMode];
+
+export const MetricReadProvenanceApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
 export interface MetricReadProvenanceApi {
   manifest_id: string;
   /** @minimum 0 */
@@ -28890,6 +28911,9 @@ export interface MetricReadProvenanceApi {
   backfill_days_done: number;
   /** @minimum 0 */
   backfill_days_total: number;
+  /** forward: started with no history; values exist from coverage_start */
+  history_mode: MetricReadProvenanceApiHistoryMode;
+  coverage_start: string;
 }
 
 export interface MetricEffectiveWindowApi {
@@ -29002,6 +29026,14 @@ export const MetricHistoryDefinitionApiBackfillStatus = {
   failed: "failed",
 } as const;
 
+export type MetricHistoryDefinitionApiHistoryMode =
+  (typeof MetricHistoryDefinitionApiHistoryMode)[keyof typeof MetricHistoryDefinitionApiHistoryMode];
+
+export const MetricHistoryDefinitionApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
 export type MetricHistoryDefinitionApiValueLabels = { [key: string]: unknown };
 
 export type MetricHistoryDefinitionApiSampling = { [key: string]: unknown };
@@ -29060,6 +29092,8 @@ export interface MetricHistoryDefinitionApi {
    * @maximum 2147483647
    */
   backfill_days_total?: number;
+  history_mode?: MetricHistoryDefinitionApiHistoryMode;
+  coverage_start?: string;
   activated_at?: string;
   readonly needs_rebuild?: boolean;
   readonly created_at?: string;

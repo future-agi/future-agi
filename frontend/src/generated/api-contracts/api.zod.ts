@@ -59825,6 +59825,8 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
         .min(tracerDerivedMetricRunsReadResponseDefinitionBackfillDaysTotalMin)
         .max(tracerDerivedMetricRunsReadResponseDefinitionBackfillDaysTotalMax)
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -60632,6 +60634,8 @@ export const TracerDerivedMetricsListResponse = zod.object({
               tracerDerivedMetricsListResponseResultsItemDraftDefinitionBackfillDaysTotalMax,
             )
             .optional(),
+          history_mode: zod.enum(["history", "forward"]).optional(),
+          coverage_start: zod.string().datetime({ offset: true }).optional(),
           activated_at: zod.string().datetime({ offset: true }).optional(),
           needs_rebuild: zod.boolean().optional(),
           created_at: zod.string().datetime({ offset: true }).optional(),
@@ -60951,6 +60955,8 @@ export const TracerDerivedMetricsListResponse = zod.object({
               tracerDerivedMetricsListResponseResultsItemDefinitionBackfillDaysTotalMax,
             )
             .optional(),
+          history_mode: zod.enum(["history", "forward"]).optional(),
+          coverage_start: zod.string().datetime({ offset: true }).optional(),
           activated_at: zod.string().datetime({ offset: true }).optional(),
           needs_rebuild: zod.boolean().optional(),
           created_at: zod.string().datetime({ offset: true }).optional(),
@@ -62597,6 +62603,8 @@ export const TracerDerivedMetricsReadResponse = zod.object({
           tracerDerivedMetricsReadResponseDraftDefinitionBackfillDaysTotalMax,
         )
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -62877,6 +62885,8 @@ export const TracerDerivedMetricsReadResponse = zod.object({
         .min(tracerDerivedMetricsReadResponseDefinitionBackfillDaysTotalMin)
         .max(tracerDerivedMetricsReadResponseDefinitionBackfillDaysTotalMax)
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -63602,6 +63612,8 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
           tracerDerivedMetricsUpdateResponseDraftDefinitionBackfillDaysTotalMax,
         )
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -63884,6 +63896,8 @@ export const TracerDerivedMetricsUpdateResponse = zod.object({
         .min(tracerDerivedMetricsUpdateResponseDefinitionBackfillDaysTotalMin)
         .max(tracerDerivedMetricsUpdateResponseDefinitionBackfillDaysTotalMax)
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -64320,6 +64334,8 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
           tracerDerivedMetricsActivateResponseDraftDefinitionBackfillDaysTotalMax,
         )
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -64604,6 +64620,8 @@ export const TracerDerivedMetricsActivateResponse = zod.object({
         .min(tracerDerivedMetricsActivateResponseDefinitionBackfillDaysTotalMin)
         .max(tracerDerivedMetricsActivateResponseDefinitionBackfillDaysTotalMax)
         .optional(),
+      history_mode: zod.enum(["history", "forward"]).optional(),
+      coverage_start: zod.string().datetime({ offset: true }).optional(),
       activated_at: zod.string().datetime({ offset: true }).optional(),
       needs_rebuild: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
@@ -64661,6 +64679,12 @@ export const TracerDerivedMetricsDriversResponse = zod.object({
     backfill_days_total: zod
       .number()
       .min(tracerDerivedMetricsDriversResponseProvenanceBackfillDaysTotalMin),
+    history_mode: zod
+      .enum(["history", "forward"])
+      .describe(
+        "forward: started with no history; values exist from coverage_start",
+      ),
+    coverage_start: zod.string().datetime({ offset: true }),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -65187,6 +65211,8 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
             tracerDerivedMetricsHistoryResponseResultsItemDefinitionBackfillDaysTotalMax,
           )
           .optional(),
+        history_mode: zod.enum(["history", "forward"]).optional(),
+        coverage_start: zod.string().datetime({ offset: true }).optional(),
         activated_at: zod.string().datetime({ offset: true }).optional(),
         needs_rebuild: zod.boolean().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
@@ -65517,6 +65543,8 @@ export const TracerDerivedMetricsHistoryResponse = zod.object({
                 tracerDerivedMetricsHistoryResponseResultsItemSnapshotDefinitionBackfillDaysTotalMax,
               )
               .optional(),
+            history_mode: zod.enum(["history", "forward"]).optional(),
+            coverage_start: zod.string().datetime({ offset: true }).optional(),
             activated_at: zod.string().datetime({ offset: true }).optional(),
             needs_rebuild: zod.boolean().optional(),
             created_at: zod.string().datetime({ offset: true }).optional(),
@@ -65683,6 +65711,12 @@ export const TracerDerivedMetricsKpiResponse = zod.object({
     backfill_days_total: zod
       .number()
       .min(tracerDerivedMetricsKpiResponseProvenanceBackfillDaysTotalMin),
+    history_mode: zod
+      .enum(["history", "forward"])
+      .describe(
+        "forward: started with no history; values exist from coverage_start",
+      ),
+    coverage_start: zod.string().datetime({ offset: true }),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -66536,6 +66570,8 @@ export const TracerDerivedMetricsRunsReadResponse = zod.object({
               tracerDerivedMetricsRunsReadResponseResultsItemDefinitionBackfillDaysTotalMax,
             )
             .optional(),
+          history_mode: zod.enum(["history", "forward"]).optional(),
+          coverage_start: zod.string().datetime({ offset: true }).optional(),
           activated_at: zod.string().datetime({ offset: true }).optional(),
           needs_rebuild: zod.boolean().optional(),
           created_at: zod.string().datetime({ offset: true }).optional(),
@@ -67076,6 +67112,8 @@ export const TracerDerivedMetricsSnapshotsReadResponse = zod.object({
               tracerDerivedMetricsSnapshotsReadResponseResultsItemDefinitionBackfillDaysTotalMax,
             )
             .optional(),
+          history_mode: zod.enum(["history", "forward"]).optional(),
+          coverage_start: zod.string().datetime({ offset: true }).optional(),
           activated_at: zod.string().datetime({ offset: true }).optional(),
           needs_rebuild: zod.boolean().optional(),
           created_at: zod.string().datetime({ offset: true }).optional(),
@@ -67253,6 +67291,12 @@ export const TracerDerivedMetricsTrendResponse = zod.object({
     backfill_days_total: zod
       .number()
       .min(tracerDerivedMetricsTrendResponseProvenanceBackfillDaysTotalMin),
+    history_mode: zod
+      .enum(["history", "forward"])
+      .describe(
+        "forward: started with no history; values exist from coverage_start",
+      ),
+    coverage_start: zod.string().datetime({ offset: true }),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),
@@ -67414,6 +67458,12 @@ export const TracerDerivedMetricsUnitValuesResponse = zod.object({
       .min(
         tracerDerivedMetricsUnitValuesResponseProvenanceBackfillDaysTotalMin,
       ),
+    history_mode: zod
+      .enum(["history", "forward"])
+      .describe(
+        "forward: started with no history; values exist from coverage_start",
+      ),
+    coverage_start: zod.string().datetime({ offset: true }),
   }),
   effective_window: zod.object({
     window_start: zod.string().datetime({ offset: true }),

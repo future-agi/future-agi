@@ -101578,6 +101578,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 2147483647,
           minimum: 0,
         },
+        history_mode: {
+          title: "History mode",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
         activated_at: {
           title: "Activated at",
           type: "string",
@@ -110971,6 +110983,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "updated_at",
         "backfill_days_done",
         "backfill_days_total",
+        "history_mode",
+        "coverage_start",
       ],
       type: "object",
       properties: {
@@ -111014,6 +111028,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Backfill days total",
           type: "integer",
           minimum: 0,
+        },
+        history_mode: {
+          title: "History mode",
+          description:
+            "forward: started with no history; values exist from coverage_start",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -129663,6 +129691,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           maximum: 2147483647,
           minimum: 0,
+        },
+        history_mode: {
+          title: "History mode",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
         activated_at: {
           title: "Activated at",

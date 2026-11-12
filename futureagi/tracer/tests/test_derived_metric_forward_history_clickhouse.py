@@ -123,7 +123,9 @@ def test_forward_floor_sweep_never_nominates_or_reads_days_before_coverage(store
     for params in sources:
         lower = datetime.fromisoformat(params["day_start"]).replace(tzinfo=UTC)
         assert lower >= floor, params["day_start"]
-    days = [params for query, params, _ in store.analytics.calls if "first_day" in query]
+    days = [
+        params for query, params, _ in store.analytics.calls if "first_day" in query
+    ]
     assert days and all("source_floor" in params for params in days)
     # Without a floor (any history version on the project) nothing changes.
     full = complete_repair(store, page_size=50)

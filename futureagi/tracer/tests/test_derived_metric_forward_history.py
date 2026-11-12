@@ -70,7 +70,9 @@ def _publish_empty_head(runner):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("extra, mode", [(-1, "history"), (0, "history"), (1, "forward")])
+@pytest.mark.parametrize(
+    "extra, mode", [(-1, "history"), (0, "history"), (1, "forward")]
+)
 def test_size_limit_boundary_exact_limit_backfills_and_one_more_starts_forward(
     setup_runner, observe_project, workspace, monkeypatch, settings, extra, mode
 ):
@@ -357,7 +359,9 @@ def test_memory_limited_discovery_makes_one_durable_repair_page_per_pass(
     for _ in range(2):
         state = MetricProjectRefresh.for_project(observe_project.id)
         admission.run_incremental(runner.writer, object(), runner.scope, state)
-        heads.append(MetricProjectRefresh.for_project(observe_project.id).head_manifest_id)
+        heads.append(
+            MetricProjectRefresh.for_project(observe_project.id).head_manifest_id
+        )
         clock[0] += timedelta(seconds=30)
     # Each pass: exactly one discovery, one published repair page, progress kept.
     assert discoveries == [changes.ns(NOW)] * 2
@@ -401,7 +405,7 @@ def test_serializers_and_read_window_expose_forward_coverage(
     assert not reads.window_is_calculated(
         version, {"window_start": bucket - timedelta(minutes=15)}
     )
-    legacy = make_version(observe_project, workspace, active=True)
+    legacy = _named_version(observe_project, workspace, "Legacy metric", active=True)
     legacy_wire = json.loads(
         json.dumps(reads.provenance(manifest, legacy), default=str)
     )
