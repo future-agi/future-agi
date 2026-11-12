@@ -23,7 +23,8 @@ def mark_rerun_cells_failed(metric_id, row_ids, *, column_id=None) -> int:
 
     Unlike stopping an entire eval, this must not touch unselected rows or other
     metrics. Optimisation reruns target one explicit column. Database errors
-    propagate to the task's failure handler; this helper must not hide them.
+    propagate so the caller can log them and keep finishing other rows; this
+    helper must not hide them.
     """
     from model_hub.services.experiment_utils import is_user_eval_stopped
 

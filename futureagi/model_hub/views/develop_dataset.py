@@ -12499,10 +12499,41 @@ def _run_dataset_evaluation_row(metric_id, row_id, runner_args):
         close_old_connections()
 
 
-@temporal_activity(time_limit=3600, queue="tasks_s")
-def run_evaluation_task(evaluation_data):
+def _refresh_task_connection():
+    """Replace the task thread's idle or broken connection before it writes.
+
+    The task thread waits while row futures run, so its pooled connection may
+    have been dropped, or a previous write may have broken it. Never drop a
+    connection that holds a caller's transaction.
+    """
+    if not connection.in_atomic_block:
+        close_old_connections()
+
+
+def _finish_failed_rerun_rows(metric_id, row_ids, column_id):
+    """Best-effort terminal write for failed rows.
+
+    One failed write must not stop the task from finishing other rows or
+    recording the status of other metrics, so errors are logged, not raised.
+    """
     from model_hub.utils.eval_cell_status import mark_rerun_cells_failed
 
+    _refresh_task_connection()
+    try:
+        mark_rerun_cells_failed(metric_id, row_ids, column_id=column_id)
+    except Exception:
+        logger.exception(
+            "dataset_rerun_failed_rows_not_marked",
+            metric_id=str(metric_id),
+            row_ids=[str(row_id) for row_id in row_ids],
+        )
+        # The failed write may have broken the connection; later metrics and
+        # status updates in this task need a usable one.
+        _refresh_task_connection()
+
+
+@temporal_activity(time_limit=3600, queue="tasks_s")
+def run_evaluation_task(evaluation_data):
     metric_ids = evaluation_data["metric_ids"]
     row_ids = evaluation_data["row_ids"]
     target_column_id = (
@@ -12657,12 +12688,10 @@ def run_evaluation_task(evaluation_data):
                         f"Error initializing evaluation for metric {metric_id}: {str(e)}"
                     )
                     failed_metric_ids.add(str(metric_id))
-                    mark_rerun_cells_failed(
-                        metric_id, row_ids, column_id=target_column_id
-                    )
+                    _finish_failed_rerun_rows(metric_id, row_ids, target_column_id)
 
-            # Keep row/metric identity so a failure cannot strand a running cell
-            # or mark a sibling row's result as failed.
+            # Keep row/metric identity so a failed row is finished on its own
+            # and never marks a sibling row's result as failed.
             for future in as_completed(futures):
                 metric_id, row_id = futures[future]
                 try:
@@ -12675,12 +12704,11 @@ def run_evaluation_task(evaluation_data):
                         row_id=str(row_id),
                     )
                     failed_metric_ids.add(str(metric_id))
-                    mark_rerun_cells_failed(
-                        metric_id, [row_id], column_id=target_column_id
-                    )
+                    _finish_failed_rerun_rows(metric_id, [row_id], target_column_id)
 
         # Record final statuses before reporting: every row has finished, so an
         # analytics failure must not relabel completed metrics as FAILED.
+        _refresh_task_connection()
         if failed_metric_ids:
             UserEvalMetric.objects.filter(id__in=failed_metric_ids).update(
                 status=StatusType.FAILED.value
@@ -12718,6 +12746,7 @@ def run_evaluation_task(evaluation_data):
                 )
     except Exception as e:
         # Handle exceptions and log errors
+        _refresh_task_connection()
         UserEvalMetric.objects.filter(id__in=metric_ids).update(
             status=StatusType.FAILED.value
         )

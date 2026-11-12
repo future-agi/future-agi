@@ -3,13 +3,14 @@
 import inspect
 import json
 import sys
-from threading import Barrier, Event, Lock
+from threading import Barrier, Event, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from django.db import OperationalError, connection
 
+import model_hub.utils.eval_cell_status as eval_cell_status
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
@@ -20,11 +21,13 @@ from model_hub.models.evals_metric import (
     EvalTemplateVersion,
     UserEvalMetric,
 )
+from model_hub.views import develop_dataset as dataset_views
 from model_hub.views.develop_dataset import run_evaluation_task
 from model_hub.views.eval_runner import EvaluationRunner
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
+FAILED_REASON = "Evaluation failed. Please rerun the evaluation."
 # Postgres rejects NUL bytes in text columns, so storing this result fails for
 # real on every write path, without mocking the database layer.
 UNSTORABLE_RESULT = ({"reason": "row-0"}, CellStatus.PASS.value, "row-0\x00")
@@ -140,6 +143,17 @@ def add_healthy_metric(rerun):
     return healthy, healthy_column
 
 
+def fail_rows_of(metric):
+    original = EvaluationRunner.run_evaluation_for_row
+
+    def run(self, row_id):
+        if str(self.user_eval_metric_id) == str(metric.id):
+            raise RuntimeError("synthetic metric failure")
+        return original(self, row_id)
+
+    return run
+
+
 def completion_counts(rerun):
     return [
         (str(call.kwargs["eval"].id), call.kwargs["count"], call.kwargs["failed"])
@@ -159,6 +173,41 @@ def column_state(column):
 def status_of(metric):
     metric.refresh_from_db()
     return metric.status
+
+
+def drop_task_connection_on_first_marker():
+    """Kill the task thread's session server-side on the first terminal write.
+
+    This is what a pooler restart or failover does to the task's connection.
+    The real marker then runs on the dead session. Returns the row ids whose
+    write hit the dead session.
+    """
+    real_marker = eval_cell_status.mark_rerun_cells_failed
+    lost_rows = []
+
+    def terminate(pid):
+        from django.db import connection as killer
+
+        try:
+            with killer.cursor() as cursor:
+                cursor.execute("SELECT pg_terminate_backend(%s, 10000)", [pid])
+        finally:
+            killer.close()
+
+    def marker(metric_id, row_ids, **kwargs):
+        if not lost_rows:
+            lost_rows.extend(str(row_id) for row_id in row_ids)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                pid = cursor.fetchone()[0]
+            killer = Thread(target=terminate, args=(pid,))
+            killer.start()
+            killer.join(20)
+        return real_marker(metric_id, row_ids, **kwargs)
+
+    return lost_rows, patch(
+        "model_hub.utils.eval_cell_status.mark_rerun_cells_failed", side_effect=marker
+    )
 
 
 def test_selected_rows_do_not_share_runner_initialization(rerun):
@@ -538,46 +587,15 @@ def test_optimization_failure_only_updates_the_requested_column(rerun):
 
 
 def test_failed_metric_does_not_change_other_metric_or_completion_counts(rerun):
-    healthy = UserEvalMetric.objects.create(
-        name="Healthy metric",
-        dataset=rerun.dataset,
-        organization=rerun.metric.organization,
-        workspace=rerun.metric.workspace,
-        template=rerun.metric.template,
-        config={"mapping": {}},
-    )
-    healthy_column = Column.objects.create(
-        name="Healthy score",
-        dataset=rerun.dataset,
-        source=SourceChoices.EVALUATION.value,
-        source_id=str(healthy.id),
-        data_type="text",
-    )
-    for row in rerun.rows:
-        Cell.objects.create(
-            dataset=rerun.dataset,
-            row=row,
-            column=healthy_column,
-            status=CellStatus.PASS.value,
-            value="previous result",
-        )
-    original = EvaluationRunner.run_evaluation_for_row
-
-    def fail_metric(self, row_id):
-        if str(self.user_eval_metric_id) == str(rerun.metric.id):
-            raise RuntimeError("synthetic metric failure")
-        return original(self, row_id)
+    healthy, healthy_column = add_healthy_metric(rerun)
 
     with (
-        patch.object(EvaluationRunner, "run_evaluation_for_row", fail_metric),
+        patch.object(
+            EvaluationRunner, "run_evaluation_for_row", fail_rows_of(rerun.metric)
+        ),
         patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
     ):
-        run_evaluation_task._original_func(
-            {
-                "metric_ids": [str(rerun.metric.id), str(healthy.id)],
-                "row_ids": [str(row.id) for row in rerun.rows[:2]],
-            }
-        )
+        run_selected(rerun, [rerun.metric, healthy])
 
     rerun.metric.refresh_from_db()
     healthy.refresh_from_db()
@@ -597,3 +615,80 @@ def test_failed_metric_does_not_change_other_metric_or_completion_counts(rerun):
         (str(call["eval"].id), call["count"], call["failed"])
         for call in completed_calls
     ] == [(str(rerun.metric.id), 0, 2), (str(healthy.id), 2, 0)]
+
+
+def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
+    """Both selected rows of one metric fail; the task's session dies on the
+    first terminal write. The other failed row is still finished, and the
+    healthy metric keeps its completed result and completion event."""
+    healthy, healthy_column = add_healthy_metric(rerun)
+    lost_rows, marker = drop_task_connection_on_first_marker()
+    try:
+        with (
+            marker,
+            patch.object(
+                EvaluationRunner, "run_evaluation_for_row", fail_rows_of(rerun.metric)
+            ),
+            patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+        ):
+            run_selected(rerun, [rerun.metric, healthy])
+    finally:
+        connection.close()
+
+    assert len(lost_rows) == 1
+    # The write that hit the dead session is logged; it cannot be stored.
+    other_row = next(row for row in rerun.rows[:2] if str(row.id) not in lost_rows)
+    for column in (rerun.column, rerun.reason_column):
+        cell = Cell.objects.get(row=other_row, column=column)
+        assert (cell.status, cell.value) == (CellStatus.ERROR.value, FAILED_REASON)
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+    assert status_of(healthy) == StatusType.COMPLETED.value
+    assert column_state(healthy_column) == [
+        (CellStatus.PASS.value, "row-0"),
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "previous result"),
+    ]
+    assert completion_counts(rerun) == [
+        (str(rerun.metric.id), 0, 2),
+        (str(healthy.id), 2, 0),
+    ]
+
+
+def test_lost_connection_after_initialization_failure_still_runs_later_metrics(
+    rerun,
+):
+    """The first metric fails before fan-out and its terminal write hits a dead
+    session. The next metric must still be submitted and complete."""
+    healthy, healthy_column = add_healthy_metric(rerun)
+    lost_rows, marker = drop_task_connection_on_first_marker()
+    original_wrap = dataset_views.wrap_for_thread
+    wrapped = []
+
+    def wrap(fn):
+        wrapped.append(fn)
+        if len(wrapped) == 1:
+            raise RuntimeError("synthetic initialization failure")
+        return original_wrap(fn)
+
+    try:
+        with (
+            marker,
+            patch.object(dataset_views, "wrap_for_thread", wrap),
+            patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+        ):
+            run_selected(rerun, [rerun.metric, healthy])
+    finally:
+        connection.close()
+
+    assert sorted(lost_rows) == sorted(str(row.id) for row in rerun.rows[:2])
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+    assert status_of(healthy) == StatusType.COMPLETED.value
+    assert column_state(healthy_column) == [
+        (CellStatus.PASS.value, "row-0"),
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "previous result"),
+    ]
+    assert completion_counts(rerun) == [
+        (str(rerun.metric.id), 0, 2),
+        (str(healthy.id), 2, 0),
+    ]
