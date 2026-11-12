@@ -12,12 +12,34 @@ from tracer.serializers.filters import (
 )
 from tracer.serializers.usage_coverage import CostCoverageBucketSerializer
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
+from tracer.utils.project_tags import TAGS_TOO_DEEP, tag_validation_error
+
+
+class ProjectTagsField(JsonValueField):
+    """A JSON value PostgreSQL jsonb can store, checked before it reaches the DB."""
+
+    def to_internal_value(self, data):
+        if self.binary or getattr(data, "is_json_string", False):
+            # Form input is JSON text: decode it before checking the value.
+            try:
+                data = super().to_internal_value(data)
+            except RecursionError:
+                raise serializers.ValidationError(TAGS_TOO_DEEP) from None
+            error = tag_validation_error(data)
+        else:
+            # Check first: DRF's own json.dumps check can run out of stack.
+            error = tag_validation_error(data)
+            if error is None:
+                data = super().to_internal_value(data)
+        if error:
+            raise serializers.ValidationError(error)
+        return data
 
 
 class ProjectSerializer(serializers.ModelSerializer):
     config = JsonValueField(required=False, allow_null=True)
     session_config = JsonValueField(required=False, allow_null=True)
-    tags = JsonValueField(required=False, allow_null=True)
+    tags = ProjectTagsField(required=False, allow_null=True)
 
     class Meta:
         model = Project
