@@ -3356,12 +3356,14 @@ def test_a_retry_after_a_loss_with_no_result_in_runs_every_call(
 
 
 @pytest.mark.django_db
-def test_a_call_with_a_result_is_charged_once_across_a_crash_retry(
-    organization, monkeypatch
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_call_with_a_result_is_charged_once_across_a_retry(
+    organization, monkeypatch, code
 ):
-    first = _delivered_run(organization, "run-loss-charged-once", receipts=0)
+    first = _delivered_run(organization, f"run-loss-charged-once-{code}", receipts=0)
     _run_calls(first, {"scenario-1:0": 100})
-    gateway = _lost_by(monkeypatch, "guest_crashed")
+    gateway = _lost_by(monkeypatch, code)
     assert gateway.reconcile_completed(first).state == (
         HostedHarnessJob.State.RETRY_WAIT
     )
@@ -3392,8 +3394,9 @@ def test_a_call_with_a_result_is_charged_once_across_a_crash_retry(
 def test_a_loss_after_every_result_is_in_keeps_the_scored_run(
     organization, monkeypatch, code, attempts
 ):
-    attempt = _delivered_run(organization, f"run-all-in-{code}-{attempts}", receipts=2)
-    payload = attempt.job.payload
+    attempt = _delivered_run(organization, f"run-all-in-{code}-{attempts}", receipts=0)
+    _run_calls(attempt, {"scenario-1:0": 100, "scenario-2:0": 10})
+    payload = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id).payload
     HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
         payload={
             **payload,
@@ -3414,8 +3417,26 @@ def test_a_loss_after_every_result_is_in_keeps_the_scored_run(
         "completed",
         "terminal_event_lost",
     )
+    assert harness_consumption(job)["text_sim_tokens"] == 110
     job.test_execution.refresh_from_db()
     assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", ["evidence_undeliverable", "sandbox_unreachable"])
+def test_a_loss_after_the_guest_reported_its_own_failure_relaunches_nothing(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-own-failure-{code}", receipts=2)
+    _deliver_terminal(attempt, "failed")
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    # The guest's failed ending is its own, and every call has its result: a relaunch
+    # would only run and charge them again.
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == code
 
 
 @pytest.mark.django_db
