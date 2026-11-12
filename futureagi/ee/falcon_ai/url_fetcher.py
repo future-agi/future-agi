@@ -45,13 +45,13 @@ def extract_urls(text):
 def fetch_url_content(url, timeout=15):
     """Fetch a URL and extract readable text content."""
     try:
-        resp = httpx.get(
-            url,
-            timeout=timeout,
-            follow_redirects=True,
-            max_redirects=5,
-            headers={"User-Agent": "FalconAI/1.0"},
-        )
+        with httpx.Client(max_redirects=5) as client:
+            resp = client.get(
+                url,
+                timeout=timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "FalconAI/1.0"},
+            )
         resp.raise_for_status()
 
         content_type = (
