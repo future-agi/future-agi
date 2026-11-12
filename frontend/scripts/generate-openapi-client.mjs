@@ -624,6 +624,33 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // drf-yasg emits x-nullable for these SQL responses, but Orval drops it.
+    // Keep rewrites scoped to the SQL declarations and fail if the source
+    // shape changes; never hand-edit the generated client.
+    for (const [name, field, type, optional] of [
+      ["SQLExecutionApi", "finished_at", "string", false],
+      ["SQLResultApi", "next_offset", "number", true],
+      ["SQLEstimateSourceApi", "parts", "number", false],
+      ["SQLEstimateSourceApi", "marks", "number", false],
+      ["SQLEstimateSourceApi", "max_rows", "number", false],
+      ["SQLEstimateApi", "exceeds_scan_bound", "boolean", false],
+    ]) {
+      const marker = optional ? "?" : "";
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${name} {`,
+        `${field}${marker}: ${type};`,
+        `${field}${marker}: ${type} | null;`,
+        `${name}.${field} nullable`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SQLResultApiRowsItemItem = { [key: string]: unknown };",
+      "export type SQLResultApiRowsItemItem = JsonValueApi;",
+      "SQL result cells support JSON scalars and null",
+    );
+
     for (const rowType of [
       "TracePrototypeListResultApiTableItem",
       "TraceObserveListResultApiTableItem",
