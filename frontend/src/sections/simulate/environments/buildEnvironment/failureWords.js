@@ -1,9 +1,9 @@
 /**
- * What a run's failure means, in the product's words. The code and the raw text the run
- * recorded stay on the record, behind "Details", for whoever is debugging.
+ * What a build's failure means, in the product's words. The code and the raw text the run
+ * recorded stay on the job's record for whoever is debugging; the page shows these words.
  *
  * A failure that names its cause (`failure.cause`, from a closed set) reads as that cause. One
- * our infrastructure caused reads as ours, not the agent's. Any other failure reads as it did.
+ * our infrastructure caused reads as ours, not the agent's. Any other failure reads as recorded.
  */
 export const CAUSE_WORDS = {
   agent_exited_before_ready:

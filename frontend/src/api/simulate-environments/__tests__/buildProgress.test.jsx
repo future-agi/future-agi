@@ -60,7 +60,47 @@ describe("jobToBuildProgress", () => {
     expect(out.running).toBe(false);
     expect(out.done).toEqual(["understand"]);
     expect(out.failure).toMatchObject({ stepId: "generate-env", retryable: true });
-    expect(out.failure.detail).toBe("boom");
+    // Our infrastructure's failure reads as ours, not the agent's; "boom" stays on the record.
+    expect(out.failure.detail).toBe(
+      "Our infrastructure failed, not the agent. Counts neither for nor against it.",
+    );
+  });
+
+  it("says a named failure cause in plain words, never the raw guest line", () => {
+    const failedWith = (cause) =>
+      jobToBuildProgress(
+        jobAt("failed", {
+          failure: {
+            stage: "validating_environment",
+            domain: "environment",
+            code: "authoring_runtime_validation_failed",
+            cause,
+            message:
+              "We couldn't run this agent version in its environment: ProcessRuntimeError: depends_on/spawn_failed (agent)",
+          },
+        }),
+      ).failure.detail;
+
+    expect(failedWith("agent_exited_before_ready")).toBe(
+      "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version.",
+    );
+    expect(failedWith("a_value_from_a_newer_server")).toBe(
+      "Stopped — the reason wasn't recorded. Run it again.",
+    );
+  });
+
+  it("leaves a failure with no cause outside our infrastructure as recorded", () => {
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "building_environment",
+          domain: "environment",
+          code: "provider_credentials_invalid",
+          message: "The Vapi key was rejected.",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe("The Vapi key was rejected.");
   });
 
   it("marks a canceled build terminal (freezes the animation) without failing a step", () => {

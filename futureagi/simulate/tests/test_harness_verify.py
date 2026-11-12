@@ -1059,6 +1059,48 @@ class TestWhatACodingAgentReads:
         for response in (job, call_read):
             assert hidden not in json.dumps(response.json())
 
+    @pytest.mark.parametrize("cause", ["agent_exited_before_ready", None])
+    def test_a_person_s_calls_read_a_named_cause_in_plain_words(
+        self, api_client, environment, keys, cause
+    ):
+        created = _as(
+            api_client,
+            keys.user,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
+            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}",
+        )
+        assert created.status_code == 202, created.content
+        raw = f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: agent: exited early"
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": raw,
+            **({"cause": cause} if cause else {}),
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+
+        project_terminal_job_onto_run(run, timezone.now())
+
+        reasons = set(
+            CallExecution.objects.filter(
+                test_execution_id=created.json()["test_execution_id"]
+            ).values_list("ended_reason", flat=True)
+        )
+        # With a cause every call says it plainly, and the guest text stays on the job.
+        # Without one, a person's calls keep the stored message as before.
+        assert reasons == (
+            {f"{RUNTIME_VALIDATION_FAILED}. {CAUSE_WORDS[cause]} (cause: {cause})"}
+            if cause
+            else {raw}
+        )
+        run.refresh_from_db()
+        assert run.failure["message"] == raw
+
     def test_its_result_rows_name_each_failure_s_domain_and_code(
         self, api_client, environment, keys
     ):
