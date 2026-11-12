@@ -501,6 +501,8 @@ RollbackRequest.propTypes = {
   canPromote: PropTypes.bool,
   closureReady: PropTypes.bool,
   releaseRevision: PropTypes.number,
+  reviewerId: PropTypes.string.isRequired,
+  onReviewer: PropTypes.func.isRequired,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
