@@ -1148,6 +1148,19 @@ import type {
   SDKStandaloneEvalV2RequestApi,
   SDKStandaloneEvalV2ResponseApi,
   SOSLoginApi,
+  SQLCatalogApi,
+  SQLEstimateApi,
+  SQLExecutionApi,
+  SQLHistoryApi,
+  SQLProjectApi,
+  SQLQueryInputApi,
+  SQLRunApi,
+  SQLRunSavedApi,
+  SQLSaveApi,
+  SQLSavedApi,
+  SQLSavedListApi,
+  SQLWidgetApi,
+  SQLWidgetResponseApi,
   Saml2AuthAcsCreateBodyOne,
   Saml2AuthAcsCreateBodyTwo,
   Saml2AuthAuthCallbackListParams,
@@ -1451,10 +1464,17 @@ import type {
   TracerProjectVersionListParams,
   TracerProjectVersionListRuns200,
   TracerProjectVersionListRunsParams,
+  TracerSavedSqlQueryDeleteParams,
+  TracerSavedSqlQueryListParams,
+  TracerSavedSqlQueryReadParams,
   TracerSavedViewsListParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
   TracerSharedSidebarListParams,
+  TracerSqlQueryCatalogParams,
+  TracerSqlQueryDownloadParams,
+  TracerSqlQueryListParams,
+  TracerSqlQueryReadParams,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
   TracerTraceGetEvalNames200,
@@ -82690,6 +82710,312 @@ export const tracerReplaySessionGenerateScenario = async (
   );
 };
 
+export type tracerSavedSqlQueryListResponse200 = {
+  data: SQLSavedListApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryListResponseSuccess =
+  tracerSavedSqlQueryListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryListResponseError =
+  tracerSavedSqlQueryListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryListResponse =
+  | tracerSavedSqlQueryListResponseSuccess
+  | tracerSavedSqlQueryListResponseError;
+
+export const getTracerSavedSqlQueryListUrl = (
+  params: TracerSavedSqlQueryListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/`;
+};
+
+export const tracerSavedSqlQueryList = async (
+  params: TracerSavedSqlQueryListParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryListResponse> => {
+  return apiMutator<tracerSavedSqlQueryListResponse>(
+    getTracerSavedSqlQueryListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryCreateResponse201 = {
+  data: SQLSavedApi;
+  status: 201;
+};
+
+export type tracerSavedSqlQueryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerSavedSqlQueryCreateResponseSuccess =
+  tracerSavedSqlQueryCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryCreateResponseError =
+  tracerSavedSqlQueryCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryCreateResponse =
+  | tracerSavedSqlQueryCreateResponseSuccess
+  | tracerSavedSqlQueryCreateResponseError;
+
+export const getTracerSavedSqlQueryCreateUrl = () => {
+  return `/tracer/saved-sql-query/`;
+};
+
+export const tracerSavedSqlQueryCreate = async (
+  sQLSaveApi: SQLSaveApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryCreateResponse> => {
+  return apiMutator<tracerSavedSqlQueryCreateResponse>(
+    getTracerSavedSqlQueryCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLSaveApi),
+    },
+  );
+};
+
+export type tracerSavedSqlQueryReadResponse200 = {
+  data: SQLSavedApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryReadResponseSuccess =
+  tracerSavedSqlQueryReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryReadResponseError =
+  tracerSavedSqlQueryReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryReadResponse =
+  | tracerSavedSqlQueryReadResponseSuccess
+  | tracerSavedSqlQueryReadResponseError;
+
+export const getTracerSavedSqlQueryReadUrl = (
+  id: string,
+  params: TracerSavedSqlQueryReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryRead = async (
+  id: string,
+  params: TracerSavedSqlQueryReadParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryReadResponse> => {
+  return apiMutator<tracerSavedSqlQueryReadResponse>(
+    getTracerSavedSqlQueryReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponse200 = {
+  data: SQLSavedApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
+  tracerSavedSqlQueryPartialUpdateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryPartialUpdateResponseError =
+  tracerSavedSqlQueryPartialUpdateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryPartialUpdateResponse =
+  | tracerSavedSqlQueryPartialUpdateResponseSuccess
+  | tracerSavedSqlQueryPartialUpdateResponseError;
+
+export const getTracerSavedSqlQueryPartialUpdateUrl = (id: string) => {
+  return `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryPartialUpdate = async (
+  id: string,
+  sQLSaveApi: SQLSaveApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryPartialUpdateResponse> => {
+  return apiMutator<tracerSavedSqlQueryPartialUpdateResponse>(
+    getTracerSavedSqlQueryPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLSaveApi),
+    },
+  );
+};
+
+export type tracerSavedSqlQueryDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerSavedSqlQueryDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerSavedSqlQueryDeleteResponseSuccess =
+  tracerSavedSqlQueryDeleteResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryDeleteResponseError =
+  tracerSavedSqlQueryDeleteResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryDeleteResponse =
+  | tracerSavedSqlQueryDeleteResponseSuccess
+  | tracerSavedSqlQueryDeleteResponseError;
+
+export const getTracerSavedSqlQueryDeleteUrl = (
+  id: string,
+  params: TracerSavedSqlQueryDeleteParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryDelete = async (
+  id: string,
+  params: TracerSavedSqlQueryDeleteParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryDeleteResponse> => {
+  return apiMutator<tracerSavedSqlQueryDeleteResponse>(
+    getTracerSavedSqlQueryDeleteUrl(id, params),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryAddWidgetResponse201 = {
+  data: SQLWidgetResponseApi;
+  status: 201;
+};
+
+export type tracerSavedSqlQueryAddWidgetResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerSavedSqlQueryAddWidgetResponseSuccess =
+  tracerSavedSqlQueryAddWidgetResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryAddWidgetResponseError =
+  tracerSavedSqlQueryAddWidgetResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryAddWidgetResponse =
+  | tracerSavedSqlQueryAddWidgetResponseSuccess
+  | tracerSavedSqlQueryAddWidgetResponseError;
+
+export const getTracerSavedSqlQueryAddWidgetUrl = (id: string) => {
+  return `/tracer/saved-sql-query/${id}/add-widget/`;
+};
+
+export const tracerSavedSqlQueryAddWidget = async (
+  id: string,
+  sQLWidgetApi: SQLWidgetApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryAddWidgetResponse> => {
+  return apiMutator<tracerSavedSqlQueryAddWidgetResponse>(
+    getTracerSavedSqlQueryAddWidgetUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLWidgetApi),
+    },
+  );
+};
+
 export type tracerSavedViewsListResponse200 = {
   data: SavedViewListResponseApi;
   status: 200;
@@ -83640,6 +83966,448 @@ export const tracerSharedTracesRead = async (
 ): Promise<tracerSharedTracesReadResponse> => {
   return apiMutator<tracerSharedTracesReadResponse>(
     getTracerSharedTracesReadUrl(token, traceId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryListResponse200 = {
+  data: SQLHistoryApi;
+  status: 200;
+};
+
+export type tracerSqlQueryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryListResponseSuccess =
+  tracerSqlQueryListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryListResponseError =
+  tracerSqlQueryListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryListResponse =
+  | tracerSqlQueryListResponseSuccess
+  | tracerSqlQueryListResponseError;
+
+export const getTracerSqlQueryListUrl = (params: TracerSqlQueryListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/?${stringifiedParams}`
+    : `/tracer/sql-query/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryList = async (
+  params: TracerSqlQueryListParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryListResponse> => {
+  return apiMutator<tracerSqlQueryListResponse>(
+    getTracerSqlQueryListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryCatalogResponse200 = {
+  data: SQLCatalogApi;
+  status: 200;
+};
+
+export type tracerSqlQueryCatalogResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryCatalogResponseSuccess =
+  tracerSqlQueryCatalogResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryCatalogResponseError =
+  tracerSqlQueryCatalogResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryCatalogResponse =
+  | tracerSqlQueryCatalogResponseSuccess
+  | tracerSqlQueryCatalogResponseError;
+
+export const getTracerSqlQueryCatalogUrl = (
+  params: TracerSqlQueryCatalogParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/catalog/?${stringifiedParams}`
+    : `/tracer/sql-query/catalog/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryCatalog = async (
+  params: TracerSqlQueryCatalogParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryCatalogResponse> => {
+  return apiMutator<tracerSqlQueryCatalogResponse>(
+    getTracerSqlQueryCatalogUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryEstimateResponse200 = {
+  data: SQLEstimateApi;
+  status: 200;
+};
+
+export type tracerSqlQueryEstimateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryEstimateResponseSuccess =
+  tracerSqlQueryEstimateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryEstimateResponseError =
+  tracerSqlQueryEstimateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryEstimateResponse =
+  | tracerSqlQueryEstimateResponseSuccess
+  | tracerSqlQueryEstimateResponseError;
+
+export const getTracerSqlQueryEstimateUrl = () => {
+  return `/tracer/sql-query/estimate/`;
+};
+
+/**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimate = async (
+  sQLQueryInputApi: SQLQueryInputApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryEstimateResponse> => {
+  return apiMutator<tracerSqlQueryEstimateResponse>(
+    getTracerSqlQueryEstimateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLQueryInputApi),
+    },
+  );
+};
+
+export type tracerSqlQueryRunSavedResponse202 = {
+  data: SQLExecutionApi;
+  status: 202;
+};
+
+export type tracerSqlQueryRunSavedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerSqlQueryRunSavedResponseSuccess =
+  tracerSqlQueryRunSavedResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryRunSavedResponseError =
+  tracerSqlQueryRunSavedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryRunSavedResponse =
+  | tracerSqlQueryRunSavedResponseSuccess
+  | tracerSqlQueryRunSavedResponseError;
+
+export const getTracerSqlQueryRunSavedUrl = () => {
+  return `/tracer/sql-query/run-saved/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRunSaved = async (
+  sQLRunSavedApi: SQLRunSavedApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryRunSavedResponse> => {
+  return apiMutator<tracerSqlQueryRunSavedResponse>(
+    getTracerSqlQueryRunSavedUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLRunSavedApi),
+    },
+  );
+};
+
+export type tracerSqlQueryRunResponse202 = {
+  data: SQLExecutionApi;
+  status: 202;
+};
+
+export type tracerSqlQueryRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
+  headers: ApiResponseHeaders;
+};
+export type tracerSqlQueryRunResponseError =
+  tracerSqlQueryRunResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryRunResponse =
+  | tracerSqlQueryRunResponseSuccess
+  | tracerSqlQueryRunResponseError;
+
+export const getTracerSqlQueryRunUrl = () => {
+  return `/tracer/sql-query/run/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRun = async (
+  sQLRunApi: SQLRunApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryRunResponse> => {
+  return apiMutator<tracerSqlQueryRunResponse>(getTracerSqlQueryRunUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(sQLRunApi),
+  });
+};
+
+export type tracerSqlQueryReadResponse200 = {
+  data: SQLExecutionApi;
+  status: 200;
+};
+
+export type tracerSqlQueryReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryReadResponseSuccess =
+  tracerSqlQueryReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryReadResponseError =
+  tracerSqlQueryReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryReadResponse =
+  | tracerSqlQueryReadResponseSuccess
+  | tracerSqlQueryReadResponseError;
+
+export const getTracerSqlQueryReadUrl = (
+  id: string,
+  params: TracerSqlQueryReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/sql-query/${id}/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRead = async (
+  id: string,
+  params: TracerSqlQueryReadParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryReadResponse> => {
+  return apiMutator<tracerSqlQueryReadResponse>(
+    getTracerSqlQueryReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryCancelResponse200 = {
+  data: SQLExecutionApi;
+  status: 200;
+};
+
+export type tracerSqlQueryCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryCancelResponseSuccess =
+  tracerSqlQueryCancelResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryCancelResponseError =
+  tracerSqlQueryCancelResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryCancelResponse =
+  | tracerSqlQueryCancelResponseSuccess
+  | tracerSqlQueryCancelResponseError;
+
+export const getTracerSqlQueryCancelUrl = (id: string) => {
+  return `/tracer/sql-query/${id}/cancel/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryCancel = async (
+  id: string,
+  sQLProjectApi: SQLProjectApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryCancelResponse> => {
+  return apiMutator<tracerSqlQueryCancelResponse>(
+    getTracerSqlQueryCancelUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLProjectApi),
+    },
+  );
+};
+
+export type tracerSqlQueryDownloadResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type tracerSqlQueryDownloadResponse409 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 409;
+};
+
+export type tracerSqlQueryDownloadResponse410 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 410;
+};
+
+export type tracerSqlQueryDownloadResponse503 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 503;
+};
+
+export type tracerSqlQueryDownloadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 409 | 410 | 503>;
+};
+
+export type tracerSqlQueryDownloadResponseSuccess =
+  tracerSqlQueryDownloadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryDownloadResponseError = (
+  | tracerSqlQueryDownloadResponse409
+  | tracerSqlQueryDownloadResponse410
+  | tracerSqlQueryDownloadResponse503
+  | tracerSqlQueryDownloadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerSqlQueryDownloadResponse =
+  | tracerSqlQueryDownloadResponseSuccess
+  | tracerSqlQueryDownloadResponseError;
+
+export const getTracerSqlQueryDownloadUrl = (
+  id: string,
+  params: TracerSqlQueryDownloadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/${id}/download/?${stringifiedParams}`
+    : `/tracer/sql-query/${id}/download/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryDownload = async (
+  id: string,
+  params: TracerSqlQueryDownloadParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryDownloadResponse> => {
+  return apiMutator<tracerSqlQueryDownloadResponse>(
+    getTracerSqlQueryDownloadUrl(id, params),
     {
       ...options,
       method: "GET",
