@@ -74,7 +74,7 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 	exposedStr := strings.Join(exposed, ", ")
 	maxAgeStr := strconv.Itoa(maxAge)
 
-	allowAll := len(origins) == 1 && origins[0] == "*"
+	allowAll := cfg.AllowsAnyOrigin()
 	originSet := make(map[string]bool, len(origins))
 	for _, o := range origins {
 		originSet[o] = true

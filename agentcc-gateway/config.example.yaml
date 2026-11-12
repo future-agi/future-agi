@@ -429,7 +429,7 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false              # cannot be true while allowed_origins contains "*" (rejected at startup)
+#   allow_credentials: false              # cannot be true while allowed_origins is ["*"] or empty (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
