@@ -128,6 +128,56 @@ class ActorView(TypedDict):
     unused_reason: str | None
 
 
+FAULT_MODES = ("timeout_before_commit", "timeout_after_commit")
+FAULT_KEYS = {"action", "mode", "on_call", "delay_seconds"}
+
+
+def _fault_problem(fault: Any) -> str | None:
+    """Why one scenario fault would not load in the harness, or None; mirrors its `Fault` model."""
+    if not isinstance(fault, dict):
+        return "a fault must be an object"
+    unknown = sorted(set(fault) - FAULT_KEYS)
+    if unknown:
+        return f"unknown field {unknown[0]}"
+    action = fault.get("action")
+    if not isinstance(action, str) or not action.strip():
+        return "action must name a world action"
+    if fault.get("mode") not in FAULT_MODES:
+        return "mode must be timeout_before_commit or timeout_after_commit"
+    on_call = fault.get("on_call", 1)
+    if isinstance(on_call, bool) or not isinstance(on_call, int) or on_call < 1:
+        return "on_call must be a whole number from 1"
+    delay = fault.get("delay_seconds", 30)
+    if (
+        isinstance(delay, bool)
+        or not isinstance(delay, (int, float))
+        or not 0 <= delay <= 30
+    ):
+        return "delay_seconds must be between 0 and 30"
+    return None
+
+
+def require_valid_faults(scenarios: Any) -> None:
+    """Refuse a write whose scenario faults the harness could not load, naming the scenario and the problem, so a
+    broken fault never reaches a saved version and fails its checks later."""
+    for scenario in scenarios if isinstance(scenarios, list) else []:
+        if not isinstance(scenario, dict) or "faults" not in scenario:
+            continue
+        faults = scenario.get("faults")
+        name = scenario.get("scenario_key") or scenario.get("name") or "a scenario"
+        problem = "faults must be a list" if not isinstance(faults, list) else None
+        for fault in faults if problem is None else []:
+            problem = _fault_problem(fault)
+            if problem:
+                break
+        if problem:
+            raise HostedHarnessError(
+                "scenario_faults_invalid",
+                f"Scenario {name} has a fault the test world cannot apply: {problem}. Ask the builder chat to fix it",
+                status_code=422,
+            )
+
+
 def _not_found(actor_id: str) -> HostedHarnessError:
     return HostedHarnessError(
         "actor_not_found",
