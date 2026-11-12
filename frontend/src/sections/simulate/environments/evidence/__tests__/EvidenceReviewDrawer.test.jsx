@@ -256,6 +256,7 @@ describe("EvidenceReviewDrawer", () => {
       cases: [
         item({
           source_id: "row-1",
+          name: "Row 1 · Support evals",
           tool_calls: part("missing", "A dataset row carries no tool calls."),
           expected_outcome: {
             ...part("present"),
@@ -266,6 +267,9 @@ describe("EvidenceReviewDrawer", () => {
     });
     renderDrawer();
     const card = await screen.findByTestId("evidence-case-c1");
+    // Titled by its place and dataset; its id stays visible beneath.
+    expect(within(card).getByText("Row 1 · Support evals")).toBeInTheDocument();
+    expect(within(card).getByText("row-1")).toBeInTheDocument();
     expect(within(card).getByText("Dataset row")).toBeInTheDocument();
     expect(
       within(card).getByText("Expected outcome: present"),

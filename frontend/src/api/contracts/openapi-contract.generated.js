@@ -99739,7 +99739,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         name: {
           title: "Name",
           description:
-            "A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row.",
+            "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
           type: "string",
         },
         status: {

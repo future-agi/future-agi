@@ -214,8 +214,9 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     source_id = serializers.CharField()
     name = serializers.CharField(
         allow_blank=True,
-        help_text="A transcript's name as the person gave it, redacted; blank for "
-        "an Observe source or a dataset row.",
+        help_text="A transcript's name as the person gave it, redacted; a dataset "
+        "row's place in the import and its dataset ('Row 2 · Support evals'); "
+        "blank for an Observe source.",
     )
     status = serializers.ChoiceField(choices=EvidenceImportCase.Status.choices)
     reason = serializers.CharField(allow_blank=True)

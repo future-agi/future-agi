@@ -20282,7 +20282,7 @@ export interface EvidenceImportCaseApi {
   id: string;
   /** @minLength 1 */
   source_id: string;
-  /** A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row. */
+  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
   name: string;
   status: EvidenceImportCaseApiStatus;
   reason: string;

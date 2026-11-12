@@ -158,6 +158,11 @@ class TestCreate:
             str(rows[0].id),
             str(rows[1].id),
         ]
+        # A row is named by its place and its dataset, not its id.
+        assert [first["name"], second["name"]] == [
+            "Row 1 · Support evals",
+            "Row 2 · Support evals",
+        ]
         assert (first["status"], first["source_available"]) == ("pending", True)
         assert first["changed_since_import"] is False
         assert first["transcript"]["status"] == "present"
@@ -298,6 +303,8 @@ class TestLive:
 
         assert (first["status"], first["reason"]) == ("unavailable", ROW_UNAVAILABLE)
         assert first["source_available"] is False
+        # Still named, so the person can tell which row went.
+        assert first["name"] == "Row 1 · Support evals"
         assert first["expected_outcome"]["status"] == "missing"
         assert second["status"] == "pending"
 

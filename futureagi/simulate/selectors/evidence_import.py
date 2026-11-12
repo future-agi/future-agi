@@ -436,6 +436,9 @@ def import_bundle(
                 current.get(case.source_id),
                 evidence_import.source_kind,
                 _stored(case) if transcript else None,
+                name=_row_name(evidence_import, case)
+                if is_dataset(evidence_import)
+                else "",
             )
             for case in cases
         ],
@@ -596,13 +599,22 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
     return tuple(kept), cut
 
 
+def _row_name(evidence_import: EvidenceImport, case: EvidenceImportCase) -> str:
+    """What a dataset row is called in the review: its place in the import and its
+    dataset, since a row id says nothing to a person."""
+    return f"Row {case.position + 1} · {evidence_import.dataset.name}"
+
+
 def _case(
     case: EvidenceImportCase,
     evidence: SourceEvidence | None,
     source_kind: str,
     stored: StoredTranscript | None = None,
+    *,
+    name: str = "",
 ) -> dict:
-    """One case as the review shows it; ``stored`` is a transcript case's text."""
+    """One case as the review shows it; ``stored`` is a transcript case's text and
+    ``name`` what any other case is called (blank for an Observe source)."""
     row = source_kind == EvidenceImport.SourceKind.DATASET
     if evidence is None:
         # A drafted, blocked or added case keeps what became of it; only one
@@ -618,7 +630,7 @@ def _case(
         return {
             "id": case.id,
             "source_id": case.source_id,
-            "name": "",
+            "name": name,
             "status": EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
             "reason": reason if pending or not case.reason else case.reason,
             "source_available": False,
@@ -640,7 +652,7 @@ def _case(
     shown = {
         "id": case.id,
         "source_id": case.source_id,
-        "name": stored.name if stored else "",
+        "name": stored.name if stored else name,
         "status": case.status,
         "reason": case.reason,
         "source_available": True,

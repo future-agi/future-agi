@@ -43,9 +43,22 @@ export default function EvidenceCaseCard({
       data-testid={`evidence-case-${item.id}`}
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {item.name || item.source_id}
-        </Typography>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" noWrap>
+            {item.name || item.source_id}
+          </Typography>
+          {/* A row's id under its name, to find it in the dataset. */}
+          {kind === "dataset" && item.name ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              component="div"
+            >
+              {item.source_id}
+            </Typography>
+          ) : null}
+        </Box>
         {simulated ? (
           <StatusBadge
             role="neutral"
