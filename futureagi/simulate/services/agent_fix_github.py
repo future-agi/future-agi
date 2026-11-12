@@ -15,9 +15,10 @@ import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.pydantic_schemas.agent_fix import EvalGrading
+from simulate.pydantic_schemas.agent_fix import HELD_BACK_VERIFIED_MIN, EvalGrading
 from simulate.selectors.agent_fix import (
     eval_review,
+    held_back_cases,
     limited_validation,
     overridable_regressions,
 )
@@ -41,10 +42,6 @@ _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
 _TITLE_CHARS = 120
-_LIMITED_NOTE = (
-    "**Limited validation.** Too few failing cases were held back to verify this fix."
-    " Review it closely before you merge."
-)
 
 
 def open_pull_request(
@@ -128,15 +125,20 @@ def _percent(rate: float) -> str:
 
 
 def _evidence(verdict: dict) -> str:
-    """The pass rates a reviewer weighs, as the fix page shows them."""
-    return ", ".join(
-        f"{name} cases {_percent(before)} → {_percent(after)}"
+    """The pass rates a reviewer weighs and the must-pass cases it broke, as the fix page's
+    headline says them."""
+    rates = [
+        f"{name} pass rate {_percent(before)} → {_percent(after)}"
         for name, (before, after) in (
             ("held-back", verdict.get("held_back_pass_rate") or (None, None)),
             ("target", verdict.get("target_pass_rate") or (None, None)),
         )
         if after is not None
-    )
+    ]
+    if not rates:
+        return ""
+    broke = len(verdict.get("must_pass_regressions") or [])
+    return ", ".join([*rates, f"broke {broke or 'none'}"])
 
 
 # The FE says the same where the user ships.
@@ -169,13 +171,39 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
     return "\n".join(lines)
 
 
+def _must_pass_check(check: str) -> str:
+    """A must-pass check, sent as "scenario key: sub-goal", as its case and its check."""
+    case, _, sub_goal = check.partition(": ")
+    named = f"Must-pass case “{case}”"
+    return f"{named}: its “{sub_goal}” check" if sub_goal else named
+
+
+def _limited_note(candidate: AgentFixCandidate) -> str:
+    held = held_back_cases(candidate.fix_run)
+    which = (
+        "No failing cases were"
+        if not held
+        else f"Only {held} failing case was"
+        if held == 1
+        else f"Only {held} failing cases were"
+    )
+    return (
+        f"**Limited validation.** {which} held back from the fix to verify it; it takes"
+        f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
+        " you merge."
+    )
+
+
 def _override_note(candidate: AgentFixCandidate) -> str:
-    """What a candidate the must-pass check refused ships with, and the user's reason."""
-    checks = "\n".join(f"- “{check}”" for check in overridable_regressions(candidate))
+    """What a candidate the must-pass check refused is opened with, and the user's reason."""
+    checks = "\n".join(
+        f"- {_must_pass_check(check)}" for check in overridable_regressions(candidate)
+    )
     reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
     return (
-        "**Known regression.** Fix my agent did not accept this change: these must-pass"
-        f" checks regressed.\n\n{checks}\n\nIt ships anyway, for this reason:\n\n{reason}"
+        "**Known regression.** Fix my agent did not accept this change: it broke these"
+        f" must-pass checks.\n\n{checks}\n\nIt was opened anyway, for this reason:"
+        f"\n\n{reason}"
     )
 
 
@@ -251,7 +279,8 @@ def _title(
     causes = _causes(candidate)
     if not causes:
         return f"{name}: {_what_changed(files, budget)}"
-    more = f" (+{len(causes) - 1} more)" if len(causes) > 1 else ""
+    others = len(causes) - 1
+    more = f" (+{others} more cause{'' if others == 1 else 's'})" if others else ""
     count = f" · {len(files)} file{'' if len(files) == 1 else 's'}" if files else ""
     headline = causes[0].splitlines()[0].rstrip(".")
     room = budget - len(more) - len(count)
@@ -275,7 +304,10 @@ _CHECK_LABELS = {
 }
 _PART_LABELS = {"reply latency": "Reply time", "agent cost": "Agent's cost"}
 _UNKNOWN_PARTS = {"reply latency": "Reply time unknown", "agent cost": "Cost unknown"}
-_UNTRACED_COST = "This agent isn't traced, so its cost isn't measured."
+_UNTRACED_COST = (
+    "This agent isn't traced, so its cost isn't measured. Trace its model calls to"
+    " Future AGI to measure it."
+)
 
 
 def _check_label(name: str, request: dict) -> str:
@@ -344,17 +376,25 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
     """What the checks could not hold this change to, or flagged without refusing it."""
     # The fix page's words for both (FixVerdict.jsx MustPassBreaks, flakyProtectedText).
     lines = [
-        f"- Must-pass check “{check}” dropped, within normal noise, so it was not"
-        " counted."
+        f"- {_must_pass_check(check)} passed less often, within normal noise, so it was"
+        " not counted."
         for check in verdict.get("must_pass_within_noise") or []
     ]
-    lines += [
-        f"- Protected case “{case.get('name') or case.get('key')}” is flaky on the"
-        " current version, so this fix wasn't held to it: its"
-        f" “{case.get('sub_goal')}” check passed {case.get('passed')} of"
-        f" {case.get('runs')} runs."
-        for case in (candidate.fix_run.report or {}).get("flaky_protected") or []
-    ]
+    # Each protected case once, by its name, or by its key when the engine sent none.
+    flaky: dict[str, list[dict]] = {}
+    for row in (candidate.fix_run.report or {}).get("flaky_protected") or []:
+        flaky.setdefault(str(row.get("key")), []).append(row)
+    for key, rows in flaky.items():
+        name = next((row["name"] for row in rows if row.get("name")), key)
+        checks = ", ".join(
+            f"its “{row.get('sub_goal')}” check passed {row.get('passed')} of"
+            f" {row.get('runs')} runs"
+            for row in rows
+        )
+        lines.append(
+            f"- Protected case “{name}” is flaky on the current version, so this fix"
+            f" wasn't held to it: {checks}."
+        )
     evals = _evals_note(candidate)
     if not lines and not evals:
         return "### What could still go wrong\n\nNothing the checks flagged."
@@ -379,34 +419,32 @@ def _plural(count: int, one: str, many: str) -> str:
 
 
 def _evidence_origin(candidate: AgentFixCandidate) -> str:
-    """The evidence the fix started from: how many sources of each import's kind, and the
-    scenarios they became. Never an id, a source's name or its content."""
+    """The evidence the fix started from: how many sources of each import's kind, each
+    one added as one case. Never an id, a source's name or its content."""
     imports = (candidate.fix_run.request or {}).get("evidence") or []
     if not imports:
         return ""
     lines = []
     for one in imports:
-        sources = len(one.get("source_ids") or [])
+        cases = len(one.get("scenario_keys") or [])
         kind = _EVIDENCE_SOURCES.get(str(one.get("source_kind")))
-        what = (
-            f"{_plural(sources, kind[0], kind[1])}{kind[2]}"
-            if kind and sources
-            else "Imported evidence"
+        lines.append(
+            f"- {_plural(cases, kind[0], kind[1])}{kind[2]}"
+            if kind
+            else f"- {_plural(cases, 'imported case', 'imported cases')}"
         )
-        scenarios = _plural(
-            len(one.get("scenario_keys") or []), "scenario", "scenarios"
-        )
-        lines.append(f"- {what}, added as {scenarios}")
     listed = "\n".join(lines)
     return f"### Evidence\n\nThis fix started from imported evidence:\n\n{listed}"
 
 
-def _notes_section(summary: str) -> str:
+def _notes_section(candidate: AgentFixCandidate) -> str:
+    """The engine's own summary, labelled: it describes only the trial's last change."""
+    summary = candidate.summary.strip()
     if not summary:
         return ""
     return (
-        "<details><summary>Notes from Fix my agent, on its last revision</summary>"
-        f"\n\n{summary}\n\n</details>"
+        "<details><summary>Notes from Fix my agent on the last change of Trial"
+        f" {candidate.attempt}</summary>\n\n{summary}\n\n</details>"
     )
 
 
@@ -433,7 +471,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     rates = _evidence(verdict)
     limited = limited_validation(candidate.fix_run)
     overridden = bool(candidate.override_reason)
-    proof = "Checked" if limited or overridden else "Proven"
+    proof = "Checked" if limited or overridden else "Verified"
     standing = (
         "Known regression"
         if overridden
@@ -446,14 +484,14 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
         part
         for part in (
             _override_note(candidate) if overridden else "",
-            _LIMITED_NOTE if limited else "",
+            _limited_note(candidate) if limited else "",
             f"{proof} by Fix my agent: {rates}" if rates else "",
             _verdict_section(verdict, standing, candidate.fix_run.request or {}),
             _files_section(files),
             _why_section(candidate),
             _risks_section(candidate, verdict),
             _evidence_origin(candidate),
-            _notes_section(candidate.summary.strip()),
+            _notes_section(candidate),
             _fix_link(candidate),
             "Opened by Future AGI Fix my agent.",
         )

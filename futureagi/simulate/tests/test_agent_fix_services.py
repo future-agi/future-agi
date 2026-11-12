@@ -3041,11 +3041,12 @@ class TestPullRequestDescription:
         # The last revision's summary ("only prompts") is not what the change does.
         assert title == (
             "Fix my agent: The agent books the date the caller first said, not the one"
-            " they corrected to (+1 more) · 3 files"
+            " they corrected to (+1 more cause) · 3 files"
         )
+        # The fix page's headline: the pass rates and the must-pass cases it broke.
         assert (
-            "Proven by Fix my agent: held-back cases 25% → 75%, target cases 0% → 63%"
-            "\n\n### Verdict" in body
+            "Verified by Fix my agent: held-back pass rate 25% → 75%, target pass rate"
+            " 0% → 63%, broke none\n\n### Verdict" in body
         )
         # The engine's own reason is not product text: the checks say it in words.
         assert "passed every tier" not in body
@@ -3060,7 +3061,11 @@ class TestPullRequestDescription:
         assert "### Why" in body and f"- {_CAUSES[1]}" in body
         assert "### What could still go wrong\n\nNothing the checks flagged." in body
         assert "### Evidence" not in body
-        assert "Notes from Fix my agent, on its last revision" in body
+        # The engine's summary is labelled as its own, on the trial the page names.
+        assert (
+            "<details><summary>Notes from Fix my agent on the last change of Trial 1"
+            "</summary>" in body
+        )
         run = candidate.fix_run
         assert (
             "[Open this fix on Future AGI](https://app.example/dashboard/simulate/"
@@ -3073,6 +3078,7 @@ class TestPullRequestDescription:
     ):
         flaky = [
             {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3},
+            {"key": "case-2", "sub_goal": "polite", "passed": 1, "runs": 3},
             {
                 "key": "case-4",
                 "name": "Refund a late order",
@@ -3106,7 +3112,7 @@ class TestPullRequestDescription:
         }
         _, title, body = self._described(
             source_run,
-            held_back=0,
+            held_back=2,
             report={"flaky_protected": flaky},
             verdict=verdict,
         )
@@ -3116,8 +3122,12 @@ class TestPullRequestDescription:
             "Fix my agent (limited validation): change code, instructions and settings"
             " in 3 files"
         )
-        assert body.startswith("**Limited validation.**")
-        assert "Checked by Fix my agent" in body and "Proven by" not in body
+        # How many were held back, and how many it takes.
+        assert body.startswith(
+            "**Limited validation.** Only 2 failing cases were held back from the fix to"
+            " verify it; it takes 4 or more."
+        )
+        assert "Checked by Fix my agent" in body and "Verified by" not in body
         assert "### Verdict: Limited validation" in body
         assert "### Why" not in body
         # A check that could not measure says so, and an untraced agent's cost says why.
@@ -3125,14 +3135,17 @@ class TestPullRequestDescription:
         assert "| ↳ Reply time | Passed | 1.2 s of 1.5 s |" in body
         assert (
             "| ↳ Agent's cost | Cost unknown | This agent isn't traced, so its cost"
-            " isn't measured. |" in body
+            " isn't measured. Trace its model calls to Future AGI to measure it. |"
+            in body
         )
         assert "| Model unchanged | Couldn't measure |  |" in body
-        # A protected case reads by its name, and by its key only when it has none.
+        # A protected case reads once, by its name, and by its key only without one.
         assert (
             "- Protected case “case-2” is flaky on the current version, so this fix"
-            " wasn't held to it: its “refunded” check passed 2 of 3 runs." in body
+            " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
+            " check passed 1 of 3 runs." in body
         )
+        assert body.count("Protected case “case-2”") == 1
         assert "- Protected case “Refund a late order” is flaky" in body
         assert "case-4" not in body
 
@@ -3155,7 +3168,9 @@ class TestPullRequestDescription:
         self, source_run
     ):
         tiers = [
-            {**tier, "status": "failed"} if tier["name"] == "must-pass" else tier
+            {**tier, "status": "failed", "detail": "1 of 6 regressed."}
+            if tier["name"] == "must-pass"
+            else tier
             for tier in _TIERS
         ]
         _, title, body = self._described(
@@ -3179,13 +3194,16 @@ class TestPullRequestDescription:
             " first said, not the one they corrected to · 3 files"
         )
         assert body.startswith("**Known regression.**")
-        assert "- “case-1: refunded”" in body
+        # The case and its check apart, and who chose to open it anyway.
+        assert "- Must-pass case “case-1”: its “refunded” check" in body
+        assert "It was opened anyway, for this reason:" in body
         assert "> The regression is a test we are retiring." in body
+        assert "Checked by Fix my agent: target pass rate 0% → 63%, broke 1" in body
         assert "### Verdict: Known regression" in body
-        assert "| Must-pass set | Failed | All 6 held. |" in body
+        assert "| Must-pass set | Failed | 1 of 6 regressed. |" in body
         assert (
-            "- Must-pass check “case-3: polite” dropped, within normal noise, so it was"
-            " not counted." in body
+            "- Must-pass case “case-3”: its “polite” check passed less often, within"
+            " normal noise, so it was not counted." in body
         )
 
     def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
@@ -3195,7 +3213,7 @@ class TestPullRequestDescription:
             {
                 "import_id": "6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11",
                 "source_kind": "session",
-                "source_ids": ["session-with-a-customer-name"],
+                "source_ids": ["session-with-a-customer-name", "another-session"],
                 "scenario_keys": ["evidence-0a1b2c3d4e5f", "evidence-0a1b2c3d4e60"],
             },
             {
@@ -3213,9 +3231,9 @@ class TestPullRequestDescription:
         # The import page's words for each kind of source.
         assert (
             "### Evidence\n\nThis fix started from imported evidence:\n\n"
-            "- 1 session from Observe, added as 2 scenarios\n"
-            "- 3 dataset rows, added as 3 scenarios\n"
-            "- Imported evidence, added as 1 scenario"
+            "- 2 sessions from Observe\n"
+            "- 3 dataset rows\n"
+            "- 1 imported case"
         ) in body
         # Never an import's id, nor its sources.
         assert "6d1f0b52" not in body and "row-1" not in body

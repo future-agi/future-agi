@@ -897,16 +897,22 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def held_back_cases(fix_run: AgentFixRun) -> int:
+    """The different cases of the run the fix held back, a variation counting as the case
+    it varies."""
+    request = FixRequest.model_validate(fix_run.request)
+    return len(
+        {
+            request.variation_parents.get(key, key)
+            for key in request.held_back_scenario_keys
+        }
+    )
+
+
 def limited_validation(fix_run: AgentFixRun) -> bool:
     """Whether too few cases were held back to call this fix verified, however it scored:
-    they must come from HELD_BACK_VERIFIED_MIN different cases of the run, a variation
-    counting as the case it varies."""
-    request = FixRequest.model_validate(fix_run.request)
-    cases = {
-        request.variation_parents.get(key, key)
-        for key in request.held_back_scenario_keys
-    }
-    return len(cases) < HELD_BACK_VERIFIED_MIN
+    they must come from HELD_BACK_VERIFIED_MIN different cases of the run."""
+    return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
 
 
 # The tiers the engine's final check records for a finalist, in order.
