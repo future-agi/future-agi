@@ -213,13 +213,18 @@ changes none of them.
   Its installation needs Contents and Pull requests write on this repository.
   Comments and labels stay on the workflow token. Nothing reads or prints a
   secret value.
-- **ee migrations.** The bump's `Migrations: 0 new files` counts future-agi
-  only, not the `future-agi/ee` repository that the hosted backend image is
-  built from. Before anyone relies on that line for ee, merge
-  `future-agi/deployment` PRs #435 and #437 into deployment `main` (#437 is
-  stacked on #435) and set deployment's `AUTO_DEPLOY` to `apply`. Until then,
-  the person who deploys checks for unapplied ee migrations. See "What neither
-  count sees" below.
+- **ee migrations.** This is not a gate on `RELEASE_AUTOPILOT` or
+  `RELEASE_AUTO_APPROVE`. The bump's `Migrations: 0 new files` counts
+  future-agi only, not the `future-agi/ee` repository that the hosted backend
+  image is built from. The only automatic stop for an ee migration is the
+  deployment pipeline's migration check. That check exists only once
+  `future-agi/deployment` PRs #435 and #437 (stacked on #435) are on
+  deployment `main` and the pipeline is turned on through the Administrator
+  setup in that repository's `docs/auto-deploy.md`. Until then, the person who
+  deploys must not read `Migrations: 0 new files` as covering ee, and checks
+  for unapplied migrations by hand in both regions. The EU apply document
+  (`eu/gcp/APPLY_UPDATES.md`) has no such step today. See "What neither count
+  sees" below.
 - **`Production` and `production-auto`.** Keep `Production`'s required
   reviewers and allowed release tags. Verify that `production-auto` exists and
   has **no reviewers**. Set `production-auto` to "Selected branches and tags"
@@ -632,8 +637,9 @@ branch (`feat/deploy-pr-checks`) rather than `main`, and ships off. On 12 Nov
 from `feat/deploy-pr-checks`, and present on `feat/deploy-pipeline` (read-only
 contents reads). By that branch's `docs/auto-deploy.md`, the check runs only
 when the repository variable `AUTO_DEPLOY` is `apply`; `plan` runs no
-migration Job (read from the branch, not run). Until #435 and #437 are on
-deployment `main` and `AUTO_DEPLOY` is `apply`:
+migration Job (read from the branch, not run). Turning the pipeline on has
+its own Administrator setup in that document. Until #435 and #437 are on
+deployment `main` and the pipeline is on:
 
 - `Migrations: 0 new files` covers future-agi only.
 - The person who deploys is the only stop for an ee migration. The US runbook
@@ -642,7 +648,7 @@ deployment `main` and `AUTO_DEPLOY` is `apply`:
   showmigrations`, which includes ee's app. `eu/gcp/APPLY_UPDATES.md` has no
   such step (read-only, 12 Nov).
 
-Once both PRs are on `main` and `AUTO_DEPLOY` is `apply`, the pipeline runs
+Once both PRs are on `main` and the pipeline is on, it runs
 `python manage.py migrate --check --noinput` before any upgrade, from the
 candidate backend image with the backend's environment (read from the branch's
 code, not run). It sees every installed Django app, ee's included, and stops
