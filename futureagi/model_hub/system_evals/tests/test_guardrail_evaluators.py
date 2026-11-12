@@ -28,7 +28,9 @@ def _load_eval(name: str):
     path = YAML_DIR / f"{name}.yaml"
     code = yaml.safe_load(path.read_text())["config"]["code"]
     ns: dict = {}
-    runner = __builtins__["exec"] if isinstance(__builtins__, dict) else getattr(__builtins__, "exec")
+    runner = (
+        __builtins__["exec"] if isinstance(__builtins__, dict) else __builtins__.exec
+    )
     runner(compile(code, str(path), "exec"), ns)
     return ns["evaluate"]
 
@@ -38,14 +40,18 @@ def _load_eval(name: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("detect_types", ["SSN,email", "SSN", "Ssn,EMAIL", " ssn , EMAIL "])
+@pytest.mark.parametrize(
+    "detect_types", ["SSN,email", "SSN", "Ssn,EMAIL", " ssn , EMAIL "]
+)
 def test_detect_types_are_case_insensitive(detect_types):
     # Pattern keys are lowercase, so "SSN" previously matched nothing and was
     # dropped. With "SSN,email" the scan narrowed to email alone and returned
     # score 1.0 "No PII (checked: email)" over text holding a real SSN.
     ev = _load_eval("regex_pii_detection")
     r = ev(None, None, None, None, text=SSN_TEXT, detect_types=detect_types)
-    assert r["score"] == 0.0, f"SSN must be detected for detect_types={detect_types!r}, got {r}"
+    assert r["score"] == 0.0, (
+        f"SSN must be detected for detect_types={detect_types!r}, got {r}"
+    )
     assert "SSN" in r["reason"]
 
 
@@ -81,7 +87,9 @@ def test_default_detect_types_still_scans_everything():
     ev = _load_eval("regex_pii_detection")
     for dt in (None, "", "   "):
         r = ev(None, None, None, None, text=SSN_TEXT, detect_types=dt)
-        assert r["score"] == 0.0, f"detect_types={dt!r} must fall back to all types, got {r}"
+        assert r["score"] == 0.0, (
+            f"detect_types={dt!r} must fall back to all types, got {r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -109,19 +117,41 @@ def test_contains_none_ignores_blank_keywords(keywords):
 
 def test_contains_any_still_matches_real_keywords():
     ev = _load_eval("contains_any")
-    assert ev(None, None, None, None, text="hello world", keywords="hello")["score"] == 1.0
-    assert ev(None, None, None, None, text="hello world", keywords="hello,")["score"] == 1.0
-    assert ev(None, None, None, None, text="hello world", keywords="nope")["score"] == 0.0
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="hello")["score"] == 1.0
+    )
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="hello,")["score"]
+        == 1.0
+    )
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="nope")["score"] == 0.0
+    )
 
 
 def test_contains_none_still_flags_real_keywords():
     ev = _load_eval("contains_none")
-    assert ev(None, None, None, None, text="hello world", keywords="hello")["score"] == 0.0
-    assert ev(None, None, None, None, text="hello world", keywords="hello,")["score"] == 0.0
-    assert ev(None, None, None, None, text="hello world", keywords="nope")["score"] == 1.0
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="hello")["score"] == 0.0
+    )
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="hello,")["score"]
+        == 0.0
+    )
+    assert (
+        ev(None, None, None, None, text="hello world", keywords="nope")["score"] == 1.0
+    )
 
 
 def test_contains_case_insensitive_still_honoured():
     ev = _load_eval("contains_any")
-    r = ev(None, None, None, None, text="Hello World", keywords="hello", case_sensitive=False)
+    r = ev(
+        None,
+        None,
+        None,
+        None,
+        text="Hello World",
+        keywords="hello",
+        case_sensitive=False,
+    )
     assert r["score"] == 1.0
