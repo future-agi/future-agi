@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion, CallExecution
 from simulate.serializers.requests.agent_version import (
@@ -136,6 +137,7 @@ class CreateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=AgentVersionCreateRequestSerializer,
         responses={
@@ -436,6 +438,7 @@ class ActivateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("change the production version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -490,6 +493,7 @@ class RestoreAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("restore an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={

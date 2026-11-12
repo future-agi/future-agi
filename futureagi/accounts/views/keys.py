@@ -35,6 +35,7 @@ from analytics.utils import (
 )
 from model_hub.models.api_key import mask_key
 from tfc.constants.roles import RolePermissions
+from tfc.permissions.rbac import IsNotViewer
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -70,7 +71,8 @@ def _managed_keys(organization):
 
 
 class GetKeysView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsNotViewer]
+    viewer_denied_action = "see API keys"
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
@@ -107,7 +109,8 @@ class GetKeysView(APIView):
 
 class SecretKeyAPIViewSet(ViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsNotViewer]
+    viewer_denied_action = "see API keys"
 
     def get_permissions(self):
         permission_classes = list(self.permission_classes)

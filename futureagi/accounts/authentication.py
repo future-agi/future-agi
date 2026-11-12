@@ -40,6 +40,7 @@ from accounts.saml_credential import SamlCredentialInvalid, validate_saml_creden
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
+from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
     build_error_envelope,
     error_details,
@@ -111,6 +112,89 @@ def workspace_read_only(view_cls):
     """
     view_cls.workspace_write_exempt = True
     return view_cls
+
+
+class ViewerReadOnly(PermissionDenied):
+    default_code = VIEWER_READ_ONLY_CODE
+
+    def __init__(self, action=None):
+        self.action = action
+        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+
+
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
+_VIEWER_REASON_PREFIX = "/simulate/"
+
+# These paths are excluded from workspace write checks because they:
+# - Don't modify workspace data (switch operations, profile updates)
+# - Or need to be accessible regardless of workspace role
+WORKSPACE_WRITE_EXEMPT_PATHS = (
+    "workspace/switch/",
+    "organizations/switch/",
+    "update-user-full-name",  # Users can always update their own profile
+    "onboarding/",  # Users can always update their own onboarding profile
+    "logout/",  # Users can always invalidate their own access token
+    "2fa/",  # Users can always manage their own second factor state
+    "passkey/",  # Users can always manage their own passkey challenges
+    "passkeys/",  # Users can always manage their own passkey records
+)
+_WRITE_METHODS = ("post", "put", "patch", "delete")
+
+
+def _with_viewer_refusal(schema):
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    return {
+        **schema,
+        "responses": {
+            403: ViewerReadOnlyErrorSerializer,
+            **schema.get("responses", {}),
+        },
+    }
+
+
+def viewer_denied(action):
+    def mark(handler):
+        handler._viewer_denied_action = action
+        schema = getattr(handler, "_swagger_auto_schema", None) or {}
+        methods = [method for method in _WRITE_METHODS if method in schema]
+        if methods:
+            handler._swagger_auto_schema = {
+                **schema,
+                **{method: _with_viewer_refusal(schema[method]) for method in methods},
+            }
+        else:
+            handler._swagger_auto_schema = _with_viewer_refusal(schema)
+        return handler
+
+    return mark
+
+
+def workspace_write_denied(request) -> PermissionDenied:
+    """The refusal of a write the user's role doesn't allow: simulation routes say
+    what a Viewer tried; every other route keeps its original response."""
+    if request.path.startswith(_VIEWER_REASON_PREFIX):
+        return ViewerReadOnly(_viewer_denied_action(request))
+    return PermissionDenied(WORKSPACE_WRITE_DENIED)
+
+
+def _viewer_denied_action(request):
+    view_cls = _resolve_view_class(request)
+    if view_cls is None:
+        return None
+    callback = request.resolver_match.func
+    method = (getattr(request, "method", "") or "").lower()
+    if hasattr(callback, "actions"):
+        actions = callback.actions if isinstance(callback.actions, dict) else {}
+        handler_name = actions.get(method)
+    else:
+        handler_name = method
+    if not isinstance(handler_name, str):
+        return None
+    action = getattr(
+        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
+    )
+    return action if isinstance(action, str) else None
 
 
 def _resolve_view_class(request):
@@ -311,24 +395,12 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
-        # - Don't modify workspace data (switch operations, profile updates)
-        # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
-
         should_skip_write_check = (
             _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
+            or any(
+                exempt_path in request.path
+                for exempt_path in WORKSPACE_WRITE_EXEMPT_PATHS
+            )
             or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
@@ -338,7 +410,7 @@ class APIKeyAuthentication(BaseAuthentication):
             and not should_skip_write_check
         ):
             if not self._can_write_to_workspace(user, workspace):
-                raise PermissionDenied("Write access denied to this workspace")
+                raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
         request.workspace = workspace
@@ -1364,6 +1436,11 @@ def custom_exception_handler(exc, context):
             status_code=response.status_code,
             code=exception_code(exc),
             details=error_details(response.data),
+            extra=(
+                {"action": exc.action}
+                if isinstance(exc, ViewerReadOnly) and exc.action
+                else None
+            ),
         )
 
     return response

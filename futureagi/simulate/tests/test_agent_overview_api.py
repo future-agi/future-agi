@@ -555,7 +555,9 @@ def test_a_workspace_viewer_cannot_flip_the_switch_or_save_anything(
         )
 
     assert response.status_code == status.HTTP_403_FORBIDDEN, response.content
-    assert "Write access denied to this workspace" in str(response.data)
+    assert response.data["detail"] == (
+        "Viewers can't edit an agent. Ask a workspace admin for the Member role."
+    )
     switch.assert_not_called()
     agent.refresh_from_db()
     assert agent.agent_name == "Northwind"

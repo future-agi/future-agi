@@ -22,7 +22,9 @@ import {
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
 import { FolderInput } from "../../panels/PanelCodeUpload";
-import { AGENT_VERSIONS_COPY } from "../workspace.constants";
+import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { refusalText } from "../evals/refusalText";
 
 const COPY = AGENT_VERSIONS_COPY.change;
@@ -146,6 +148,7 @@ export default function AgentSourceChange({
   versions = [],
 }) {
   const create = useCreateAgentVersion(envId);
+  const { canEdit } = useSimulationAccess();
   const [editing, setEditing] = useState(false);
   const [uploading, setUploading] = useState(null);
   const [error, setError] = useState(null);
@@ -243,23 +246,27 @@ export default function AgentSourceChange({
 
       {source.kind === "archive" && (
         <>
-          <Waiting checking={checking}>
-            <Button
-              component="label"
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              sx={{ textTransform: "none" }}
-            >
-              {create.isPending
-                ? COPY.creating
-                : uploading !== null
-                  ? COPY.uploading(uploading)
-                  : COPY.upload}
-              <FolderInput onPick={upload} />
-            </Button>
-          </Waiting>
+          <ViewerLock
+            locked={!canEdit}
+            title={WORKSPACE_COPY.viewer.agentVersion}
+          >
+            <Waiting checking={checking}>
+              <Button
+                component="label"
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit || busy}
+              >
+                {create.isPending
+                  ? COPY.creating
+                  : uploading !== null
+                    ? COPY.uploading(uploading)
+                    : COPY.upload}
+                <FolderInput onPick={upload} />
+              </Button>
+            </Waiting>
+          </ViewerLock>
           {(uploading !== null || create.isPending) && (
             <LinearProgress
               variant={uploading > 0 ? "determinate" : "indeterminate"}
@@ -272,24 +279,28 @@ export default function AgentSourceChange({
 
       {prompted && !editing && (
         <>
-          <Waiting checking={checking}>
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              onClick={() => {
-                setError(null);
-                setCreated(null);
-                setEditing(true);
-              }}
-              sx={{ textTransform: "none" }}
-            >
-              {source.kind === "provider"
-                ? COPY.evalInstructions
-                : COPY.editPrompt}
-            </Button>
-          </Waiting>
+          <ViewerLock
+            locked={!canEdit}
+            title={WORKSPACE_COPY.viewer.agentVersion}
+          >
+            <Waiting checking={checking}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit || busy}
+                onClick={() => {
+                  setError(null);
+                  setCreated(null);
+                  setEditing(true);
+                }}
+              >
+                {source.kind === "provider"
+                  ? COPY.evalInstructions
+                  : COPY.editPrompt}
+              </Button>
+            </Waiting>
+          </ViewerLock>
           {source.kind === "provider" && (
             <Note>{COPY.evalInstructionsHint(source.provider)}</Note>
           )}

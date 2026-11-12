@@ -6,6 +6,7 @@ from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.agent_setup import agent_summary
+from tfc.permissions.utils import cached_is_read_only_user
 from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
@@ -89,7 +90,11 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             # key/secret fields render blank. Surface display-only masked
             # values here (never persisted) so the form shows a credential is
             # set; a masked value round-trips untouched via ``_apply_secrets``.
-            if isinstance(snapshot, dict) and creds.provider_type == "livekit":
+            if (
+                isinstance(snapshot, dict)
+                and creds.provider_type == "livekit"
+                and not cached_is_read_only_user(self.context)
+            ):
                 snapshot = {**snapshot}
                 snapshot["livekit_api_key"] = (
                     creds.get_masked_api_key() if creds.api_key else ""
@@ -124,6 +129,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         serializer_or_field=serializers.CharField(allow_null=True)
     )
     def get_api_key(self, obj) -> str | None:
+        if cached_is_read_only_user(self.context):
+            return None
         api_key = resolve_api_key_for_version(obj)
         return mask_key(api_key) if api_key else None
 

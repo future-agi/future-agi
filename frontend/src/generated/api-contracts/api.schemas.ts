@@ -16660,6 +16660,49 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly versions_updated?: number;
 }
 
+export type ViewerReadOnlyErrorApiType =
+  (typeof ViewerReadOnlyErrorApiType)[keyof typeof ViewerReadOnlyErrorApiType];
+
+export const ViewerReadOnlyErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ViewerReadOnlyErrorApiCode =
+  (typeof ViewerReadOnlyErrorApiCode)[keyof typeof ViewerReadOnlyErrorApiCode];
+
+export const ViewerReadOnlyErrorApiCode = {
+  viewer_read_only: "viewer_read_only",
+} as const;
+
+export type ViewerReadOnlyErrorApiDetails = { [key: string]: string[] };
+
+export interface ViewerReadOnlyErrorApi {
+  status?: boolean;
+  type?: ViewerReadOnlyErrorApiType;
+  code?: ViewerReadOnlyErrorApiCode;
+  detail: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ViewerReadOnlyErrorApiDetails;
+  action?: string;
+}
+
 /**
  * The type of agent. One of: voice, text.
  */

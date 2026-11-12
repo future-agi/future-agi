@@ -9,6 +9,7 @@ from simulate.serializers.harness_environment import (
     RunEnvironmentRefSerializer,
 )
 from simulate.services.agent_overview import observe_project
+from tfc.permissions.utils import cached_is_read_only_user
 
 MASKED_CREDENTIAL_VALUE = "********"
 
@@ -107,6 +108,8 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         return creds.server_url if creds else ""
 
     def get_livekit_api_key(self, obj):
+        if cached_is_read_only_user(self.context):
+            return ""
         creds = self._get_livekit_creds(obj)
         return self._get_masked_api_key(creds)
 
@@ -125,6 +128,8 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         )
 
     def get_api_key(self, obj):
+        if cached_is_read_only_user(self.context):
+            return ""
         creds = self._get_latest_creds(obj)
         if creds and creds.provider_type != "livekit":
             return self._get_masked_api_key(creds)

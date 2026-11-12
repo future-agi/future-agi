@@ -25,6 +25,8 @@ import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import SideDrawer from "../../components/SideDrawer";
 import EmptyState from "../../components/EmptyState";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 import { EVALS_COPY } from "./evals.constants";
 import { gradingCountsSentence } from "./gradingCounts";
 import { refusalText } from "./refusalText";
@@ -127,6 +129,7 @@ export default function AddEvaluationDrawer({
   const editEval = useEditAppliedEvaluation();
   const errorLocalizationAvailable = useErrorLocalizationAvailable();
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const { canEdit } = useSimulationAccess();
 
   const refreshFailed =
     open && runTestQuery.isError && runTestQuery.data !== undefined;
@@ -283,8 +286,9 @@ export default function AddEvaluationDrawer({
   const loaded = open && runTestId && runTestQuery.data !== undefined;
   // While editing, the picker never falls back to its add list: a missing or
   // harness-set eval gets its own message instead.
-  const editRefusal =
-    loaded && editMode
+  const editRefusal = !canEdit
+    ? WORKSPACE_COPY.viewer.evals
+    : loaded && editMode
       ? !editTarget
         ? "This evaluation no longer exists."
         : editTarget.editable !== true
@@ -330,7 +334,9 @@ export default function AddEvaluationDrawer({
         {editRefusal ? (
           <EmptyState
             icon="solar:danger-triangle-linear"
-            title="Can’t edit this evaluation"
+            title={
+              editMode ? "Can’t edit this evaluation" : "Can’t add evaluations"
+            }
             body={editRefusal}
             action={
               <Button variant="outlined" size="small" onClick={handleClose}>

@@ -34,6 +34,9 @@ const NewVoiceSimulationDrawer = lazy(
 const TestRunHeader = () => {
   const theme = useTheme();
   const { role } = useAuthContext();
+  const canRunTest = Boolean(
+    RolePermission.SIMULATION_AGENT[PERMISSIONS.RUN_SIMULATION_TEST][role],
+  );
   const { search, setSearch } = useTestRunsSearchStore();
   const [scenarioPopoverOpen, setScenarioPopoverOpen] = useState(false);
   const scenarioPopoverRef = useRef(null);
@@ -234,19 +237,22 @@ const TestRunHeader = () => {
           </CustomTooltip> */}
           <CustomTooltip
             show={
+              !canRunTest ||
               isAgentDefinitionDeleted ||
               selectedScenarios.length === 0 ||
               hasEmptyScenario ||
               hasIncompleteScenario
             }
             title={
-              isAgentDefinitionDeleted
-                ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
-                : selectedScenarios.length === 0
-                  ? "Select atleast one scenario to run test"
-                  : hasEmptyScenario
-                    ? "Some selected scenarios have no datapoints. Remove them from the selection to run."
-                    : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
+              !canRunTest
+                ? "You don't have permission to start runs."
+                : isAgentDefinitionDeleted
+                  ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
+                  : selectedScenarios.length === 0
+                    ? "Select atleast one scenario to run test"
+                    : hasEmptyScenario
+                      ? "Some selected scenarios have no datapoints. Remove them from the selection to run."
+                      : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
             }
             size="small"
             arrow
@@ -275,9 +281,7 @@ const TestRunHeader = () => {
                 }}
                 sx={{ whiteSpace: "nowrap", minWidth: "fit-content" }}
                 disabled={
-                  !RolePermission.SIMULATION_AGENT[
-                    PERMISSIONS.RUN_SIMULATION_TEST
-                  ][role] ||
+                  !canRunTest ||
                   selectedScenarios.length === 0 ||
                   isAgentDefinitionDeleted ||
                   hasEmptyScenario ||
