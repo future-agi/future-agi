@@ -17,12 +17,14 @@ import { seedEnvironment } from '../../lib/environment-seed';
 //
 // Deliberate failures, one run per check; each run must fail on that check and no earlier one:
 // 1. tick the decoy row too: the POST names three rows.
-// 2. tick "These rows come from production": the row is declared production.
-// 3. look for the first ask in the dataset's own cells instead of the import's rows: it is
-//    found, which proves the probe reads the text it searches.
-// 4. seed the first chat without the email: no transcript finding names it.
+// 2. seed the second chat as JSON cut short: the POST is unchanged, but its case cannot be
+//    fingerprinted, so it is stored with a blank digest.
+// 3. read the dataset's own cells instead of the import's rows: the first ask is found, which
+//    proves the probe reads the text it searches.
+// 4. seed the first chat without the email: the row reads without it and no finding names it.
 // 5. skip the cell edit: the edited row does not read as changed.
-// 6. pick no expected outcome column: the cards show "Expected outcome: missing".
+// 6. serve the browser's review a bundle marked as Observe sessions: the API lane is unchanged,
+//    but no card is marked "Dataset row".
 
 // One browser action's first-paint budget (see README "UI_READY").
 const UI_READY = 60_000;
