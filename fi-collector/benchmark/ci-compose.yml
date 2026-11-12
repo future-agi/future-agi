@@ -1,0 +1,24 @@
+# Disposable CI-only storage for a 20-span protocol/SQL smoke, not a load test.
+# Always use a unique compose project. The benchmark itself never manages it.
+services:
+  clickhouse:
+    init: true
+    image: clickhouse/clickhouse-server:25.3.14.14-alpine@sha256:a4e8cf46e526a06f4f52d22f7fa8d07472b55d3c896d7ca3f159e249be38ae62
+    environment:
+      CLICKHOUSE_USER: test
+      CLICKHOUSE_PASSWORD: test
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "127.0.0.1:${OTLPBENCH_CI_CH_PORT:-18147}:8123"
+    volumes:
+      - ../../futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/benchmark-storage.xml:ro
+      - benchmark-data:/var/lib/clickhouse
+    mem_limit: 2g
+    cpus: 2
+    healthcheck:
+      test: [CMD, clickhouse-client, --user, test, --password, test, --query, "SELECT 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+volumes:
+  benchmark-data:
