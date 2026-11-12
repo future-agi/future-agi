@@ -37,6 +37,10 @@ MAX_VIDEO_PIXELS = 8192 * 4320
 MAX_MEDIA_SECONDS = 7200
 MAX_ELEMENTS = 200_000
 INFLATE_SLICE = 1024 * 1024
+# Total bytes the FLAC end-of-file search may CRC-16. Each candidate header
+# costs a CRC over the rest of the file, so without a total cap a crafted tail
+# of false headers costs up to 256 x 1 MiB of pure-Python CRC.
+FLAC_CRC_BUDGET = 4 * 1024 * 1024
 
 # Parsers raise these on malformed input; probe() turns all of them into
 # ValueError so nothing about the input escapes the sandbox.
@@ -545,12 +549,14 @@ def _flac(data):
     # The last frame must end exactly at EOF: its CRC-16 covers the whole frame,
     # so a truncated or extended file fails. Search back for its header.
     window = max(min(max_frame or 65536, 1024 * 1024), 16)
-    start, cursor, tries = max(pos, size - window - 1), size - 2, 0
+    start, cursor, tries, crc_bytes = max(pos, size - window - 1), size - 2, 0, 0
     while True:
         index = data.rfind(b"\xff", start, cursor)
         _require(index >= 0 and tries < 256)
         tries += 1
         if _flac_frame_header(data, index) is not None:
+            crc_bytes += size - 2 - index
+            _require(crc_bytes <= FLAC_CRC_BUDGET)
             if _crc16(data[index : size - 2]) == int.from_bytes(data[-2:], "big"):
                 return _facts("audio/flac", rate, channels, total)
         cursor = index
@@ -787,6 +793,7 @@ def _full_box_times(data, start):
 
 def _mp4_track(data, start, end):
     tkhd = _child(data, start, end, b"tkhd")[0]
+    track_id = struct.unpack_from(">I", data, tkhd + (20 if data[tkhd] == 1 else 12))[0]
     offset = 88 if data[tkhd] == 1 else 76
     width, height = struct.unpack(">II", data[tkhd + offset : tkhd + offset + 8])
     mdia = _child(data, start, end, b"mdia")
@@ -811,6 +818,7 @@ def _mp4_track(data, start, end):
     else:
         _require(handler == b"vide" and codecs <= MP4_VIDEO)
     return {
+        "id": track_id,
         "handler": handler,
         "width": width >> 16,
         "height": height >> 16,
@@ -818,6 +826,69 @@ def _mp4_track(data, start, end):
         "length": length,
         "channels": channels,
     }
+
+
+def _trex_defaults(data, start, end):
+    """track_ID -> default_sample_duration from each mvex/trex."""
+    defaults = {}
+    for kind, a, b in _boxes(data, start, end):
+        if kind == b"trex":
+            _require(b - a == 24)
+            track_id, _, duration = struct.unpack(">III", data[a + 4 : a + 16])
+            _require(track_id not in defaults)
+            defaults[track_id] = duration
+    return defaults
+
+
+def _traf_duration(data, start, end, trex):
+    """(track_ID, summed sample durations) of one moof/traf.
+
+    A sample's duration comes from its trun entry, else the tfhd default, else
+    the trex default. Every trun must hold exactly its declared entries.
+    """
+    tfhd_start, _ = _child(data, start, end, b"tfhd")
+    flags = int.from_bytes(data[tfhd_start + 1 : tfhd_start + 4], "big")
+    track_id = struct.unpack(">I", data[tfhd_start + 4 : tfhd_start + 8])[0]
+    _require(track_id in trex)
+    at = tfhd_start + 8 + (8 if flags & 0x01 else 0) + (4 if flags & 0x02 else 0)
+    default = trex[track_id]
+    if flags & 0x08:
+        default = struct.unpack(">I", data[at : at + 4])[0]
+    total = 0
+    for kind, a, b in _boxes(data, start, end):
+        if kind != b"trun":
+            continue
+        flags = int.from_bytes(data[a + 1 : a + 4], "big")
+        count = struct.unpack(">I", data[a + 4 : a + 8])[0]
+        at = a + 8 + (4 if flags & 0x01 else 0) + (4 if flags & 0x04 else 0)
+        entry = 4 * sum(bool(flags & bit) for bit in (0x100, 0x200, 0x400, 0x800))
+        _require(at + count * entry == b)
+        if flags & 0x100:
+            # The duration is the first field of each entry.
+            total += sum(
+                struct.unpack_from(">I", data, i)[0] for i in range(at, b, entry)
+            )
+        else:
+            total += count * default
+    return track_id, total
+
+
+def _fragment_seconds(data, top, moov, tracks):
+    """Longest track in seconds, summed over every moof (empty_moov files)."""
+    mvex = [(a, b) for kind, a, b in _boxes(data, *moov) if kind == b"mvex"]
+    _require(len(mvex) == 1)
+    trex = _trex_defaults(data, *mvex[0])
+    scales = {track["id"]: track["scale"] for track in tracks}
+    _require(set(trex) <= set(scales) and all(scales.values()))
+    totals = dict.fromkeys(scales, 0)
+    for kind, a, b in top:
+        if kind != b"moof":
+            continue
+        for inner, x, y in _boxes(data, a, b):
+            if inner == b"traf":
+                track_id, duration = _traf_duration(data, x, y, trex)
+                totals[track_id] += duration
+    return max(totals[track] / scales[track] for track in totals)
 
 
 def _mp4(data):
@@ -845,7 +916,12 @@ def _mp4(data):
                     data[start + 4 : start + (12 if data[start] == 1 else 8)],
                 )[0]
     _require(scale > 0 and tracks)
-    seconds = (length or fragment) / scale
+    _require(len({track["id"] for track in tracks}) == len(tracks))
+    if length or fragment:
+        seconds = (length or fragment) / scale
+    else:
+        # Fragmented with an empty moov and no mehd: only the fragments know.
+        seconds = _fragment_seconds(data, top, moov, tracks)
     _require(0 < seconds <= MAX_MEDIA_SECONDS)
     video = [t for t in tracks if t["handler"] == b"vide"]
     if video:
