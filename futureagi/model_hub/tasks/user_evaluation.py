@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -6,7 +7,12 @@ import structlog
 from accounts.models import workspace
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
-from django.db import close_old_connections
+from django.db import (
+    InterfaceError,
+    OperationalError,
+    close_old_connections,
+    transaction,
+)
 from django.db.models import Q
 
 from model_hub.services.localization_errors import LocalizationFailure
@@ -877,6 +883,13 @@ def trigger_error_localization_for_column(
     logger.info(f"Created ErrorLocalizerTask for cell {cell.id}")
 
 
+# Statement-level PostgreSQL failures (a statement timeout or cancel, or a
+# dropped connection Django reopens) that the span trigger retries in place.
+_TRANSIENT_DB_ERRORS = (OperationalError, InterfaceError)
+SPAN_LOCALIZATION_ATTEMPTS = 3
+SPAN_LOCALIZATION_RETRY_DELAY_SECONDS = 0.5
+
+
 def trigger_error_localization_for_span(
     eval_template: EvalTemplate,
     eval_logger: EvalLogger,
@@ -888,129 +901,206 @@ def trigger_error_localization_for_span(
     *,
     observation_span: "ObservationSpan",
 ) -> None:
+    """Create or refresh localization for an accepted span result.
+
+    Runs after the evaluator persisted the result, so nothing raised here
+    reaches the caller. Deliberate refusals log a WARNING. Once the entry is
+    completed nothing else retries localization, so a transient database
+    failure is retried here, each attempt in its own transaction or savepoint.
+    """
+    log_context = {
+        "eval_logger_id": str(eval_logger.id),
+        "span_id": str(observation_span.id),
+    }
+    for attempt in range(1, SPAN_LOCALIZATION_ATTEMPTS + 1):
+        try:
+            with transaction.atomic():
+                _create_or_refresh_span_localization(
+                    eval_template=eval_template,
+                    eval_logger=eval_logger,
+                    value=value,
+                    mapping=mapping,
+                    eval_explanation=eval_explanation,
+                    log_id=log_id,
+                    eval_config=eval_config,
+                    observation_span=observation_span,
+                )
+        except _TRANSIENT_DB_ERRORS as e:
+            if attempt < SPAN_LOCALIZATION_ATTEMPTS:
+                logger.warning(
+                    "error_localizer_span_trigger_retrying",
+                    **log_context,
+                    attempt=attempt,
+                    error_type=type(e).__name__,
+                )
+                time.sleep(SPAN_LOCALIZATION_RETRY_DELAY_SECONDS * attempt)
+                continue
+            # A sustained outage also fails run_entry's terminal write, which
+            # Temporal retries with the whole entry. Reaching this means a
+            # transient outlasted every attempt while the entry still completed.
+            logger.error(
+                "error_localizer_span_trigger_db_unavailable",
+                **log_context,
+                attempts=attempt,
+                error_type=type(e).__name__,
+            )
+        except Exception as e:
+            logger.error(
+                "error_localizer_span_trigger_failed",
+                **log_context,
+                error_type=type(e).__name__,
+            )
+        return
+
+
+def _create_or_refresh_span_localization(
+    *,
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    log_id: str | None,
+    eval_config: dict | None,
+    observation_span: "ObservationSpan",
+) -> None:
     """Use the evaluator's project-scoped span, which may exist only in CH."""
     from tracer.models.eval_task import EvalTask
 
-    try:
-        project = observation_span.project
-        config = eval_logger.custom_eval_config
-        config_project = config.project
-        # Task targets need not belong to the config's author project. Legacy
-        # entries without a task still use the config project as their owner.
-        target_project_id = config.project_id
-        if eval_logger.eval_task_id:
-            target_project_id = EvalTask.objects.only("project_id").get(
-                id=eval_logger.eval_task_id
-            ).project_id
-        if (
-            str(eval_logger.observation_span_id) != str(observation_span.id)
-            or str(eval_logger.trace_id) != str(observation_span.trace_id)
-            or str(target_project_id) != str(project.id)
-            or config_project.organization_id != project.organization_id
-            or str(config.eval_template_id) != str(eval_template.id)
-        ):
+    project = observation_span.project
+    config = eval_logger.custom_eval_config
+    config_project = config.project
+    # Task targets need not belong to the config's author project. Legacy
+    # entries without a task still use the config project as their owner.
+    target_project_id = config.project_id
+    if eval_logger.eval_task_id:
+        target_project_id = (
+            EvalTask.objects.filter(id=eval_logger.eval_task_id)
+            .values_list("project_id", flat=True)
+            .first()
+        )
+        if target_project_id is None:
+            # A missing or soft-deleted task owns nothing left to localize.
             logger.warning(
                 "error_localizer_span_context_mismatch",
                 eval_logger_id=str(eval_logger.id),
+                eval_task_id=str(eval_logger.eval_task_id),
+                reason="owning_task_missing",
             )
             return
-        input_data_dict = mapping
-        input_keys = list(input_data_dict.keys())
-        input_type_dict = _get_input_type(input_data_dict)
-
-        task_exists = ErrorLocalizerTask.objects.filter(
-            source_id=eval_logger.id
-        ).exists()
-        workspace = project.workspace
-        if not workspace:
-            workspace = Workspace.objects.get(
-                organization=project.organization,
-                is_default=True,
-                is_active=True,
-            )
-        # A null author workspace denotes this tenant's default workspace,
-        # not permission to borrow a config into an arbitrary workspace.
-        config_workspace_matches = config_project.workspace_id == workspace.id or (
-            config_project.workspace_id is None
-            and workspace.is_default
-            and workspace.is_active
+    if (
+        str(eval_logger.observation_span_id) != str(observation_span.id)
+        or str(eval_logger.trace_id) != str(observation_span.trace_id)
+        or str(target_project_id) != str(project.id)
+        or config_project.organization_id != project.organization_id
+        or str(config.eval_template_id) != str(eval_template.id)
+    ):
+        logger.warning(
+            "error_localizer_span_context_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="span_context",
         )
-        if (
-            workspace.organization_id != project.organization_id
-            or not config_workspace_matches
-        ):
-            logger.warning(
-                "error_localizer_workspace_mismatch",
-                eval_logger_id=str(eval_logger.id),
-            )
-            return
+        return
+    input_data_dict = mapping
+    input_keys = list(input_data_dict.keys())
+    input_type_dict = _get_input_type(input_data_dict)
 
-        rule_prompt = (
-            eval_template.config.get("rule_prompt")
-            or eval_template.criteria
-            or eval_template.description
+    task_exists = ErrorLocalizerTask.objects.filter(
+        source_id=eval_logger.id
+    ).exists()
+    target_workspace = project.workspace
+    if not target_workspace:
+        target_workspace = Workspace.objects.get(
+            organization=project.organization,
+            is_default=True,
+            is_active=True,
         )
-
-        # Validate required fields before creating/updating task
-        initial_status, error_message = _validate_error_localizer_fields(
-            rule_prompt, input_data_dict, value
+    # A null author workspace denotes this tenant's default workspace,
+    # not permission to borrow a config into an arbitrary workspace.
+    config_workspace_matches = config_project.workspace_id == target_workspace.id or (
+        config_project.workspace_id is None
+        and target_workspace.is_default
+        and target_workspace.is_active
+    )
+    if (
+        target_workspace.organization_id != project.organization_id
+        or not config_workspace_matches
+    ):
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
         )
+        return
 
-        pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+    rule_prompt = (
+        eval_template.config.get("rule_prompt")
+        or eval_template.criteria
+        or eval_template.description
+    )
 
-        if task_exists:
-            workspace_scope = Q(workspace=workspace)
-            if workspace.is_default and workspace.is_active:
-                # The workspace migration did not backfill historical tasks.
-                # Adopt only this organization's legacy rows into its default.
-                workspace_scope |= Q(workspace__isnull=True)
+    # Validate required fields before creating/updating task
+    initial_status, error_message = _validate_error_localizer_fields(
+        rule_prompt, input_data_dict, value
+    )
+
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
+    if task_exists:
+        workspace_scope = Q(workspace=target_workspace)
+        if target_workspace.is_default and target_workspace.is_active:
+            # The workspace migration did not backfill historical tasks.
+            # Adopt only this organization's legacy rows into its default.
+            workspace_scope |= Q(workspace__isnull=True)
+        try:
             task = ErrorLocalizerTask.objects.get(
                 workspace_scope,
                 source_id=eval_logger.id,
                 source=ErrorLocalizerSource.OBSERVE,
                 organization=project.organization,
             )
-            task.workspace = workspace
-            metadata = task.metadata or {}
-            metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
-            task.eval_result = value
-            task.eval_explanation = eval_explanation
-            task.input_data = input_data_dict
-            task.input_keys = input_keys
-            task.input_types = input_type_dict
-            task.status = initial_status
-            task.rule_prompt = rule_prompt
-            task.error_message = error_message
-            task.metadata = metadata
-            task.save()
-
-        else:
-            task = ErrorLocalizerTask(
-                eval_template=eval_template,
-                source=ErrorLocalizerSource.OBSERVE,
-                source_id=eval_logger.id,
-                input_data=input_data_dict,
-                input_keys=input_keys,
-                input_types=input_type_dict,
-                eval_result=value,
-                eval_explanation=eval_explanation,
-                rule_prompt=rule_prompt,
-                organization=project.organization,
-                metadata={"log_id": log_id, "pass_threshold": pass_threshold},
-                workspace=workspace,
-                status=initial_status,
-                error_message=error_message,
+        except ErrorLocalizerTask.DoesNotExist:
+            # This source's localization belongs to another tenant, workspace
+            # or source; leave it untouched rather than raising into the crash
+            # handler. ``unique_source_id`` rules out creating a second row.
+            logger.warning(
+                "error_localizer_span_existing_task_out_of_scope",
+                eval_logger_id=str(eval_logger.id),
             )
-            task.save()
+            return
+        task.workspace = target_workspace
+        metadata = task.metadata or {}
+        metadata.update({"log_id": str(log_id), "pass_threshold": pass_threshold})
+        task.eval_result = value
+        task.eval_explanation = eval_explanation
+        task.input_data = input_data_dict
+        task.input_keys = input_keys
+        task.input_types = input_type_dict
+        task.status = initial_status
+        task.rule_prompt = rule_prompt
+        task.error_message = error_message
+        task.metadata = metadata
+        task.save()
 
-        logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
-    except Exception as e:
-        logger.error(
-            "error_localizer_span_trigger_failed",
-            eval_logger_id=str(eval_logger.id),
-            span_id=str(observation_span.id),
-            error_type=type(e).__name__,
+    else:
+        task = ErrorLocalizerTask(
+            eval_template=eval_template,
+            source=ErrorLocalizerSource.OBSERVE,
+            source_id=eval_logger.id,
+            input_data=input_data_dict,
+            input_keys=input_keys,
+            input_types=input_type_dict,
+            eval_result=value,
+            eval_explanation=eval_explanation,
+            rule_prompt=rule_prompt,
+            organization=project.organization,
+            metadata={"log_id": log_id, "pass_threshold": pass_threshold},
+            workspace=target_workspace,
+            status=initial_status,
+            error_message=error_message,
         )
+        task.save()
+
+    logger.info(f"Created ErrorLocalizerTask for Eval Logger {eval_logger.id}")
 
 
 def _get_input_keys(input_data):

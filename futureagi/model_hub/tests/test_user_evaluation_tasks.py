@@ -1604,6 +1604,8 @@ class TestTriggerMetadataSnapshot:
         construct_kwargs = mock_task.call_args.kwargs
         assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
 
+    # The span trigger runs each attempt in its own transaction.
+    @pytest.mark.django_db
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
