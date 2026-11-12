@@ -4,6 +4,7 @@ import { AgGridReact } from "ag-grid-react";
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -88,6 +89,19 @@ const CompareData = ({
 
   const { mutate: deleteCompare } = useDeleteCompare();
 
+  // A compare_id is only valid for the selection that created it. Each new
+  // selection (datasets or base column) gets its own token; the id is stored
+  // with the token it belongs to, and responses for an older token are dropped.
+  const selection = useMemo(
+    () => ({ selectedDatasetsValues, baseColumn }),
+    [selectedDatasetsValues, baseColumn],
+  );
+  const activeSelectionRef = useRef(selection);
+  const compareIdSelectionRef = useRef(null);
+  useLayoutEffect(() => {
+    activeSelectionRef.current = selection;
+  }, [selection]);
+
   React.useEffect(() => {
     diffModeRef.current = diffMode;
     gridApiRef?.current?.api?.refreshCells({ force: true });
@@ -126,17 +140,18 @@ const CompareData = ({
     };
   }, [isRefreshingColumns, refreshGrid]); // Dependency on pending items
 
-  // Add effect to refresh grid when selectedDatasetsValues changes
+  // Drop the previous selection's comparison and reload when the selection changes
   React.useEffect(() => {
-    if (compareId?.current) {
+    if (compareId?.current && compareIdSelectionRef.current !== selection) {
       deleteCompare(compareId.current);
       compareId.current = null;
+      compareIdSelectionRef.current = null;
     }
     if (gridApiRef.current && gridApiRef.current.api) {
       gridApiRef.current.api.refreshServerSide({ route: [] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDatasetsValues]);
+  }, [selection]);
 
   function filterColumnDef(columnDefs, selectedColumns) {
     if (columnDefs?.length < 1) return;
@@ -298,6 +313,12 @@ const CompareData = ({
         // request has startRow and endRow get next page number and each page has 10 rows
         const selectedDatasets = selectedDatasetsValues.slice(1);
         const pageNumber = Math.floor(request.startRow / 10);
+        // Only reuse an id that was created for this selection.
+        const requestCompareId =
+          compareIdSelectionRef.current === selection
+            ? compareId?.current ?? null
+            : null;
+        const isStale = () => activeSelectionRef.current !== selection;
 
         try {
           const { data } = await axios.post(
@@ -307,11 +328,24 @@ const CompareData = ({
               base_column_name: baseColumn,
               page_size: 10,
               current_page_index: pageNumber,
-              compare_id: compareId?.current,
+              compare_id: requestCompareId,
             },
           );
 
-          compareId.current = data?.result?.metadata?.compare_id;
+          const responseCompareId = data?.result?.metadata?.compare_id;
+          if (isStale()) {
+            // The selection changed while this request was in flight. A fresh
+            // comparison it created is orphaned, so remove it; a reused id
+            // was already removed by the selection-change effect.
+            if (!requestCompareId && responseCompareId) {
+              deleteCompare(responseCompareId);
+            }
+            params.fail?.();
+            return;
+          }
+
+          compareId.current = responseCompareId;
+          compareIdSelectionRef.current = selection;
 
           // Check if data is empty or doesn't have required structure
           if (!data?.result?.table || data.result.table.length === 0) {
@@ -484,6 +518,10 @@ const CompareData = ({
 
           setColumnAvgs(averages);
         } catch (error) {
+          if (isStale()) {
+            params.fail?.();
+            return;
+          }
           setHasData(false);
           isRefreshingColumns.current = null;
           params.success({
@@ -495,9 +533,11 @@ const CompareData = ({
       getRowId: (data) => data.rowId,
     }),
     [
+      selection,
       selectedDatasetsValues,
       baseColumn,
       compareId,
+      deleteCompare,
       setCommonColumn,
       setDatasetInfo,
       setColumns,
