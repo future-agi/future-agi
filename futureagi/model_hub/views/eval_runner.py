@@ -1625,6 +1625,10 @@ class EvaluationRunner:
             )
         except Exception as e:
             logger.exception(f"Error updating or creating cell: {str(e)}")
+            # The result was not stored, so the cell keeps its RUNNING state.
+            # Fail the row so the caller finishes it instead of counting it as
+            # a success.
+            raise
 
     def _get_required_fields_and_mappings(
         self, user_eval_metric=None, mapping=None, config=None, required_field=None

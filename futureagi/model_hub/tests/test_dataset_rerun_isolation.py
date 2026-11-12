@@ -24,6 +24,10 @@ from model_hub.views.eval_runner import EvaluationRunner
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
+# Postgres rejects NUL bytes in text columns, so storing this result fails for
+# real on every write path, without mocking the database layer.
+UNSTORABLE_RESULT = ({"reason": "row-0"}, CellStatus.PASS.value, "row-0\x00")
+
 
 @pytest.fixture
 def rerun():
@@ -106,6 +110,14 @@ def run_selected(rerun):
 def result_for_row(self, row, mappings):
     value = f"row-{row.order}"
     return {"reason": value}, CellStatus.PASS.value, value
+
+
+def completion_counts(rerun):
+    return [
+        (str(call.kwargs["eval"].id), call.kwargs["count"], call.kwargs["failed"])
+        for call in rerun.properties.call_args_list
+        if "failed" in call.kwargs
+    ]
 
 
 def test_selected_rows_do_not_share_runner_initialization(rerun):
@@ -287,17 +299,23 @@ def test_row_initializers_leave_metric_lifecycle_to_the_batch(rerun):
 @pytest.mark.parametrize("failure_stage", ["initialize", "evaluate", "persist"])
 def test_failed_future_finishes_only_its_selected_row(rerun, failure_stage):
     original = EvaluationRunner.run_evaluation_for_row
+    method, behaviour = {
+        "initialize": (
+            "load_user_eval_metric",
+            {"side_effect": RuntimeError("synthetic row failure")},
+        ),
+        "evaluate": (
+            "_process_eval_result",
+            {"side_effect": RuntimeError("synthetic row failure")},
+        ),
+        # The real cell-write failure: the in-place save and the
+        # update_or_create fallback both fail to store the result.
+        "persist": ("_process_eval_result", {"return_value": UNSTORABLE_RESULT}),
+    }[failure_stage]
 
     def fail_one(self, row_id):
         if row_id == str(rerun.rows[0].id):
-            method = {
-                "initialize": "load_user_eval_metric",
-                "evaluate": "_process_eval_result",
-                "persist": "_create_cell",
-            }[failure_stage]
-            with patch.object(
-                self, method, side_effect=RuntimeError("synthetic row failure")
-            ):
+            with patch.object(self, method, **behaviour):
                 return original(self, row_id)
         return original(self, row_id)
 
@@ -325,6 +343,7 @@ def test_failed_future_finishes_only_its_selected_row(rerun, failure_stage):
     )
     rerun.metric.refresh_from_db()
     assert rerun.metric.status == StatusType.FAILED.value
+    assert completion_counts(rerun) == [(str(rerun.metric.id), 1, 1)]
 
 
 def test_runner_constructor_failure_finishes_all_selected_rows(rerun):
