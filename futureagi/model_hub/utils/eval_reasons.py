@@ -73,8 +73,9 @@ def get_eval_reasons(
         # Dataset reason columns name their evaluation column in the source_id
         # prefix. Pair by that id: splitting the column name breaks evaluation
         # names that themselves contain "-reason" (e.g. "answer-reasoning").
-        eval_name = eval_name_by_column_id.get(paired_column_id) or (
-            column.name.rsplit("-reason", 1)[0]
+        eval_name = (
+            eval_name_by_column_id.get(paired_column_id)
+            or (column.name.rsplit("-reason", 1)[0])
         )
 
         if user_eval_metric_id and user_eval_metric_id not in uem_to_eval_name_map:

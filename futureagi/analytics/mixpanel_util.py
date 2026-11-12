@@ -106,7 +106,7 @@ class MixpanelTracker:
             return
         try:
             self._set_details(user)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort analytics never raises
             _log_delivery_failure(e, "set_details", "mixpanel_set_details_failed")
 
     def _set_details(self, user: User):
