@@ -283,7 +283,7 @@
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:145`
 
 **Tags:** @saml
 
@@ -304,7 +304,7 @@
 
 **Goal:** The browser that initiated SSO can complete after another browser posts first
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:191`
 
 **Tags:** @saml
 
@@ -324,7 +324,7 @@
 
 **Goal:** A real cross-site IdP POST does not leak the browser binding cookie
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:255`
 
 **Tags:** @saml
 
@@ -343,7 +343,7 @@
 
 **Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:276`
 
 **Tags:** @saml
 
@@ -362,7 +362,7 @@
 
 **Goal:** A SAML session lands in the organization that signed the assertion
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:308`
 
 **Tags:** @saml
 
@@ -381,7 +381,7 @@
 
 **Goal:** A SAML callback replaces a live session without using its stale organization scope
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:339`
 
 **Tags:** @saml
 
@@ -1104,7 +1104,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:280`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:305`
 
 **Tags:** —
 
@@ -1128,7 +1128,7 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:351`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:376`
 
 **Tags:** —
 
@@ -1153,7 +1153,7 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:406`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:431`
 
 **Tags:** —
 
@@ -1178,7 +1178,7 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:485`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:510`
 
 **Tags:** —
 
@@ -1203,7 +1203,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:182`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:207`
 
 **Tags:** —
 
@@ -1251,6 +1251,33 @@
 - the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
 - both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
 - the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
+
+### EVAL-E2E-013 — a Jev choice stays under the pointer while ordinary model search loads
+
+**Goal:** Choose Jev latest with one gesture during model search and reach the TypeSafe keys drawer without selecting a model or saving a key
+
+**Spec:** `flows/evals/evaluator-picker-search.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a real evaluator draft at normal and constrained viewport heights
+2. wait for the initial decision and ordinary-model catalogs, then search Jev
+3. observe the Jev row before and during ordinary-model loading
+4. press the row, release the unmodified search response, and release the pointer at the same position
+5. read the TypeSafe drawer and the still-unselected evaluation model
+
+**Backend state verified:**
+
+- the real provider-status API reports no TypeSafe key before and after each gesture
+- the browser sends no API-key write during either gesture
+
+**Browser observations:**
+
+- Jev latest does not move at loading onset or response completion
+- one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
+- the picker stays within the viewport at both heights
 
 ## gateway
 
@@ -2199,7 +2226,7 @@
 
 **Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
 
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+**Spec:** `flows/observe/openrouter-usage.spec.ts:45`
 
 **Tags:** —
 
