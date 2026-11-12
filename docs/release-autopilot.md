@@ -802,10 +802,24 @@ Python calls left without `-I`, and why:
   `sys.path` to find the test modules.
 - The backend build's `verify-command` in `release-images.yml` runs
   `python -c` inside the built image, not on the runner.
-- `release-update-manifest.yml` (`python3 -` in its contents-write `publish`
-  job) and `refresh-disposable-domains.yml` (which reads the release-bot key)
-  need the same change. They are outside this change.
-  `helm-release.yml` runs `python -m pip` only in its read-only `package`
+- `release-update-manifest.yml` runs `python3 -` in the "Validate proof
+  before signing" step of its contents-write `publish` job. That code imports
+  `deploy.update` and `scripts` from the job's `refs/tags/<version>` checkout,
+  so plain `-I` would break it. It needs `python3 -I` plus an explicit
+  `sys.path` entry for the checkout, appended after the standard library so a
+  top-level module file cannot shadow it. That workflow is outside this
+  change.
+- `refresh-disposable-domains.yml` reads the release-bot key and runs
+  `python3 scripts/generate_disposable_domains.py`. The script imports only
+  the standard library, so `-I` alone is enough. That workflow is outside this
+  change.
+- `build-image-multiarch.yml` runs `python3 scripts/image_size_budget.py` from
+  the release checkout in its `build` job, and `python3 -c` in its `publish`
+  job. Both jobs hold Docker Hub credentials, and `build` also has a
+  `packages: write` token for the ghcr build cache. Neither holds the
+  release-bot key, an App token or a contents-write token, so the rule above
+  does not cover them, and they stay as they are.
+- `helm-release.yml` runs `python -m pip` only in its read-only `package`
   job.
 
 ## Verification and unchanged workflow sections
