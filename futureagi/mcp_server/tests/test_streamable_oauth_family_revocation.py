@@ -325,3 +325,58 @@ async def test_sdk_reuse_in_one_family_leaves_other_grants_working(
 
     _assert_invalid_token(await _post_initialize(rotated.json()["access_token"]))
     assert (await _post_initialize(other["access_token"])).status_code == 200
+
+
+async def test_drf_replaying_the_unused_token_of_a_superseded_family_keeps_its_access(
+    user, workspace
+):
+    """Positive control for the escalation: presenting the superseded
+    family's latest (never rotated) token is refused as revoked, not as
+    reuse, so the family's access token keeps its remaining lifetime."""
+    first = await drf_authorize(user, workspace, "family-drf-su", "family-su-1")
+    await drf_authorize(user, workspace, "family-drf-su", "family-su-2")
+
+    late = await drf_refresh(first["refresh_token"], "family-drf-su")
+    assert late.status_code == 400, late.data
+
+    assert (await _post_initialize(first["access_token"])).status_code == 200
+
+
+async def test_drf_access_token_of_a_deleted_family_is_rejected(user, workspace):
+    from mcp_server.models.oauth_refresh_token import MCPOAuthRefreshFamily
+
+    issued = await drf_authorize(user, workspace, "family-drf-del", "family-del")
+    family_id = decrypt_oauth_token(issued["access_token"])["refresh_family_id"]
+    assert (await _post_initialize(issued["access_token"])).status_code == 200
+
+    await sync_to_async(
+        MCPOAuthRefreshFamily.objects.filter(pk=family_id).delete
+    )()
+
+    _assert_invalid_token(await _post_initialize(issued["access_token"]))
+
+
+async def test_sdk_revoked_family_stays_revoked_for_the_access_token_lifetime(
+    user, workspace, settings, monkeypatch
+):
+    """With a refresh-token lifetime shorter than an access token's, the
+    family's revoked marker must still outlive the family's access tokens."""
+    from django.core.cache.backends import locmem
+
+    settings.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 60
+    async with _oauth_http() as http:
+        client = await _sdk_register(http)
+        issued = await _sdk_issue_tokens(http, client, user, workspace)
+        stolen = await _sdk_refresh(http, client, issued["refresh_token"])
+        assert stolen.status_code == 200, stolen.text
+        replay = await _sdk_refresh(http, client, issued["refresh_token"])
+        assert replay.status_code == 400, replay.text
+    thief_access = stolen.json()["access_token"]
+    _assert_invalid_token(await _post_initialize(thief_access))
+
+    # Ten minutes later: past the refresh-token lifetime, within the access
+    # token's hour (its encrypted expiry is checked against the real clock).
+    real_time = locmem.time.time
+    monkeypatch.setattr(locmem.time, "time", lambda: real_time() + 600)
+
+    _assert_invalid_token(await _post_initialize(thief_access))

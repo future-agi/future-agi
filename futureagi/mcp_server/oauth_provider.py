@@ -87,8 +87,12 @@ def _refresh_ttl() -> int:
 async def _revoke_refresh_family(family_id: str | None, reason: str) -> None:
     if not family_id:
         return
+    # The marker must outlive the family's refresh tokens and its access
+    # tokens, which /mcp refuses while it exists.
     await sync_to_async(cache.set)(
-        f"{REFRESH_FAMILY_REVOKED_PREFIX}{family_id}", reason, _refresh_ttl()
+        f"{REFRESH_FAMILY_REVOKED_PREFIX}{family_id}",
+        reason,
+        max(_refresh_ttl(), ACCESS_TTL),
     )
     logger.warning("oauth_refresh_family_revoked", family_id=family_id, reason=reason)
 
