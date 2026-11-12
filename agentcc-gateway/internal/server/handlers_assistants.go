@@ -85,7 +85,7 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.TraceID = r.Header.Get("x-agentcc-trace-id")
 	rc.EndpointType = "assistants"
 	rc.Metadata["assistants_operation"] = operation
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header.
