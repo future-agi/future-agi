@@ -24,13 +24,13 @@ name: Python types (advisory)
 # cache can never hide an error.
 #
 # No branches filter on pull_request: stacked PRs into feature branches get the
-# check too. No "edited" type: a body edit would start a run that cancels the
-# one in progress. A PR moved to another base is checked on its next push, or
-# by re-running the workflow.
+# check too. An "edited" event runs the check only when the base changes: that
+# event checks the new merge commit. Ordinary body/title edits skip every job
+# and use an isolated concurrency group, leaving an active check alone.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [dev]
 
@@ -38,9 +38,9 @@ permissions:
   contents: read
 
 concurrency:
-  # One run per PR; a new push cancels the old run. Pushes to dev get one group
-  # per commit, so a later merge never cancels an earlier commit's run.
-  group: python-types-${{ github.event_name == 'push' && github.sha || github.ref }}
+  # Pushes and retargets share the PR group; ordinary edits cannot cancel them.
+  # Pushes to dev get one group per commit, so later merges cannot cancel them.
+  group: python-types-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -50,14 +50,15 @@ env:
 
 jobs:
   changes:
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read # dorny/paths-filter reads the PR's file list
     outputs:
-      # A push to dev always runs mypy; a PR runs it when a type path changed.
-      python: ${{ github.event_name == 'push' && 'true' || steps.filter.outputs.python }}
+      # Pushes to dev and retargets always run mypy, even for a docs-only PR.
+      python: ${{ (github.event_name == 'push' || github.event.changes.base) && 'true' || steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -144,7 +145,7 @@ jobs:
   python-types-pass:
     name: Python Types Pass
     needs: [changes, mypy-baseline]
-    if: always()
+    if: always() && (github.event.action != 'edited' || github.event.changes.base)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
