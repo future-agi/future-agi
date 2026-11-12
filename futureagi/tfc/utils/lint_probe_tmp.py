@@ -2,4 +2,5 @@
 
 
 def probe_value() -> int:
+    print("probe")
     return 1
