@@ -14,16 +14,34 @@ This ASGI wrapper applies the same limits as the Django token endpoint
 
 Refusals use the Django endpoint's OAuth error shape: ``429`` with
 ``{"error": "slow_down", ...}`` and ``Retry-After``.
+
+The throttle must key on the same ``client_id`` whose secret the SDK checks.
+So ``/token`` and ``/revoke`` bodies are parsed with Starlette's own form
+parser, the one the SDK handlers call, and two kinds of body are refused with
+``400 invalid_request`` before any throttle or SDK code runs:
+
+- a body that Starlette would not parse as
+  ``application/x-www-form-urlencoded``, the format RFC 6749 (sections 4.1.3
+  and 6) and RFC 7009 (section 2.1) specify for these requests. Without this, a ``multipart/form-data``
+  body would reach the SDK's secret check under a client the throttle never
+  saw.
+- a body with more than one ``client_id``. RFC 6749 section 3.1 forbids
+  repeating a parameter, and the SDK authenticates the last one, so a decoy
+  could otherwise take the throttle's attention.
 """
 
 import json
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
-from urllib.parse import parse_qsl
 
 import structlog
 from asgiref.sync import sync_to_async
+
+# The function starlette.requests uses to decide how to parse a form body.
+from python_multipart.multipart import parse_options_header
 from rest_framework.exceptions import Throttled
+from starlette.datastructures import FormData, Headers
+from starlette.requests import ClientDisconnect, Request
 
 from mcp_server.exceptions import RateLimitBackendUnavailableError
 from mcp_server.throttles import (
@@ -50,6 +68,10 @@ REGISTER_PATH = "/register"
 # The body is buffered to read client_id, so cap it.
 MAX_BODY_BYTES = 64 * 1024
 
+# The only media type Starlette parses as a url-encoded form, compared after
+# the same parse_options_header() normalization.
+URLENCODED_MEDIA_TYPE = b"application/x-www-form-urlencoded"
+
 # SDK responses that mean a client secret, code or refresh token was wrong.
 _INVALID_CREDENTIAL_ERRORS = frozenset(
     {"unauthorized_client", "invalid_client", "invalid_grant"}
@@ -59,20 +81,31 @@ _INVALID_CREDENTIAL_ERRORS = frozenset(
 class _ThrottleRequest:
     """The parts of a DRF request that the token throttle helpers read."""
 
-    def __init__(self, scope: Scope, body: bytes) -> None:
-        headers = {
-            name.decode("latin-1").lower(): value.decode("latin-1")
-            for name, value in scope.get("headers") or []
-        }
+    def __init__(self, scope: Scope, data: dict[str, str] | None = None) -> None:
+        headers = Headers(scope=scope)
         client = scope.get("client") or ("", 0)
         self.META = {"REMOTE_ADDR": client[0] or ""}
         if "x-forwarded-for" in headers:
             self.META["HTTP_X_FORWARDED_FOR"] = headers["x-forwarded-for"]
-        self.data: dict[str, str] = {}
-        content_type = headers.get("content-type", "")
-        if content_type.split(";")[0].strip() == "application/x-www-form-urlencoded":
-            for key, value in parse_qsl(body.decode("utf-8", "replace")):
-                self.data.setdefault(key, value)
+        self.data: dict[str, str] = data or {}
+
+
+def _is_urlencoded(scope: Scope) -> bool:
+    """True if Starlette, and so the SDK, would parse the body as a url-encoded form."""
+    media_type, _ = parse_options_header(Headers(scope=scope).get("content-type"))
+    return media_type == URLENCODED_MEDIA_TYPE
+
+
+async def _parse_form(scope: Scope, messages: list[Message]) -> FormData:
+    """Parse the buffered body exactly as the SDK handler's request.form() will."""
+    pending = list(messages)
+
+    async def receive() -> Message:
+        if pending:
+            return pending.pop(0)
+        return {"type": "http.disconnect"}
+
+    return await Request(scope, receive).form()
 
 
 async def _send_json(
@@ -90,6 +123,12 @@ async def _send_json(
         {"type": "http.response.start", "status": status, "headers": raw_headers}
     )
     await send({"type": "http.response.body", "body": body})
+
+
+async def _send_invalid_request(send: Send, detail: str) -> None:
+    await _send_json(
+        send, 400, {"error": "invalid_request", "error_description": detail}
+    )
 
 
 async def _send_throttled(send: Send, wait: float | int | None, detail: str) -> None:
@@ -198,6 +237,13 @@ class MCPSDKOAuthThrottleMiddleware:
             await self.app(scope, receive, send)
             return
 
+        is_token_path = path in TOKEN_PATHS
+        if is_token_path and not _is_urlencoded(scope):
+            await _send_invalid_request(
+                send, "Content-Type must be application/x-www-form-urlencoded"
+            )
+            return
+
         body, messages = await _read_body(receive)
         if body is None:
             await _send_json(
@@ -210,15 +256,31 @@ class MCPSDKOAuthThrottleMiddleware:
             )
             return
 
-        request = _ThrottleRequest(scope, body)
-        admit = _admit_token_request if path in TOKEN_PATHS else _admit_register_request
+        if is_token_path:
+            try:
+                form = await _parse_form(scope, messages)
+            except ClientDisconnect:
+                return
+            if len(form.getlist("client_id")) > 1:
+                await _send_invalid_request(send, "client_id must not be repeated")
+                return
+            # dict() keeps the last value of each field, as the SDK's
+            # dict(form_data) does. Only text fields can carry client_id.
+            request = _ThrottleRequest(
+                scope,
+                {key: value for key, value in form.items() if isinstance(value, str)},
+            )
+            admit = _admit_token_request
+            outage_detail = "Token throttling temporarily unavailable"
+        else:
+            request = _ThrottleRequest(scope)
+            admit = _admit_register_request
+            outage_detail = "Client registration throttling temporarily unavailable"
         try:
             refused = await sync_to_async(admit)(request)
         except RateLimitBackendUnavailableError as exc:
-            release_token_attempt_reservation(request)
-            await _send_throttled(
-                send, exc.retry_after, "Token throttling temporarily unavailable"
-            )
+            await sync_to_async(release_token_attempt_reservation)(request)
+            await _send_throttled(send, exc.retry_after, outage_detail)
             return
         if refused is not None:
             await _send_throttled(send, *refused)
@@ -231,7 +293,7 @@ class MCPSDKOAuthThrottleMiddleware:
                 return pending.pop(0)
             return await receive()
 
-        if path not in TOKEN_PATHS:
+        if not is_token_path:
             await self.app(scope, replay, send)
             return
 
