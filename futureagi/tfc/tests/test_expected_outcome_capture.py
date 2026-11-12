@@ -238,3 +238,48 @@ def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):
     assert "LiteLLM" in {
         crumb.get("category") for crumb in event["breadcrumbs"]["values"]
     }
+
+
+@pytest.mark.asyncio
+async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
+    from temporalio.exceptions import ApplicationError
+
+    from tfc.temporal.common import sentry_interceptor
+
+    monkeypatch.setattr(sentry_interceptor, "_get_sentry_sdk", lambda: sentry_sdk)
+
+    async def activity_fn():
+        raise AssertionError("replaced per case")
+
+    def interceptor_raising(error):
+        async def execute(_):
+            raise error
+
+        return sentry_interceptor.SentryActivityInboundInterceptor(
+            SimpleNamespace(execute_activity=execute)
+        )
+
+    activity_input = SimpleNamespace(fn=activity_fn, args=[])
+    denial = ApplicationError(
+        "Synthetic free tier limit reached",
+        {"code": "FREE_TIER_LIMIT", "message": "Synthetic free tier limit reached"},
+        type="EvaluationDenied",
+        non_retryable=True,
+    )
+    with pytest.raises(ApplicationError):
+        await interceptor_raising(denial).execute_activity(activity_input)
+    assert transport.events == []
+
+    genuine = [
+        RuntimeError("synthetic activity fault"),
+        ApplicationError("retryable", type="EvaluationDenied", non_retryable=False),
+        ApplicationError(
+            "other refusal", type="ProviderMisconfigured", non_retryable=True
+        ),
+    ]
+    for error in genuine:
+        with pytest.raises(type(error)):
+            await interceptor_raising(error).execute_activity(activity_input)
+    assert [
+        event["exception"]["values"][-1]["value"] for event in transport.events
+    ] == ["synthetic activity fault", "retryable", "other refusal"]

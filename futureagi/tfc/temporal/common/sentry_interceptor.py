@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Optional, Type
 
 from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 from temporalio.worker import (
     ActivityInboundInterceptor,
     ExecuteActivityInput,
@@ -21,6 +22,20 @@ from temporalio.worker import (
     WorkflowInboundInterceptor,
     WorkflowInterceptorClassInput,
 )
+
+# Non-retryable ApplicationError types that an activity raises to report an
+# expected refusal rather than a fault. An evaluation usage or entitlement
+# denial is the activity's answer: the workflow records it and stops, so it is
+# not a Sentry issue. Any other type, or a retryable one, is still captured.
+EXPECTED_ACTIVITY_FAILURE_TYPES = frozenset({"EvaluationDenied"})
+
+
+def _is_expected_activity_failure(error: BaseException) -> bool:
+    return (
+        isinstance(error, ApplicationError)
+        and error.non_retryable
+        and error.type in EXPECTED_ACTIVITY_FAILURE_TYPES
+    )
 
 
 def _get_sentry_sdk():
@@ -199,7 +214,10 @@ class SentryActivityInboundInterceptor(ActivityInboundInterceptor):
                         type(e).__name__,
                     ]
 
-                    sentry_sdk.capture_exception(e)
+                    # An expected refusal keeps its breadcrumb and span status
+                    # below but is not reported as an issue.
+                    if not _is_expected_activity_failure(e):
+                        sentry_sdk.capture_exception(e)
 
                 # Add breadcrumb for activity failure
                 sentry_sdk.add_breadcrumb(
