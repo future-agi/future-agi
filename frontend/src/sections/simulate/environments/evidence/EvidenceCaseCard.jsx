@@ -10,6 +10,11 @@ import {
 } from "./evidence.constants";
 
 const PARTS = Object.keys(PART_LABELS);
+// Only a dataset row records an expected outcome.
+const partsOf = (kind) =>
+  kind === "dataset"
+    ? PARTS
+    : PARTS.filter((part) => part !== "expected_outcome");
 const PREVIEW_CHARS = 240;
 
 const clip = (text) =>
@@ -57,6 +62,14 @@ export default function EvidenceCaseCard({
             variant="badge"
           />
         ) : null}
+        {kind === "dataset" ? (
+          <StatusBadge
+            role="neutral"
+            label={EVIDENCE_COPY.yourRow(production)}
+            size="sm"
+            variant="badge"
+          />
+        ) : null}
         <StatusBadge
           role={CASE_ROLE[item.status] || "neutral"}
           label={EVIDENCE_COPY[item.status] || item.status}
@@ -70,7 +83,9 @@ export default function EvidenceCaseCard({
       ) : null}
       {!item.source_available ? (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {EVIDENCE_COPY.provenanceUnavailable}
+          {kind === "dataset"
+            ? EVIDENCE_COPY.provenanceUnavailableRow
+            : EVIDENCE_COPY.provenanceUnavailable}
         </Typography>
       ) : null}
       {item.changed_since_import ? (
@@ -79,7 +94,7 @@ export default function EvidenceCaseCard({
         </Typography>
       ) : null}
       <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mb: 1 }}>
-        {PARTS.map((part) => (
+        {partsOf(kind).map((part) => (
           <CustomTooltip
             key={part}
             title={item[part]?.reason || ""}
@@ -106,6 +121,16 @@ export default function EvidenceCaseCard({
           {clip(turn.text)}
         </Typography>
       ))}
+      {item.expected_outcome?.text ? (
+        <Typography
+          variant="body2"
+          sx={{ whiteSpace: "pre-wrap", color: "text.secondary", mt: 0.5 }}
+          data-testid="evidence-expected-outcome"
+        >
+          <strong>{EVIDENCE_COPY.expectedOutcome}:</strong>{" "}
+          {clip(item.expected_outcome.text)}
+        </Typography>
+      ) : null}
       {item.status === "drafted" || item.status === "added" ? (
         <Box sx={{ mt: 1 }}>
           <Typography variant="body2">
@@ -147,7 +172,7 @@ export default function EvidenceCaseCard({
 
 EvidenceCaseCard.propTypes = {
   item: PropTypes.object.isRequired,
-  kind: PropTypes.oneOf(["session", "call", "transcript"]),
+  kind: PropTypes.oneOf(["session", "call", "transcript", "dataset"]),
   simulated: PropTypes.bool,
   production: PropTypes.bool,
   shows: PropTypes.string,

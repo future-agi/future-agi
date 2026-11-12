@@ -16,6 +16,10 @@ vi.mock("src/api/simulate-environments/environments", () => ({
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn() },
 }));
+const dataset = vi.hoisted(() => ({ columns: [] }));
+vi.mock("src/api/develop/develop-detail", () => ({
+  useDatasetColumnConfig: () => dataset.columns,
+}));
 
 const { default: axios } = await import("src/utils/axios");
 const { default: CreateEnvironmentTestDialog } = await import(
@@ -56,7 +60,23 @@ beforeEach(() => {
   nav.navigate.mockReset();
   envs.rows = [{ id: ENV, name: "Refunds" }];
   envs.answer = null;
+  dataset.columns = [
+    { field: "col-chat", headerName: "chat", dataType: "text" },
+    { field: "col-expected", headerName: "expected", dataType: "text" },
+    { field: "col-audio", headerName: "recording", dataType: "audio" },
+  ];
 });
+
+const renderRows = () =>
+  renderDialog({
+    projectId: undefined,
+    datasetId: "d1",
+    sourceKind: "dataset",
+    ids: ["r1", "r2"],
+  });
+
+const pick = (testId, value) =>
+  fireEvent.change(screen.getByTestId(testId), { target: { value } });
 
 describe("CreateEnvironmentTestDialog", () => {
   it("imports into the picked environment and opens its review", async () => {
@@ -120,5 +140,60 @@ describe("CreateEnvironmentTestDialog", () => {
       screen.getByText(/Couldn't load your environments/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No environment to import into/)).toBeNull();
+  });
+
+  it("imports dataset rows through the picked columns, not as production unsaid", async () => {
+    axios.post.mockResolvedValue({ data: { id: IMPORT, cases: [] } });
+    const { onClose } = renderRows();
+    expect(screen.getByText(/2 rows from this dataset/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Audio-only rows are not supported yet/),
+    ).toBeInTheDocument();
+
+    pickEnvironment();
+    // No conversation column yet: nothing to read the rows through.
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    pick("evidence-conversation-column", "col-chat");
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(axios.post).toHaveBeenCalledWith(
+      `/simulate/api/harness-environments/${ENV}/evidence-imports/`,
+      {
+        source_kind: "dataset",
+        dataset_id: "d1",
+        ids: ["r1", "r2"],
+        columns: { conversation: "col-chat", labels: [], expected: null },
+        production: false,
+      },
+    );
+    expect(nav.navigate.mock.calls.at(-1)[0]).toMatch(
+      new RegExp(`[?&]import=${IMPORT}$`),
+    );
+  });
+
+  it("sends the expected outcome column, and production only when ticked", async () => {
+    axios.post.mockResolvedValue({ data: { id: IMPORT, cases: [] } });
+    renderRows();
+    pickEnvironment();
+    pick("evidence-conversation-column", "col-chat");
+    pick("evidence-expected-column", "col-expected");
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "These rows come from production" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls[0][1]).toMatchObject({
+      columns: { conversation: "col-chat", expected: "col-expected" },
+      production: true,
+    });
+  });
+
+  it("never offers an audio column as the conversation", () => {
+    renderRows();
+    pickEnvironment();
+    pick("evidence-conversation-column", "col-audio");
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
   });
 });

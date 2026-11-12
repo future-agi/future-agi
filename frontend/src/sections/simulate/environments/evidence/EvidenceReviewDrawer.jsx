@@ -55,6 +55,7 @@ export default function EvidenceReviewDrawer({
   const beside = Boolean(drafts?.any);
   const kind = data?.source_kind ?? "session";
   const transcript = kind === "transcript";
+  const dataset = kind === "dataset";
 
   const onDraft = () =>
     draft.mutate({
@@ -125,6 +126,11 @@ export default function EvidenceReviewDrawer({
                   {EVIDENCE_COPY.transcriptNotice(Boolean(data.production))}
                 </Alert>
               ) : null}
+              {dataset ? (
+                <Alert severity="info" data-testid="evidence-dataset">
+                  {EVIDENCE_COPY.datasetNotice(Boolean(data.production))}
+                </Alert>
+              ) : null}
               {cases.map((one) => (
                 <EvidenceCaseCard
                   key={one.id}
@@ -150,7 +156,9 @@ export default function EvidenceReviewDrawer({
               <Alert severity="info">
                 {transcript
                   ? EVIDENCE_COPY.startingStateTranscript
-                  : EVIDENCE_COPY.startingState}
+                  : dataset
+                    ? EVIDENCE_COPY.startingStateDataset
+                    : EVIDENCE_COPY.startingState}
               </Alert>
             </Section>
 

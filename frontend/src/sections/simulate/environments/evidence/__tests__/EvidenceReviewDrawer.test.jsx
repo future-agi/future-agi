@@ -249,6 +249,74 @@ describe("EvidenceReviewDrawer", () => {
     ).toHaveTextContent("Reproduce the failure as a test");
   });
 
+  it("reviews dataset rows as the person's, with each row's expected outcome", async () => {
+    evidence = bundle({
+      source_kind: "dataset",
+      production: false,
+      cases: [
+        item({
+          source_id: "row-1",
+          tool_calls: part("missing", "A dataset row carries no tool calls."),
+          expected_outcome: {
+            ...part("present"),
+            text: "Refuse the second refund.",
+          },
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).getByText("Dataset row")).toBeInTheDocument();
+    expect(
+      within(card).getByText("Expected outcome: present"),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByTestId("evidence-expected-outcome"),
+    ).toHaveTextContent("Expected outcome: Refuse the second refund.");
+    expect(screen.getByText("1 row from a dataset")).toBeInTheDocument();
+    expect(screen.getByTestId("evidence-dataset")).toHaveTextContent(
+      "You did not mark these rows as production",
+    );
+    // Rows are read live, so redaction is what it will replace, not what it did.
+    expect(
+      screen.getByText(/will be replaced with tokens/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^A dataset row never records the records/),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("evidence-transcript")).toBeNull();
+    expect(
+      screen.getByRole("combobox", {
+        name: /^What should the new scenarios be\?/,
+      }),
+    ).toHaveTextContent("Reproduce the failure as a test");
+  });
+
+  it("says a deleted row's provenance is the dataset's, not Observe's", async () => {
+    evidence = bundle({
+      source_kind: "dataset",
+      cases: [
+        item({
+          status: "unavailable",
+          reason: "The row or its dataset was deleted.",
+          source_available: false,
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(
+      within(card).getByText(/the dataset no longer holds this row/),
+    ).toBeInTheDocument();
+    expect(within(card).queryByText(/Observe no longer keeps/)).toBeNull();
+  });
+
+  it("shows no expected outcome on an Observe source", async () => {
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(within(card).queryByText(/^Expected outcome/)).toBeNull();
+  });
+
   it("a transcript said to be from production makes regression tests", async () => {
     evidence = bundle({
       source_kind: "transcript",

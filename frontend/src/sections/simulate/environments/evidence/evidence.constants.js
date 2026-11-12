@@ -4,7 +4,8 @@ import {
 } from "src/api/simulate-environments/evidenceImports";
 
 // What the import review says. One term per thing: an "import" holds "cases",
-// each from one Observe session or call, or one transcript a person added; the
+// each from one Observe session or call, one dataset row, or one transcript a
+// person added; the
 // builder "drafts" a scenario for a case; a person "adds" drafted cases to the
 // suite.
 
@@ -20,6 +21,22 @@ export const EVIDENCE_COPY = {
   dialogTitle: "Create environment test",
   dialogBody: (count, kind) =>
     `${count} ${kind}${count === 1 ? "" : "s"} from this project become a draft import. Nothing runs, and nothing joins the suite until you add it.`,
+  datasetDialogBody: (count) =>
+    `${count} row${count === 1 ? "" : "s"} from this dataset become a draft import. The rows are read again each time you review them; nothing of them is copied. Nothing runs, and nothing joins the suite until you add it.`,
+  conversationColumn: "Conversation column",
+  conversationHelp:
+    'Chat messages as JSON, or lines that start "User:" or "Agent:". Audio-only rows are not supported yet.',
+  labelColumns: "Label columns (optional)",
+  expectedColumn: "Expected outcome column (optional)",
+  expectedHelp:
+    "What should happen. The scenario's expected behaviour is written from it; where it contradicts the agent's policy, the policy wins.",
+  noColumn: "None",
+  columnsLoading: "Loading this dataset's columns…",
+  noTextColumn:
+    "This dataset has no text or JSON column to read a conversation from. Audio-only rows are not supported yet.",
+  rowsProduction: "These rows come from production",
+  rowsProductionHelp:
+    "Leave it off for rows you wrote or ones from testing: their scenarios then never claim a customer did this.",
   environmentLabel: "Environment",
   noEnvironments: "No environment to import into yet. Create one first.",
   environmentsLoading: "Loading your environments…",
@@ -54,13 +71,22 @@ export const EVIDENCE_COPY = {
     `${name} is longer than ${MAX_TRANSCRIPT_CHARS.toLocaleString("en-US")} characters.`,
   transcriptsTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} files.`,
   title: "Review imported evidence",
-  subtitle: (count, kind) =>
-    kind === "transcript"
-      ? `${count} transcript${count === 1 ? "" : "s"} you added`
-      : `${count} ${kind}${count === 1 ? "" : "s"} from Observe`,
+  subtitle: (count, kind) => {
+    const plural = count === 1 ? "" : "s";
+    if (kind === "transcript") return `${count} transcript${plural} you added`;
+    if (kind === "dataset") return `${count} row${plural} from a dataset`;
+    return `${count} ${kind}${plural} from Observe`;
+  },
   // A transcript is the person's, never a recording Observe made.
   yourTranscript: (production) =>
     production ? "Your transcript, from production" : "Your transcript",
+  // A dataset row is the person's too; its provenance is what they said.
+  yourRow: (production) =>
+    production ? "Dataset row, from production" : "Dataset row",
+  datasetNotice: (production) =>
+    production
+      ? "You said these rows come from production, so each case is regression evidence. They are read from the dataset again each time, not recordings Observe made."
+      : "You did not mark these rows as production: their scenarios are tests, and never claim a customer did this.",
   transcriptNotice: (production) =>
     production
       ? "You said these transcripts come from production, so each case is regression evidence. They are your transcripts, not recordings Observe made."
@@ -107,6 +133,8 @@ export const EVIDENCE_COPY = {
   },
   startingState:
     "Observe never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+  startingStateDataset:
+    "A dataset row never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the row shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
   startingStateTranscript:
     "A transcript never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the transcript shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
   draft: (n) => `Draft ${n} scenario${n === 1 ? "" : "s"}`,
@@ -123,6 +151,9 @@ export const EVIDENCE_COPY = {
   scenarioKey: "Scenario",
   provenanceUnavailable:
     "Provenance unavailable: Observe no longer keeps this source.",
+  provenanceUnavailableRow:
+    "Provenance unavailable: the dataset no longer holds this row.",
+  expectedOutcome: "Expected outcome",
   changed: "The source changed since it was imported.",
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,
@@ -159,6 +190,7 @@ export const PART_LABELS = {
   tool_outputs: "Tool outputs",
   labels: "Labels",
   starting_state: "Starting state",
+  expected_outcome: "Expected outcome",
 };
 
 // A part's status as a StatusBadge role.

@@ -5,9 +5,9 @@ import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { refreshDrafts, refreshFollowers } from "./versions";
 
-// Observe sessions or calls frozen as evidence for an environment's tests, or
-// transcripts a person added, and the review that drafts and adds them
-// (simulate/serializers/evidence_import.py).
+// Observe sessions or calls or dataset rows frozen as evidence for an
+// environment's tests, or transcripts a person added, and the review that
+// drafts and adds them (simulate/serializers/evidence_import.py).
 
 // The backend takes 1 to 20 sources per import.
 export const MAX_EVIDENCE_SOURCES = 20;
@@ -46,21 +46,34 @@ export const evidenceImportKey = (envId, importId) => [
   importId,
 ];
 
-// An Observe import names its project and ids; a transcript import carries its
-// transcripts ({name, format, text}) and whether the person says they come
-// from production.
-export const createEvidenceImport = async (
-  envId,
-  { projectId, sourceKind, ids, transcripts, production },
-) =>
-  (
-    await axios.post(
-      importsPath(envId),
-      sourceKind === "transcript"
-        ? { source_kind: sourceKind, transcripts, production }
-        : { project_id: projectId, source_kind: sourceKind, ids },
-    )
-  ).data;
+// An Observe import names its project and ids. A dataset import names its
+// dataset, row ids and columns ({conversation, labels, expected}); a transcript
+// import carries its transcripts ({name, format, text}). Both say whether the
+// person says they come from production.
+const createBody = ({
+  projectId,
+  datasetId,
+  sourceKind,
+  ids,
+  columns,
+  transcripts,
+  production,
+}) => {
+  if (sourceKind === "transcript")
+    return { source_kind: sourceKind, transcripts, production };
+  if (sourceKind === "dataset")
+    return {
+      source_kind: sourceKind,
+      dataset_id: datasetId,
+      ids,
+      columns,
+      production,
+    };
+  return { project_id: projectId, source_kind: sourceKind, ids };
+};
+
+export const createEvidenceImport = async (envId, body) =>
+  (await axios.post(importsPath(envId), createBody(body))).data;
 
 export const getEvidenceImport = async (envId, importId) =>
   (await axios.get(importPath(envId, importId))).data;
