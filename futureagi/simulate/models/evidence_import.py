@@ -8,16 +8,18 @@ from tfc.utils.base_model import BaseModel
 
 
 class EvidenceImport(BaseModel):
-    """Observe sessions or calls, or transcripts a person added, chosen to turn
-    into tests of one environment. Observe sources are frozen as ids and read
-    again on every view, so evidence deleted later reads as unavailable instead
-    of living on here. A transcript has no source to read again, so its
-    redacted text is kept on its case until the import is deleted."""
+    """Observe sessions or calls, dataset rows, or transcripts a person added,
+    chosen to turn into tests of one environment. Observe sources and dataset
+    rows are frozen as ids and read again on every view, so evidence deleted
+    later reads as unavailable instead of living on here. A transcript has no
+    source to read again, so its redacted text is kept on its case until the
+    import is deleted."""
 
     class SourceKind(models.TextChoices):
         SESSION = "session", "Session"
         CALL = "call", "Call"
         TRANSCRIPT = "transcript", "Transcript"
+        DATASET = "dataset", "Dataset rows"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -35,7 +37,7 @@ class EvidenceImport(BaseModel):
         on_delete=models.CASCADE,
         related_name="evidence_imports",
     )
-    # The Observe project; none for transcripts.
+    # The Observe project; none for transcripts and dataset rows.
     project = models.ForeignKey(
         "tracer.Project",
         on_delete=models.CASCADE,
@@ -43,6 +45,17 @@ class EvidenceImport(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Dataset rows only: their dataset, and which of its columns is the
+    # conversation, the labels and the expected outcome
+    # (pydantic_schemas.evidence_import.DatasetColumns).
+    dataset = models.ForeignKey(
+        "model_hub.Dataset",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    dataset_columns = models.JSONField(null=True, blank=True)
     # The environment's agent version when the import was made.
     agent_version = models.ForeignKey(
         "simulate.AgentVersion",
@@ -52,8 +65,8 @@ class EvidenceImport(BaseModel):
         related_name="+",
     )
     source_kind = models.CharField(max_length=16, choices=SourceKind.choices)
-    # Transcripts only: the person said they come from production. An Observe
-    # import's provenance is its project's.
+    # Transcripts and dataset rows: the person said they come from production.
+    # An Observe import's provenance is its project's.
     declared_production = models.BooleanField(default=False)
     # Transcripts only: what redaction replaced when the text was stored
     # (pydantic_schemas.evidence_import.StoredRedaction).
@@ -84,16 +97,26 @@ class EvidenceImport(BaseModel):
             ),
         ]
         constraints = [
-            # An Observe import has its project; a transcript import has none.
+            # An Observe import has its project, a dataset import its dataset,
+            # and a transcript import neither.
             models.CheckConstraint(
                 condition=(
-                    models.Q(source_kind="transcript", project__isnull=True)
+                    models.Q(
+                        source_kind="transcript",
+                        project__isnull=True,
+                        dataset__isnull=True,
+                    )
+                    | models.Q(
+                        source_kind="dataset",
+                        project__isnull=True,
+                        dataset__isnull=False,
+                    )
                     | (
-                        ~models.Q(source_kind="transcript")
-                        & models.Q(project__isnull=False)
+                        ~models.Q(source_kind__in=("transcript", "dataset"))
+                        & models.Q(project__isnull=False, dataset__isnull=True)
                     )
                 ),
-                name="evidence_import_project_by_kind",
+                name="evidence_import_source_by_kind",
             ),
         ]
 
@@ -108,8 +131,8 @@ class EvidenceImport(BaseModel):
 
 
 class EvidenceImportCase(BaseModel):
-    """One session or call of an import: its id, what it held when the import
-    was made, and what became of it."""
+    """One session, call, dataset row or transcript of an import: its id, what
+    it held when the import was made, and what became of it."""
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending review"

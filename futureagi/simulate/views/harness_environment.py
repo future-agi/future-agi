@@ -8,9 +8,12 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from model_hub.models.develop_dataset import Dataset
 from simulate.models import AgentDefinition, EvidenceImport, HostedHarnessJob
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
+    evidence_dataset,
     evidence_project,
     import_bundle,
 )
@@ -70,6 +73,7 @@ from simulate.serializers.response.run_test import SimulateEvalConfigResponseSer
 from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
+    create_dataset_import,
     create_evidence_import,
     create_transcript_import,
 )
@@ -93,7 +97,10 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.utils.workspace_scope import project_queryset_for_request
+from tracer.utils.workspace_scope import (
+    project_queryset_for_request,
+    project_workspace_scope_q,
+)
 
 
 def _touch_content(job):
@@ -501,9 +508,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"], url_path="evidence-imports")
     def evidence_imports(self, request, pk=None):
-        """Freeze Observe sessions or calls, or store transcripts a person added,
-        as evidence for this environment's tests; returns what each holds and
-        lacks, and what redaction replaces. Nothing is drafted or run."""
+        """Freeze Observe sessions or calls or dataset rows, or store transcripts
+        a person added, as evidence for this environment's tests; returns what
+        each holds and lacks, and what redaction replaces. Nothing is drafted or
+        run."""
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -520,6 +528,26 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
             return Response(
                 EvidenceImportSerializer(import_bundle(evidence_import)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        if body["source_kind"] == EvidenceImport.SourceKind.DATASET:
+            # The datasets the caller may read, scoped as Observe's projects are.
+            datasets = Dataset.no_workspace_objects.filter(
+                project_workspace_scope_q(request, project_prefix=""), deleted=False
+            )
+            dataset = evidence_dataset(datasets, job, body["dataset_id"])
+            if dataset is None:
+                raise NotFound("Dataset not found in this environment's workspace")
+            evidence_import, evidence = create_dataset_import(
+                environment=job,
+                dataset=dataset,
+                columns=DatasetColumns(**body["columns"]),
+                row_ids=[str(row_id) for row_id in body["ids"]],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
                 status=status.HTTP_201_CREATED,
             )
         project = evidence_project(

@@ -1,7 +1,8 @@
-"""Reads for an evidence import: which Observe project an environment may take
-evidence from, and the bundle a person reviews before a test is drafted from it.
+"""Reads for an evidence import: which Observe project or dataset an
+environment may take evidence from, and the bundle a person reviews before a
+test is drafted from it.
 
-An Observe bundle is read live from Observe on every view, cut to the import's
+An Observe or dataset bundle is read live on every view, cut to the import's
 size budget. A transcript's is its stored text, cut and redacted when it was
 added. The bundle says what each source holds and lacks, and what redaction
 replaces before any of it becomes scenario text or seed data.
@@ -15,24 +16,24 @@ from dataclasses import asdict, replace
 
 from django.db.models import Q, QuerySet
 
+from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.pydantic_schemas.evidence_import import (
+    DatasetColumns,
     StoredRedaction,
     StoredTranscript,
     StoredTurn,
 )
+from simulate.selectors.dataset_evidence import dataset_evidence, text_evidence
 from simulate.utils.transcript_parse import ParsedTranscript
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.selectors.observe_evidence import (
-    MAX_TURNS,
     Label,
     SourceEvidence,
     SourceKind,
     ToolCall,
     Turn,
-    head_and_tail,
     observe_evidence,
-    recorded_turn,
 )
 from tracer.utils.pii_scrubber import PiiFinding, find_pii, find_pii_basic, redact
 
@@ -66,15 +67,23 @@ TRANSCRIPT_STATE_MISSING = (
     "A transcript does not record the records the agent's tools read before the "
     "conversation. Supply them, or label the starting state synthetic."
 )
+ROW_UNAVAILABLE = "The row or its dataset was deleted."
+ROW_NOT_FOUND = "No row with this id in the dataset."
+ROW_NO_TOOLS = "A dataset row carries no tool calls."
+ROW_NO_LABELS = "No label column was picked, or this row's label cells are empty."
+ROW_STATE_MISSING = (
+    "A dataset row does not record the records the agent's tools read before the "
+    "conversation. Supply them, or label the starting state synthetic."
+)
+NO_EXPECTED = "Only a dataset's expected outcome column records one."
+ROW_NO_EXPECTED = "No column was picked as the expected outcome, or it was deleted."
+ROW_EXPECTED_EMPTY = "This row's expected outcome is empty."
 
 
-def evidence_project(
-    projects: QuerySet[Project], environment: HostedHarnessJob, project_id
-) -> Project | None:
-    """The project among ``projects`` (those the caller may read) that the
-    environment may take evidence from: its organization, and a workspace the
-    environment's own scope reads, as Observe scopes a default workspace. A
-    project in another workspace is refused, so its production data never
+def _environment_scope(environment: HostedHarnessJob) -> Q:
+    """What the environment may take evidence from: its organization, and a
+    workspace the environment's own scope reads, as Observe scopes a default
+    workspace. Anything in another workspace is refused, so its data never
     lands where that workspace's people cannot see it."""
     workspace = environment.workspace
     if workspace is not None and not workspace.is_default:
@@ -83,15 +92,38 @@ def evidence_project(
         scope = Q(workspace__isnull=True) | Q(workspace__is_default=True)
         if workspace is not None:
             scope |= Q(workspace=workspace)
-    return (
-        projects.filter(scope, organization_id=environment.organization_id)
-        .filter(id=project_id)
-        .first()
-    )
+    return scope & Q(organization_id=environment.organization_id)
+
+
+def evidence_project(
+    projects: QuerySet[Project], environment: HostedHarnessJob, project_id
+) -> Project | None:
+    """The project among ``projects`` (those the caller may read) that the
+    environment may take evidence from."""
+    return projects.filter(_environment_scope(environment), id=project_id).first()
+
+
+def evidence_dataset(
+    datasets: QuerySet[Dataset], environment: HostedHarnessJob, dataset_id
+) -> Dataset | None:
+    """The dataset among ``datasets`` (those the caller may read) that the
+    environment may take evidence from."""
+    return datasets.filter(_environment_scope(environment), id=dataset_id).first()
 
 
 def is_transcript(evidence_import: EvidenceImport) -> bool:
+    """Whether the import's text is stored: it has no source to read again."""
     return evidence_import.source_kind == EvidenceImport.SourceKind.TRANSCRIPT
+
+
+def is_dataset(evidence_import: EvidenceImport) -> bool:
+    return evidence_import.source_kind == EvidenceImport.SourceKind.DATASET
+
+
+def is_declared(evidence_import: EvidenceImport) -> bool:
+    """Whether the person said where the evidence comes from: transcripts and
+    dataset rows. An Observe import's provenance is its project's."""
+    return is_transcript(evidence_import) or is_dataset(evidence_import)
 
 
 def is_simulated(evidence_import: EvidenceImport) -> bool:
@@ -105,8 +137,9 @@ def is_simulated(evidence_import: EvidenceImport) -> bool:
 
 def is_production(evidence_import: EvidenceImport) -> bool:
     """Whether the import is production evidence: an Observe project's that is
-    not a Simulator project, or transcripts the person said come from production."""
-    if is_transcript(evidence_import):
+    not a Simulator project, or transcripts or dataset rows the person said
+    come from production."""
+    if is_declared(evidence_import):
         return evidence_import.declared_production
     return not is_simulated(evidence_import)
 
@@ -118,7 +151,7 @@ def environment_evidence_import(
         EvidenceImport.no_workspace_objects.filter(
             environment=environment, id=import_id, deleted=False
         )
-        .select_related("project")
+        .select_related("project", "dataset")
         .prefetch_related("cases")
         .first()
     )
@@ -131,30 +164,51 @@ def import_evidence(
     share of the import's budget. Nothing, once the project is deleted."""
     if project.deleted:
         return {}
+    return _shared(observe_evidence(project, source_kind, source_ids), source_ids)
+
+
+def import_rows(
+    dataset: Dataset, columns: DatasetColumns, row_ids: list[str]
+) -> dict[str, SourceEvidence]:
+    """What ``dataset`` holds now for ``row_ids``, each row cut to its equal
+    share of the import's budget."""
+    return _shared(dataset_evidence(dataset, columns, row_ids), row_ids)
+
+
+def _shared(
+    found: dict[str, SourceEvidence], source_ids: list[str]
+) -> dict[str, SourceEvidence]:
     share = MAX_IMPORT_CHARS // max(1, len(source_ids))
     return {
-        source_id: _within(evidence, share)
-        for source_id, evidence in observe_evidence(
-            project, source_kind, source_ids
-        ).items()
+        source_id: _within(evidence, share) for source_id, evidence in found.items()
     }
+
+
+def import_columns(evidence_import: EvidenceImport) -> DatasetColumns | None:
+    """The columns a dataset import reads its rows through."""
+    if evidence_import.dataset_columns is None:
+        return None
+    return DatasetColumns.model_validate(evidence_import.dataset_columns)
 
 
 def current_evidence(
     evidence_import: EvidenceImport, cases: list[EvidenceImportCase]
 ) -> dict[str, SourceEvidence]:
-    """What each case's source holds now: Observe read again, or a
-    transcript's stored text."""
+    """What each case's source holds now: Observe or the dataset read again,
+    or a transcript's stored text."""
     if is_transcript(evidence_import):
         return {
             case.source_id: found
             for case in cases
             if (found := _stored_evidence(case)) is not None
         }
+    source_ids = [case.source_id for case in cases]
+    if is_dataset(evidence_import):
+        return import_rows(
+            evidence_import.dataset, import_columns(evidence_import), source_ids
+        )
     return import_evidence(
-        evidence_import.project,
-        evidence_import.source_kind,
-        [case.source_id for case in cases],
+        evidence_import.project, evidence_import.source_kind, source_ids
     )
 
 
@@ -198,27 +252,7 @@ def _cut_transcript(parsed: ParsedTranscript, chars: int) -> SourceEvidence:
     MAX_TURNS turns (the first and last halves), then ``chars`` characters. A
     cut turn ends at its last whitespace, so no value redaction must find is
     left in two pieces it cannot recognise."""
-    turns = [
-        turn
-        for one in parsed.turns
-        if (turn := recorded_turn(one.role, one.text, "", None)) is not None
-    ]
-    cut = _within(
-        SourceEvidence(
-            source_id="",
-            trace_ids=(),
-            started_at=None,
-            ended_at=None,
-            turns=head_and_tail(turns, MAX_TURNS),
-            turns_truncated=len(turns) > MAX_TURNS,
-            turns_omitted=max(0, len(turns) - MAX_TURNS),
-            transcript_unreadable=False,
-            tool_calls=(),
-            tool_calls_truncated=False,
-            labels=(),
-        ),
-        chars,
-    )
+    cut = _within(text_evidence("", parsed), chars)
     return replace(
         cut,
         turns=tuple(
@@ -289,10 +323,13 @@ def import_bundle(
         if case.status != EvidenceImportCase.Status.UNAVAILABLE
     }
     transcript = is_transcript(evidence_import)
+    columns = import_columns(evidence_import)
     return {
         "id": evidence_import.id,
         "environment_id": evidence_import.environment_id,
         "project_id": evidence_import.project_id,
+        "dataset_id": evidence_import.dataset_id,
+        "dataset_columns": columns.model_dump() if columns is not None else None,
         "agent_version_id": evidence_import.agent_version_id,
         "source_kind": evidence_import.source_kind,
         "created_at": evidence_import.created_at,
@@ -301,7 +338,10 @@ def import_bundle(
         "production": is_production(evidence_import),
         "cases": [
             _case(
-                case, current.get(case.source_id), _stored(case) if transcript else None
+                case,
+                current.get(case.source_id),
+                evidence_import.source_kind,
+                _stored(case) if transcript else None,
             )
             for case in cases
         ],
@@ -327,20 +367,25 @@ def _stored_redaction(evidence_import: EvidenceImport) -> dict:
 
 def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
     """``evidence`` with at most ``chars`` characters of text redaction must
-    read: the conversation, the tool calls' inputs, outputs and errors, and the
-    labels' notes. The parts share ``chars`` evenly, a part needing less giving
-    the rest to the others. A cut keeps the start and says so."""
+    read: the conversation, the tool calls' inputs, outputs and errors, the
+    labels' notes and the expected outcome. The parts share ``chars`` evenly, a
+    part needing less giving the rest to the others. A cut keeps the start and
+    says so."""
     sizes = (
         sum(len(turn.text) for turn in evidence.turns),
         sum(_call_size(call) for call in evidence.tool_calls or ()),
         sum(_label_size(label) for label in evidence.labels),
+        len(evidence.expected or ""),
     )
     if sum(sizes) <= chars:
         return evidence
-    turns_room, calls_room, labels_room = _shares(sizes, chars)
+    turns_room, calls_room, labels_room, expected_room = _shares(sizes, chars)
     turns, turns_cut, omitted = _cut_turns(evidence.turns, turns_room)
     calls, calls_cut = _cut_calls(evidence.tool_calls, calls_room)
     labels, labels_cut = _cut_labels(evidence.labels, labels_room)
+    expected = evidence.expected
+    if expected is not None:
+        expected, _ = _clip(expected, expected_room)
     return replace(
         evidence,
         turns=turns,
@@ -350,6 +395,8 @@ def _within(evidence: SourceEvidence, chars: int) -> SourceEvidence:
         tool_calls_truncated=evidence.tool_calls_truncated or calls_cut,
         labels=labels,
         labels_truncated=evidence.labels_truncated or labels_cut,
+        expected=expected,
+        expected_truncated=evidence.expected_truncated or expected != evidence.expected,
     )
 
 
@@ -458,9 +505,11 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
 def _case(
     case: EvidenceImportCase,
     evidence: SourceEvidence | None,
+    source_kind: str,
     stored: StoredTranscript | None = None,
 ) -> dict:
     """One case as the review shows it; ``stored`` is a transcript case's text."""
+    row = source_kind == EvidenceImport.SourceKind.DATASET
     if evidence is None:
         # A drafted, blocked or added case keeps what became of it; only one
         # still waiting reads as unavailable. Its evidence is gone either way.
@@ -468,6 +517,8 @@ def _case(
         reason = (
             case.reason
             if case.status == EvidenceImportCase.Status.UNAVAILABLE
+            else ROW_UNAVAILABLE
+            if row
             else SOURCE_UNAVAILABLE
         )
         return {
@@ -489,6 +540,7 @@ def _case(
             "tool_outputs": _part("missing", reason),
             "starting_state": _part("missing", STATE_MISSING),
             "labels": _part("missing", reason, labels=[]),
+            "expected_outcome": _part("missing", reason, text=""),
         }
     digest = evidence_digest(evidence)
     shown = {
@@ -512,6 +564,7 @@ def _case(
         **_tools(evidence),
         "starting_state": _part("missing", STATE_MISSING),
         "labels": _labels(evidence),
+        "expected_outcome": _expected(evidence),
     }
     if stored is not None:
         none = _part("missing", TRANSCRIPT_NO_TOOLS)
@@ -522,7 +575,30 @@ def _case(
             "starting_state": _part("missing", TRANSCRIPT_STATE_MISSING),
             "labels": _part("missing", TRANSCRIPT_NO_LABELS, labels=[]),
         }
+    elif row:
+        none = _part("missing", ROW_NO_TOOLS)
+        shown |= {
+            "tool_calls": {**none, "calls": []},
+            "tool_inputs": none,
+            "tool_outputs": none,
+            "starting_state": _part("missing", ROW_STATE_MISSING),
+            "expected_outcome": _expected(evidence, ROW_NO_EXPECTED),
+        }
+        if not evidence.labels:
+            shown["labels"] = _part("missing", ROW_NO_LABELS, labels=[])
     return shown
+
+
+def _expected(evidence: SourceEvidence, unrecorded: str = NO_EXPECTED) -> dict:
+    """The expected outcome part; ``unrecorded`` says why there is none."""
+    text = evidence.expected
+    if text is None:
+        return _part("missing", unrecorded, text="")
+    if not text:
+        return _part("missing", ROW_EXPECTED_EMPTY, text="")
+    if evidence.expected_truncated:
+        return _part("truncated", CUT_TO_FIT, text=text)
+    return _part("present", text=text)
 
 
 def _new_checks(case: EvidenceImportCase) -> list[dict]:
@@ -654,6 +730,8 @@ def _texts(
             values.append((case, "labels", i, "notes", label.notes))
             if isinstance(label.value, str):
                 values.append((case, "labels", i, "value", label.value))
+        if source.expected:
+            values.append((case, "expected_outcome", 0, "text", source.expected))
     return values
 
 
@@ -763,6 +841,13 @@ def evidence_document(
             notes = redacted[(case.id, "labels", i, "notes")]
             if notes:
                 lines += _wrapped(f"[label {i + 1}] notes", notes)
+        if is_dataset(evidence_import):
+            lines.append(f"-- expected outcome: {_expected(source)['status']}")
+            if source.expected:
+                lines += _wrapped(
+                    "[expected outcome]",
+                    redacted[(case.id, "expected_outcome", 0, "text")],
+                )
     return "\n".join(lines) + "\n"
 
 
@@ -787,6 +872,24 @@ def _document_head(evidence_import: EvidenceImport, reason: str) -> list[str]:
             "# A transcript records no starting state, tool calls or labels: "
             "anything you assume about the starting state is synthetic and must "
             "be labelled so.",
+        ]
+    if is_dataset(evidence_import):
+        return [
+            f"# Evidence import {evidence_import.id}: rows a person picked from "
+            f"dataset {evidence_import.dataset_id}. They are not recordings "
+            "Observe made: never cite a trace or a call.",
+            (
+                "# The person says they come from production: each case is "
+                "regression evidence."
+                if evidence_import.declared_production
+                else "# The person did not say they come from production. Never "
+                "write a case as something a customer did."
+            ),
+            redaction,
+            "# A dataset row records no starting state or tool calls: anything you "
+            "assume about the starting state is synthetic and must be labelled so.",
+            "# Labels are the row's label columns: input evidence. The expected "
+            "outcome is the row's expected outcome column.",
         ]
     kind = evidence_import.source_kind
     return [

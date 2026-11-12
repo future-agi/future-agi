@@ -34,6 +34,10 @@ from simulate.services.hosted_harness_conversation import (
     issue_conversation_capability,
 )
 from simulate.services.hosted_harness_gateway import rewrite_conversation_scenarios
+from simulate.tests.test_evidence_datasets import EXPECTED
+from simulate.tests.test_evidence_datasets import columns as columns
+from simulate.tests.test_evidence_datasets import dataset as dataset
+from simulate.tests.test_evidence_datasets import rows as rows
 from simulate.tests.test_evidence_drafts import (  # noqa: F401 - fixtures
     INJECTED,
     _end_turn,
@@ -657,3 +661,63 @@ def test_a_transcript_import_is_drafted_as_the_person_said(
         document = evidence_drafts.sandbox_evidence(conversation).decode()
     assert "[turn 2] agent: Done twice." in document
     assert "transcripts a person added" in document
+
+
+@pytest.mark.parametrize(
+    "production, opening",
+    [
+        (
+            True,
+            "Draft one regression scenario for each case below from the dataset rows",
+        ),
+        (False, "did not say they come from production"),
+    ],
+)
+def test_a_dataset_import_is_drafted_from_its_expected_outcome(
+    environment, user, scheduled, dataset, columns, rows, production, opening
+):
+    """The one place the expected outcome's weight against policy is pinned: the
+    builder writes the expected behaviour from the row, and policy wins a
+    conflict."""
+    from simulate.pydantic_schemas.evidence_import import DatasetColumns
+    from simulate.services.evidence_import import create_dataset_import
+
+    made, _ = create_dataset_import(
+        environment=environment,
+        dataset=dataset,
+        columns=DatasetColumns(
+            conversation=columns["chat"].id,
+            labels=[columns["intent"].id],
+            expected=columns["expected"].id,
+        ),
+        row_ids=[str(rows[0].id)],
+        production=production,
+        user=user,
+    )
+    [case] = made.cases.all()
+    conversation = evidence_drafts.start_drafting(
+        made,
+        [str(case.id)],
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(case.id): "failure"},
+    )
+
+    content = _command(conversation).content
+    assert opening in content
+    assert evidence_drafts.EXPECTED_OUTCOME_RULE in content
+    assert "the policy wins" in content
+    assert ("regression" in content) is production
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence",
+        side_effect=AssertionError("Observe was read"),
+    ):
+        document = evidence_drafts.sandbox_evidence(conversation).decode()
+    assert f"[expected outcome]: {EXPECTED}" in document
+    assert "rows a person picked from dataset" in document
+
+
+def test_only_a_dataset_turn_carries_the_expected_outcome_rule(cases, user, scheduled):
+    conversation = _start(cases, user)
+
+    assert evidence_drafts.EXPECTED_OUTCOME_RULE not in _command(conversation).content

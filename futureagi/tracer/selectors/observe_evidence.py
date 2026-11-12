@@ -77,17 +77,20 @@ class Label:
     kind: str
     value: object
     notes: str
-    target: Literal["session", "trace", "span"]
+    # "row": a dataset row's label column.
+    target: Literal["session", "trace", "span", "row"]
 
 
 @dataclass(frozen=True)
 class SourceEvidence:
-    """One session or call as Observe recorded it, or a transcript a person added.
+    """One session or call as Observe recorded it, a dataset row, or a
+    transcript a person added.
 
     ``tool_calls`` is None when the calls could not be read, and
     ``transcript_unreadable`` says a recorded transcript could not be parsed;
     the ``*_truncated`` flags say a cap cut a part (``labels_truncated`` is set
-    only by a reader that cuts the labels' text)."""
+    only by a reader that cuts the labels' text). ``expected`` is a dataset
+    row's expected outcome; None when nothing records one."""
 
     source_id: str
     trace_ids: tuple[str, ...]
@@ -103,6 +106,8 @@ class SourceEvidence:
     tool_calls_truncated: bool
     labels: tuple[Label, ...]
     labels_truncated: bool = False
+    expected: str | None = None
+    expected_truncated: bool = False
 
 
 def observe_evidence(

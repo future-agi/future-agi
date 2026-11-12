@@ -1,6 +1,6 @@
-"""Making an evidence import: the Observe sessions or calls a person picked, or
-transcripts they added, frozen for one environment so a test can be drafted
-from them.
+"""Making an evidence import: the Observe sessions or calls or the dataset rows
+a person picked, or transcripts they added, frozen for one environment so a
+test can be drafted from them.
 
 Nothing here drafts a scenario or starts a run.
 """
@@ -13,11 +13,16 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.utils import timezone
 
+from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.dataset_evidence import MEDIA_TYPES, dataset_columns
 from simulate.selectors.evidence_import import (
+    ROW_NOT_FOUND,
     SOURCE_NOT_FOUND,
     evidence_digest,
     import_evidence,
+    import_rows,
     stored_transcripts,
 )
 from simulate.services.evidence_drafts import CATALOGUE
@@ -64,6 +69,77 @@ def create_evidence_import(
             ]
         )
     return evidence_import, evidence
+
+
+def create_dataset_import(
+    *,
+    environment: HostedHarnessJob,
+    dataset: Dataset,
+    columns: DatasetColumns,
+    row_ids: list[str],
+    production: bool,
+    user,
+) -> tuple[EvidenceImport, dict[str, SourceEvidence]]:
+    """Freeze ``row_ids`` of ``dataset`` as an import for ``environment``, read
+    through ``columns``, each row with a fingerprint of what it holds now, as an
+    Observe import's sources are. Nothing of the rows is stored: they are read
+    again on every view. ``production`` is what the person said about where
+    they come from. A column that is not the dataset's, or holds media, refuses
+    the import."""
+    _check_columns(dataset, columns)
+    evidence = import_rows(dataset, columns, row_ids)
+    with transaction.atomic():
+        evidence_import = EvidenceImport.objects.create(
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            environment=environment,
+            dataset=dataset,
+            dataset_columns=columns.model_dump(mode="json"),
+            agent_version_id=environment.agent_version_id,
+            source_kind=EvidenceImport.SourceKind.DATASET,
+            declared_production=production,
+            created_by=user,
+        )
+        EvidenceImportCase.objects.bulk_create(
+            [
+                _case(
+                    evidence_import,
+                    position,
+                    row_id,
+                    evidence.get(row_id),
+                    missing=ROW_NOT_FOUND,
+                )
+                for position, row_id in enumerate(row_ids)
+            ]
+        )
+    return evidence_import, evidence
+
+
+def _check_columns(dataset: Dataset, columns: DatasetColumns) -> None:
+    """Refuses a picked column the dataset does not have, and one whose cells
+    are audio, images or documents: an import reads text only."""
+    picked = {
+        "conversation": [columns.conversation],
+        "labels": columns.labels,
+        "expected": [columns.expected] if columns.expected is not None else [],
+    }
+    live = dataset_columns(dataset, [one for ids in picked.values() for one in ids])
+    for role, ids in picked.items():
+        for column_id in map(str, ids):
+            column = live.get(column_id)
+            if column is None:
+                raise HostedHarnessError(
+                    "dataset_column_not_found",
+                    f"Column {column_id} is not a column of this dataset",
+                    details={"column": role},
+                )
+            if column.data_type in MEDIA_TYPES:
+                raise HostedHarnessError(
+                    "dataset_column_media",
+                    f'Column "{column.name}" holds {column.data_type}, not text: '
+                    "rows whose conversation is only audio cannot be imported yet",
+                    details={"column": role},
+                )
 
 
 @dataclass(frozen=True)
@@ -132,6 +208,8 @@ def _case(
     position: int,
     source_id: str,
     evidence: SourceEvidence | None,
+    *,
+    missing: str = SOURCE_NOT_FOUND,
 ) -> EvidenceImportCase:
     if evidence is None:
         return EvidenceImportCase(
@@ -139,7 +217,7 @@ def _case(
             position=position,
             source_id=source_id,
             status=EvidenceImportCase.Status.UNAVAILABLE,
-            reason=SOURCE_NOT_FOUND,
+            reason=missing,
         )
     return EvidenceImportCase(
         evidence_import=evidence_import,

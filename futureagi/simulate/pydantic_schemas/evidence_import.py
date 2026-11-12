@@ -1,8 +1,10 @@
-"""What a transcript import stores. A transcript has no source to read again,
-so its redacted text, cut to the import's size, is kept until the import is
-deleted. Nothing unredacted is stored."""
+"""What an evidence import stores beyond its sources' ids. A transcript has no
+source to read again, so its redacted text, cut to the import's size, is kept
+until the import is deleted. Nothing unredacted is stored. A dataset import
+keeps only which columns to read."""
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -34,3 +36,12 @@ class StoredRedaction(BaseModel):
     # Why the method could not find everything; blank for Presidio.
     reason: str
     total: int = Field(ge=0)
+
+
+class DatasetColumns(BaseModel):
+    """Which of a dataset's columns its rows are read through
+    (``EvidenceImport.dataset_columns``): ids, since names can be edited."""
+
+    conversation: UUID
+    labels: list[UUID]
+    expected: UUID | None

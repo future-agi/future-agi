@@ -1,9 +1,11 @@
-"""The evidence import contract: Observe sessions or calls frozen for an
-environment, and the bundle a person reviews before a test is drafted from them."""
+"""The evidence import contract: Observe sessions or calls, dataset rows or
+transcripts frozen for an environment, and the bundle a person reviews before a
+test is drafted from them."""
 
 from rest_framework import serializers
 
 from simulate.models import EvidenceImport, EvidenceImportCase
+from simulate.selectors.dataset_evidence import MAX_LABEL_COLUMNS
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.utils.transcript_parse import FORMATS
 
@@ -34,12 +36,60 @@ class EvidenceTranscriptInputSerializer(serializers.Serializer):
     )
 
 
-class EvidenceImportCreateSerializer(serializers.Serializer):
-    """An Observe import (session or call) names its project and ids; a
-    transcript import carries its transcripts instead."""
+class EvidenceDatasetColumnsSerializer(serializers.Serializer):
+    """Which of a dataset's columns its rows are read through, by id."""
 
-    OBSERVE_FIELDS = ("project_id", "ids")
-    TRANSCRIPT_FIELDS = ("transcripts", "production")
+    conversation = serializers.UUIDField(
+        help_text="The conversation: chat messages as JSON, or lines that start "
+        '"User:" or "Agent:".'
+    )
+    labels = serializers.ListField(
+        child=serializers.UUIDField(),
+        max_length=MAX_LABEL_COLUMNS,
+        required=False,
+        default=list,
+        help_text="Columns read as the row's labels.",
+    )
+    expected = serializers.UUIDField(
+        allow_null=True,
+        required=False,
+        default=None,
+        help_text="The column that says what should happen.",
+    )
+
+    def validate(self, attrs):
+        picked = [attrs["conversation"], *attrs["labels"]]
+        if attrs["expected"] is not None:
+            picked.append(attrs["expected"])
+        if len(set(picked)) != len(picked):
+            raise serializers.ValidationError("Each column may be picked once.")
+        return attrs
+
+
+class EvidenceImportCreateSerializer(serializers.Serializer):
+    """An Observe import (session or call) names its project and ids; a dataset
+    import its dataset, row ids and columns; a transcript import carries its
+    transcripts instead."""
+
+    # What each kind needs and may take; any other source field is refused.
+    NEEDS = {
+        EvidenceImport.SourceKind.SESSION: ("project_id", "ids"),
+        EvidenceImport.SourceKind.CALL: ("project_id", "ids"),
+        EvidenceImport.SourceKind.TRANSCRIPT: ("transcripts",),
+        EvidenceImport.SourceKind.DATASET: ("dataset_id", "ids", "columns"),
+    }
+    TAKES = {
+        EvidenceImport.SourceKind.TRANSCRIPT: ("production",),
+        EvidenceImport.SourceKind.DATASET: ("production",),
+    }
+    SOURCE_FIELDS = (
+        "project_id",
+        "ids",
+        "transcripts",
+        "production",
+        "dataset_id",
+        "columns",
+    )
 
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     project_id = serializers.UUIDField(
@@ -50,8 +100,14 @@ class EvidenceImportCreateSerializer(serializers.Serializer):
         min_length=1,
         max_length=MAX_SOURCES,
         required=False,
-        help_text="Session and call imports: session ids, or the trace ids of "
-        "calls, in the order picked.",
+        help_text="Session, call and dataset imports: session ids, the trace ids "
+        "of calls, or row ids, in the order picked.",
+    )
+    dataset_id = serializers.UUIDField(
+        required=False, help_text="Dataset imports: the dataset."
+    )
+    columns = EvidenceDatasetColumnsSerializer(
+        required=False, help_text="Dataset imports: the columns to read."
     )
     transcripts = serializers.ListField(
         child=EvidenceTranscriptInputSerializer(),
@@ -62,8 +118,8 @@ class EvidenceImportCreateSerializer(serializers.Serializer):
     )
     production = serializers.BooleanField(
         required=False,
-        help_text="Transcript imports: the person says they come from production. "
-        "Unsaid, they are not called production evidence.",
+        help_text="Transcript and dataset imports: the person says they come from "
+        "production. Unsaid, they are not called production evidence.",
     )
 
     def validate_ids(self, value):
@@ -72,13 +128,10 @@ class EvidenceImportCreateSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        transcript = attrs["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT
-        needed, refused = (
-            (("transcripts",), self.OBSERVE_FIELDS)
-            if transcript
-            else (self.OBSERVE_FIELDS, self.TRANSCRIPT_FIELDS)
-        )
         kind = attrs["source_kind"]
+        needed = self.NEEDS[kind]
+        allowed = {*needed, *self.TAKES.get(kind, ())}
+        refused = [field for field in self.SOURCE_FIELDS if field not in allowed]
         errors = {
             **{
                 field: [f"A {kind} import needs it."]
@@ -139,11 +192,18 @@ class EvidenceLabelSerializer(serializers.Serializer):
         help_text="As the annotator recorded it: input evidence, not a verdict."
     )
     notes = serializers.CharField(allow_blank=True)
-    target = serializers.ChoiceField(choices=("session", "trace", "span"))
+    target = serializers.ChoiceField(
+        choices=("session", "trace", "span", "row"),
+        help_text="row: a dataset row's label column.",
+    )
 
 
 class EvidenceLabelsSerializer(EvidencePartSerializer):
     labels = EvidenceLabelSerializer(many=True)
+
+
+class EvidenceExpectedOutcomeSerializer(EvidencePartSerializer):
+    text = serializers.CharField(allow_blank=True)
 
 
 class EvidenceNewCheckSerializer(serializers.Serializer):
@@ -157,14 +217,14 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     name = serializers.CharField(
         allow_blank=True,
         help_text="A transcript's name as the person gave it, redacted; blank for "
-        "an Observe source.",
+        "an Observe source or a dataset row.",
     )
     status = serializers.ChoiceField(choices=EvidenceImportCase.Status.choices)
     reason = serializers.CharField(allow_blank=True)
     source_available = serializers.BooleanField(
-        help_text="False once Observe no longer holds the source: its provenance "
-        "is unavailable, though what became of the case stands. Always true for "
-        "a transcript, whose text is stored."
+        help_text="False once Observe or the dataset no longer holds the source: "
+        "its provenance is unavailable, though what became of the case stands. "
+        "Always true for a transcript, whose text is stored."
     )
     scenario_key = serializers.CharField(
         allow_blank=True, help_text="The drafted scenario's key, once drafted."
@@ -195,11 +255,16 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
         help_text="The records the agent's tools read before the conversation."
     )
     labels = EvidenceLabelsSerializer()
+    expected_outcome = EvidenceExpectedOutcomeSerializer(
+        help_text="What a dataset row's expected outcome column says should happen."
+    )
 
 
 class EvidenceRedactionFindingSerializer(serializers.Serializer):
     case_id = serializers.UUIDField()
-    part = serializers.ChoiceField(choices=("transcript", "tool_calls", "labels"))
+    part = serializers.ChoiceField(
+        choices=("transcript", "tool_calls", "labels", "expected_outcome")
+    )
     index = serializers.IntegerField(min_value=0)
     field = serializers.ChoiceField(
         choices=("text", "input", "output", "error", "notes", "value")
@@ -231,6 +296,12 @@ class EvidenceImportSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The Observe project; null for evidence from outside Observe.",
     )
+    dataset_id = serializers.UUIDField(
+        allow_null=True, help_text="A dataset import's dataset; null otherwise."
+    )
+    dataset_columns = EvidenceDatasetColumnsSerializer(
+        allow_null=True, help_text="A dataset import's columns; null otherwise."
+    )
     agent_version_id = serializers.UUIDField(allow_null=True)
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     created_at = serializers.DateTimeField()
@@ -240,7 +311,8 @@ class EvidenceImportSerializer(serializers.Serializer):
     )
     production = serializers.BooleanField(
         help_text="True for production evidence: an Observe project that is not a "
-        "Simulator project, or transcripts the person said come from production."
+        "Simulator project, or transcripts or dataset rows the person said come "
+        "from production."
     )
     drafting = serializers.BooleanField(
         help_text="True while the environment's builder is drafting cases."
