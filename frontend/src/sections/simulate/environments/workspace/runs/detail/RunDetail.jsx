@@ -395,7 +395,7 @@ export default function RunDetail({
         {improvable.length > 0 && (
           <Tooltip
             describeChild
-            title={`Starts Epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
+            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
           >
             <Button
               variant="outlined"

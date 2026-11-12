@@ -815,7 +815,7 @@ describe("RunDetail", () => {
       // It says which cases Epoch starts from.
       await user.hover(screen.getByRole("button", { name: "Run Epoch" }));
       expect(await screen.findByRole("tooltip")).toHaveTextContent(
-        "Starts Epoch from the 1 failing scenario that came from imported evidence.",
+        "Starts an epoch from the 1 failing scenario that came from imported evidence.",
       );
       await user.click(screen.getByRole("button", { name: "Run Epoch" }));
 
