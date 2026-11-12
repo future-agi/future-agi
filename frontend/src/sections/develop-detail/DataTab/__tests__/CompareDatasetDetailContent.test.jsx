@@ -87,7 +87,11 @@ const row = {
   "output-a": { cell_value: "left-0", cell_row_id: "a-0" },
   "output-b": {
     cell_value: "right-0",
-    cell_diff_value: [{ value: "right-0", added: true }],
+    // model_hub.utils.utils.get_diff of the base output against this one.
+    cell_diff_value: [
+      { text: "left-0", status: "removed" },
+      { text: "right-0", status: "added" },
+    ],
     cell_row_id: "b-0",
   },
 };
@@ -126,12 +130,16 @@ describe("Compare row detail content", () => {
         .getAllByTestId("datapoint")
         .map((card) => card.textContent),
     ).toEqual(["right-0"]);
-    const rightCard = cards.find((card) => card.value === row["output-b"]);
+    const rightCard = cards.find(
+      (card) => card.value?.cell_value === row["output-b"].cell_value,
+    );
     expect(rightCard.column).toEqual({
       dataType: "text",
       headerName: "output",
     });
     expect(rightCard.showDiff).toBe(row["output-b"].cell_diff_value);
+    // DatapointCard's Difference tab renders value.cellDiffValue.
+    expect(rightCard.value.cellDiffValue).toBe(row["output-b"].cell_diff_value);
   });
 });
 
