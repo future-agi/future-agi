@@ -61,13 +61,13 @@ def assignment_schema(django_db_blocker):
         try:
             loader = MigrationLoader(None, ignore_no_migrations=True)
             assert loader.graph.leaf_nodes("tracer") == [
-                ("tracer", "0131_entity_tag_assignment")
+                ("tracer", "0132_entity_tag_assignment")
             ]
             migration = importlib.import_module(
-                "tracer.migrations.0131_entity_tag_assignment"
-            ).Migration("0131_entity_tag_assignment", "tracer")
+                "tracer.migrations.0132_entity_tag_assignment"
+            ).Migration("0132_entity_tag_assignment", "tracer")
             assert migration.dependencies == [
-                ("tracer", "0130_observationspan_internal_type")
+                ("tracer", "0131_merge_sql_workbench_and_observationspan_internal_type")
             ]
             state = loader.project_state(migration.dependencies)
             with connection.schema_editor() as editor:

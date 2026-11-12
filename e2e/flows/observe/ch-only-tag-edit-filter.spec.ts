@@ -38,10 +38,10 @@ const flatten = (entries: Entry[]): Span[] => entries.flatMap(e => [e.observatio
 const names = (tags: Tag[]) => tags.map(t => t.name).sort();
 const checksum = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-test('OBS-E2E-061: ClickHouse-only trace and child labels survive reload and filter without losing SDK tags', {
+test('OBS-E2E-062: ClickHouse-only trace and child labels survive reload and filter without losing SDK tags', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-061', area: 'observe',
+    id: 'OBS-E2E-062', area: 'observe',
     userGoal: 'A developer labels an ingested trace and child span, reloads, and finds only the intended trace through tag filtering without losing SDK labels',
     steps: [
       'ingest alpha and beta two-span traces with independently named SDK tags',
