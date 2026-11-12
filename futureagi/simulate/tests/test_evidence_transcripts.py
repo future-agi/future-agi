@@ -349,6 +349,19 @@ class TestStored:
         assert stored.redaction is None
         assert [c.transcript for c in EvidenceImportCase._base_manager.all()] == [None]
 
+    def test_deleting_the_environment_deletes_its_transcripts(
+        self, client, environment, no_observe
+    ):
+        _post(client, environment)
+
+        with patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"):
+            deleted = client.delete(f"{ENVIRONMENTS}/{environment.id}/")
+
+        assert deleted.status_code == status.HTTP_204_NO_CONTENT
+        stored = EvidenceImport.all_objects.get()
+        assert (stored.deleted, stored.redaction) == (True, None)
+        assert [c.transcript for c in EvidenceImportCase._base_manager.all()] == [None]
+
     @pytest.mark.parametrize(
         "production, says",
         [

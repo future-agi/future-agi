@@ -18,6 +18,7 @@ from django.utils import timezone
 from simulate.models import (
     AgentVersion,
     CallExecution,
+    EvidenceImport,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
@@ -1904,6 +1905,11 @@ def delete_environment(job: HostedHarnessJob) -> None:
         )
 
         close_environment_nudges(locked, code="environment_deleted")
+        # Its evidence imports go with it, and a transcript's stored text with them.
+        for evidence_import in EvidenceImport.no_workspace_objects.filter(
+            environment=locked, deleted=False
+        ):
+            evidence_import.delete()
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)

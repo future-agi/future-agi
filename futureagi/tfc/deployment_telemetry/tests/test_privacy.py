@@ -1,7 +1,9 @@
+from datetime import UTC
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from django.http import JsonResponse
 from django.test import RequestFactory
 
 from tfc.deployment_telemetry.payloads import (
@@ -65,6 +67,62 @@ def test_staged_credential_files_are_treated_as_sensitive_bodies():
             "values": [
                 {"stacktrace": {"frames": [{"vars": {"content": "PRIVATE KEY"}}]}}
             ]
+        },
+    }
+
+    scrubbed = _scrub_deployment_telemetry_event(event)
+
+    assert "data" not in scrubbed["request"]
+    assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
+
+
+# A transcript import's create body is the raw transcript, before redaction.
+ENVIRONMENT = "/simulate/api/harness-environments/3f2b0c1e-5d6a-4b7c-8d9e-0f1a2b3c4d5e"
+RAW_TRANSCRIPT = (
+    '{"source_kind": "transcript", "transcripts": [{"name": "chat", '
+    '"format": "text", "text": "User: write to jane.doe@example.com"}]}'
+)
+
+
+def _captured(path, *, status=None):
+    """The span attributes the middleware sets for a JSON POST to ``path``, and
+    for its JSON answer with ``status`` when given."""
+    request = RequestFactory().post(
+        path, data=RAW_TRANSCRIPT, content_type="application/json"
+    )
+    span = MagicMock()
+    middleware = OTelContextMiddleware(lambda request: None)
+    middleware._capture_request(span, request)
+    if status is not None:
+        answer = JsonResponse({"message": "Transcript 1 (jane.doe@example.com)"})
+        answer.status_code = status
+        middleware._capture_response(span, request, answer, 1.0)
+    return [call.args[0] for call in span.set_attribute.call_args_list]
+
+
+def test_otel_never_records_a_transcript_import_or_its_refusal():
+    captured = _captured(f"{ENVIRONMENT}/evidence-imports/", status=400)
+
+    assert "http.request.body" not in captured
+    assert "http.response.body" not in captured
+
+
+def test_otel_still_records_an_environments_other_bodies():
+    """The id stands for one path segment, not everything below the environment."""
+    captured = _captured(f"{ENVIRONMENT}/runs/", status=400)
+
+    assert "http.request.body" in captured
+    assert "http.response.body" in captured
+
+
+def test_sentry_scrubs_a_transcript_import_request_and_frame_variables():
+    event = {
+        "request": {
+            "url": f"https://api.futureagi.com{ENVIRONMENT}/evidence-imports/",
+            "data": {"transcripts": [{"text": "User: jane.doe@example.com"}]},
+        },
+        "exception": {
+            "values": [{"stacktrace": {"frames": [{"vars": {"body": "jane.doe"}}]}}]
         },
     }
 
@@ -190,10 +248,10 @@ def test_heartbeat_payload_shape_matches_contract(counts):
     """Any field added to the heartbeat payload that isn't on the documented
     HEARTBEAT_FIELDS contract is a wire leak — fail loudly instead of letting
     it ship to PostHog/HubSpot."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 1, 1, 6, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 6, tzinfo=UTC)
 
     payload = build_heartbeat_payload(uuid4(), start, end, counts)
 

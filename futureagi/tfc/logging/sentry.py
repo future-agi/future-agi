@@ -236,15 +236,16 @@ def _event_message(event: dict) -> str:
 def _is_telemetry_url(url: object) -> bool:
     """True when ``url`` matches a path prefix whose body must never reach Sentry.
 
-    Reuses ``SENSITIVE_BODY_PATH_PREFIXES`` so the OTel middleware and the
-    Sentry scrubber agree on which paths are sensitive; previously the prefix
-    was hardcoded here and could silently drift from the middleware copy.
+    Reuses ``SENSITIVE_BODY_PATH_PREFIXES`` (as its patterns) so the OTel
+    middleware and the Sentry scrubber agree on which paths are sensitive;
+    previously the prefix was hardcoded here and could silently drift from the
+    middleware copy.
     """
     if not url:
         return False
-    from tfc.telemetry.middleware import SENSITIVE_BODY_PATH_PREFIXES
+    from tfc.telemetry.middleware import SENSITIVE_BODY_PATHS
 
-    return any(prefix in str(url) for prefix in SENSITIVE_BODY_PATH_PREFIXES)
+    return any(pattern.search(str(url)) for pattern in SENSITIVE_BODY_PATHS)
 
 
 def _scrub_deployment_telemetry_event(event: dict) -> dict:
