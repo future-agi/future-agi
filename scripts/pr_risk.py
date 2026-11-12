@@ -1382,10 +1382,48 @@ def unfinished_merges(api, policy, now):
     return found
 
 
+def planned_names(plan):
+    return ", ".join(f"`{safe_text(entry['workflow'])}`" for entry in plan) or "none"
+
+
+def record_merge(api, number, head, body, names):
+    """Post the merged record. It must precede every post-merge dispatch: a
+    sweep that finds it dispatches nothing for the merge, so no follow-up is
+    ever started twice. Retried, as a second copy is harmless. When every
+    attempt fails, the comments are read back, because a write whose answer
+    was lost may have landed; a record that did land would stop every later
+    sweep. Raises when the record is not known to be on the PR, and then the
+    caller dispatches nothing."""
+    try:
+        retrying(lambda: comment(api, number, body))
+        return
+    except PolicyError:
+        pass
+    try:
+        landed = any(
+            bot_comment(c)
+            and (c.get("body") or "").startswith(MERGED_MARKER)
+            and f"`{head}`" in (c.get("body") or "")
+            for c in api.pages(f"issues/{number}/comments")
+        )
+    except PolicyError:
+        raise PolicyError(
+            "the merged record could not be written or read back, so nothing was "
+            "dispatched. If the record is not on the PR, a later sweep starts the "
+            f"follow-ups; if it is, dispatch these on dev by hand: {names}"
+        ) from None
+    if not landed:
+        raise PolicyError(
+            "the merged record could not be written, so nothing was dispatched; "
+            "a later sweep starts the follow-ups"
+        )
+
+
 def recover_merge(api, policy, settings, number):
-    """Start the follow-ups of an autopilot merge whose run ended before them
-    (a lost merge answer, a timeout, a lost runner). Returns the follow-ups
-    that did not start, or None when there is nothing to recover.
+    """Start the follow-ups of an autopilot merge whose run ended before its
+    record (a lost merge answer, a record that could not be written, or a
+    time limit or lost runner between the merge and the record). Returns the
+    follow-ups that did not start, or None when there is nothing to recover.
 
     The autopilot's merge: merged by the workflow token, on a head the bot's
     approval audit names. A person's merge started the push workflows itself.
@@ -1397,23 +1435,24 @@ def recover_merge(api, policy, settings, number):
     comments = api.pages(f"issues/{number}/comments")
     bodies = [c.get("body") or "" for c in comments if bot_comment(c)]
     if any(body.startswith(MERGED_MARKER) for body in bodies):
-        # The merging run started its follow-ups; its comment names any it missed.
+        # A run wrote the record before its dispatches, so it started them, or
+        # it ended partway and its failed job shows that. Never a second time.
         return None
     if not any(body.startswith(APPROVAL_MARKER) and f"`{head}`" in body for body in bodies):
         return None
     if not isinstance(merge_sha, str) or not SHA.fullmatch(merge_sha):
         raise PolicyError("the merge commit is unknown")
     plan = post_merge_plan(policy, api.pages(f"pulls/{number}/files"), settings)
-    names = ", ".join(f"`{safe_text(entry['workflow'])}`" for entry in plan) or "none"
-    # Retried: a record applied with its answer lost would stop every later
-    # sweep before any dispatch. A second copy of the record is harmless.
-    retrying(lambda: comment(
+    names = planned_names(plan)
+    record_merge(
         api,
         number,
+        head,
         f"{MERGED_MARKER}\nAutopilot merged head `{head}` (merge SHA `{merge_sha}`), but the run "
-        "that merged it ended before its follow-ups. A later sweep started them: post-merge "
+        "that merged it ended before its follow-ups. A later sweep is starting them: post-merge "
         f"dispatches on dev: {names}. They test the current dev tip, which may include later merges.",
-    ))
+        names,
+    )
     missed = dispatch_plan(api, plan)
     try:
         add_label(api, number, policy["labels"]["merged"])
@@ -1437,8 +1476,8 @@ def recover_merges(api, policy, settings):
     for number in numbers:
         try:
             missed = recover_merge(api, policy, settings, number)
-        except PolicyError:
-            problems.append(f"merge recovery of PR {number} failed")
+        except PolicyError as exc:
+            problems.append(f"merge recovery of PR {number} failed: {exc}")
             continue
         if missed is not None:
             summary(f"Recovered the post-merge follow-ups of PR #{number}.")
@@ -2150,27 +2189,48 @@ def merge(api, policy, settings, context, approver):
         raise
     # GITHUB_TOKEN merges start no push workflows, so the dev verification
     # dispatches matter most. Each follow-up gets its own attempt.
+    head = context["head"]
     merge_sha = response.get("sha")
     merge_sha = merge_sha if isinstance(merge_sha, str) and SHA.fullmatch(merge_sha) else "unknown"
     missed = []
     try:
         plan = post_merge_plan(policy, plan_files, settings)
+        names = planned_names(plan)
     except (KeyError, TypeError):
-        plan = []
+        plan, names = [], "none (the post-merge plan could not be built)"
         missed.append("post-merge plan")
+    # The record comes first, as in recovery: a sweep that finds it never
+    # dispatches this merge's follow-ups, so a run that ends partway through
+    # them (its time limit, a lost runner) never has them started twice.
+    # Without the record nothing is dispatched or labelled here, and a later
+    # sweep starts them.
+    try:
+        record_merge(
+            api,
+            number,
+            head,
+            f"{MERGED_MARKER}\nAutopilot merged head `{head}` with a merge commit after "
+            f"rechecking policy, review and required checks. Merge SHA: `{merge_sha}`. "
+            f"Post-merge dispatches about to start on dev: {names}.\n\n{audit}",
+            names,
+        )
+    except PolicyError as exc:
+        summary(f"Autopilot merged PR #{number}, but {exc}.")
+        raise PolicyError(f"merged, but {exc}") from None
     missed += dispatch_plan(api, plan)
     try:
         add_label(api, number, policy["labels"]["merged"])
     except PolicyError:
         missed.append("merged label")
-    try:
-        comment(
-            api,
-            number,
-            f"{MERGED_MARKER}\nAutopilot merged head `{context['head']}` with a merge commit after rechecking policy, review and required checks. Merge SHA: `{merge_sha}`.{not_started(missed)}\n\n{audit}",
-        )
-    except PolicyError:
-        missed.append("merged comment")
+    if missed:
+        try:
+            comment(
+                api,
+                number,
+                f"{MERGED_MARKER}\nSome post-merge follow-ups for head `{head}` did not start.{not_started(missed)}",
+            )
+        except PolicyError:
+            missed.append("note naming them")
     summary(
         f"Autopilot merged PR #{number}; merge SHA {merge_sha}; checks: {', '.join(checks)}."
     )

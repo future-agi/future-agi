@@ -174,6 +174,11 @@ class FakeApprover:
         return copy.deepcopy(result)
 
 
+class RunEnded(BaseException):
+    """The job hit its time limit or lost its runner. Nothing in the
+    controller catches it, as nothing runs after a cancelled step."""
+
+
 class FakeGitHub:
     """Implement only the API contract used by the trusted controller."""
 
@@ -2611,6 +2616,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.merged_records()), 2)
         self.later_sweep(35)
         self.assertEqual(self.post_merge_dispatches(), planned)
+        # Every attempt fails, but the last one reached GitHub: the sweep reads
+        # the comments back, finds its record and dispatches, once.
+        self.api = FakeGitHub()
+        self.merge_with_lost_answer()
+        self.lose_every_record_answer()
+        self.later_sweep(20)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+        self.assertEqual(len(self.merged_records()), 1)
+        self.later_sweep(35)
+        self.assertEqual(self.post_merge_dispatches(), planned)
 
     def test_merge_recovery_respects_the_dev_cdn_switch(self):
         self.assertIn("DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}", workflow_job("prepare"))
@@ -2641,6 +2656,120 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("backend-ci.yml", self.post_merge_dispatches())
         [record] = self.merged_records()
         self.assertIn("Merge SHA: `unknown`", record)
+
+    # --- The merging run's record comes before its dispatches ---
+
+    @staticmethod
+    def merged_record_write(method, route, data):
+        return (method, route) == ("POST", "issues/42/comments") and data["body"].startswith(
+            risk.MERGED_MARKER
+        )
+
+    def end_run_at_dispatch(self, n):
+        """The merge run ends while it sends its n-th post-merge dispatch."""
+        original, sent = self.api.request, [0]
+        own = f"actions/workflows/{risk.WORKFLOW}/dispatches"
+
+        def request(method, route, data=None, **kwargs):
+            if method == "POST" and route.endswith("/dispatches") and route != own:
+                sent[0] += 1
+                if sent[0] == n:
+                    raise RunEnded()
+            return original(method, route, data, **kwargs)
+
+        self.api.request = request
+
+    def test_a_merge_run_that_ends_during_its_follow_ups_is_not_dispatched_again(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        self.assertGreater(len(planned), 1)
+        context = self.passing_review()
+        self.end_run_at_dispatch(2)
+        with self.assertRaises(RunEnded):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertTrue(self.api.pr["merged"])
+        self.assertEqual(self.post_merge_dispatches(), planned[:1])
+        self.assertNotIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+        # The record was written first, and names what the run was about to start.
+        [record] = self.merged_records()
+        self.assertIn("c" * 40, record)
+        for workflow in planned:
+            self.assertIn(f"`{workflow}`", record)
+        self.api.open_prs = []
+        self.later_sweep(20)
+        self.later_sweep(35)
+        self.assertEqual(self.post_merge_dispatches(), planned[:1])
+        self.assertEqual(len(self.merged_records()), 1)
+
+    def test_a_merge_whose_label_and_note_both_fail_is_not_dispatched_again(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        context = self.passing_review()
+        self.failing(lambda method, route, data: (method, route) == ("POST", "issues/42/labels")
+                     and "autopilot-merged" in data["labels"], 1, status=403)
+        # Every merged comment written after the dispatches fails.
+        self.failing(lambda method, route, data: self.merged_record_write(method, route, data)
+                     and bool(self.post_merge_dispatches()), 3, status=403)
+        with self.assertRaisesRegex(risk.PolicyError, "merged label, note naming them"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+        self.assertNotIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+        self.assertEqual(len(self.merged_records()), 1)
+        self.api.open_prs = []
+        self.later_sweep(20)
+        self.later_sweep(35)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+
+    def test_a_merge_record_that_cannot_be_written_leaves_the_follow_ups_to_the_sweep(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        # A refusal is not retried; server errors are, three times.
+        for status, times in ((403, 1), (502, 3)):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                self.failing(self.merged_record_write, times, status=status)
+                with self.assertRaisesRegex(risk.PolicyError, "merged record could not be written"):
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertTrue(self.api.pr["merged"])
+                self.assertEqual(self.post_merge_dispatches(), [])
+                self.assertEqual(self.merged_records(), [])
+                # No merged label either: it would hide the PR from recovery.
+                self.assertNotIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+                self.api.open_prs = []
+                self.later_sweep(20)
+                self.assertEqual(self.post_merge_dispatches(), planned)
+                self.assertIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+                self.later_sweep(35)
+                self.assertEqual(self.post_merge_dispatches(), planned)
+
+    def lose_every_record_answer(self, attempts=3):
+        """Every attempt to write the record fails; the last one reaches GitHub."""
+        self.failing(self.merged_record_write, 1, status=None, lose_response=True)
+        self.failing(self.merged_record_write, attempts - 1, status=502)
+
+    def test_a_merge_record_whose_answers_are_all_lost_is_read_back(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        context = self.passing_review()
+        self.lose_every_record_answer()
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+        self.assertIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+        self.assertEqual(len(self.merged_records()), 1)
+        # The read-back cannot be made either: nothing is dispatched, and the
+        # run says that a person may have to dispatch them.
+        self.api = FakeGitHub()
+        context = self.passing_review()
+        self.lose_every_record_answer()
+        pages = self.api.pages
+
+        def no_comments_after_merge(route, key=None):
+            if route == "issues/42/comments" and self.api.pr["merged"]:
+                raise risk.ApiError("GitHub API denied or failed a request (HTTP 502)", 502)
+            return pages(route, key)
+
+        self.api.pages = no_comments_after_merge
+        with self.assertRaisesRegex(risk.PolicyError, "by hand: `backend-ci.yml`"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(self.post_merge_dispatches(), [])
+        self.assertNotIn({"name": "autopilot-merged"}, self.api.pr["labels"])
 
     def test_hold_head_base_and_required_check_races_after_approval(self):
         changes = {
