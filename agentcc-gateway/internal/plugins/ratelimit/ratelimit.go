@@ -99,10 +99,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 	if !allowed {
 		return pipeline.ResultError(&models.APIError{
-			Status:  http.StatusTooManyRequests,
-			Type:    "rate_limit_error",
-			Code:    "rate_limit_exceeded",
-			Message: fmt.Sprintf("Rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			Status:     http.StatusTooManyRequests,
+			Type:       "rate_limit_error",
+			Code:       "rate_limit_exceeded",
+			Message:    fmt.Sprintf("Rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			RetryAfter: strconv.Itoa(resetSeconds),
 		})
 	}
 
@@ -151,10 +152,11 @@ func (p *Plugin) checkTokens(rc *models.RequestContext, keyID string) pipeline.P
 
 	if !allowed {
 		return pipeline.ResultError(&models.APIError{
-			Status:  http.StatusTooManyRequests,
-			Type:    "rate_limit_error",
-			Code:    "token_rate_limit_exceeded",
-			Message: fmt.Sprintf("Token rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			Status:     http.StatusTooManyRequests,
+			Type:       "rate_limit_error",
+			Code:       "token_rate_limit_exceeded",
+			Message:    fmt.Sprintf("Token rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			RetryAfter: strconv.Itoa(resetSeconds),
 		})
 	}
 	return pipeline.ResultContinue()
