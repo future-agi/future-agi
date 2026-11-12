@@ -21,6 +21,19 @@ from tracer.models.dashboard import Dashboard
 pytestmark = [pytest.mark.e2e, pytest.mark.django_db(transaction=True)]
 
 
+@pytest.fixture(autouse=True)
+def registered_oauth_client(db):
+    """Register the client the tests' OAuth tokens name.
+
+    ``/mcp`` refuses tokens whose client is no longer registered and active.
+    """
+    from mcp_server.models.oauth_client import MCPOAuthClient
+
+    return MCPOAuthClient.objects.create(
+        client_id="test-client", client_secret_hash="unused", name="test-client"
+    )
+
+
 @pytest.fixture
 def protocol_client(user, workspace, monkeypatch):
     @asynccontextmanager
