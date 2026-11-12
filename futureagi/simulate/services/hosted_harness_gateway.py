@@ -5223,10 +5223,11 @@ def prepare_dispatch_payload(
             metadata = dict(dispatched.get("metadata") or {})
             metadata["available_evals"] = offered
             dispatched["metadata"] = metadata
-        if getattr(job, "skill_snapshot", None):
-            from simulate.services.skills import dispatch_skills
+        from simulate.services.skills import dispatch_skills
 
-            dispatched["skills"] = dispatch_skills(job.skill_snapshot)
+        skills = dispatch_skills(job.agent_version_id)
+        if skills:
+            dispatched["skills"] = skills
     return dispatched
 
 

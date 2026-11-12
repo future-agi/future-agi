@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.services.skills import receipt_skill_usage
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -905,9 +906,9 @@ def _apply_receipt_to_call(
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
     metadata["harness_outcome_status"] = body["status"]
-    metadata["skill_loads"] = _json_ready(
-        list((call_data or {}).get("skill_loads") or [])
-    )
+    skill_usage = receipt_skill_usage(call_data)
+    if skill_usage is not None:
+        metadata["skill_usage"] = skill_usage
     coverage = _receipt_evaluation_coverage(body)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:

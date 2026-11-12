@@ -31,10 +31,4 @@ def user_runs(path: str = "") -> Q:
     ``simulation_runs__`` from an environment). Anything else uses the selectors
     above.
     """
-    return Q(
-        **{
-            f"{path}fix_run__isnull": True,
-            f"{path}verify_of__isnull": True,
-            f"{path}skill_test__isnull": True,
-        }
-    )
+    return Q(**{f"{path}fix_run__isnull": True, f"{path}verify_of__isnull": True})

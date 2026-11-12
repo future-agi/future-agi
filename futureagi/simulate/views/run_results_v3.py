@@ -29,6 +29,7 @@ from simulate.selectors.runs import user_executions
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
+from simulate.serializers.skills import CallSkillsSerializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
@@ -63,7 +64,7 @@ from simulate.services.scoring_status import (
     SCORING_STATUSES,
     scoring_counts,
 )
-from simulate.services.skills import run_skill_summary
+from simulate.services.skills import call_skills
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
@@ -257,17 +258,6 @@ class RunResumeSerializer(serializers.Serializer):
     history = RunResumeEntrySerializer(many=True)
 
 
-class RunSkillLoadSerializer(serializers.Serializer):
-    name = serializers.CharField()
-    kind = serializers.CharField()
-    origin = serializers.ChoiceField(choices=("library", "repo"))
-    version_number = serializers.IntegerField(allow_null=True)
-    from_tag = serializers.CharField(allow_null=True)
-    observed = serializers.BooleanField(allow_null=True)
-    loaded_in = serializers.IntegerField()
-    total = serializers.IntegerField()
-
-
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -291,7 +281,6 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
-    skills = RunSkillLoadSerializer(many=True, required=False, default=list)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -446,6 +435,7 @@ class RunTracesV3QuerySerializer(serializers.Serializer):
 class RunTracesV3ResponseSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(allow_null=True)
     traces = RunTraceSerializer(many=True)
+    skills = CallSkillsSerializer(allow_null=True, required=False)
 
 
 class AnalyticsExecutionSerializer(serializers.Serializer):
@@ -689,7 +679,6 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
-        "skills": run_skill_summary(job),
     }
 
 
@@ -726,7 +715,12 @@ class RunTracesV3View(APIView):
                 "Traces are unavailable right now",
                 code="run_traces_unavailable",
             )
-        return Response(RunTracesV3ResponseSerializer(asdict(result)).data)
+        skills = call_skills(
+            execution, request.validated_query_data["call_execution_id"]
+        )
+        return Response(
+            RunTracesV3ResponseSerializer({**asdict(result), "skills": skills}).data
+        )
 
 
 def _facet_rows(

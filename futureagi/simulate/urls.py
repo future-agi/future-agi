@@ -136,7 +136,7 @@ from .views.run_results_v3 import (
     RunTracesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
-from .views.skills import SkillViewSet
+from .views.skills import AgentSkillViewSet
 
 app_name = "simulate"
 
@@ -170,7 +170,7 @@ router.register(
     HostedHarnessConversationViewSet,
     basename="hosted-harness-conversation",
 )
-router.register(r"skills", SkillViewSet, basename="skill")
+router.register(r"agent-skills", AgentSkillViewSet, basename="agent-skill")
 
 urlpatterns = [
     path("api/", include(router.urls)),

@@ -148,14 +148,6 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
-    skill_snapshot = models.JSONField(null=True, blank=True)
-    skill_test = models.ForeignKey(
-        "simulate.SkillTest",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
