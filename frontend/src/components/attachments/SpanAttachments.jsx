@@ -98,8 +98,7 @@ export default function SpanAttachments({
   const spanFrame = frames.findIndex(
     (frame) => frame.parent.span_id === parent?.span_id,
   );
-  const showFilmstrip =
-    frames.length > 0 && (spanFrame >= 0 || isRootSpan);
+  const showFilmstrip = frames.length > 0 && (spanFrame >= 0 || isRootSpan);
   if (!validProject || !parent || (!groups.length && !showFilmstrip))
     return null;
 
@@ -137,7 +136,9 @@ export default function SpanAttachments({
                     item={item}
                     request={requestFor(item, "original")}
                     result={imageResults.get(item.reference.occurrence_id)}
-                    loading={images.status === "loading"}
+                    loading={
+                      images.status === "loading" || images.status === "idle"
+                    }
                     label={itemLabel(item, group.label)}
                     onRetry={images.retry}
                   />
@@ -146,7 +147,8 @@ export default function SpanAttachments({
             )}
             {others.map((item) => {
               const kind = attachmentKind(item.reference);
-              const Component = kind === "media" ? AttachmentMedia : AttachmentFile;
+              const Component =
+                kind === "media" ? AttachmentMedia : AttachmentFile;
               return (
                 <Component
                   key={item.reference.occurrence_id}

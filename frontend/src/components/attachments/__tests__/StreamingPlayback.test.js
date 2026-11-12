@@ -30,7 +30,9 @@ describe("shared streaming transport", () => {
         Array(count).fill(7198),
       );
       await vi.waitFor(() => expect(player.isPlaying()).toBe(true));
-      elements.forEach((element) => { element.currentTime = 7199; });
+      elements.forEach((element) => {
+        element.currentTime = 7199;
+      });
       elements[0].dispatchEvent(new Event("timeupdate"));
       expect(player.getCurrentTime()).toBe(7199);
       expect(tick).toHaveBeenLastCalledWith(7199);

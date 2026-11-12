@@ -11,7 +11,11 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import useAttachmentGrants from "./useAttachmentGrants";
-import { ImageZoomDialog, MediaPlaceholder, canRenderImage } from "./AttachmentImage";
+import {
+  ImageZoomDialog,
+  MediaPlaceholder,
+  canRenderImage,
+} from "./AttachmentImage";
 
 // Only this many step buttons are mounted, centred on the selection, so a
 // 1,000-step run mounts ~15 buttons and resolves exactly one original.
@@ -52,7 +56,9 @@ export default function ScreenshotFilmstrip({
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    setIndex(Math.min(Math.max(0, initialIndex), Math.max(0, frames.length - 1)));
+    setIndex(
+      Math.min(Math.max(0, initialIndex), Math.max(0, frames.length - 1)),
+    );
   }, [initialIndex, frames.length]);
   useEffect(() => {
     const timer = setTimeout(() => setSettled(index), SETTLE_MS);
@@ -63,7 +69,9 @@ export default function ScreenshotFilmstrip({
   const frame = frames[index];
   const settledFrame = frames[settled];
   const showable =
-    settledFrame && settledFrame.item.status === "ready" && canRenderImage(settledFrame.item);
+    settledFrame &&
+    settledFrame.item.status === "ready" &&
+    canRenderImage(settledFrame.item);
   const request = useMemo(
     () => (settledFrame ? frameRequest(settledFrame) : null),
     [settledFrame],
@@ -75,8 +83,7 @@ export default function ScreenshotFilmstrip({
   );
   if (!frame) return null;
 
-  const go = (next) =>
-    setIndex(Math.min(Math.max(0, next), frames.length - 1));
+  const go = (next) => setIndex(Math.min(Math.max(0, next), frames.length - 1));
   const onKeyDown = (event) => {
     const moves = {
       ArrowLeft: index - 1,
@@ -96,12 +103,20 @@ export default function ScreenshotFilmstrip({
   const visible = frames.slice(start, start + WINDOW);
   const result = results[0];
   const label = `Screenshot ${index + 1} of ${frames.length}`;
-  const pending = settled !== index || status === "loading" || status === "idle";
+  const pending =
+    settled !== index || status === "loading" || status === "idle";
   const offset = offsetLabel(frame.startTime, traceStartTime);
 
   let viewer;
   if (frame.item.status !== "ready" || !canRenderImage(frame.item))
-    viewer = <MediaPlaceholder status={frame.item.status === "ready" ? "unavailable" : frame.item.status} height={240} />;
+    viewer = (
+      <MediaPlaceholder
+        status={
+          frame.item.status === "ready" ? "unavailable" : frame.item.status
+        }
+        height={240}
+      />
+    );
   else if (pending) viewer = <Skeleton variant="rectangular" height={240} />;
   else if (status !== "ready" || result?.status !== "ready" || failed)
     viewer = (
@@ -141,7 +156,12 @@ export default function ScreenshotFilmstrip({
           alt={label}
           referrerPolicy="no-referrer"
           onError={() => setFailed(true)}
-          sx={{ display: "block", width: "100%", height: 240, objectFit: "contain" }}
+          sx={{
+            display: "block",
+            width: "100%",
+            height: 240,
+            objectFit: "contain",
+          }}
         />
       </ButtonBase>
     );
@@ -158,7 +178,10 @@ export default function ScreenshotFilmstrip({
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "4px",
-        "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+        },
       }}
     >
       <Stack direction="row" alignItems="center" justifyContent="space-between">
@@ -175,9 +198,19 @@ export default function ScreenshotFilmstrip({
         </Typography>
       </Stack>
       {viewer}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ minWidth: 0 }}
+      >
         <Typography variant="caption" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {[frame.spanName || "Span", frame.item.reference.tool_call_id && `call ${frame.item.reference.tool_call_id}`, offset]
+          {[
+            frame.spanName || "Span",
+            frame.item.reference.tool_call_id &&
+              `call ${frame.item.reference.tool_call_id}`,
+            offset,
+          ]
             .filter(Boolean)
             .join(" · ")}
         </Typography>
@@ -224,7 +257,11 @@ export default function ScreenshotFilmstrip({
                   border: "1px solid",
                   borderColor: selected ? "text.primary" : "divider",
                   bgcolor: selected ? "text.primary" : "transparent",
-                  color: selected ? "background.paper" : step.item.status === "ready" ? "text.primary" : "text.disabled",
+                  color: selected
+                    ? "background.paper"
+                    : step.item.status === "ready"
+                      ? "text.primary"
+                      : "text.disabled",
                   fontVariantNumeric: "tabular-nums",
                 }}
               >

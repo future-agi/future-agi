@@ -24,10 +24,15 @@ export const scopeSchema = z
 // F01 Timestamp is RFC3339 date-time (max 40), not UTC-Z-only. Python's
 // datetime.isoformat() serializes UTC as +00:00. Preserve the wire spelling.
 const rfc3339 = z.string().datetime({ offset: true });
-export const timestampSchema = z.string().max(40).refine(
-  (value) => rfc3339.safeParse(value.toUpperCase()).success &&
-    /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) && Number.isFinite(Date.parse(value)),
-);
+export const timestampSchema = z
+  .string()
+  .max(40)
+  .refine(
+    (value) =>
+      rfc3339.safeParse(value.toUpperCase()).success &&
+      /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) &&
+      Number.isFinite(Date.parse(value)),
+  );
 const direction = z.enum(["input", "output", "mixed"]);
 const token = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const mediaTypes = {
@@ -119,28 +124,32 @@ export const resolveItemSchema = z
   .refine(
     (v) => (v.representation === "channel") === (v.channel !== undefined),
   );
-export const resolveResultSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      occurrence_id: uuid,
-      status: z.literal("ready"),
-      gateway_path: z
-        .string()
-        .regex(
-          /^\/tracer\/v1\/attachment-media\/(?!00000000-0000-0000-0000-000000000000\/)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\/[a-zA-Z0-9_-]{1,128}$/,
-        )
-        .max(194),
-      expires_at: timestampSchema,
-    })
-    .strict(),
-  ...["not_found", "pending", "failed", "expired", "deleted"].map((status) =>
-    z.object({ occurrence_id: uuid, status: z.literal(status) }).strict(),
-  ),
-]).refine(
-  (item) => item.status !== "ready" ||
-    ("gateway_path" in item && item.gateway_path.split("/")[4] === item.occurrence_id),
-  { message: "Gateway occurrence mismatch" },
-);
+export const resolveResultSchema = z
+  .discriminatedUnion("status", [
+    z
+      .object({
+        occurrence_id: uuid,
+        status: z.literal("ready"),
+        gateway_path: z
+          .string()
+          .regex(
+            /^\/tracer\/v1\/attachment-media\/(?!00000000-0000-0000-0000-000000000000\/)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\/[a-zA-Z0-9_-]{1,128}$/,
+          )
+          .max(194),
+        expires_at: timestampSchema,
+      })
+      .strict(),
+    ...["not_found", "pending", "failed", "expired", "deleted"].map((status) =>
+      z.object({ occurrence_id: uuid, status: z.literal(status) }).strict(),
+    ),
+  ])
+  .refine(
+    (item) =>
+      item.status !== "ready" ||
+      ("gateway_path" in item &&
+        item.gateway_path.split("/")[4] === item.occurrence_id),
+    { message: "Gateway occurrence mismatch" },
+  );
 export const resolveResponseSchema = z
   .object({ items: z.array(resolveResultSchema).max(64) })
   .strict();

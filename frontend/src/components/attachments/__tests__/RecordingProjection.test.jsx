@@ -14,16 +14,56 @@ afterEach(() => {
 describe("I04 recording_attachment states", () => {
   it.each([
     [{ state: "rejected" }, "Recording unavailable"],
-    [{ occurrence_id: occurrenceId, parent, state: "waiting" }, "Waiting for recording completion"],
-    [{ occurrence_id: occurrenceId, parent, state: "pending" }, "Recording is not ready yet"],
-    [{ occurrence_id: occurrenceId, parent, state: "pending_upload" }, "Uploading recording"],
-    [{ occurrence_id: occurrenceId, parent, state: "validating" }, "Validating recording"],
-    [{ occurrence_id: occurrenceId, parent, state: "failed" }, "Recording could not be prepared"],
-    [{ occurrence_id: occurrenceId, parent, state: "ready" }, "Recording unavailable"],
-    [{ occurrence_id: occurrenceId, parent, state: "ready", manifest: { ...mixedManifest, layout: "bogus" } }, "Recording unavailable"],
-    [{ occurrence_id: occurrenceId, parent, state: "ready", manifest: mixedManifest, url: "https://provider.example/r.wav" }, "Recording unavailable"],
+    [
+      { occurrence_id: occurrenceId, parent, state: "waiting" },
+      "Waiting for recording completion",
+    ],
+    [
+      { occurrence_id: occurrenceId, parent, state: "pending" },
+      "Recording is not ready yet",
+    ],
+    [
+      { occurrence_id: occurrenceId, parent, state: "pending_upload" },
+      "Uploading recording",
+    ],
+    [
+      { occurrence_id: occurrenceId, parent, state: "validating" },
+      "Validating recording",
+    ],
+    [
+      { occurrence_id: occurrenceId, parent, state: "failed" },
+      "Recording could not be prepared",
+    ],
+    [
+      { occurrence_id: occurrenceId, parent, state: "ready" },
+      "Recording unavailable",
+    ],
+    [
+      {
+        occurrence_id: occurrenceId,
+        parent,
+        state: "ready",
+        manifest: { ...mixedManifest, layout: "bogus" },
+      },
+      "Recording unavailable",
+    ],
+    [
+      {
+        occurrence_id: occurrenceId,
+        parent,
+        state: "ready",
+        manifest: mixedManifest,
+        url: "https://provider.example/r.wav",
+      },
+      "Recording unavailable",
+    ],
   ])("%j shows a coarse state and never resolves", (attachment, text) => {
-    render(<RecordingAttachmentPlayer projectId={projectId} attachment={attachment} />);
+    render(
+      <RecordingAttachmentPlayer
+        projectId={projectId}
+        attachment={attachment}
+      />,
+    );
     expect(screen.getByText(text)).toBeInTheDocument();
     expect(resolveAttachments).not.toHaveBeenCalled();
   });
@@ -39,13 +79,20 @@ describe("I04 recording_attachment states", () => {
     render(
       <RecordingAttachmentPlayer
         projectId={projectId}
-        attachment={{ occurrence_id: occurrenceId, parent, state: "ready", manifest: mixedManifest }}
+        attachment={{
+          occurrence_id: occurrenceId,
+          parent,
+          state: "ready",
+          manifest: mixedManifest,
+        }}
       />,
     );
     await screen.findByRole("button", { name: "Play recording" });
     expect(resolveAttachments.mock.calls[0][1]).toEqual([
       { occurrence_id: occurrenceId, parent, representation: "playable" },
     ]);
-    expect(screen.queryByText(/Pipecat|LiveKit|Framework recording/)).toBeNull();
+    expect(
+      screen.queryByText(/Pipecat|LiveKit|Framework recording/),
+    ).toBeNull();
   });
 });

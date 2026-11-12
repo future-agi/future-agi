@@ -50,7 +50,9 @@ export default class StreamingPlayback {
           if (
             !this.ready() ||
             elements.some(
-              (other) => Math.abs(other.currentTime - element.currentTime) > DRIFT_TOLERANCE,
+              (other) =>
+                Math.abs(other.currentTime - element.currentTime) >
+                DRIFT_TOLERANCE,
             )
           ) {
             this.hold();
@@ -76,26 +78,45 @@ export default class StreamingPlayback {
   emit(event, value) {
     this.listeners.get(event)?.forEach((callback) => callback(value));
   }
-  getCurrentTime() { return this.time; }
-  getDuration() { return this.duration; }
-  isPlaying() { return this.playing; }
+  getCurrentTime() {
+    return this.time;
+  }
+  getDuration() {
+    return this.duration;
+  }
+  isPlaying() {
+    return this.playing;
+  }
   ready() {
-    return !this.pendingMetadata.size && this.elements.every(
-      (element) => element.readyState >= HAVE_FUTURE_DATA && !element.seeking,
+    return (
+      !this.pendingMetadata.size &&
+      this.elements.every(
+        (element) => element.readyState >= HAVE_FUTURE_DATA && !element.seeking,
+      )
     );
   }
   align() {
     this.elements.forEach((element) => {
-      if (!this.pendingMetadata.has(element) && element.readyState >= 1 &&
-          Math.abs(element.currentTime - this.time) > ALIGN_TOLERANCE)
+      if (
+        !this.pendingMetadata.has(element) &&
+        element.readyState >= 1 &&
+        Math.abs(element.currentTime - this.time) > ALIGN_TOLERANCE
+      )
         element.currentTime = this.time;
     });
   }
   // Keep play intent distinct from actual playback. One stalled/seeking channel
   // pauses EVERY channel at the earliest position, never skipping unheard audio.
   hold(retainPosition = true) {
-    if (retainPosition && (this.playing || this.starting) && !this.pendingMetadata.size) {
-      this.time = Math.max(0, Math.min(this.duration, ...this.elements.map((e) => e.currentTime)));
+    if (
+      retainPosition &&
+      (this.playing || this.starting) &&
+      !this.pendingMetadata.size
+    ) {
+      this.time = Math.max(
+        0,
+        Math.min(this.duration, ...this.elements.map((e) => e.currentTime)),
+      );
       this.emit("timeupdate", this.time);
     }
     this.generation += 1;
@@ -113,7 +134,9 @@ export default class StreamingPlayback {
     this.emit("timeupdate", this.time);
     void this.resumeWhenReady();
   }
-  seekTo(progress) { this.setTime(progress * this.duration); }
+  seekTo(progress) {
+    this.setTime(progress * this.duration);
+  }
   play() {
     if (this.disposed) return Promise.resolve();
     this.wantsPlay = true;
@@ -124,7 +147,14 @@ export default class StreamingPlayback {
     return this.resumeWhenReady();
   }
   async resumeWhenReady() {
-    if (this.disposed || !this.wantsPlay || this.playing || this.starting || !this.ready()) return;
+    if (
+      this.disposed ||
+      !this.wantsPlay ||
+      this.playing ||
+      this.starting ||
+      !this.ready()
+    )
+      return;
     this.align();
     // Seeking to the retained clock can itself need another Range response.
     if (!this.ready()) return;

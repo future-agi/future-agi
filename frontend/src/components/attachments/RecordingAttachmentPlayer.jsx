@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Slider, Stack, Typography } from "@mui/material";
-import {
-  recordingProjectionSchema,
-  recordingRequests,
-  uuid,
-} from "./contract";
+import { recordingProjectionSchema, recordingRequests, uuid } from "./contract";
 import { resolveAttachments } from "./client";
 import StreamingPlayback from "./StreamingPlayback";
 import AttachmentStatus from "./AttachmentStatus";
@@ -232,7 +228,11 @@ function ReadyRecording({ projectId, attachment, manifest, onInstance }) {
               {timeLabel(time)} / {timeLabel(duration)}
             </Typography>
           </Stack>
-          {buffering && <Typography variant="caption" role="status">Buffering recording…</Typography>}
+          {buffering && (
+            <Typography variant="caption" role="status">
+              Buffering recording…
+            </Typography>
+          )}
           <Typography variant="caption" color="text.secondary">
             {manifest.tracks
               .map((track) => trackLabels[track.role])

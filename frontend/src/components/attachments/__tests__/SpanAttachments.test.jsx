@@ -51,7 +51,11 @@ afterEach(() => {
 describe("contextual span attachments (U01)", () => {
   it("renders nothing and requests nothing when the projection is absent", () => {
     const { container } = render(
-      <SpanAttachments projectId={projectId} span={span(undefined)} allSpans={[]} />,
+      <SpanAttachments
+        projectId={projectId}
+        span={span(undefined)}
+        allSpans={[]}
+      />,
     );
     expect(container).toBeEmptyDOMElement();
     expect(resolveAttachments).not.toHaveBeenCalled();
@@ -63,7 +67,13 @@ describe("contextual span attachments (U01)", () => {
       spanImage(1),
       spanImage(2, { reference: { direction: "output", message_index: 1 } }),
     ];
-    render(<SpanAttachments projectId={projectId} span={span(items)} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span(items)}
+        allSpans={[]}
+      />,
+    );
     const images = await screen.findAllByRole("img");
     expect(images).toHaveLength(3);
     expect(resolveAttachments).toHaveBeenCalledTimes(1);
@@ -76,7 +86,9 @@ describe("contextual span attachments (U01)", () => {
         representation: "original",
       })),
     );
-    expect(images[0].getAttribute("src")).toMatch(/^\/tracer\/v1\/attachment-media\//);
+    expect(images[0].getAttribute("src")).toMatch(
+      /^\/tracer\/v1\/attachment-media\//,
+    );
     expect(images[0].getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(screen.getByText("Input · message 1 · part 1")).toBeInTheDocument();
     expect(screen.getByText("Output · message 2 · part 3")).toBeInTheDocument();
@@ -103,15 +115,30 @@ describe("contextual span attachments (U01)", () => {
 
   it("shows a resolver denial as unavailable without disclosing why", async () => {
     resolveAttachments.mockResolvedValue([
-      { occurrence_id: spanImage(0).reference.occurrence_id, status: "not_found" },
+      {
+        occurrence_id: spanImage(0).reference.occurrence_id,
+        status: "not_found",
+      },
     ]);
-    render(<SpanAttachments projectId={projectId} span={span([spanImage(0)])} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([spanImage(0)])}
+        allSpans={[]}
+      />,
+    );
     expect(await screen.findByText("Unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("img")).toBeNull();
   });
 
   it("replaces a broken image with a retry that re-resolves", async () => {
-    render(<SpanAttachments projectId={projectId} span={span([spanImage(0)])} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([spanImage(0)])}
+        allSpans={[]}
+      />,
+    );
     fireEvent.error(await screen.findByRole("img"));
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Retry"));
@@ -119,8 +146,16 @@ describe("contextual span attachments (U01)", () => {
   });
 
   it("zooms with a FRESH grant and returns focus to the image", async () => {
-    render(<SpanAttachments projectId={projectId} span={span([spanImage(0)])} allSpans={[]} />);
-    const trigger = await screen.findByRole("button", { name: /Open Input · message 1 · part 1 image at full size/ });
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([spanImage(0)])}
+        allSpans={[]}
+      />,
+    );
+    const trigger = await screen.findByRole("button", {
+      name: /Open Input · message 1 · part 1 image at full size/,
+    });
     trigger.focus();
     fireEvent.click(trigger);
     await waitFor(() => expect(resolveAttachments).toHaveBeenCalledTimes(2));
@@ -133,32 +168,60 @@ describe("contextual span attachments (U01)", () => {
   it("never renders SVG or unknown image types even if a row claims ready", () => {
     const row = spanImage(0);
     row.reference.mime_type = "image/svg+xml";
-    render(<SpanAttachments projectId={projectId} span={span([row, spanImage(1)])} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([row, spanImage(1)])}
+        allSpans={[]}
+      />,
+    );
     // The SVG row is invalid under F01 and dropped; only the PNG is requested.
     expect(resolveAttachments.mock.calls[0][1]).toHaveLength(1);
   });
 
   it("rejects an invalid project or span id before any request", () => {
     const { container } = render(
-      <SpanAttachments projectId="not-a-uuid" span={span([spanImage(0)])} allSpans={[]} />,
+      <SpanAttachments
+        projectId="not-a-uuid"
+        span={span([spanImage(0)])}
+        allSpans={[]}
+      />,
     );
     expect(container).toBeEmptyDOMElement();
-    render(<SpanAttachments projectId={projectId} span={span([spanImage(0)], { id: "x" })} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([spanImage(0)], { id: "x" })}
+        allSpans={[]}
+      />,
+    );
     expect(resolveAttachments).not.toHaveBeenCalled();
   });
 });
 
 describe("video, audio and file attachments (U04)", () => {
   const video = spanImage(0, {
-    reference: { modality: "video", mime_type: "video/mp4", direction: "output" },
+    reference: {
+      modality: "video",
+      mime_type: "video/mp4",
+      direction: "output",
+    },
   });
   const pdf = spanImage(1, {
-    reference: { modality: "document", mime_type: "application/pdf", purpose: "document" },
+    reference: {
+      modality: "document",
+      mime_type: "application/pdf",
+      purpose: "document",
+    },
   });
 
   it("does not resolve or fetch media until the viewer asks, then streams from the gateway", async () => {
     const { container } = render(
-      <SpanAttachments projectId={projectId} span={span([video])} allSpans={[]} />,
+      <SpanAttachments
+        projectId={projectId}
+        span={span([video])}
+        allSpans={[]}
+      />,
     );
     expect(resolveAttachments).not.toHaveBeenCalled();
     expect(container.querySelector("video")).toBeNull();
@@ -168,24 +231,40 @@ describe("video, audio and file attachments (U04)", () => {
         /^\/tracer\/v1\/attachment-media\//,
       ),
     );
-    expect(resolveAttachments.mock.calls[0][1][0].representation).toBe("playable");
-    expect(container.querySelector("video").getAttribute("preload")).toBe("metadata");
+    expect(resolveAttachments.mock.calls[0][1][0].representation).toBe(
+      "playable",
+    );
+    expect(container.querySelector("video").getAttribute("preload")).toBe(
+      "metadata",
+    );
   });
 
   it("downloads a PDF through a same-origin link and never embeds it", async () => {
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
     const { container } = render(
-      <SpanAttachments projectId={projectId} span={span([pdf])} allSpans={[]} />,
+      <SpanAttachments
+        projectId={projectId}
+        span={span([pdf])}
+        allSpans={[]}
+      />,
     );
-    expect(screen.getByText("Preview unavailable · download to inspect")).toBeInTheDocument();
+    expect(
+      screen.getByText("Preview unavailable · download to inspect"),
+    ).toBeInTheDocument();
     expect(container.querySelector("iframe, object, embed")).toBeNull();
     expect(resolveAttachments).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Download/ }));
     await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
     const link = click.mock.instances[0];
-    expect(link.getAttribute("href")).toMatch(/^\/tracer\/v1\/attachment-media\//);
+    expect(link.getAttribute("href")).toMatch(
+      /^\/tracer\/v1\/attachment-media\//,
+    );
     expect(link.download).toMatch(/^attachment-d0000000\.pdf$/);
-    expect(resolveAttachments.mock.calls[0][1][0].representation).toBe("original");
+    expect(resolveAttachments.mock.calls[0][1][0].representation).toBe(
+      "original",
+    );
     expect(document.querySelector("a[download]")).toBeNull();
   });
 
@@ -193,7 +272,13 @@ describe("video, audio and file attachments (U04)", () => {
     resolveAttachments.mockResolvedValue([
       { occurrence_id: pdf.reference.occurrence_id, status: "deleted" },
     ]);
-    render(<SpanAttachments projectId={projectId} span={span([pdf])} allSpans={[]} />);
+    render(
+      <SpanAttachments
+        projectId={projectId}
+        span={span([pdf])}
+        allSpans={[]}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /Download/ }));
     expect(await screen.findByText("Deleted")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Download/ }));
@@ -224,21 +309,40 @@ describe("computer-use filmstrip (U03)", () => {
       />,
     );
     await screen.findByRole("img");
-    expect(screen.getAllByRole("button", { name: /^Step \d+/ })).toHaveLength(15);
+    expect(screen.getAllByRole("button", { name: /^Step \d+/ })).toHaveLength(
+      15,
+    );
     expect(resolveAttachments).toHaveBeenCalledTimes(1);
     expect(resolveAttachments.mock.calls[0][1]).toEqual([
-      { occurrence_id: frames[0].item.reference.occurrence_id, parent: frames[0].parent, representation: "original" },
+      {
+        occurrence_id: frames[0].item.reference.occurrence_id,
+        parent: frames[0].parent,
+        representation: "original",
+      },
     ]);
     expect(screen.getByText("Step 1 of 1000")).toBeInTheDocument();
-    expect(screen.getByText("Screenshots captured at each step, not a continuous recording.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Screenshots captured at each step, not a continuous recording.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("navigates by keyboard and resolves only where the selection settles", async () => {
     const frames = collectScreenshots(thousand);
-    render(<ScreenshotFilmstrip projectId={projectId} frames={frames} traceStartTime={traceStart} />);
+    render(
+      <ScreenshotFilmstrip
+        projectId={projectId}
+        frames={frames}
+        traceStartTime={traceStart}
+      />,
+    );
     await screen.findByRole("img");
-    const region = screen.getByRole("region", { name: "Computer-use screenshots" });
-    for (let i = 0; i < 5; i += 1) fireEvent.keyDown(region, { key: "ArrowRight" });
+    const region = screen.getByRole("region", {
+      name: "Computer-use screenshots",
+    });
+    for (let i = 0; i < 5; i += 1)
+      fireEvent.keyDown(region, { key: "ArrowRight" });
     expect(screen.getByText("Step 6 of 1000")).toBeInTheDocument();
     await waitFor(() => expect(resolveAttachments).toHaveBeenCalledTimes(2));
     expect(resolveAttachments.mock.calls[1][1][0].occurrence_id).toBe(
@@ -246,8 +350,13 @@ describe("computer-use filmstrip (U03)", () => {
     );
     fireEvent.keyDown(region, { key: "End" });
     expect(screen.getByText("Step 1000 of 1000")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Next screenshot" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^Step 1000/ })).toHaveAttribute("aria-current", "step");
+    expect(
+      screen.getByRole("button", { name: "Next screenshot" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Step 1000/ })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
     expect(screen.getByText(/\+999\.0 s/)).toBeInTheDocument();
   });
 
@@ -272,7 +381,12 @@ describe("computer-use filmstrip (U03)", () => {
   it("shows hidden or deleted steps as coarse states and does not resolve them", async () => {
     const frames = collectScreenshots([
       {
-        observation_span: { id: spanId, trace: traceId, start_time: traceStart, attachments: [shot(0, { status: "failed" })] },
+        observation_span: {
+          id: spanId,
+          trace: traceId,
+          start_time: traceStart,
+          attachments: [shot(0, { status: "failed" })],
+        },
       },
     ]);
     vi.useFakeTimers();

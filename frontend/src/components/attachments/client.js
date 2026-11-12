@@ -38,9 +38,11 @@ export async function resolveAttachments(projectId, items, signal) {
     const config = requestConfig(signal);
     // Separate narrow exchange: an application session plus a playback grant,
     // never a bearer URL alone. Reauthorize on every renewal; do not cache it.
+    // The contract body is AttachmentEmptyRequest: `{}`, not an absent body,
+    // which the development request-contract check rejects before sending.
     const session = await axios.post(
       apiPath("/tracer/v1/attachment-media-sessions"),
-      undefined,
+      {},
       config,
     );
     if (session.status !== 204) throw new AttachmentUnavailable();

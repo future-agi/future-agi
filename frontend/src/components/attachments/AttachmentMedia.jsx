@@ -29,15 +29,15 @@ export default function AttachmentMedia({ projectId, request, item, label }) {
   const [requested, setRequested] = useState(false);
   const [failed, setFailed] = useState(false);
   const elementRef = useRef(null);
-  const { status, results, retry } = useAttachmentGrants(
-    projectId,
-    [request],
-    { enabled: requested, renew: true },
-  );
+  const { status, results, retry } = useAttachmentGrants(projectId, [request], {
+    enabled: requested,
+    renew: true,
+  });
   const result = results[0];
-  const path = status === "ready" && result?.status === "ready"
-    ? result.gateway_path
-    : null;
+  const path =
+    status === "ready" && result?.status === "ready"
+      ? result.gateway_path
+      : null;
 
   useEffect(() => {
     const element = elementRef.current;
@@ -138,7 +138,10 @@ AttachmentMedia.propTypes = {
   label: PropTypes.string.isRequired,
 };
 
-const fileNames = { "application/pdf": "pdf", "application/octet-stream": "bin" };
+const fileNames = {
+  "application/pdf": "pdf",
+  "application/octet-stream": "bin",
+};
 
 /**
  * A file or PDF chip. Nothing is rendered inline: there is no sandboxed PDF
@@ -148,11 +151,9 @@ const fileNames = { "application/pdf": "pdf", "application/octet-stream": "bin" 
  */
 export function AttachmentFile({ projectId, request, item, label }) {
   const [requested, setRequested] = useState(false);
-  const { status, results, retry } = useAttachmentGrants(
-    projectId,
-    [request],
-    { enabled: requested },
-  );
+  const { status, results, retry } = useAttachmentGrants(projectId, [request], {
+    enabled: requested,
+  });
   const result = results[0];
   const isPdf = item.reference.mime_type === "application/pdf";
 
@@ -204,7 +205,8 @@ export function AttachmentFile({ projectId, request, item, label }) {
           {blocked
             ? unavailableLabels[item.status] || unavailableLabels.unavailable
             : denied
-              ? unavailableLabels[result?.status] || unavailableLabels.unavailable
+              ? unavailableLabels[result?.status] ||
+                unavailableLabels.unavailable
               : "Preview unavailable · download to inspect"}
         </Typography>
       </Stack>

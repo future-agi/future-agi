@@ -109,9 +109,7 @@ export function ImageZoomDialog({ open, onClose, projectId, request, label }) {
         ) : (
           <Box sx={{ width: 480 }}>
             <MediaPlaceholder
-              status={
-                failed ? "unavailable" : result?.status || "unavailable"
-              }
+              status={failed ? "unavailable" : result?.status || "unavailable"}
               height={200}
             >
               <ButtonBase
@@ -154,14 +152,16 @@ export default function AttachmentImage({
 }) {
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(false);
-  if (item.status !== "ready")
-    return <MediaPlaceholder status={item.status} />;
+  if (item.status !== "ready") return <MediaPlaceholder status={item.status} />;
   if (!canRenderImage(item)) return <MediaPlaceholder status="unavailable" />;
-  if (loading || !result)
-    return <Skeleton variant="rectangular" height={120} />;
-  if (result.status !== "ready" || failed)
+  if (loading) return <Skeleton variant="rectangular" height={120} />;
+  // A failed batch resolve leaves no result: show it as unavailable with a
+  // retry rather than an endless skeleton.
+  if (!result || result.status !== "ready" || failed)
     return (
-      <MediaPlaceholder status={failed ? "unavailable" : result.status}>
+      <MediaPlaceholder
+        status={failed || !result ? "unavailable" : result.status}
+      >
         {onRetry && (
           <ButtonBase
             onClick={() => {
@@ -188,7 +188,10 @@ export default function AttachmentImage({
           borderRadius: "4px",
           overflow: "hidden",
           bgcolor: "background.default",
-          "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+          },
         }}
       >
         <Box
