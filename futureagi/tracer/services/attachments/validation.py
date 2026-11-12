@@ -21,9 +21,20 @@ from tracer.models.attachment import (
     AttachmentUpload,
 )
 from tracer.services.attachments.bootstrap import check_session, session_policy
-from tracer.services.attachments.contract import AttachmentError, admit_audio
+from tracer.services.attachments.contract import (
+    SERVER_MODALITIES,
+    AttachmentError,
+    admit_audio,
+)
+from tracer.services.attachments.probe import REJECTED_EXIT
 from tracer.services.attachments.storage import ObjectIdentity
 from tracer.services.attachments.uploads import settle
+
+
+VALIDATED_MIME_TYPES = frozenset(
+    mime for types in SERVER_MODALITIES.values() for mime in types
+)
+SANDBOX_NPROC = 16
 
 
 def sandbox_probe(path):
@@ -31,6 +42,13 @@ def sandbox_probe(path):
 
     No permissive fallback if user namespaces/bubblewrap are unavailable. The
     only writable filesystem is a private /tmp, with output limited by RLIMIT.
+
+    The process cap is set inside the sandbox, after bwrap made its namespaces.
+    RLIMIT_NPROC counts every process of the caller's UID, so a cap on bwrap
+    itself makes a non-root worker that already runs >=16 processes fail to
+    create the namespace. Only probe.py's own REJECTED_EXIT means the bytes were
+    refused; any other exit (bwrap or prlimit setup, SIGXCPU/SIGKILL, a missing
+    interpreter) is the sandbox failing and is retryable, never a rejection.
     """
     command = [
         "/usr/bin/prlimit",
@@ -38,7 +56,6 @@ def sandbox_probe(path):
         "--cpu=10",
         "--fsize=8192",
         "--nofile=32",
-        "--nproc=16",
         "--",
         "/usr/bin/bwrap",
         "--unshare-all",
@@ -69,6 +86,9 @@ def sandbox_probe(path):
         "/input",
         "--chdir",
         "/tmp",
+        "/usr/bin/prlimit",
+        f"--nproc={SANDBOX_NPROC}",
+        "--",
         "/usr/bin/python3",
         "-I",
         "-S",
@@ -87,13 +107,19 @@ def sandbox_probe(path):
                 check=False,
                 close_fds=True,
             )
-            if completed.returncode != 0:
+            if completed.returncode == REJECTED_EXIT:
                 raise AttachmentError("validation_rejected", 422)
+            if completed.returncode != 0:
+                raise ValueError
             output.seek(0)
             result = json.loads(output.read(8193))
         if (
             set(result) != {"mime_type", "sample_rate", "channels", "frame_count"}
-            or result["mime_type"] != "audio/wav"
+            or result["mime_type"] not in VALIDATED_MIME_TYPES
+            or any(
+                type(result[key]) is not int or result[key] < 0
+                for key in ("sample_rate", "channels", "frame_count")
+            )
         ):
             raise ValueError
         return result
@@ -122,7 +148,20 @@ def _check(upload):
         session_policy(upload.capture_session),
         direction=upload.occurrence.direction,
         source_kind=upload.attachment.source_kind,
+        creates_recording=upload.recording_id is not None,
+        modality=upload.attachment.modality,
     )
+
+
+def accept(facts, upload):
+    """The sniffed type must be exactly the declared one; the blob stores it.
+
+    A PNG declared as image/jpeg, or a WAV declared as audio/ogg, is rejected:
+    the gateway serves the validated type, so a mismatch is never relabelled.
+    """
+    if facts["mime_type"] != upload.mime_type:
+        raise AttachmentError("validation_rejected", 422)
+    return facts
 
 
 def validate(upload_id, *, scope_id, storage):
@@ -145,7 +184,7 @@ def validate(upload_id, *, scope_id, storage):
                 expected_length=upload.expected_bytes,
             )
             snapshot.flush()
-            facts = sandbox_probe(snapshot.name)
+            facts = accept(sandbox_probe(snapshot.name), upload)
             # Scope lock serializes policy/deletion fencing and publication. The
             # bounded promotion is intentionally inside this transaction.
             with transaction.atomic():
@@ -183,6 +222,11 @@ def validate(upload_id, *, scope_id, storage):
         settle(upload_id, scope_id=scope_id, outcome=AttachmentState.READY)
         return blob
     except Exception as exc:
+        if isinstance(exc, AttachmentError) and exc.code == "validation_unavailable":
+            # The sandbox failed, not the bytes: the upload stays VALIDATING with
+            # its reservation and outbox row, so the job is retried until the
+            # occurrence expiry fence settles it.
+            raise
         settle(upload_id, scope_id=scope_id, outcome=AttachmentState.REJECTED)
         if isinstance(exc, AttachmentError):
             raise

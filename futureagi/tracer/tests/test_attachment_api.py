@@ -389,7 +389,13 @@ def test_bootstrap_returns_server_policy_and_renews(api):
     reply, body = bootstrap(api)
     document = ok(reply, 200, "BootstrapResponse")
     assert document["scope"]["project_id"] == str(api.project.id)
-    assert document["policy"]["allowed_modalities"] == ["audio"]
+    assert document["policy"]["allowed_modalities"] == [
+        "audio",
+        "document",
+        "image",
+        "video",
+    ]
+    assert document["policy"]["record_video"] is False
     assert document["policy"]["record_audio"] is True
     again, _ = bootstrap(
         api, sid=body["capture_session_id"], nonce=body["correlation_nonce"]
@@ -562,7 +568,49 @@ def test_renewed_capability_never_outlives_the_upload_horizon(api):
             403,
             "recording_disabled",
         ),
-        ({}, {"modality": "image", "mime_type": "image/png"}, 403, "policy_denied"),
+        # Declared types the server cannot validate are refused, never stored.
+        (
+            {},
+            {"modality": "file", "mime_type": "application/octet-stream"},
+            403,
+            "policy_denied",
+        ),
+        ({}, {"mime_type": "audio/L16"}, 403, "policy_denied"),
+        # Not in the F01 MIME enum at all: refused by the schema.
+        (
+            {},
+            {"modality": "image", "mime_type": "image/gif"},
+            400,
+            "unsupported_version",
+        ),
+        (
+            {},
+            {"modality": "image", "mime_type": "image/svg+xml"},
+            400,
+            "unsupported_version",
+        ),
+        # Only audio forms a recording, and its segments stay PCM WAV.
+        (
+            {},
+            {
+                "modality": "video",
+                "mime_type": "video/mp4",
+                "recording_id": str(uuid.uuid4()),
+                "segment_index": 0,
+            },
+            403,
+            "recording_disabled",
+        ),
+        (
+            {},
+            {
+                "mime_type": "audio/ogg",
+                "recording_id": str(uuid.uuid4()),
+                "segment_index": 0,
+            },
+            403,
+            "policy_denied",
+        ),
         ({}, {"source_kind": "RemoteUrl"}, 403, "policy_denied"),
         ({}, {"policy_version": "999"}, 409, "expired"),
         ({}, {"declared_bytes": 9 * 1024 * 1024}, 413, "too_large"),
