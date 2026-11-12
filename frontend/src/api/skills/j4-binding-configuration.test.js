@@ -14,8 +14,15 @@ it('keeps a pinned native manifest and server digest on reads, but never asserts
 });
 
 it('distinguishes legacy omission from explicit configuration removal', () => {
-  const legacy = mapContextBinding(wire.BindingOut);
+  // The current BindingOut always carries configuration (null when none); a legacy
+  // payload is one from before J4, without either configuration field.
+  const { configuration: _configuration, configuration_digest: _digest, ...legacyOut } = wire.BindingOut;
+  const legacy = mapContextBinding(legacyOut);
+  expect(legacy).not.toHaveProperty('configurationDigest');
   expect(contextBindingInput(legacy)).not.toHaveProperty('configuration');
+  // Reading a current binding without configuration and writing it back keeps
+  // the server's null; nothing is invented.
+  expect(contextBindingInput(mapContextBinding(wire.BindingOut))).toHaveProperty('configuration', null);
   const cleared = mapContextBinding({ ...wire.BindingOut, configuration: null, configuration_digest: '' });
   expect(contextBindingInput(cleared)).toHaveProperty('configuration', null);
   expect(cleared.configurationDigest).toBe('');
