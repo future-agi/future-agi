@@ -11,6 +11,7 @@ logger = structlog.get_logger(__name__)
 DEFAULT_INTERVAL_HOURS = 6
 VALID_INTERVAL_HOURS = frozenset({1, 2, 3, 4, 6, 8, 12, 24})
 DEFAULT_JITTER_SECONDS = 30 * 60
+DEFAULT_EVENT_FLUSH_SECONDS = 60
 BUFFER_FLUSH_BATCH_SIZE = 10
 BUFFER_RETENTION_DAYS = 30
 REGISTRATION_CLAIM_TIMEOUT_SECONDS = 10 * 60
@@ -63,6 +64,25 @@ def get_telemetry_jitter_seconds() -> int:
         )
         return DEFAULT_JITTER_SECONDS
     return jitter_seconds
+
+
+def get_event_flush_seconds() -> int:
+    raw_value = os.getenv(
+        "FUTURE_AGI_TELEMETRY_EVENT_FLUSH_SECONDS",
+        str(DEFAULT_EVENT_FLUSH_SECONDS),
+    )
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 0
+    if value < 30 or value > 900:
+        logger.warning(
+            "deployment_telemetry_invalid_event_flush_interval",
+            configured_value=raw_value,
+            fallback_seconds=DEFAULT_EVENT_FLUSH_SECONDS,
+        )
+        return DEFAULT_EVENT_FLUSH_SECONDS
+    return value
 
 
 

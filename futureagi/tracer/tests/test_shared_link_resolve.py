@@ -974,3 +974,527 @@ def test_shared_collector_trace_is_gone_not_broken_while_clickhouse_is_down(
     assert SharedLink.objects.filter(id=link["id"]).exists()
     recovered = api_client.get(f"/tracer/shared/{link['token']}/")
     assert recovered.status_code == status.HTTP_200_OK
+
+
+@pytest.fixture
+def error_feed_licensed():
+    from unittest.mock import patch
+
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None) as gate:
+        yield gate
+
+
+@pytest.fixture
+def error_issue_project(db, organization, workspace):
+    return Project.objects.create(
+        name=f"Error Feed Share Project {uuid.uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+
+
+def _make_error_issue(project, cluster_id="E-SHARE01", **extra):
+    from tracer.models.trace_error_analysis import (
+        ErrorClusterTraces,
+        TraceErrorGroup,
+    )
+
+    now = timezone.now()
+    group = TraceErrorGroup.objects.create(
+        project=project,
+        cluster_id=cluster_id,
+        target_type="error_feed",
+        source="eval",
+        error_type="Refund Policy Check",
+        issue_group="Refund Policy Check",
+        title="Agent promises refunds outside the policy window",
+        first_seen=now - timedelta(days=2),
+        last_seen=now,
+        total_events=2,
+        unique_traces=2,
+        **extra,
+    )
+    for _ in range(2):
+        ErrorClusterTraces.objects.create(cluster=group, trace_id=str(uuid.uuid4()))
+    return group
+
+
+@pytest.fixture
+def error_issue(error_issue_project):
+    return _make_error_issue(error_issue_project)
+
+
+def _share_error_issue(client, cluster_id, access_type="public", emails=None):
+    data = {
+        "resource_type": "error_feed_issue",
+        "resource_id": cluster_id,
+        "access_type": access_type,
+    }
+    if emails is not None:
+        data["emails"] = emails
+    return client.post("/tracer/shared-links/", data=data, format="json")
+
+
+@pytest.mark.django_db
+def test_error_issue_shared_link_resolves_issue_payload(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    response = _share_error_issue(auth_client, error_issue.cluster_id)
+    assert response.status_code == status.HTTP_201_CREATED, response.json()
+    link = response.json()["result"]
+    assert link["resource_type"] == "error_feed_issue"
+    assert link["resource_id"] == "E-SHARE01"
+
+    resolved = api_client.get(f"/tracer/shared/{link['token']}/")
+    assert resolved.status_code == status.HTTP_200_OK, resolved.json()
+    payload = resolved.json()
+    assert payload["resource_type"] == "error_feed_issue"
+    data = payload["data"]
+    assert data["issue"]["row"]["cluster_id"] == "E-SHARE01"
+    assert (
+        data["issue"]["row"]["error"]["name"]
+        == "Agent promises refunds outside the policy window"
+    )
+    for key in ("overview", "traces", "trends", "sidebar"):
+        assert key in data, key
+    assert data["traces"]["total"] == 2
+
+
+@pytest.mark.django_db
+def test_error_issue_shared_payload_keeps_assignees_and_linear(
+    api_client, auth_client, user, error_issue_project, error_feed_licensed
+):
+    _make_error_issue(
+        error_issue_project,
+        assignee=user,
+        external_issue_url="https://linear.app/acme/issue/TH-1",
+        external_issue_id="TH-1",
+    )
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+
+    row = api_client.get(f"/tracer/shared/{token}/").json()["data"]["issue"]["row"]
+    assert row["assignees"] == [user.email]
+    assert row["external_issue_url"] == "https://linear.app/acme/issue/TH-1"
+
+
+@pytest.mark.django_db
+def test_restricted_error_issue_link_enforces_acl(
+    api_client, auth_client, organization, error_issue, error_feed_licensed
+):
+    response = _share_error_issue(
+        auth_client,
+        error_issue.cluster_id,
+        access_type="restricted",
+        emails=["issue-viewer@example.com"],
+    )
+    token = response.json()["result"]["token"]
+
+    assert api_client.get(f"/tracer/shared/{token}/").status_code == 401
+
+    outsider = User.objects.create_user(
+        email="issue-outsider@example.com",
+        password="testpassword123",
+        name="Not On The List",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    api_client.force_authenticate(user=outsider)
+    assert api_client.get(f"/tracer/shared/{token}/").status_code == 403
+
+    viewer = User.objects.create_user(
+        email="issue-viewer@example.com",
+        password="testpassword123",
+        name="On The List",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    api_client.force_authenticate(user=viewer)
+    allowed = api_client.get(f"/tracer/shared/{token}/")
+    assert allowed.status_code == status.HTTP_200_OK
+    assert allowed.json()["data"]["issue"]["row"]["cluster_id"] == "E-SHARE01"
+
+
+@pytest.mark.django_db
+def test_error_issue_share_rejects_out_of_scope_cluster(
+    auth_client, user, organization, error_feed_licensed
+):
+    from accounts.models.organization import Organization
+
+    other_org = Organization.objects.create(name="Other Feed Org")
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"Other Feed Workspace {uuid.uuid4().hex[:8]}",
+        organization=other_org,
+        is_default=True,
+        created_by=user,
+    )
+    other_project = Project.no_workspace_objects.create(
+        name="Other Feed Project",
+        organization=other_org,
+        workspace=other_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    _make_error_issue(other_project, cluster_id="E-FOREIGN")
+
+    response = _share_error_issue(auth_client, "E-FOREIGN")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    missing = _share_error_issue(auth_client, "E-NOPE")
+    assert missing.status_code == status.HTTP_404_NOT_FOUND
+    assert not SharedLink.no_workspace_objects.filter(
+        resource_type="error_feed_issue"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_error_issue_link_follows_merge_redirect(
+    api_client, auth_client, error_issue_project, error_issue, error_feed_licensed
+):
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    survivor = _make_error_issue(error_issue_project, cluster_id="E-SHARE02")
+    error_issue.deleted = True
+    error_issue.redirect_to = survivor
+    error_issue.save(update_fields=["deleted", "redirect_to"])
+
+    resolved = api_client.get(f"/tracer/shared/{token}/")
+    assert resolved.status_code == status.HTTP_200_OK, resolved.json()
+    assert resolved.json()["data"]["issue"]["row"]["cluster_id"] == "E-SHARE02"
+
+
+@pytest.mark.django_db
+def test_error_issue_link_resolves_for_viewer_in_other_workspace(
+    auth_client, user, error_issue, error_feed_licensed
+):
+    from accounts.models.organization import Organization
+    from conftest import WorkspaceAwareAPIClient
+
+    token = _share_error_issue(
+        auth_client,
+        error_issue.cluster_id,
+        access_type="restricted",
+        emails=["feed-other-org@example.com"],
+    ).json()["result"]["token"]
+
+    other_org = Organization.objects.create(name="Feed Viewer Org")
+    viewer = User.objects.create_user(
+        email="feed-other-org@example.com",
+        password="testpassword123",
+        name="Other Org Viewer",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    viewer_workspace = Workspace.no_workspace_objects.create(
+        name=f"Feed Viewer Workspace {uuid.uuid4().hex[:8]}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=viewer,
+    )
+    viewer_client = WorkspaceAwareAPIClient()
+    viewer_client.force_authenticate(user=viewer)
+    viewer_client.set_workspace(viewer_workspace)
+    try:
+        resolved = viewer_client.get(f"/tracer/shared/{token}/")
+    finally:
+        viewer_client.stop_workspace_injection()
+
+    assert resolved.status_code == status.HTTP_200_OK, resolved.json()
+    assert resolved.json()["data"]["issue"]["row"]["cluster_id"] == "E-SHARE01"
+
+
+@pytest.mark.django_db
+def test_error_issue_link_404_when_sharer_unlicensed(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    from tfc.ee_gating import FeatureUnavailable
+
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    error_feed_licensed.side_effect = FeatureUnavailable("error_feed")
+
+    resolved = api_client.get(f"/tracer/shared/{token}/")
+    assert resolved.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_error_issue_link_404_after_cluster_deleted(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    error_issue.deleted = True
+    error_issue.save(update_fields=["deleted"])
+
+    resolved = api_client.get(f"/tracer/shared/{token}/")
+    assert resolved.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_error_issue_link_still_resolves_when_a_tab_fails(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    from unittest.mock import patch
+
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    with patch(
+        "tracer.utils.feed.get_overview_tab", side_effect=RuntimeError("ch down")
+    ):
+        resolved = api_client.get(f"/tracer/shared/{token}/")
+
+    assert resolved.status_code == status.HTTP_200_OK, resolved.json()
+    data = resolved.json()["data"]
+    assert data["issue"]["row"]["cluster_id"] == "E-SHARE01"
+    assert data["overview"] is None
+    assert data["traces"]["total"] == 2
+
+
+def _member_trace_id(group):
+    from tracer.models.trace_error_analysis import ErrorClusterTraces
+
+    return str(
+        ErrorClusterTraces.objects.filter(cluster=group)
+        .order_by("created_at")
+        .first()
+        .trace_id
+    )
+
+
+@pytest.fixture
+def fake_trace_detail():
+    from unittest.mock import patch
+
+    def _detail(view, request, trace_id, analytics, *, project_id=None, **_):
+        return {"trace": {"id": str(trace_id), "project_id": project_id}}
+
+    with patch(
+        "tracer.services.clickhouse.v2.query_builders.trace_detail."
+        "retrieve_trace_detail_ch",
+        side_effect=_detail,
+    ) as fake:
+        yield fake
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_returns_trace_detail_for_member_trace(
+    api_client, auth_client, error_issue, error_feed_licensed, fake_trace_detail
+):
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    trace_id = _member_trace_id(error_issue)
+
+    response = api_client.get(f"/tracer/shared/{token}/traces/{trace_id}/")
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    result = response.json()["result"]
+    assert result["trace"]["id"] == trace_id
+    assert result["trace"]["project_id"] == str(error_issue.project_id)
+    scoped_request = fake_trace_detail.call_args.args[1]
+    assert scoped_request.organization == error_issue.project.organization
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_404_for_trace_outside_cluster(
+    api_client, auth_client, error_issue, error_feed_licensed, fake_trace_detail
+):
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+
+    response = api_client.get(f"/tracer/shared/{token}/traces/{uuid.uuid4()}/")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    fake_trace_detail.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_enforces_restricted_acl(
+    api_client,
+    auth_client,
+    organization,
+    error_issue,
+    error_feed_licensed,
+    fake_trace_detail,
+):
+    token = _share_error_issue(
+        auth_client,
+        "E-SHARE01",
+        access_type="restricted",
+        emails=["trace-viewer@example.com"],
+    ).json()["result"]["token"]
+    url = f"/tracer/shared/{token}/traces/{_member_trace_id(error_issue)}/"
+
+    assert api_client.get(url).status_code == status.HTTP_401_UNAUTHORIZED
+    outsider = User.objects.create_user(
+        email="trace-outsider@example.com",
+        password="testpassword123",
+        name="Not On The List",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    api_client.force_authenticate(user=outsider)
+    assert api_client.get(url).status_code == status.HTTP_403_FORBIDDEN
+    fake_trace_detail.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_404_on_trace_link_token(
+    api_client, auth_client, trace, observation_span, fake_trace_detail
+):
+    token = auth_client.post(
+        "/tracer/shared-links/",
+        data={
+            "resource_type": "trace",
+            "resource_id": str(trace.id),
+            "access_type": "public",
+        },
+        format="json",
+    ).json()["result"]["token"]
+
+    response = api_client.get(f"/tracer/shared/{token}/traces/{trace.id}/")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    fake_trace_detail.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_410_after_revoke(
+    api_client, auth_client, error_issue, error_feed_licensed, fake_trace_detail
+):
+    link = _share_error_issue(auth_client, "E-SHARE01").json()["result"]
+    auth_client.delete(f"/tracer/shared-links/{link['id']}/")
+
+    response = api_client.get(
+        f"/tracer/shared/{link['token']}/traces/{_member_trace_id(error_issue)}/"
+    )
+
+    assert response.status_code == status.HTTP_410_GONE
+
+
+@pytest.mark.django_db
+def test_error_issue_shared_traces_match_the_issue_page_page_size(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    from unittest.mock import patch
+
+    from tracer.utils import feed as feed_service
+
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    with patch(
+        "tracer.utils.feed.get_traces_tab", wraps=feed_service.get_traces_tab
+    ) as traces_tab:
+        api_client.get(f"/tracer/shared/{token}/")
+
+    assert traces_tab.call_args.kwargs["limit"] == 200
+
+
+@pytest.mark.django_db
+def test_shared_issue_sidebar_follows_the_picked_trace(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    from unittest.mock import patch
+
+    from tracer.utils import feed as feed_service
+
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+    trace_id = _member_trace_id(error_issue)
+    with patch(
+        "tracer.utils.feed.get_sidebar", wraps=feed_service.get_sidebar
+    ) as sidebar:
+        response = api_client.get(
+            f"/tracer/shared/{token}/sidebar/", {"trace_id": trace_id}
+        )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    assert "timeline" in response.json()["result"]
+    assert sidebar.call_args.kwargs["trace_id"] == trace_id
+    assert sidebar.call_args.args[0] == "E-SHARE01"
+
+
+@pytest.mark.django_db
+def test_shared_issue_sidebar_404_for_trace_outside_cluster(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+
+    response = api_client.get(
+        f"/tracer/shared/{token}/sidebar/", {"trace_id": str(uuid.uuid4())}
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_shared_issue_sidebar_enforces_restricted_acl(
+    api_client, auth_client, error_issue, error_feed_licensed
+):
+    token = _share_error_issue(
+        auth_client,
+        "E-SHARE01",
+        access_type="restricted",
+        emails=["sidebar-viewer@example.com"],
+    ).json()["result"]["token"]
+
+    response = api_client.get(
+        f"/tracer/shared/{token}/sidebar/",
+        {"trace_id": _member_trace_id(error_issue)},
+    )
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_serves_the_issues_working_trace(
+    api_client, auth_client, error_issue_project, error_feed_licensed, fake_trace_detail
+):
+    working = str(uuid.uuid4())
+    _make_error_issue(error_issue_project, success_trace_id=working)
+    token = _share_error_issue(auth_client, "E-SHARE01").json()["result"]["token"]
+
+    response = api_client.get(f"/tracer/shared/{token}/traces/{working}/")
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    assert response.json()["result"]["trace"]["id"] == working
+    other = api_client.get(f"/tracer/shared/{token}/traces/{uuid.uuid4()}/")
+    assert other.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_shared_issue_trace_reads_the_real_trace_for_signed_out_and_other_org_viewers(
+    api_client, auth_client, project, trace, observation_span, error_feed_licensed
+):
+    from accounts.models.organization import Organization
+    from conftest import WorkspaceAwareAPIClient
+    from tracer.models.trace_error_analysis import ErrorClusterTraces
+
+    group = _make_error_issue(project, cluster_id="E-REALTRACE")
+    ErrorClusterTraces.objects.create(cluster=group, trace_id=str(trace.id))
+    token = _share_error_issue(auth_client, "E-REALTRACE").json()["result"]["token"]
+    url = f"/tracer/shared/{token}/traces/{trace.id}/"
+
+    signed_out = api_client.get(url)
+    assert signed_out.status_code == status.HTTP_200_OK, signed_out.json()
+    result = signed_out.json()["result"]
+    assert result["trace"]["id"] == str(trace.id)
+    span_ids = [node["observation_span"]["id"] for node in result["observation_spans"]]
+    assert span_ids == [observation_span.id]
+
+    other_org = Organization.objects.create(name="Shared Trace Viewer Org")
+    viewer = User.objects.create_user(
+        email="shared-trace-viewer@example.com",
+        password="testpassword123",
+        name="Other Org Viewer",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    viewer_workspace = Workspace.no_workspace_objects.create(
+        name=f"Shared Trace Viewer Workspace {uuid.uuid4().hex[:8]}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=viewer,
+    )
+    viewer_client = WorkspaceAwareAPIClient()
+    viewer_client.force_authenticate(user=viewer)
+    viewer_client.set_workspace(viewer_workspace)
+    try:
+        other = viewer_client.get(url)
+    finally:
+        viewer_client.stop_workspace_injection()
+    assert other.status_code == status.HTTP_200_OK, other.json()
+    assert other.json()["result"]["trace"]["id"] == str(trace.id)

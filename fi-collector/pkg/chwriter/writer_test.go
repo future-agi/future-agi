@@ -20,6 +20,7 @@ import (
 type confirmationRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f confirmationRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	defer r.Body.Close() // this synchronous fixture owns the body, like a real RoundTripper
 	return f(r)
 }
 

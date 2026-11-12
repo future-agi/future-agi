@@ -1,7 +1,6 @@
 import {
   Box,
   Button,
-  Card,
   FormControl,
   Grid,
   InputLabel,
@@ -9,11 +8,36 @@ import {
   Select,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import DatasetSelector from "./dataset-selector";
-import ModelEventFilterPopover from "./model-event-filter-popover";
-import { emptyfilter } from "./helper";
+import { FilterButton } from "src/components/filter";
+
+// Filterable event dimensions of a dataset: its features, predictions, actuals
+// and tags, grouped the way the picker lists them.
+const EVENT_FILTER_GROUPS = [
+  { key: "feature", label: "Feature", sources: ["categorical", "numerical"] },
+  { key: "prediction", label: "Prediction", sources: ["predictionLabel"] },
+  { key: "actual", label: "Actual", sources: ["actualLabel"] },
+  { key: "tag", label: "Tag", sources: ["tags"] },
+];
+
+const buildEventFilterFields = (datasets) =>
+  EVENT_FILTER_GROUPS.flatMap(({ key, sources }) =>
+    sources.flatMap((source) =>
+      (datasets?.[source] || []).map(({ name, dataType }) => ({
+        id: `${key}::${name}`,
+        label: name,
+        type: dataType === "number" ? "number" : "text",
+        category: key,
+      })),
+    ),
+  );
+
+const EVENT_FILTER_CATEGORY_LABELS = Object.fromEntries(
+  EVENT_FILTER_GROUPS.map(({ key, label }) => [key, label]),
+);
 
 export default function DatasetFilter({
   showExport,
@@ -32,7 +56,11 @@ export default function DatasetFilter({
   const [metricConfig, setMetricConfig] = useState(
     datasets?.modelPerformanceConfig,
   );
-  const [filters, setFilters] = useState([emptyfilter]);
+  const [filters, setFilters] = useState([]);
+  const filterFields = useMemo(
+    () => buildEventFilterFields(datasets),
+    [datasets],
+  );
 
   function toggleShowComparison() {
     setShowComparisonDataset((prevValue) => !prevValue);
@@ -57,8 +85,8 @@ export default function DatasetFilter({
     setComparisonDatasetSelection(datasetSelection);
   }
 
-  function onFilterChange(newValue) {
-    setFilters(newValue);
+  function onFilterChange(rows) {
+    setFilters(rows || []);
   }
 
   const valueFilters = !isBaseline && (
@@ -105,11 +133,12 @@ export default function DatasetFilter({
               </Select>
             </FormControl>
           )}
-          <ModelEventFilterPopover
-            onFilterChange={onFilterChange}
-            filters={filters}
-            datasets={datasets}
-          ></ModelEventFilterPopover>
+          <FilterButton
+            fields={filterFields}
+            value={filters}
+            onChange={onFilterChange}
+            categoryLabels={EVENT_FILTER_CATEGORY_LABELS}
+          />
         </Grid>
       </Grid>
     </>
@@ -117,7 +146,7 @@ export default function DatasetFilter({
 
   return (
     <>
-      <Card>
+      <Section variant="panel">
         <Box sx={{ my: 2, mx: 2 }}>
           <Grid container>
             <Grid
@@ -167,7 +196,7 @@ export default function DatasetFilter({
 
           {valueFilters}
         </Box>
-      </Card>
+      </Section>
     </>
   );
 }

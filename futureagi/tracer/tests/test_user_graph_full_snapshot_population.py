@@ -52,10 +52,30 @@ REPLACEMENT_KEY = (
     "GROUP BY project_id, observation_type, service_name, "
     "toStartOfHour(start_time), trace_id, id"
 )
-REPLAYED_STATE = (
-    "argMax(tuple(start_time, is_deleted, end_user_id, latency_ms, total_tokens, "
-    "cost, prompt_tokens, completion_tokens, status), _version) AS latest_state"
-)
+def assert_replayed_state(population):
+    assert (
+        "argMax(tuple(start_time, is_deleted, end_user_id, latency_ms, total_tokens, "
+        "cost, prompt_tokens, completion_tokens, status, parent_span_id, name, "
+    ) in population
+    assert "), _version) AS latest_state" in population
+    fields = (
+        "start_time",
+        "is_deleted",
+        "end_user_id",
+        "latency_ms",
+        "total_tokens",
+        "cost",
+        "prompt_tokens",
+        "completion_tokens",
+        "status",
+        "parent_span_id",
+        "name",
+        "graph_cost_flags",
+    )
+    for position, column in enumerate(fields, 1):
+        assert f"latest_state.{position} AS {column}" in population
+    assert "attrs_string['fi.cost.kind']" in population
+    assert "attrs_string['fi.usage.contribution']" in population
 
 
 def _spans_reads(sql):
@@ -100,7 +120,7 @@ def test_exact_reader_replays_latest_state_in_one_ordered_pass_without_final():
     # candidate-derived remap) were three scans of the same window.
     assert _cte_references(sql, "latest_spans") == 1
     population = _cte(sql, "latest_spans")
-    assert REPLAYED_STATE in population
+    assert_replayed_state(population)
     assert REPLACEMENT_KEY in population
     assert "ARRAY JOIN" not in population
 
@@ -208,7 +228,7 @@ def test_narrow_output_partition_keeps_entity_safe_trace_ownership(edge):
     assert params["user_partition_start_us"] == (start - epoch) // timedelta(microseconds=1)
     assert params["user_partition_end_us"] == (end - epoch) // timedelta(microseconds=1)
     population = _cte(sql, "snapshot_spans")
-    assert REPLAYED_STATE in population
+    assert_replayed_state(population)
     assert REPLACEMENT_KEY in population
     assert "latest_state.2 = 0" in population.split("HAVING", 1)[1]
     assert "ARRAY JOIN [old_id, new_id]" not in sql
@@ -267,7 +287,7 @@ def test_remap_fixture_expands_complete_touched_group_before_choosing_survivor(
 def test_fixture_full_hour_replacement_does_not_revive_old_timestamp(outcome):
     """Model the SQL's scan->replacement->exact-window order; not live SQL."""
     sql, params = _build()
-    assert REPLAYED_STATE in _cte(sql, "latest_spans")
+    assert_replayed_state(_cte(sql, "latest_spans"))
     old = {
         "project_id": PROJECT,
         "observation_type": "span",

@@ -157,10 +157,16 @@ const CustomColumnDialog = ({
   }, [checked, existingCustomIds]);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ pb: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Iconify icon="mdi:table-column-plus-after" width={20} />
+          <Iconify icon="solar:columns-3-linear" width={20} />
           <Typography variant="subtitle1" fontWeight={600}>
             Custom Columns
           </Typography>
@@ -183,8 +189,8 @@ const CustomColumnDialog = ({
           InputProps={{
             startAdornment: (
               <Iconify
-                icon="mdi:magnify"
-                width={18}
+                icon="solar:magnifier-linear"
+                width={16}
                 sx={{ mr: 0.5, color: "text.disabled" }}
               />
             ),

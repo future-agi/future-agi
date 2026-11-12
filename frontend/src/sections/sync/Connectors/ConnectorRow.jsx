@@ -6,11 +6,13 @@ import ConnectorCard from "./ConnectorCard";
 
 const ConnectorRow = ({ title, connectors }) => {
   return (
-    <Box sx={{ padding: 3, display: "flex", flexDirection: "column", gap: 3 }}>
-      <Typography fontWeight={700} fontSize={14} color="text.disabled">
+    <Box
+      sx={{ padding: 3, display: "flex", flexDirection: "column", gap: 1.5 }}
+    >
+      <Typography fontWeight={600} fontSize={13} color="text.primary">
         {title}
       </Typography>
-      <Box sx={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
+      <Box sx={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
         {connectors.map(({ title, icon, onClick }) => (
           <ConnectorCard
             onClick={onClick}

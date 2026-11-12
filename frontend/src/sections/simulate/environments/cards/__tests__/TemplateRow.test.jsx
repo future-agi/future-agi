@@ -17,8 +17,8 @@ describe("TemplateRow", () => {
   it("renders the surface, name, tagline and stat line", () => {
     render(<TemplateRow template={TEMPLATE} />);
 
-    // Surface is rendered lowercase, uppercased with CSS text-transform.
-    expect(screen.getByText("voice")).toBeInTheDocument();
+    // Surface is shown in sentence case.
+    expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
     expect(
       screen.getByText("Inbound phone support for an online storefront"),

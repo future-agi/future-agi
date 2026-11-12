@@ -6,40 +6,36 @@ import { autocompleteClasses } from "@mui/material/Autocomplete";
 
 // ----------------------------------------------------------------------
 
+// Floating surface (design system bg.overlay). No blur or decorative gradients:
+// menus and popovers are solid, ringed and lightly shadowed.
 export const paper = ({ theme, bgcolor, dropdown }) => ({
-  ...bgBlur({
-    blur: 20,
-    opacity: 0.9,
-    color: theme.palette.background.paper,
-    ...(!!bgcolor && {
-      color: bgcolor,
-    }),
-  }),
-  backgroundColor: theme.palette.background.paper,
-  backgroundRepeat: "no-repeat, no-repeat",
-  backgroundPosition: "top right, left bottom",
-  backgroundSize: "50%, 50%",
-  ...(theme.direction === "rtl" && {
-    backgroundPosition: "top left, right bottom",
-  }),
+  backgroundColor:
+    bgcolor ||
+    theme.palette.background.overlay ||
+    theme.palette.background.paper,
   ...(dropdown && {
-    padding: theme.spacing(0.5),
+    padding: 4,
     boxShadow: theme.customShadows.dropdown,
-    borderRadius: theme.shape.borderRadius * 1.25,
+    borderRadius: 8,
   }),
 });
 
 // ----------------------------------------------------------------------
 
 export const menuItem = (theme) => ({
-  ...theme.typography.body2,
-  padding: theme.spacing(0.75, 1),
-  borderRadius: theme.shape.borderRadius * 0.75,
+  fontSize: 13,
+  lineHeight: "20px",
+  minHeight: 30,
+  padding: "5px 8px",
+  borderRadius: 4,
   "&:not(:last-of-type)": {
-    marginBottom: 4,
+    marginBottom: 1,
+  },
+  "&:hover": {
+    backgroundColor: theme.palette.action.hover,
   },
   [`&.${menuItemClasses.selected}`]: {
-    fontWeight: theme.typography.fontWeightSemiBold,
+    fontWeight: 500,
     backgroundColor: theme.palette.action.selected,
     "&:hover": {
       backgroundColor: theme.palette.action.hover,

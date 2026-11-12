@@ -16,7 +16,7 @@ describe("DerivingAnimation", () => {
 
   it("shows the real source and a neutral skeleton (no invented names) before the world lands", () => {
     render(<DerivingAnimation source="ride-voice-agent" />);
-    expect(screen.getByText("SANDBOX")).toBeInTheDocument();
+    expect(screen.getByText("Sandbox")).toBeInTheDocument();
     // the real source in the file header — not the old hardcoded filename
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
     expect(screen.queryByText("handlers/refunds.py")).not.toBeInTheDocument();

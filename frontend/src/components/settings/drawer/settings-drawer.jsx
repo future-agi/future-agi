@@ -52,7 +52,7 @@ export default function SettingsDrawer() {
       </Tooltip>
 
       <IconButton onClick={settings.onClose}>
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
     </Stack>
   );
@@ -129,7 +129,11 @@ export default function SettingsDrawer() {
       >
         Stretch
         <Tooltip title="Only available at large resolutions > 1600px (xl)">
-          <Iconify icon="eva:info-outline" width={16} sx={{ ml: 0.5 }} />
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={16}
+            sx={{ ml: 0.5 }}
+          />
         </Tooltip>
       </Typography>
 

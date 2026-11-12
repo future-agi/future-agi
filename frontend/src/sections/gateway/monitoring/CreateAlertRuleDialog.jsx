@@ -91,7 +91,13 @@ const CreateAlertRuleDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Create Alert Rule</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>

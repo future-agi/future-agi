@@ -58,23 +58,23 @@ export default function EditableAccordionCategorical({
                 size="large"
                 sx={{
                   transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.3s ease",
+                  transition: "transform 0.2s ease",
                 }}
               >
-                <Iconify icon="material-symbols-light:keyboard-arrow-down" />
+                <Iconify icon="solar:alt-arrow-down-linear" />
               </IconButton>
 
               <Box
                 display={"flex"}
                 alignItems={"center"}
                 bgcolor={"background.default"}
-                borderRadius={0.5}
+                borderRadius="4px"
                 sx={{ marginRight: "5px" }}
               >
                 <IconButton size="small">
                   <Iconify
                     color="text.primary"
-                    icon="mdi:apple-keyboard-command"
+                    icon="solar:command-linear"
                     height={12}
                     width={12}
                   />
@@ -98,8 +98,8 @@ export default function EditableAccordionCategorical({
                 >
                   <Iconify
                     icon="solar:trash-bin-trash-bold"
-                    height={15}
-                    width={15}
+                    height={16}
+                    width={16}
                   />
                 </IconButton>
               )}
@@ -135,8 +135,8 @@ export default function EditableAccordionCategorical({
           >
             <Typography
               sx={{
-                fontSize: "14px",
-                fontWeight: theme.typography.fontWeightBold,
+                fontSize: "13px",
+                fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}
             >
@@ -216,9 +216,9 @@ export default function EditableAccordionCategorical({
                           key={index}
                           color="black"
                           bgcolor={"background.neutral"}
-                          fontWeight={"700"}
+                          fontWeight={"600"}
                           sx={{
-                            fontSize: "14px",
+                            fontSize: "13px",
                             padding: "5px 10px",
                             borderLeft:
                               index === 0 ? "none" : "1px solid black",
@@ -234,9 +234,7 @@ export default function EditableAccordionCategorical({
                                   ? "0 8px 8px 0"
                                   : "0",
                             cursor: "pointer",
-                            transition:
-                              "transform 0.2s ease, background-color 0.2s ease",
-                            transform: isSelected ? "scale(1.1)" : "scale(1)", // Scale up if selected
+                            transition: "background-color 0.2s ease",
                             backgroundColor: isSelected
                               ? grey["400"]
                               : "background.neutral", // Highlight selected

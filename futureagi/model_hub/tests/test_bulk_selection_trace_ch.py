@@ -177,6 +177,7 @@ def test_trace_requests_cap_plus_one_bounded_prefix(monkeypatch):
         cap=10,
         annotation_label_ids=[],
     )
+    assert capture["eval_count_mode"] is True
     assert capture["page_size"] == 11  # builder contract remains cap + 1
     assert capture["bounded_identity_only"] is True
     assert capture["bounded_bulk_scan"] is True
@@ -575,6 +576,7 @@ def test_voice_truncation_and_flag_passthrough(monkeypatch):
         remove_simulation_calls=True,
         annotation_label_ids=[],
     )
+    assert capture["eval_count_mode"] is True
     assert capture["page_size"] == 3
     assert capture["remove_simulation_calls"] is True
     assert capture["bounded_read"]["classify_batch_size"] == 50

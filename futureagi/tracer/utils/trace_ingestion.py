@@ -471,6 +471,8 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                 start_time_unix_nano = int(span.get("start_time_unix_nano", 0))
                 end_time_unix_nano = int(span.get("end_time_unix_nano", 0))
                 span_data = {
+                    "resource": {"attributes": resource_attributes},
+                    "scope": scope_span.get("scope", {}),
                     "trace_id": _format_if_needed(span.get("trace_id")),
                     "span_id": _format_if_needed(span.get("span_id")),
                     "name": span.get("name"),
@@ -480,6 +482,9 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                     "events": [
                         {
                             "name": event.get("name"),
+                            "dropped_attributes_count": event.get(
+                                "dropped_attributes_count", 0
+                            ),
                             "attributes": _convert_attributes(event.get("attributes")),
                             "timestamp": (
                                 datetime.fromtimestamp(
@@ -491,6 +496,19 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                         }
                         for event in span.get("events", [])
                     ],
+                    "links": [
+                        {
+                            "trace_id": _format_if_needed(link.get("trace_id")),
+                            "span_id": _format_if_needed(link.get("span_id")),
+                            "attributes": _convert_attributes(link.get("attributes")),
+                            "dropped_attributes_count": link.get(
+                                "dropped_attributes_count", 0
+                            ),
+                        }
+                        for link in span.get("links", [])
+                    ],
+                    "dropped_events_count": span.get("dropped_events_count", 0),
+                    "dropped_links_count": span.get("dropped_links_count", 0),
                     "status": OTLP_STATUS_MAP.get(
                         span.get("status", {}).get("code"), "UNSET"
                     ),

@@ -1,10 +1,12 @@
-import { Box, Chip, Skeleton, Typography, useTheme } from "@mui/material";
+import { Box, Skeleton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import {
   getLabel,
-  getStatusColor,
+  evalResultRole,
 } from "src/sections/develop-detail/DataTab/common";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import { commonBorder } from "src/sections/experiment-detail/ExperimentData/Common";
 import { getUniqueColorPalette } from "src/utils/utils";
 import CompareEvalGrid from "../CompareDrawer/CompareEvalGrid";
@@ -36,7 +38,7 @@ const StatusCellRenderer = (data) => {
       <Box
         sx={{
           marginLeft: "10px",
-          color: theme.palette.error.main,
+          color: statusColors(theme, "danger").fg,
           fontSize: "13px",
         }}
       >
@@ -59,22 +61,18 @@ const StatusCellRenderer = (data) => {
 
   return (
     <Box>
-      <Chip
-        variant="soft"
+      <StatusBadge
         label={getLabel(cellValue)}
-        size="small"
-        sx={{
-          ...getStatusColor(data?.data?.data?.cellValue),
-          marginRight: "10px",
-        }}
+        role={evalResultRole(data?.data?.data?.cellValue)}
+        dot={false}
+        sx={{ marginRight: "10px" }}
       />
 
       {Array.isArray(cellValue) && cellValue.length > 1 && (
-        <Chip
-          variant="soft"
+        <StatusBadge
           label={`+${cellValue.length - 1}`}
-          size="small"
-          sx={getStatusColor(data?.data?.data?.cellValue)}
+          role={evalResultRole(data?.data?.data?.cellValue)}
+          dot={false}
         />
       )}
     </Box>
@@ -166,7 +164,7 @@ const RunEvaluations = ({ traceData, selectedEvals, index }) => {
         >
           {String.fromCharCode(65 + index)}
         </Box>
-        <Typography fontWeight={700}>
+        <Typography fontWeight={600}>
           {traceData?.projectVersionName}
         </Typography>
       </Box>

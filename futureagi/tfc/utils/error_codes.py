@@ -1140,6 +1140,14 @@ def get_specific_error_message(error, is_llm_error=None):
     Returns:
     - A user-friendly error message string
     """
+    from tfc.ee_gates import jev_error_message
+
+    # A failed Jev run gets its own fixed text: its codes (JEV_RATE_LIMITED,
+    # say) would otherwise match the generic checks below.
+    jev_message = jev_error_message(error)
+    if jev_message is not None:
+        return jev_message
+
     error_message = str(error)
     error_message_lower = error_message.lower()
     error_status = None
@@ -1230,6 +1238,11 @@ def get_usage_error_code(error):
     recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
     same taxonomy as the usage pre-check (CheckResult.error_code).
     """
+    from tfc.ee_gates import describe_jev_error
+
+    # TypeSafe's rate limit is the org's own, not a Future AGI plan limit.
+    if describe_jev_error(error) is not None:
+        return None
     error_message = str(error)
     error_status = ""
     if (

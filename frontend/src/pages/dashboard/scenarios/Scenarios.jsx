@@ -1,5 +1,6 @@
 /* eslint-disable react/prop-types */
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import { Box, Button, Typography } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import PageHeader from "src/components/page-header";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import DeleteScenarioDialog from "src/components/scenarios/DeleteScenarioDialog";
@@ -39,7 +41,7 @@ function ChipCell({ getValue }) {
         gap: 0.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.25,
+        borderRadius: "4px",
         px: 1.5,
         py: 0.25,
       }}
@@ -68,14 +70,14 @@ function CreatedAtCell({ value }) {
 
   if (!value) {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13, color: "text.disabled" }}>
+      <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
         -
       </Typography>
     );
   }
   try {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" sx={{ fontSize: 12 }}>
         {formatDistanceToNow(new Date(value), { addSuffix: true })}
       </Typography>
     );
@@ -195,7 +197,7 @@ function Scenarios() {
         size: 140,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ?? "-"}
           </Typography>
         ),
@@ -273,72 +275,39 @@ function Scenarios() {
           <SimulationScenarioEmptyScreen />
         ) : (
           <>
-            {/* Header */}
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 2,
-              }}
-            >
-              <Stack spacing={0.25}>
-                <Typography
-                  color="text.primary"
-                  typography="m2"
-                  fontWeight="fontWeightSemiBold"
-                >
-                  Scenarios
-                </Typography>
-                <Typography
-                  typography="s1"
-                  color="text.primary"
-                  fontWeight="fontWeightRegular"
-                >
-                  Define the test cases, customer profiles, and conversation
-                  flows that your AI agent will encounter during simulations
-                </Typography>
-              </Stack>
-              <Box sx={{ display: "flex", gap: 1.5 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  sx={{
-                    color: "text.primary",
-                    borderColor: "divider",
-                    px: 1.5,
-                    height: 38,
-                  }}
-                  startIcon={
-                    <SvgColor src="/assets/icons/ic_docs_single.svg" />
-                  }
-                  component="a"
-                  href="https://docs.futureagi.com/docs/simulation/concepts/scenarios"
-                  target="_blank"
-                >
-                  View Docs
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  sx={{ px: 3, borderRadius: "4px", height: 38 }}
-                  startIcon={
-                    <Iconify
-                      icon="octicon:plus-24"
-                      sx={{ width: 20, height: 20 }}
-                    />
-                  }
-                  disabled={
-                    !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
-                  }
-                  onClick={handleAddScenario}
-                >
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    Add Scenario
-                  </Typography>
-                </Button>
-              </Box>
-            </Box>
+            <PageHeader
+              title="Scenarios"
+              description="Write or generate the conversations your agent is tested on: who calls, what they want and how it can go."
+              sx={{ mb: 0 }}
+              actions={
+                <>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={
+                      <SvgColor src="/assets/icons/ic_docs_single.svg" />
+                    }
+                    component="a"
+                    href="https://docs.futureagi.com/docs/simulation/concepts/scenarios"
+                    target="_blank"
+                  >
+                    View docs
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    startIcon={<Iconify width={16} icon="solar:add-linear" />}
+                    disabled={
+                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                    }
+                    onClick={handleAddScenario}
+                  >
+                    Add scenario
+                  </Button>
+                </>
+              }
+            />
 
             {/* Search */}
             <Box
@@ -371,7 +340,7 @@ function Scenarios() {
               rowCount={total}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No scenarios found"
             />
 

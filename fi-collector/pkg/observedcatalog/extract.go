@@ -232,15 +232,7 @@ func Merge(batches ...Batch) Batch {
 	for _, row := range values {
 		out.Values = append(out.Values, row)
 	}
-	sort.Slice(out.Keys, func(i, j int) bool {
-		a, _ := json.Marshal(out.Keys[i])
-		b, _ := json.Marshal(out.Keys[j])
-		return string(a) < string(b)
-	})
-	sort.Slice(out.Values, func(i, j int) bool {
-		a, _ := json.Marshal(out.Values[i])
-		b, _ := json.Marshal(out.Values[j])
-		return string(a) < string(b)
-	})
+	sortJSONRows(out.Keys, keyStringBytes)
+	sortJSONRows(out.Values, valueStringBytes)
 	return out
 }

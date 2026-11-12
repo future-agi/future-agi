@@ -590,10 +590,11 @@ export const errorMessage = (error) => {
     const first = Object.values(detail).flat().find(Boolean);
     if (typeof first === "string") return first;
   }
-  if (typeof payload?.error === "string" && payload.error.trim())
-    return payload.error;
+  // A harness error body carries a code in `error` and the sentence in `message`.
   if (typeof payload?.message === "string" && payload.message.trim())
     return payload.message;
+  if (typeof payload?.error === "string" && payload.error.trim())
+    return payload.error;
   if (typeof error?.message === "string" && error.message.trim())
     return error.message;
   return "Something went wrong";

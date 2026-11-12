@@ -1,4 +1,5 @@
-import { Box, Button, Card, LinearProgress } from "@mui/material";
+import { Box, Button, LinearProgress } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
@@ -11,14 +12,14 @@ const ManageTeam = () => {
   const { data, isPending } = useQuery({
     queryFn: () => axios.get(endpoints.settings.teams.getMemberList),
     queryKey: ["member-list"],
-    select: (d) => d.data,
+    select: (d) => d.data?.result?.results ?? [],
   });
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   return (
     <Box sx={{ paddingX: "20px" }}>
-      <Card sx={{ height: "calc(100vh - 90px)" }}>
+      <Section variant="panel" sx={{ height: "calc(100vh - 90px)" }}>
         <InviteUserDrawer
           open={isDrawerOpen}
           onClose={() => setIsDrawerOpen(false)}
@@ -44,7 +45,7 @@ const ManageTeam = () => {
         {isPending ? <LinearProgress /> : null}
         {!isPending && !data?.length && <NoMember />}
         {!isPending && Boolean(data?.length) && <MemberListTable data={data} />}
-      </Card>
+      </Section>
     </Box>
   );
 };

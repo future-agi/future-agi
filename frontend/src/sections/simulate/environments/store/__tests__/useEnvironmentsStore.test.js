@@ -129,14 +129,6 @@ describe("useEnvironmentsStore", () => {
       expect(runs[1]).toEqual({ id: "r1", status: "passed" });
     });
 
-    it("addAgentVersion() appends to the version list", () => {
-      useEnvironmentsStore.getState().addAgentVersion("env-a", { label: "v1" });
-      useEnvironmentsStore.getState().addAgentVersion("env-a", { label: "v2" });
-      expect(
-        useEnvironmentsStore.getState().byEnv["env-a"].agentVersions,
-      ).toEqual([{ label: "v1" }, { label: "v2" }]);
-    });
-
     it("forkEnvironment() prepends the fork record and writes its state", () => {
       useEnvironmentsStore
         .getState()
@@ -241,16 +233,14 @@ describe("useEnvironmentsStore", () => {
       });
     });
 
-    it("exposes patch/recordRun/addAgentVersion bound to the env id", () => {
+    it("exposes patch/recordRun bound to the env id", () => {
       const { result } = renderHook(() => useEnvState("env-bound"));
       act(() => result.current.patch({ evals: ["e1"] }));
       act(() => result.current.recordRun({ id: "r1", status: "running" }));
-      act(() => result.current.addAgentVersion({ label: "v1" }));
 
       const slice = useEnvironmentsStore.getState().byEnv["env-bound"];
       expect(slice.evals).toEqual(["e1"]);
       expect(slice.runs).toEqual([{ id: "r1", status: "running" }]);
-      expect(slice.agentVersions).toEqual([{ label: "v1" }]);
     });
   });
 });

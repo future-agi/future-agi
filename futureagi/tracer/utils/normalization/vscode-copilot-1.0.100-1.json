@@ -1,0 +1,1264 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "project_name",
+            "value": {
+              "stringValue": "sanitized-vscode-copilot-capture"
+            }
+          },
+          {
+            "key": "project_type",
+            "value": {
+              "stringValue": "observe"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "vscode.agent-host"
+          },
+          "spans": [
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "c37598ec69584c91",
+              "name": "vscode.agent_host.session",
+              "startTimeUnixNano": "1794009269544000000",
+              "endTimeUnixNano": "1794009269544000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "a7d724abce394c61",
+              "parentSpanId": "c37598ec69584c91",
+              "name": "vscode.agent_host.session.title_changed",
+              "startTimeUnixNano": "1794009283601000000",
+              "endTimeUnixNano": "1794009283601000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "2743ffc09c9c4686",
+              "parentSpanId": "c37598ec69584c91",
+              "name": "vscode.agent_host.session.title_changed",
+              "startTimeUnixNano": "1794009269544000000",
+              "endTimeUnixNano": "1794009269544000000",
+              "kind": 1,
+              "attributes": []
+            }
+          ]
+        },
+        {
+          "scope": {
+            "name": "github.copilot",
+            "version": "1.0.100-1"
+          },
+          "spans": [
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "032a3dcf272e65e1",
+              "parentSpanId": "46ba5ca209aedaeb",
+              "name": "permission",
+              "startTimeUnixNano": "1794009296573000000",
+              "endTimeUnixNano": "1794009373518000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "46ba5ca209aedaeb",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "execute_tool bash bash",
+              "startTimeUnixNano": "1794009295761000000",
+              "endTimeUnixNano": "1794009374153000000",
+              "kind": 1,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "197e61ed358ba935",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "chat gpt-6-luna",
+              "startTimeUnixNano": "1794009294144000000",
+              "endTimeUnixNano": "1794009295663000000",
+              "kind": 3,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-6-luna"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "17735"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "63"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": "17400"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_write.input_tokens",
+                  "value": {
+                    "intValue": "332"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": "10"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "a7b2674799a2fb8f",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "chat gpt-6-luna",
+              "startTimeUnixNano": "1794009374569000000",
+              "endTimeUnixNano": "1794009376294000000",
+              "kind": 3,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-6-luna"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "17826"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "80"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": "17732"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_write.input_tokens",
+                  "value": {
+                    "intValue": "91"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": "0"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "390f26207a90cdc9",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.model_resolution",
+              "startTimeUnixNano": "1794009277018990875",
+              "endTimeUnixNano": "1794009277715990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "b155ba9946b28c73",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.content_exclusion_policy_resolution",
+              "startTimeUnixNano": "1794009277715990875",
+              "endTimeUnixNano": "1794009277717990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "5170b62f3df0c11a",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.content_exclusion_service_initialization",
+              "startTimeUnixNano": "1794009277718990875",
+              "endTimeUnixNano": "1794009277726990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "9aa9ffb6e7f19fc6",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.content_exclusion_preparation",
+              "startTimeUnixNano": "1794009277715990875",
+              "endTimeUnixNano": "1794009277725990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "ce6562262de50f7b",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.custom_agent_loading",
+              "startTimeUnixNano": "1794009277726990875",
+              "endTimeUnixNano": "1794009277726990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "4116de734d3d4a7c",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.skills_loading",
+              "startTimeUnixNano": "1794009277728990875",
+              "endTimeUnixNano": "1794009277758990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "128dbd0a8e3b92f3",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.mcp_bridge_reconciliation",
+              "startTimeUnixNano": "1794009277759990875",
+              "endTimeUnixNano": "1794009277759990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "72cb1da195d328d5",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.mcp_initialization",
+              "startTimeUnixNano": "1794009277759990875",
+              "endTimeUnixNano": "1794009277763990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "428a3d15266d9e77",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.github_mcp_authentication",
+              "startTimeUnixNano": "1794009277763990875",
+              "endTimeUnixNano": "1794009277764990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "ace61d155cb225b6",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.lsp_initialization",
+              "startTimeUnixNano": "1794009277766990875",
+              "endTimeUnixNano": "1794009277772990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "278045609cf8b38b",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.prompt_environment",
+              "startTimeUnixNano": "1794009277775990875",
+              "endTimeUnixNano": "1794009277776990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "59d08ee00cb468a3",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.mcp_catalog",
+              "startTimeUnixNano": "1794009277776990875",
+              "endTimeUnixNano": "1794009279743990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "f668962e06bb78cb",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.system_message_inputs",
+              "startTimeUnixNano": "1794009277777990875",
+              "endTimeUnixNano": "1794009277788990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "94dc47a444e190d0",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.skills_custom_agents",
+              "startTimeUnixNano": "1794009279829990875",
+              "endTimeUnixNano": "1794009279888990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "33748f9c7f688d7f",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.tool_descriptors",
+              "startTimeUnixNano": "1794009279916990875",
+              "endTimeUnixNano": "1794009279968990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "69be51b2cdca0dd4",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.powershell_prompt",
+              "startTimeUnixNano": "1794009279969990875",
+              "endTimeUnixNano": "1794009279969990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "3955add9a55f5387",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.system_prompt",
+              "startTimeUnixNano": "1794009279969990875",
+              "endTimeUnixNano": "1794009279982990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "7791c38ce77fceba",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.lsp_initialization",
+              "startTimeUnixNano": "1794009279985990875",
+              "endTimeUnixNano": "1794009279985990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "560cc1305e217287",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.prompt_environment",
+              "startTimeUnixNano": "1794009279986990875",
+              "endTimeUnixNano": "1794009279989990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "0620e9177a607ab0",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.mcp_catalog",
+              "startTimeUnixNano": "1794009279986990875",
+              "endTimeUnixNano": "1794009280010990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "261783b3b65278c4",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.system_message_inputs",
+              "startTimeUnixNano": "1794009279989990875",
+              "endTimeUnixNano": "1794009279990990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "61af24d05790fdca",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.skills_custom_agents",
+              "startTimeUnixNano": "1794009280011990875",
+              "endTimeUnixNano": "1794009280018990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "e6b0669bc1f13f41",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.tool_cache_validation",
+              "startTimeUnixNano": "1794009279985990875",
+              "endTimeUnixNano": "1794009280027990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "609eae9cfa1b9c22",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.tool_initialization_attempt",
+              "startTimeUnixNano": "1794009279916990875",
+              "endTimeUnixNano": "1794009280026990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "92b40a75a4e8a9f6",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.turn_preparation",
+              "startTimeUnixNano": "1794009277005990875",
+              "endTimeUnixNano": "1794009280030990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "8606f52ee184f081",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.context_assembly",
+              "startTimeUnixNano": "1794009280035990875",
+              "endTimeUnixNano": "1794009280110990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "6721178fd98a2955",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.turn_setup",
+              "startTimeUnixNano": "1794009280111990875",
+              "endTimeUnixNano": "1794009280164990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "149e43063bdd08c6",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.hook_user_prompt_submitted_callback",
+              "startTimeUnixNano": "1794009280349990875",
+              "endTimeUnixNano": "1794009280363990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "e031ddf858f2aaf4",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_prompt_hooks",
+              "startTimeUnixNano": "1794009280339990875",
+              "endTimeUnixNano": "1794009280364990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "1e5e9a8b5d82695e",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_preamble_context",
+              "startTimeUnixNano": "1794009280365990875",
+              "endTimeUnixNano": "1794009280365990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "a3fa4f802baafdd0",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_preamble_producers",
+              "startTimeUnixNano": "1794009280365990875",
+              "endTimeUnixNano": "1794009280365990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "18bdf024c8423cc8",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_attachment_gate",
+              "startTimeUnixNano": "1794009280365990875",
+              "endTimeUnixNano": "1794009280365990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "16c36b0a73b55fa9",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_attachment_preparation",
+              "startTimeUnixNano": "1794009280366990875",
+              "endTimeUnixNano": "1794009280366990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "ae83b4aacfdd68c7",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_preamble_assembly",
+              "startTimeUnixNano": "1794009280366990875",
+              "endTimeUnixNano": "1794009280366990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "052d6d61720dd183",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.hook_user_prompt_transformed_callback",
+              "startTimeUnixNano": "1794009280367990875",
+              "endTimeUnixNano": "1794009280371990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "88aae3be0be99060",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_prompt_transformed",
+              "startTimeUnixNano": "1794009280366990875",
+              "endTimeUnixNano": "1794009280371990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "2ec9b8391cac2793",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_event_emission",
+              "startTimeUnixNano": "1794009280372990875",
+              "endTimeUnixNano": "1794009280391990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "645a16610f2bc79e",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.user_message_emission",
+              "startTimeUnixNano": "1794009280365990875",
+              "endTimeUnixNano": "1794009280391990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "73869381201a8d31",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.hook_session_start_callback",
+              "startTimeUnixNano": "1794009280467990875",
+              "endTimeUnixNano": "1794009280469990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "63c226a4c4176333",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_capability_pruning",
+              "startTimeUnixNano": "1794009280546990875",
+              "endTimeUnixNano": "1794009280546990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "df0a596082ce16f7",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_compaction",
+              "startTimeUnixNano": "1794009280547990875",
+              "endTimeUnixNano": "1794009280574990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "64e37e3c3e82459c",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_jit_instruction",
+              "startTimeUnixNano": "1794009280575990875",
+              "endTimeUnixNano": "1794009280575990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "3e33a3a63d2cf119",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_truncation",
+              "startTimeUnixNano": "1794009280575990875",
+              "endTimeUnixNano": "1794009280587990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "eb94e809905885a2",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_response_limits",
+              "startTimeUnixNano": "1794009280587990875",
+              "endTimeUnixNano": "1794009280587990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "634d2ecc7d5af3dd",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_immediate_prompts",
+              "startTimeUnixNano": "1794009280588990875",
+              "endTimeUnixNano": "1794009280588990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "f4a834a7af03a3b4",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_image_processing",
+              "startTimeUnixNano": "1794009280588990875",
+              "endTimeUnixNano": "1794009280592990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "a4647a39e8873164",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_finalization",
+              "startTimeUnixNano": "1794009280593990875",
+              "endTimeUnixNano": "1794009280600990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "cf7173a1e8b93e6a",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_pre_request",
+              "startTimeUnixNano": "1794009280545990875",
+              "endTimeUnixNano": "1794009280599990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "e7ef1af5da9017e0",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_cache_control",
+              "startTimeUnixNano": "1794009280600990875",
+              "endTimeUnixNano": "1794009280600990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "a2752875ef399447",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_message_assembly",
+              "startTimeUnixNano": "1794009280600990875",
+              "endTimeUnixNano": "1794009280600990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "e6391c807e613993",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_incremental_input",
+              "startTimeUnixNano": "1794009280600990875",
+              "endTimeUnixNano": "1794009280600990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "bc726068fd3a86aa",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_request_capture",
+              "startTimeUnixNano": "1794009280600990875",
+              "endTimeUnixNano": "1794009280610990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "b3746cbad2588baf",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.model_request_preparation",
+              "startTimeUnixNano": "1794009280616990875",
+              "endTimeUnixNano": "1794009281173990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "f6e2a5a52cbd76d4",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.model_physical_dispatch_to_completion",
+              "startTimeUnixNano": "1794009281173990875",
+              "endTimeUnixNano": "1794009282950990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "31cc068080b2bb12",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.hook_pre_tool_use_callback",
+              "startTimeUnixNano": "1794009283168990875",
+              "endTimeUnixNano": "1794009283169990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "f37ff1ee17fbb9a3",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.hook_post_tool_use_callback",
+              "startTimeUnixNano": "1794009283418990875",
+              "endTimeUnixNano": "1794009283420990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "64b7883155e0bc3d",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_capability_pruning",
+              "startTimeUnixNano": "1794009283664990875",
+              "endTimeUnixNano": "1794009283664990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "c18993ba412d02cb",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_compaction",
+              "startTimeUnixNano": "1794009283665990875",
+              "endTimeUnixNano": "1794009283669990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "4272e400246c0264",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_jit_instruction",
+              "startTimeUnixNano": "1794009283669990875",
+              "endTimeUnixNano": "1794009283669990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "2c5b4d1e7a2003e3",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_truncation",
+              "startTimeUnixNano": "1794009283669990875",
+              "endTimeUnixNano": "1794009283670990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "df3c20fbbaae9b79",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_response_limits",
+              "startTimeUnixNano": "1794009283671990875",
+              "endTimeUnixNano": "1794009283671990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "0a0ad27ec7dab7ad",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_immediate_prompts",
+              "startTimeUnixNano": "1794009283671990875",
+              "endTimeUnixNano": "1794009283671990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "894d7c0c48782f99",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_image_processing",
+              "startTimeUnixNano": "1794009283672990875",
+              "endTimeUnixNano": "1794009283673990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "5cf09cda9b0b52c1",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.pre_request_finalization",
+              "startTimeUnixNano": "1794009283674990875",
+              "endTimeUnixNano": "1794009283680990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "fd6ca9af6b2dc139",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_pre_request",
+              "startTimeUnixNano": "1794009283664990875",
+              "endTimeUnixNano": "1794009283680990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "d885c4cd15bf58dd",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_cache_control",
+              "startTimeUnixNano": "1794009283681990875",
+              "endTimeUnixNano": "1794009283681990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "941135ee4679653c",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_message_assembly",
+              "startTimeUnixNano": "1794009283681990875",
+              "endTimeUnixNano": "1794009283681990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "2653fcf3a89d8f9f",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_incremental_input",
+              "startTimeUnixNano": "1794009283681990875",
+              "endTimeUnixNano": "1794009283681990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "59bd44c7439f4c11",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.attempt_request_capture",
+              "startTimeUnixNano": "1794009283681990875",
+              "endTimeUnixNano": "1794009283684990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "bdaba38c9fbbbeb5",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.model_request_preparation",
+              "startTimeUnixNano": "1794009283690990875",
+              "endTimeUnixNano": "1794009283705990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "c0a496f3499cb173",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.model_physical_dispatch_to_completion",
+              "startTimeUnixNano": "1794009283706990875",
+              "endTimeUnixNano": "1794009285524990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "ba8f54f709c7716b",
+              "parentSpanId": "04a3cd04fa285aab",
+              "name": "session.timing.output_forwarding",
+              "startTimeUnixNano": "1794009285522990875",
+              "endTimeUnixNano": "1794009285523990875",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "04a3cd04fa285aab",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "session.first_turn",
+              "startTimeUnixNano": "1794009276987990875",
+              "endTimeUnixNano": "1794009285525503750",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "b4eabccbb50b8005",
+              "parentSpanId": "c37598ec69584c91",
+              "name": "invoke_agent",
+              "startTimeUnixNano": "1794009280385000000",
+              "endTimeUnixNano": "1794009376456000000",
+              "kind": 1,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "87533"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "540"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "5f84917e8a091a87",
+              "parentSpanId": "76f2e58bae62de6e",
+              "name": "permission",
+              "startTimeUnixNano": "1794009287075000000",
+              "endTimeUnixNano": "1794009287105000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "76f2e58bae62de6e",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "execute_tool view",
+              "startTimeUnixNano": "1794009287013000000",
+              "endTimeUnixNano": "1794009287145000000",
+              "kind": 1,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "03302aadac3c46ee",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "chat gpt-6-luna",
+              "startTimeUnixNano": "1794009283689000000",
+              "endTimeUnixNano": "1794009286989000000",
+              "kind": 3,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-6-luna"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "17304"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "76"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": "17262"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_write.input_tokens",
+                  "value": {
+                    "intValue": "39"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": "40"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "c52d77166647d148",
+              "parentSpanId": "9c7d64d0c489f274",
+              "name": "permission",
+              "startTimeUnixNano": "1794009293671000000",
+              "endTimeUnixNano": "1794009293710000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "9c7d64d0c489f274",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "execute_tool apply_patch",
+              "startTimeUnixNano": "1794009293564000000",
+              "endTimeUnixNano": "1794009293802000000",
+              "kind": 1,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "02a1add29ea0b95c",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "chat gpt-6-luna",
+              "startTimeUnixNano": "1794009287245000000",
+              "endTimeUnixNano": "1794009293538000000",
+              "kind": 3,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-6-luna"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "17403"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "297"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": "17301"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_write.input_tokens",
+                  "value": {
+                    "intValue": "99"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": "153"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "d8538b399376aa90",
+              "parentSpanId": "db357acadea780e9",
+              "name": "permission",
+              "startTimeUnixNano": "1794009283207000000",
+              "endTimeUnixNano": "1794009283260000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "6d6c092cf610c257",
+              "parentSpanId": "db357acadea780e9",
+              "name": "external_tool rename_chat",
+              "startTimeUnixNano": "1794009283406000000",
+              "endTimeUnixNano": "1794009283417000000",
+              "kind": 1,
+              "attributes": []
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "db357acadea780e9",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "execute_tool rename_chat",
+              "startTimeUnixNano": "1794009283111000000",
+              "endTimeUnixNano": "1794009283429000000",
+              "kind": 1,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "82875303ebfe464f9f6a55fdbc718114",
+              "spanId": "72e251669d77b7a8",
+              "parentSpanId": "b4eabccbb50b8005",
+              "name": "chat gpt-6-luna",
+              "startTimeUnixNano": "1794009280616000000",
+              "endTimeUnixNano": "1794009283009000000",
+              "kind": 3,
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-6-luna"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "17265"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "24"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_write.input_tokens",
+                  "value": {
+                    "intValue": "17262"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": "0"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

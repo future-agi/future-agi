@@ -277,7 +277,9 @@ def test_context_project_and_custom_sort(navigation_context_call):
     query, params = service.execute_ch_query.call_args.args
     assert params["project_id"] == PROJECT_ID
     assert "ORDER BY total_tokens ASC, session_id ASC" in query
-    assert "sum(total_tokens) AS total_tokens" in query
+    assert "sum(usage_total_tokens) AS member_total_tokens" in query
+    assert "LEFT JOIN session_usage USING (project_id, session_id)" in query
+    assert "max(member_total_tokens) AS total_tokens" in query
 
 
 def test_context_cannot_pin_a_different_authorized_project(navigation_context_call):

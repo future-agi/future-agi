@@ -6,7 +6,7 @@ function PropmtCardSkeleton() {
     <Box
       sx={{
         p: "24px",
-        borderRadius: "16px",
+        borderRadius: "12px",
         border: "1px solid var(--border-default)",
         mb: "29px",
       }}

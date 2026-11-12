@@ -77,7 +77,8 @@ const getDefaultValues = (evalConfig, editMode, allColumns, fagiLocked) => {
       );
       const safeDefault =
         fagiLocked && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
-      const hasTuringLarge = !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
+      const hasTuringLarge =
+        !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
         ? safeDefault ||
           (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
@@ -918,7 +919,7 @@ const EvaluationConfigureForm = ({
             size="small"
             startIcon={
               <Iconify
-                icon="octicon:chevron-left-24"
+                icon="solar:alt-arrow-left-linear"
                 width="24px"
                 sx={{ color: "primary.main" }}
               />
@@ -931,7 +932,7 @@ const EvaluationConfigureForm = ({
             Close
           </Button>
         </Box>
-        <Typography fontSize="14px" fontWeight={700} color="text.secondary">
+        <Typography fontSize="13px" fontWeight={600} color="text.secondary">
           {selectedEval?.name || evalConfig?.name}
         </Typography>
         {isLoading && <LinearProgress />}

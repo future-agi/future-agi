@@ -84,7 +84,10 @@ from tracer.serializers.eval_task import (
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
-from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.eval_tasks.entries import (
+    soft_delete_eval_results,
+    soft_delete_live,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -216,6 +219,7 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     project_name = serializers.CharField(required=False)
     status = serializers.CharField(allow_null=True)
     run_type = serializers.CharField(allow_null=True)
+    row_type = serializers.CharField(allow_null=True)
     filters_applied = serializers.JSONField(allow_null=True)
     created_at = serializers.DateTimeField()
     evals_applied = serializers.ListField(child=serializers.CharField(allow_null=True))
@@ -305,6 +309,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "name",
             "status",
             "run_type",
+            "row_type",
             "filters",
             "created_at",
             "sampling_rate",
@@ -1433,6 +1438,7 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
             "name": eval_task.name,
             "status": eval_task.status,
             "run_type": eval_task.run_type,
+            "row_type": eval_task.row_type,
             "filters_applied": eval_task.filters,
             "created_at": datetime_field.to_representation(eval_task.created_at),
             "evals_applied": [
@@ -1870,9 +1876,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now
         )
-        EvalLogger.objects.filter(eval_task_id=instance.id).update(
-            deleted=True, deleted_at=now
-        )
+        soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
     @validated_request(
@@ -2749,8 +2753,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
                 deleted=True, deleted_at=timezone.now()
             )
-            EvalLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
-                deleted=True, deleted_at=timezone.now()
+            soft_delete_eval_results(
+                EvalLogger.objects.filter(eval_task_id__in=eval_task_ids)
             )
 
             return self._gm.success_response(

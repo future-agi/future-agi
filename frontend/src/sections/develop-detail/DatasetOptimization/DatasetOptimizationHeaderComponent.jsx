@@ -232,19 +232,20 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
 
           <Chip
             sx={{
-              backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
-              color: modelDeprecated ? "warning.dark" : "blue.500",
+              backgroundColor: modelDeprecated ? "warning.lighter" : "status.info.bg",
+              color: modelDeprecated ? "warning.dark" : "status.info.fg",
               ":hover": {
-                backgroundColor: modelDeprecated ? "warning.lighter" : "blue.o10",
+                backgroundColor: modelDeprecated
+                  ? "warning.lighter"
+                  : "status.info.bg",
               },
-              "& .MuiChip-icon": { color: modelDeprecated ? "warning.dark" : "blue.500" },
+              "& .MuiChip-icon": {
+                color: modelDeprecated ? "warning.dark" : "status.info.fg",
+              },
             }}
             icon={
               modelDeprecated ? (
-                <SvgColor
-                  src="/assets/icons/ic_warning.svg"
-                  sx={{ width: 16, height: 16 }}
-                />
+                <SvgColor width={16} src="/assets/icons/ic_warning.svg" />
               ) : providerLogo ? (
                 <Image
                   ratio="1/1"
@@ -263,13 +264,13 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
 
           <ShowComponent condition={parameters?.length > 0}>
             <Button
-              sx={{ px: "8px" }}
               variant="outlined"
               size="small"
               startIcon={
                 <SvgColor
+                  width={16}
                   src="/assets/prompt/slider-options.svg"
-                  sx={{ height: "16px", width: "16px", color: "text.primary" }}
+                  sx={{ color: "text.primary" }}
                 />
               }
               onClick={(e) => setAnchorRef(e.currentTarget)}
@@ -282,7 +283,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
           <Button
             variant="outlined"
             size="small"
-            sx={{ borderColor: "#9C9C9C" }}
+            sx={{ borderColor: "border.default" }}
             startIcon={<SvgColor src="/assets/icons/ic_stop_v2.svg" />}
             onClick={() => {
               setStopOptimizationId(optimizationId);
@@ -346,11 +347,11 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
             </Typography>
             <Link
               href={getDocsLinkBasedOnOptimizer(optimiserType)}
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="14px"
+              fontSize="13px"
               sx={{
                 textDecoration: "underline",
                 fontSize: "13px",

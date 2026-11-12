@@ -244,10 +244,9 @@ export default function AddToQueueDialog({
         slotProps={{
           paper: {
             sx: {
-              width: 280,
+              width: 320,
               mt: 0.5,
               borderRadius: "6px",
-              boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
               border: 1,
               borderColor: "divider",
             },
@@ -261,9 +260,9 @@ export default function AddToQueueDialog({
             sx={{
               px: 0.5,
               py: 0.25,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
-              textTransform: "uppercase",
+              textTransform: "none",
               letterSpacing: 0,
               display: "block",
             }}
@@ -284,7 +283,7 @@ export default function AddToQueueDialog({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
                     width={16}
                     sx={{ color: "text.disabled" }}
                   />
@@ -317,11 +316,9 @@ export default function AddToQueueDialog({
                   onClick={() => handleSelect(queue)}
                   onMouseEnter={() => setFocusIndex(idx)}
                   sx={{
-                    fontSize: 13,
                     py: 0.5,
                     px: 0.5,
                     borderRadius: "4px",
-                    minHeight: "auto",
                   }}
                 >
                   {queue.name}
@@ -348,14 +345,13 @@ export default function AddToQueueDialog({
                   setPage((p) => p - 1);
                   setFocusIndex(0);
                 }}
-                sx={{ p: 0.25 }}
               >
-                <Iconify icon="eva:chevron-left-fill" width={18} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={20} />
               </IconButton>
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: 11 }}
+                sx={{ fontSize: 12 }}
               >
                 {page + 1} / {totalPages}
               </Typography>
@@ -366,9 +362,8 @@ export default function AddToQueueDialog({
                   setPage((p) => p + 1);
                   setFocusIndex(0);
                 }}
-                sx={{ p: 0.25 }}
               >
-                <Iconify icon="eva:chevron-right-fill" width={18} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={20} />
               </IconButton>
             </Box>
           )}
@@ -382,17 +377,13 @@ export default function AddToQueueDialog({
               setCreateDrawerOpen(true);
             }}
             sx={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "primary.main",
               gap: 0.5,
               py: 0.5,
               px: 0.5,
               borderRadius: "4px",
-              minHeight: "auto",
             }}
           >
-            <Iconify icon="mdi:plus" width={20} />
+            <Iconify icon="solar:add-linear" width={20} />
             Create new queue
           </MenuItem>
           <Divider sx={{ my: 0.5 }} />
@@ -404,17 +395,13 @@ export default function AddToQueueDialog({
             rel="noopener"
             onClick={onClose}
             sx={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "primary.main",
               gap: 0.5,
               py: 0.5,
               px: 0.5,
               borderRadius: "4px",
-              minHeight: "auto",
             }}
           >
-            <Iconify icon="iconoir:open-new-window" width={20} />
+            <Iconify icon="solar:arrow-right-up-linear" width={20} />
             Manage queues
           </MenuItem>
         </Box>

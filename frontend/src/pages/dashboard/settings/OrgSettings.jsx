@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import {
   Box,
@@ -93,27 +94,11 @@ const OrgSettings = () => {
       <Box
         sx={{ display: "flex", flexDirection: "column", gap: theme.spacing(2) }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Organization Settings
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.secondary",
-              marginTop: theme.spacing(0.5),
-            }}
-          >
-            Manage organization-level settings
-          </Typography>
-        </Box>
+        <PageHeader
+          title="Organization Settings"
+          description="Manage organization-level settings"
+          sx={{ mb: 0 }}
+        />
 
         <Box
           sx={{
@@ -203,7 +188,7 @@ const OrgSettings = () => {
                   </Typography>
                   <Tooltip title="Edit Organization Name">
                     <Iconify
-                      icon="fluent:edit-12-regular"
+                      icon="solar:pen-linear"
                       color="text.primary"
                       onClick={() => setIsEditing(true)}
                       sx={{

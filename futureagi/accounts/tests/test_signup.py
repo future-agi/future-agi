@@ -2115,6 +2115,61 @@ def _first_signup_payload(email):
     }
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("supplied_password", [True, False])
+def test_every_signup_dispatches_demo_seeding_after_commit(
+    supplied_password, no_outbound_email, django_capture_on_commit_callbacks
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed@futureagi.com")
+    if not supplied_password:
+        payload.pop("password")
+    with (
+        patch("accounts.utils.process_post_registration") as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration"),
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once()
+        user_id, generated_password = dispatch.call_args.args
+        assert user_id == user.id
+        if supplied_password:
+            assert generated_password is None
+        else:
+            assert generated_password
+
+
+@pytest.mark.django_db
+def test_signup_survives_unavailable_post_registration_worker(
+    no_outbound_email, django_capture_on_commit_callbacks, caplog
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed-worker-down@futureagi.com")
+    with (
+        patch(
+            "accounts.utils.process_post_registration",
+            side_effect=RuntimeError("Temporal unavailable"),
+        ) as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration") as telemetry,
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once_with(user.id, None)
+        telemetry.assert_called_once()
+
+    user.refresh_from_db()
+    assert user.check_password(payload["password"])
+    assert "Temporal unavailable" in caplog.text
+
+
 def _deployment(monkeypatch, *, cloud=False, ee=False):
     """Set the deployment identity the signup gate actually reads.
 

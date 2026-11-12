@@ -19,7 +19,7 @@ const BasicDetailsForm = ({ control, errors }) => {
           control={control}
           placeholder={"Enter agent name"}
           label={
-            <Typography typography={"s1"} fontWeight={"fontWeightBold"}>
+            <Typography typography={"s1"} fontWeight={600}>
               Agent Name
             </Typography>
           }
@@ -67,7 +67,7 @@ const BasicDetailsForm = ({ control, errors }) => {
         placeholder={"Enter prompt"}
         fieldName={"prompt"}
         label={
-          <Typography typography={"s1"} fontWeight={"fontWeightBold"}>
+          <Typography typography={"s1"} fontWeight={600}>
             Prompt
           </Typography>
         }
@@ -131,7 +131,7 @@ const BasicDetailsForm = ({ control, errors }) => {
           marks={generateNMarks(0, 1)}
           inputSectionStyles={{
             "& .slider-label": {
-              fontSize: "14px",
+              fontSize: "13px",
             },
           }}
         />

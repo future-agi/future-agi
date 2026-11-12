@@ -9,7 +9,7 @@ from typing import Any, List
 import Levenshtein
 import numpy as np
 import requests
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import (
@@ -1843,7 +1843,7 @@ def _validate_llm_similarity(actual_value: str, expected_value: str, validation:
 
 def _get_messages(validation: dict, actual_value: Any, expected_value: Any) -> list:
     if validation.get("system_message") and validation.get("user_message"):
-        env = Environment(
+        env = SandboxedEnvironment(
             variable_start_string='{{',
             variable_end_string='}}',
             undefined=PreserveUndefined
@@ -2810,6 +2810,35 @@ def _levenshtein_distance_list(ref, hyp):
             cost = 0 if ref[i - 1] == hyp[j - 1] else 1
             dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
     return dp[n][m]
+
+
+def _align_counts(ref: list[str], hyp: list[str]) -> tuple[int, int, int, int]:
+    """Return hits, substitutions, deletions, and insertions for an alignment.
+
+    ``Levenshtein.opcodes`` is the repository's standard token-alignment
+    implementation.  Using its compact opcode stream avoids materializing a
+    Python ``len(ref) x len(hyp)`` matrix, which matters for long transcripts.
+    Word-information metrics depend on the hit count, so they must not derive
+    it by subtracting the full edit distance (which also includes insertions).
+    """
+    hits = substitutions = deletions = insertions = 0
+    for operation, ref_start, ref_end, hyp_start, hyp_end in Levenshtein.opcodes(
+        ref, hyp
+    ):
+        ref_count = ref_end - ref_start
+        hyp_count = hyp_end - hyp_start
+        if operation == "equal":
+            hits += ref_count
+        elif operation == "replace":
+            substitutions += min(ref_count, hyp_count)
+            deletions += max(ref_count - hyp_count, 0)
+            insertions += max(hyp_count - ref_count, 0)
+        elif operation == "delete":
+            deletions += ref_count
+        elif operation == "insert":
+            insertions += hyp_count
+
+    return hits, substitutions, deletions, insertions
 
 
 def calculate_word_error_rate(reference, hypothesis, **kwargs):
@@ -3830,14 +3859,13 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIL: 1.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wil = 1.0 - (hits / len(ref_words)) * (hits / len(hyp_words)) if len(ref_words) > 0 and len(hyp_words) > 0 else 1.0
     score = max(0.0, 1.0 - wil)
     return {"result": score, "reason": f"WIL: {wil:.4f}, score={score:.4f}"}
@@ -3845,14 +3873,13 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIP: 0.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wip = (hits / len(ref_words)) * (hits / len(hyp_words))
     return {"result": wip, "reason": f"WIP: {wip:.4f}"}
 

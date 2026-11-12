@@ -90,24 +90,24 @@ export default function ClusterTable({ clusterData, gradientColors }) {
 
   return (
     <>
-      <Tabs
-        value={currentTab}
-        onChange={handleTab}
+      <Box
         sx={{
           px: 2.5,
           boxShadow: (theme) =>
             `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
         }}
       >
-        {tabOptions.map((tab) => (
-          <Tab
-            key={tab.value}
-            iconPosition="end"
-            value={tab.value}
-            label={tab.label}
-          />
-        ))}
-      </Tabs>
+        <Tabs value={currentTab} onChange={handleTab}>
+          {tabOptions.map((tab) => (
+            <Tab
+              key={tab.value}
+              iconPosition="end"
+              value={tab.value}
+              label={tab.label}
+            />
+          ))}
+        </Tabs>
+      </Box>
 
       {currentTab === "settings" && clusterSettings}
       {currentTab === "clusters" && clusterInfoTable}

@@ -164,8 +164,8 @@ const OptimizationDetail = ({ selectedOptimization }) => {
       />
       <Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
-          {/* <Iconify icon="material-symbols:credit-score-rounded" /> */}
-          <Typography fontWeight={500} fontSize="14px">
+          {/* <Iconify icon="solar:card-linear" /> */}
+          <Typography fontWeight={500} fontSize="13px">
             Template Score
           </Typography>
         </Box>

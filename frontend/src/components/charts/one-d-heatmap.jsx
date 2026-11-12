@@ -21,7 +21,7 @@ export default function OneDHeatmap() {
       // height: 80,
       type: "heatmap",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       parentHeightOffset: 0,
       toolbar: {
         show: false,
@@ -33,6 +33,8 @@ export default function OneDHeatmap() {
     theme: {
       mode: isDark ? "dark" : "light",
     },
+    // One red, shaded light to dark by value.
+    colors: [theme.palette.status.danger.solid],
     plotOptions: {
       heatmap: {
         shadeIntensity: 0.5,
@@ -41,7 +43,6 @@ export default function OneDHeatmap() {
         colorScale: {
           min: 0,
           max: 1,
-          color: ["#ffcccc", "#ff3333"], // Gradient from very light red to dark red
         },
       },
     },
@@ -65,7 +66,7 @@ export default function OneDHeatmap() {
       enabled: false, // This will disable the tooltip
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
   };
 

@@ -30,7 +30,7 @@ export const SKIP_PROJECT_MAPPING_PLATFORMS = [
 ];
 
 // Platforms that skip sync settings (no polling / backfill — action-only integrations)
-export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear"];
+export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear", "slack"];
 
 export const DATADOG_SITES = [
   { value: "us1", label: "US1 (datadoghq.com)", domain: "datadoghq.com" },
@@ -117,12 +117,24 @@ export const PLATFORMS = [
     available: true,
   },
   {
+    id: "slack",
+    name: "Slack",
+    description: "Send Error Feed alerts to a Slack channel",
+    wizardDescription: "Connect a Slack workspace for Error Feed alerts",
+    logo: null,
+    icon: "simple-icons:slack",
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Slack)
+    iconColor: "#E01E5A",
+    available: true,
+  },
+  {
     id: "linear",
     name: "Linear",
     description: "Issue tracking for Error Feed clusters",
     wizardDescription: "Create Linear issues from Error Feed clusters",
     logo: null,
     icon: "simple-icons:linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
     iconColor: "#5E6AD2",
     available: true,
   },

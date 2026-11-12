@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -15,8 +17,14 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationCommandQuerySerializer,
     HarnessConversationEventAckSerializer,
     HarnessConversationEventBatchSerializer,
+    HarnessConversationOverviewQuerySerializer,
+    HarnessConversationOverviewSerializer,
+    HarnessConversationPublishSerializer,
     HarnessConversationRerunSerializer,
+    HarnessConversationRunsQuerySerializer,
+    HarnessConversationRunStartSerializer,
     HarnessConversationRunStatusSerializer,
+    HarnessConversationScenarioQuerySerializer,
     HarnessConversationTranscriptAppendResponseSerializer,
     HarnessConversationTranscriptAppendSerializer,
     HarnessConversationTranscriptQuerySerializer,
@@ -26,15 +34,23 @@ from simulate.serializers.hosted_harness_conversation import (
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
     append_provider_transcript,
+    conversation_overview,
     conversation_run_status,
+    conversation_runs,
+    conversation_scenarios,
     ingest_conversation_events,
     load_provider_transcript,
     pending_commands,
     promote_latest_checkpoint,
+    publish_conversation_workspace,
+    report_checkpoint_rejection,
+    start_conversation_run,
     store_workspace_archive,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
+
+logger = logging.getLogger(__name__)
 
 
 class HostedHarnessConversationViewSet(viewsets.ViewSet):
@@ -131,9 +147,21 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     @swagger_auto_schema(responses={202: HarnessConversationRunStatusSerializer})
     def rerun(self, request, pk=None):
         from simulate.services.harness_provider import get_harness_provider
+        from simulate.services.harness_versioning.drafts import drafts_apply
 
-        promote_latest_checkpoint(self._conversation)
         job = self._conversation.job
+        try:
+            promote_latest_checkpoint(self._conversation)
+        except HostedHarnessError as exc:
+            # The run uses the saved versions; a refused draft write must not block it.
+            if not drafts_apply(job.environment or job) or exc.code not in {
+                "draft_changed",
+                "scenario_key_retired",
+                "scenario_key_taken",
+            }:
+                raise
+            logger.info("harness_rerun_promote_refused code=%s", exc.code)
+            report_checkpoint_rejection(str(self._conversation.id), exc.message)
         try:
             get_harness_provider().rerun_saved(
                 str(job.id),
@@ -210,3 +238,64 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
             body=request.body,
         )
         return Response(result)
+
+    @validated_request(
+        request_serializer=HarnessConversationScenarioQuerySerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def scenarios(self, request, pk=None):
+        return Response(conversation_scenarios(self._conversation, request.validated_data))
+
+    @validated_request(
+        request_serializer=HarnessConversationPublishSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        return Response(
+            publish_conversation_workspace(
+                self._conversation, digest=request.validated_data["digest"]
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationRunsQuerySerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def runs(self, request, pk=None):
+        body = request.validated_data
+        return Response(
+            conversation_runs(
+                self._conversation,
+                run_id=body.get("run_id") or "",
+                limit=body.get("limit") or 10,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationRunStartSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="runs/start")
+    def start_run(self, request, pk=None):
+        body = request.validated_data
+        return Response(
+            start_conversation_run(
+                self._conversation,
+                numbers=body.get("numbers") or [],
+                ranges=body.get("ranges") or [],
+                trials=body["trials"],
+                operation_id=body.get("operation_id") or "",
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationOverviewQuerySerializer,
+        responses={200: HarnessConversationOverviewSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def overview(self, request, pk=None):
+        return Response(conversation_overview(self._conversation))

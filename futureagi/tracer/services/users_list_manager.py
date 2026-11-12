@@ -78,6 +78,10 @@ USERS_EXPORT_COLUMNS = [
     # projects exports twice; the project names each row's scope.  Appended
     # so existing column positions stay stable.
     ("Project", "project_name"),
+    ("Cost coverage", "cost_coverage.status"),
+    ("Known cost subtotal ($)", "cost_coverage.known_subtotal"),
+    ("Known cost fact count", "cost_coverage.known_fact_count"),
+    ("Unknown cost fact count", "cost_coverage.unknown_fact_count"),
 ]
 
 
@@ -2163,6 +2167,13 @@ class UsersListManager:
             value = self._native_filter_values_by_user.get(
                 str(row.get("end_user_id")), {}
             ).get(key, row.get(key))
+            coverage = row.get("cost_coverage")
+            if (
+                key == "total_cost"
+                and coverage is not None
+                and coverage["status"] != "complete"
+            ):
+                value = None
             expected = config.get("filter_value", config.get("filterValue"))
             operation = config.get("filter_op") or config.get("filterOp")
             if key in {"activated_at", "last_active"} and operation not in {
@@ -2638,12 +2649,27 @@ class UsersListManager:
         rows = list(payload.get("table") or ())
 
         for row in rows:
-            writer.writerow(
-                [
-                    self._format_export_cell(row.get(field))
-                    for _, field in USERS_EXPORT_COLUMNS
-                ]
-            )
+            coverage = row.get("cost_coverage")
+            cells = []
+            for _, field in USERS_EXPORT_COLUMNS:
+                if field.startswith("cost_coverage."):
+                    value = (
+                        coverage[field.split(".", 1)[1]]
+                        if coverage is not None
+                        else None
+                    )
+                elif (
+                    field == "total_cost"
+                    and coverage is not None
+                    and coverage["status"] != "complete"
+                ):
+                    # Keep the old complete-price column honest; the numeric
+                    # compatibility subtotal has its own explicitly named cell.
+                    value = None
+                else:
+                    value = row.get(field)
+                cells.append(self._format_export_cell(value))
+            writer.writerow(cells)
             yield _drain()
 
         truncated = bool(

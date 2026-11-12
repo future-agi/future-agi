@@ -39,11 +39,25 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         description="Recover eval tasks whose drain stopped",
     ),
     ScheduleConfig(
+        schedule_id="sweep-lost-insight-runs",
+        activity_name="sweep_lost_insight_runs",
+        interval_seconds=60,
+        queue="tasks_xl",
+        description="Settle Insights reports whose workflow stopped",
+    ),
+    ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",
         interval_seconds=60,
         queue="tasks_l",
         description="Check and process alert monitors",
+    ),
+    ScheduleConfig(
+        schedule_id="drain-feed-alerts",
+        activity_name="drain_feed_alerts",
+        interval_seconds=30,
+        queue="tasks_s",
+        description="Dispatch committed Error Feed alerts to Slack",
     ),
     ScheduleConfig(
         schedule_id="run-evals-on-spans",

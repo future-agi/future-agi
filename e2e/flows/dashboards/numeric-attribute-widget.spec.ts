@@ -218,7 +218,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
         const [created] = await Promise.all([
           page.waitForResponse(r => new URL(r.url()).pathname === DASHBOARDS && r.request().method() === 'POST'),
-          page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+          page.getByRole('button', { name: /^create dashboard$/i }).click(),
         ]);
         expect(created.status()).toBe(200);
         dashboardId = ((await created.json()) as { result: { id: string } }).result.id;
@@ -230,7 +230,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
           page.getByPlaceholder('Untitled Dashboard').press('Enter'),
         ]);
         expect(named.status()).toBe(200);
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click();
         await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');

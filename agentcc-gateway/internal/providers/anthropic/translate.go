@@ -429,7 +429,8 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		case "auto":
 			return &anthropicToolChoice{Type: "auto"}, nil
 		case "none":
-			return nil, nil // Anthropic doesn't have "none" — just omit tools.
+			// Tools stay declared so earlier tool_use turns remain valid.
+			return &anthropicToolChoice{Type: "none"}, nil
 		case "required":
 			return &anthropicToolChoice{Type: "any"}, nil
 		}

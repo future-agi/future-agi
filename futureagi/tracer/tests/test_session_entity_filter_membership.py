@@ -205,8 +205,27 @@ def test_latest_physical_replay_remaps_and_all_root_metrics_are_preserved():
     assert "argMax(tuple(trace_session_id), _version)" in latest
     assert "latest_is_deleted = 0" in live
     assert "LEFT JOIN ts_survivor_map AS scalar_ts_remap" in live
+    members = _cte(sql, "session_members")
+    assert "attrs_string['fi.cost.kind'] = 'unknown'" in members
+    assert "attrs_string['fi.usage.contribution'] = 'none'" in members
+    assert "AS latest_usage_coverage" in members
+    assert "argMax(tuple(cost), _version).1 AS latest_cost" in members
+    assert "argMax(tuple(total_tokens), _version).1 AS latest_total_tokens" in members
+    assert (
+        "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in members
+    )
+    assert "WHERE latest_is_deleted = 0" in members
+    assert "LEFT JOIN ts_survivor_map AS member_remap" in members
+    assert "SELECT project_id, session_id FROM member_session_scope" in members
+    usage = _cte(sql, "session_usage")
+    assert "countIf(isNull(usage_cost)) > 0" in usage
+    assert "sum(usage_cost)) AS member_total_cost" in usage
+    assert "sum(usage_total_tokens) AS member_total_tokens" in usage
+    assert "GROUP BY project_id, member_session_id" in usage
     sessions = _cte(sql, "sessions")
-    assert "sum(cost) AS total_cost" in sessions
+    assert "LEFT JOIN session_usage USING (project_id, session_id)" in sessions
+    assert "max(member_total_cost) AS total_cost" in sessions
     assert "FROM resolved_root_sessions" in sessions
     assert "latest_attr_value" not in sessions
     assert "matching_scalar_sessions" in sessions
@@ -237,7 +256,8 @@ def test_relational_leaves_have_independent_session_membership_and_keep_all_root
     assert membership.count("> 0") == 2
     sessions = _cte(sql, "sessions")
     assert "FROM resolved_root_sessions" in sessions
-    assert "sum(total_tokens) AS total_tokens" in sessions
+    assert "max(member_total_tokens) AS total_tokens" in sessions
+    assert "FROM member_trace_usage" in sql
     assert "(resolved_root_sessions.project_id, session_id) IN" in sessions
     assert "trace_id IN" not in sessions
     assert "%(session_relational_trace_ids)s" not in sql
@@ -414,7 +434,8 @@ def test_native_user_membership_and_raw_metric_intersect_without_value_collision
     assert "raw-token-value" in params.values()
     assert "matching_user_sessions AS" in sql
     assert "mapContains(attrs_string" in _cte(sql, "latest_candidate_scalar_spans")
-    assert "sum(total_tokens) AS total_tokens" in _cte(sql, "sessions")
+    assert "max(member_total_tokens) AS total_tokens" in _cte(sql, "sessions")
+    assert "FROM member_trace_usage" in sql
     assert "HAVING total_tokens >" in _cte(sql, "sessions")
     assert builder.supports_candidate_cursor_page()
 

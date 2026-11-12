@@ -38,7 +38,7 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: 547,
+          width: 560,
           padding: theme.spacing(1),
         },
       }}
@@ -51,14 +51,11 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
         }}
       >
         <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography
-            variant="subtitle1"
-            fontWeight={typographyTheme.fontWeightBold}
-          >
+          <Typography variant="subtitle1" fontWeight={600}>
             {title}
           </Typography>
-          <IconButton aria-label="close-share" onClick={onClose} sx={{ p: 0 }}>
-            <Iconify icon="line-md:close" color="black" />
+          <IconButton aria-label="close-share" onClick={onClose}>
+            <Iconify icon="solar:close-linear" color="black" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -87,14 +84,14 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
               size="small"
               sx={{
                 color: "text.primary",
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: 400,
               }}
               InputProps={{
                 readOnly: true,
                 startAdornment: (
                   <Iconify
-                    icon="tabler:link"
+                    icon="solar:link-linear"
                     width={20}
                     height={20}
                     sx={{ marginRight: 1, color: "text.primary" }}
@@ -104,27 +101,21 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
             />
           </Box>
 
-          <Box
-            flex={2}
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
+          <IconButton
+            onClick={handleCopy}
             sx={{
+              flex: 2,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 1,
-              height: 40,
-              cursor: "pointer",
             }}
-            onClick={handleCopy}
           >
             <Iconify
-              icon="tabler:copy"
+              icon="solar:copy-linear"
               width={24}
               height={24}
               color={"text.disabled"}
             />
-          </Box>
+          </IconButton>
         </Box>
       </DialogContent>
       <Divider />
@@ -144,9 +135,6 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
             onClick={onClose}
             sx={{
               flex: 1,
-              height: 36,
-              fontSize: "13px",
-              textTransform: "none",
             }}
           >
             Cancel
@@ -158,8 +146,6 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
             onClick={onClose}
             sx={{
               flex: 1,
-              height: 36,
-              fontSize: "13px",
             }}
           >
             Done

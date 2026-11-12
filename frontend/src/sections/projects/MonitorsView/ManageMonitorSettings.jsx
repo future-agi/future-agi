@@ -569,7 +569,6 @@ const ManageMonitorSettings = ({
                   variant="contained"
                   color="primary"
                   sx={{
-                    height: "40px",
                     width: "90px",
                     "&:disabled": {
                       color: "common.white",
@@ -612,7 +611,7 @@ const ManageMonitorSettings = ({
                         {email.value}
                       </Typography>
                       <Iconify
-                        icon="mdi:close"
+                        icon="solar:close-linear"
                         onClick={() => remove(index)}
                         sx={{ cursor: "pointer", color: "text.primary" }}
                         width={16}

@@ -8,6 +8,8 @@
  * - Billing details
  */
 
+import EmptyState from "src/components/empty-state";
+import PageHeader from "src/components/page-header";
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
@@ -29,6 +31,7 @@ import {
   Collapse,
   Alert,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 
 import axios, { endpoints } from "src/utils/axios";
@@ -38,11 +41,23 @@ import PaymentMethods from "./PaymentMethods";
 
 // Status badge colors
 const STATUS_CONFIG = {
-  paid: { color: "success", icon: "mdi:check-circle", label: "Paid" },
-  draft: { color: "default", icon: "mdi:clock-outline", label: "Draft" },
-  finalized: { color: "info", icon: "mdi:clock-outline", label: "Pending" },
-  failed: { color: "error", icon: "mdi:alert-circle", label: "Failed" },
-  void: { color: "default", icon: "mdi:alert-circle", label: "Void" },
+  paid: { color: "success", icon: "solar:check-circle-bold", label: "Paid" },
+  draft: {
+    color: "default",
+    icon: "solar:clock-circle-linear",
+    label: "Draft",
+  },
+  finalized: {
+    color: "info",
+    icon: "solar:clock-circle-linear",
+    label: "Pending",
+  },
+  failed: {
+    color: "error",
+    icon: "solar:danger-circle-linear",
+    label: "Failed",
+  },
+  void: { color: "default", icon: "solar:danger-circle-linear", label: "Void" },
 };
 
 // ── Current Period Summary ─────────────────────────────────────────────────
@@ -50,7 +65,7 @@ const STATUS_CONFIG = {
 function CurrentPeriodSummary({ data }) {
   if (!data || data.plan === "free") {
     return (
-      <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
+      <Section variant="panel" sx={{ p: 3 }}>
         <Typography variant="subtitle1" fontWeight={600} mb={1}>
           Current Period
         </Typography>
@@ -65,12 +80,12 @@ function CurrentPeriodSummary({ data }) {
         >
           Upgrade to Pay-as-you-go
         </Button>
-      </Paper>
+      </Section>
     );
   }
 
   return (
-    <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
+    <Section variant="panel" sx={{ p: 3 }}>
       <Stack
         direction="row"
         justifyContent="space-between"
@@ -89,7 +104,7 @@ function CurrentPeriodSummary({ data }) {
           <Typography variant="caption" color="text.secondary">
             Estimated total
           </Typography>
-          <Typography variant="h4" fontWeight={700}>
+          <Typography variant="h4" fontWeight={600}>
             {fCurrency(data.total || 0)}
           </Typography>
         </Box>
@@ -108,7 +123,10 @@ function CurrentPeriodSummary({ data }) {
                   <TableCell sx={{ pl: 0 }}>
                     <Typography variant="body2">{item.description}</Typography>
                   </TableCell>
-                  <TableCell align="right" sx={{ pr: 0 }}>
+                  <TableCell
+                    align="right"
+                    sx={{ fontVariantNumeric: "tabular-nums", pr: 0 }}
+                  >
                     <Typography
                       variant="body2"
                       fontWeight={500}
@@ -122,12 +140,19 @@ function CurrentPeriodSummary({ data }) {
               ))}
               <TableRow>
                 <TableCell sx={{ pl: 0, borderBottom: 0 }}>
-                  <Typography variant="subtitle2" fontWeight={700}>
+                  <Typography variant="subtitle2" fontWeight={600}>
                     Total
                   </Typography>
                 </TableCell>
-                <TableCell align="right" sx={{ pr: 0, borderBottom: 0 }}>
-                  <Typography variant="subtitle2" fontWeight={700}>
+                <TableCell
+                  align="right"
+                  sx={{
+                    fontVariantNumeric: "tabular-nums",
+                    pr: 0,
+                    borderBottom: 0,
+                  }}
+                >
+                  <Typography variant="subtitle2" fontWeight={600}>
                     {fCurrency(data.total || 0)}
                   </Typography>
                 </TableCell>
@@ -136,7 +161,7 @@ function CurrentPeriodSummary({ data }) {
           </Table>
         </TableContainer>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -177,8 +202,12 @@ function InvoiceRow({ inv }) {
         <TableCell sx={{ width: 30, pr: 0 }}>
           <IconButton size="small">
             <Iconify
-              icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
-              width={18}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
+              width={20}
             />
           </IconButton>
         </TableCell>
@@ -188,9 +217,11 @@ function InvoiceRow({ inv }) {
           </Typography>
         </TableCell>
         <TableCell>
-          <Chip label={inv.plan} size="small" variant="outlined" />
+          <Typography variant="body2" color="text.primary">
+            {inv.plan}
+          </Typography>
         </TableCell>
-        <TableCell align="right">
+        <TableCell sx={{ fontVariantNumeric: "tabular-nums" }} align="right">
           <Typography variant="body2" fontWeight={500}>
             {fCurrency(inv.total)}
           </Typography>
@@ -204,16 +235,17 @@ function InvoiceRow({ inv }) {
             variant="outlined"
           />
         </TableCell>
-        <TableCell align="right">
+        <TableCell sx={{ fontVariantNumeric: "tabular-nums" }} align="right">
           {inv.stripe_pdf_url && (
             <IconButton
+              className="row-hover-action"
               size="small"
               href={inv.stripe_pdf_url}
               target="_blank"
               title="Download PDF"
               onClick={(e) => e.stopPropagation()}
             >
-              <Iconify icon="mdi:download" width={18} />
+              <Iconify icon="solar:download-minimalistic-linear" width={20} />
             </IconButton>
           )}
         </TableCell>
@@ -232,9 +264,24 @@ function InvoiceRow({ inv }) {
                   <TableHead>
                     <TableRow>
                       <TableCell>Item</TableCell>
-                      <TableCell align="right">Qty</TableCell>
-                      <TableCell align="right">Rate</TableCell>
-                      <TableCell align="right">Amount</TableCell>
+                      <TableCell
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                        align="right"
+                      >
+                        Qty
+                      </TableCell>
+                      <TableCell
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                        align="right"
+                      >
+                        Rate
+                      </TableCell>
+                      <TableCell
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                        align="right"
+                      >
+                        Amount
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -247,21 +294,30 @@ function InvoiceRow({ inv }) {
                             {item.description}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           <Typography variant="caption">
                             {item.quantity
                               ? `${Number(item.quantity).toLocaleString()} ${item.unit || ""}`
                               : "—"}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           <Typography variant="caption">
                             {item.unit_price
                               ? fCurrency(item.unit_price, true)
                               : "—"}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           <Typography
                             variant="caption"
                             fontWeight={500}
@@ -317,25 +373,14 @@ function InvoiceHistory() {
 
   if (invoices.length === 0) {
     return (
-      <Paper
-        variant="outlined"
-        sx={{
-          p: 3,
-          textAlign: "center",
-          borderStyle: "dashed",
-          borderRadius: 2,
-        }}
-      >
-        <Iconify
-          icon="mdi:receipt-text"
-          width={40}
-          sx={{ color: "text.disabled", mb: 1 }}
+      <Section variant="panel" sx={{ p: 0 }}>
+        <EmptyState
+          icon="solar:document-text-linear"
+          title="No invoices yet"
+          description="Your first invoice will appear at the end of the billing period."
+          sx={{ pt: 6, pb: 6 }}
         />
-        <Typography variant="body2" color="text.secondary">
-          No invoices yet. Your first invoice will appear at the end of the
-          billing period.
-        </Typography>
-      </Paper>
+      </Section>
     );
   }
 
@@ -351,9 +396,19 @@ function InvoiceHistory() {
             <TableCell sx={{ width: 30 }} />
             <TableCell>Period</TableCell>
             <TableCell>Plan</TableCell>
-            <TableCell align="right">Amount</TableCell>
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
+              Amount
+            </TableCell>
             <TableCell align="center">Status</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
+              Actions
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -395,12 +450,11 @@ export default function BillingPageV2() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} mb={0.5}>
-        Billing
-      </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
-        Manage your billing, view invoices, and update payment methods.
-      </Typography>
+      <PageHeader
+        title="Billing"
+        description="Manage your billing, view invoices, and update payment methods."
+        sx={{ mb: 3 }}
+      />
 
       {/* Alert banners from notifications API */}
       {notifications?.filter((b) => !dismissedBanners.has(b.id)).length > 0 && (
@@ -439,7 +493,7 @@ export default function BillingPageV2() {
 
       {/* Pending add-on cancellation notice */}
       {billingData?.pending_cancel && (
-        <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
+        <Alert severity="warning" sx={{ mb: 3 }}>
           You&apos;ve requested to cancel your add-on. Your plan will become
           inactive
           {billingData.cancel_at

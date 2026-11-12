@@ -5,7 +5,6 @@ import {
   Divider,
   IconButton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -39,8 +38,6 @@ InfoRow.propTypes = {
 };
 
 const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
-  const theme = useTheme();
-
   if (!evalData) return null;
 
   const normalizedEvalData = normalizeEvalPickerEval(evalData);
@@ -79,7 +76,7 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {name}
@@ -121,8 +118,6 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
               size="small"
               variant="outlined"
               sx={{
-                fontSize: "12px",
-                height: 22,
                 borderColor: "divider",
               }}
             />
@@ -150,8 +145,6 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
                   label={v}
                   size="small"
                   sx={{
-                    fontSize: "11px",
-                    height: 20,
                     bgcolor: "action.hover",
                     color: "text.secondary",
                     "& .MuiChip-label": { px: 0.75 },
@@ -176,10 +169,7 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
               sx={{
                 p: 1.5,
                 borderRadius: 1,
-                bgcolor:
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "rgba(0,0,0,0.02)",
+                bgcolor: "background.neutral",
                 border: "1px solid",
                 borderColor: "divider",
                 maxHeight: 200,
@@ -216,7 +206,7 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
           variant="outlined"
           size="small"
           onClick={onBack}
-          sx={{ textTransform: "none", minWidth: 80 }}
+          sx={{ minWidth: 80 }}
         >
           Back
         </Button>
@@ -224,8 +214,8 @@ const EvalPickerPreview = ({ evalData, onBack, onAddEval }) => {
           variant="contained"
           size="small"
           onClick={() => onAddEval(evalData)}
-          startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-          sx={{ textTransform: "none", minWidth: 120 }}
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
+          sx={{ minWidth: 120 }}
         >
           Add Evaluation
         </Button>

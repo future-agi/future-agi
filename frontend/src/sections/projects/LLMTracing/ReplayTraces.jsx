@@ -95,15 +95,11 @@ const ReplayTraces = ({ gridApi }) => {
       >
         <span>
           <Button
-            sx={{
-              p: "8px",
-            }}
             color={selectAll || toggledNodes.length > 0 ? "primary" : "inherit"}
             startIcon={
               <SvgColor
+                width="16px"
                 sx={{
-                  height: "16px",
-                  width: "16px",
                   color:
                     selectAll || toggledNodes.length > 0
                       ? "primary"

@@ -16,6 +16,7 @@ criteria: "You are evaluating whether the output maintains an appropriate tone f
 eval_tags:
 - Medical
 - Safety
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

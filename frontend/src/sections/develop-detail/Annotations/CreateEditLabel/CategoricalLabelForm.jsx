@@ -24,12 +24,12 @@ const CategoricalLabelForm = ({ control }) => {
         fieldPrefix=""
         label={
           <Typography
-            fontSize={14}
+            fontSize={13}
             fontWeight={500}
             sx={{ mb: theme.spacing(1) }}
           >
             Choices
-            <Typography component="span" color={theme.palette.red[500]}>
+            <Typography component="span" color={theme.palette.status.danger.fg}>
               *
             </Typography>
           </Typography>
@@ -48,9 +48,9 @@ const CategoricalLabelForm = ({ control }) => {
         }
         labelPlacement="start"
         label={
-          <Typography fontWeight={600} fontSize={14}>
+          <Typography fontWeight={600} fontSize={13}>
             Multi Choice
-            <Typography component="span" color={theme.palette.red[500]}>
+            <Typography component="span" color={theme.palette.status.danger.fg}>
               *
             </Typography>
           </Typography>

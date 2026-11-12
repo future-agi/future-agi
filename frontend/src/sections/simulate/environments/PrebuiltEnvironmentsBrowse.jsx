@@ -77,10 +77,10 @@ export default function PrebuiltEnvironmentsBrowse() {
             </IconButton>
           </CustomTooltip>
           <Box>
-            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600 }}>
               {BROWSE_COPY.title}
             </Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               {BROWSE_COPY.subtitle}
             </Typography>
           </Box>
@@ -93,7 +93,7 @@ export default function PrebuiltEnvironmentsBrowse() {
           InputProps={{
             startAdornment: <Iconify icon="solar:magnifer-linear" width={13} sx={{ color: "text.subtitle", mr: 0.75 }} />,
           }}
-          sx={{ width: { sm: 280 }, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2" } }}
+          sx={{ width: { sm: 280 }, flexShrink: 0 }}
         />
       </Stack>
 
@@ -115,7 +115,7 @@ export default function PrebuiltEnvironmentsBrowse() {
           }}
         >
           {!isLoading && totalShown === 0 ? (
-            <Typography sx={{ typography: "s2", color: "text.subtitle", py: 6, textAlign: "center" }}>
+            <Typography sx={{ typography: "s1", color: "text.subtitle", py: 6, textAlign: "center" }}>
               {query.trim() ? BROWSE_COPY.noMatch(query) : BROWSE_COPY.emptyLibrary}
             </Typography>
           ) : (

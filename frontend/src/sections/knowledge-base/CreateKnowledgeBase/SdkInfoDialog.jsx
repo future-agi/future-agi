@@ -20,7 +20,8 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-description"
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
     >
       <DialogTitle
         sx={{
@@ -57,7 +58,7 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
               }}
               onClick={onClose}
             >
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
           <Typography
@@ -77,15 +78,13 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
           sx={{
             color: "text.disabled",
             minWidth: "90px",
-            px: "24px",
-            py: "6px",
           }}
           variant="outlined"
         >
           <Typography
             variant="s2"
             fontWeight={"fontWeightMedium"}
-            fontSize={"14px"}
+            fontSize={"13px"}
           >
             Cancel
           </Typography>
@@ -93,8 +92,6 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
         <Button
           sx={{
             minWidth: "90px",
-            px: "24px",
-            py: "6px",
           }}
           onClick={onSubmit}
           variant="contained"
@@ -104,7 +101,7 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
           <Typography
             variant="s2"
             fontWeight={"fontWeightSemiBold"}
-            fontSize={"14px"}
+            fontSize={"13px"}
           >
             Ok,got it
           </Typography>

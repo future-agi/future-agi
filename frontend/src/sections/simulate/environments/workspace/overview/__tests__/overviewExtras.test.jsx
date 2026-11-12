@@ -5,109 +5,18 @@ import userEvent from "@testing-library/user-event";
 import { render } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import OverviewPanel from "../OverviewPanel";
-import AgentRefreshBanner from "../AgentRefreshBanner";
 import NextStepsChecklist from "../NextStepsChecklist";
 import SourceToSandboxMap from "../SourceToSandboxMap";
-
-const REFRESH_HEADING = "Agent v2 is newer than this environment";
-
-describe("AgentRefreshBanner", () => {
-  it("shows when the active agent version has moved ahead of the derived-for version", () => {
-    render(
-      <AgentRefreshBanner
-        env={MOCK_WORLD}
-        envState={{
-          agentVersions: [{ label: "v1" }, { label: "v2" }],
-          activeAgentVersion: "v2",
-          envDerivedForAgent: "v1",
-        }}
-        patch={vi.fn()}
-      />
-    );
-    expect(screen.getByText(REFRESH_HEADING)).toBeInTheDocument();
-  });
-
-  it("hides when the environment was already derived against the active agent", () => {
-    render(
-      <AgentRefreshBanner
-        env={MOCK_WORLD}
-        envState={{
-          agentVersions: [{ label: "v1" }, { label: "v2" }],
-          activeAgentVersion: "v2",
-          envDerivedForAgent: "v2",
-        }}
-        patch={vi.fn()}
-      />
-    );
-    expect(screen.queryByText(REFRESH_HEADING)).not.toBeInTheDocument();
-  });
-
-  it("hides when there is no divergence (no envDerivedForAgent, agent on v1)", () => {
-    render(
-      <AgentRefreshBanner
-        env={MOCK_WORLD}
-        envState={{ activeAgentVersion: "v1" }}
-        patch={vi.fn()}
-      />
-    );
-    expect(screen.queryByText(/is newer than this environment/)).not.toBeInTheDocument();
-  });
-
-  it("re-derives the world against the active agent on refresh", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    render(
-      <AgentRefreshBanner
-        env={MOCK_WORLD}
-        envState={{
-          agentVersions: [{ label: "v1" }, { label: "v2" }],
-          activeAgentVersion: "v2",
-          envDerivedForAgent: "v1",
-        }}
-        patch={patch}
-      />
-    );
-    await user.click(screen.getByRole("button", { name: /refresh environment/i }));
-    expect(patch).toHaveBeenCalledTimes(1);
-    expect(patch.mock.calls[0][0]).toMatchObject({ envDerivedForAgent: "v2" });
-  });
-});
-
-describe("AgentRefreshBanner inside OverviewPanel", () => {
-  const movedAhead = {
-    agent: { via: "endpoint", values: {} },
-    agentVersions: [{ label: "v1" }, { label: "v2" }],
-    activeAgentVersion: "v2",
-    envDerivedForAgent: "v1",
-    scenarios: [],
-  };
-
-  it("renders the refresh banner on an unlocked env that moved ahead", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected />
-    );
-    expect(screen.getByText(REFRESH_HEADING)).toBeInTheDocument();
-  });
-
-  it("never renders the refresh banner on a locked env", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected locked />
-    );
-    expect(screen.queryByText(REFRESH_HEADING)).not.toBeInTheDocument();
-  });
-});
 
 describe("Overview extras wired into OverviewPanel", () => {
   const connected = {
     agent: { via: "endpoint", values: {} },
-    agentVersions: [{ label: "v1" }],
-    activeAgentVersion: "v1",
     scenarios: [],
   };
 
   it("no longer renders the source-to-sandbox map on an env with a derived world", () => {
     render(
-      <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
+      <OverviewPanel env={MOCK_WORLD} envState={connected} onGo={vi.fn()} agentConnected />
     );
     // The map's origin chips and sandbox targets were derived by position and
     // keyword rather than reported by ALK, so the panel dropped it.
@@ -119,7 +28,7 @@ describe("Overview extras wired into OverviewPanel", () => {
       <OverviewPanel
         env={{ ...MOCK_WORLD, tools: [], rules: [], seed: { tables: [] } }}
         envState={{ scenarios: [] }}
-        patch={vi.fn()}
+
         onGo={vi.fn()}
         agentConnected={false}
       />
@@ -129,7 +38,7 @@ describe("Overview extras wired into OverviewPanel", () => {
 
   it("hides the checklist once the env carries a derived world", () => {
     render(
-      <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
+      <OverviewPanel env={MOCK_WORLD} envState={connected} onGo={vi.fn()} agentConnected />
     );
     expect(screen.queryByText("Next steps")).not.toBeInTheDocument();
   });
@@ -156,7 +65,7 @@ describe("NextStepsChecklist", () => {
     renderChecklist({ onGo });
 
     // Connecting an agent is deferred (no Agents tab) — the CTA is disabled
-    // behind the coming-soon tooltip rather than a button that no-ops.
+    // rather than a button that no-ops.
     expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /add scenarios/i }));

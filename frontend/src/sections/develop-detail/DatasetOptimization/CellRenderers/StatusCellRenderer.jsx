@@ -1,36 +1,23 @@
-import { Box, Button, IconButton, styled, Typography } from "@mui/material";
+import { Box, Button, IconButton, styled } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { DatasetOptimizationStatus, convertKeysToSnakeCase } from "../common";
 import SvgColor from "src/components/svg-color";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useDatasetOptimizationStoreShallow } from "../states";
 
-const statusColorMap = {
-  [DatasetOptimizationStatus.PENDING]: {
-    backgroundColor: "action.hover",
-    color: "primary.main",
-    title: "Queue",
-  },
-  [DatasetOptimizationStatus.RUNNING]: {
-    backgroundColor: "blue.o10",
-    color: "blue.500",
-    title: "Running",
-  },
+const statusMap = {
+  [DatasetOptimizationStatus.PENDING]: { role: "neutral", title: "Queue" },
+  [DatasetOptimizationStatus.RUNNING]: { role: "info", title: "Running" },
   [DatasetOptimizationStatus.COMPLETED]: {
-    backgroundColor: "green.o10",
-    color: "green.500",
+    role: "success",
     title: "Completed",
   },
-  [DatasetOptimizationStatus.FAILED]: {
-    backgroundColor: "red.o10",
-    color: "red.500",
-    title: "Failed",
-  },
+  [DatasetOptimizationStatus.FAILED]: { role: "danger", title: "Failed" },
   [DatasetOptimizationStatus.CANCELLED]: {
-    backgroundColor: "red.o10",
-    color: "red.500",
+    role: "neutral",
     title: "Cancelled",
   },
 };
@@ -96,24 +83,11 @@ const StatusCellRenderer = ({ value, data }) => {
           </StyledIconButton>
         </CustomTooltip>
       </ShowComponent>
-      <Box
-        sx={{
-          backgroundColor:
-            statusColorMap?.[value]?.backgroundColor ??
-            statusColorMap?.[DatasetOptimizationStatus.PENDING]
-              ?.backgroundColor,
-          color:
-            statusColorMap?.[value]?.color ??
-            statusColorMap?.[DatasetOptimizationStatus.PENDING]?.color,
-          paddingX: 1,
-          paddingY: 0.5,
-          borderRadius: 0.5,
-        }}
-      >
-        <Typography typography="s3" fontWeight="fontWeightMedium">
-          {statusColorMap?.[value]?.title ?? "-"}
-        </Typography>
-      </Box>
+      <StatusBadge
+        status={value}
+        label={statusMap[value]?.title ?? "-"}
+        role={statusMap[value]?.role ?? "neutral"}
+      />
 
       <ShowComponent
         condition={
@@ -130,11 +104,14 @@ const StatusCellRenderer = ({ value, data }) => {
           }}
           sx={{
             border: "1px solid",
-            borderColor: "black.100",
-            color: "red.500",
+            borderColor: "divider",
+            color: "status.danger.fg",
           }}
           startIcon={
-            <SvgColor color={"red.500"} src={"/assets/icons/ic_stop_v2.svg"} />
+            <SvgColor
+              color={"status.danger.fg"}
+              src={"/assets/icons/ic_stop_v2.svg"}
+            />
           }
         >
           Stop

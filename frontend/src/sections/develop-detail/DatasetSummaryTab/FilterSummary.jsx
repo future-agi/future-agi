@@ -38,12 +38,9 @@ const FilterSummary = ({
       <IconButton
         ref={ref}
         sx={{
-          borderRadius: "4px",
           border: "1px solid",
           borderColor: "divider",
           gap: theme.spacing(1),
-          height: "32px",
-          paddingX: 3,
         }}
         disabled={false}
         onClick={handleFilter}

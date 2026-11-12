@@ -10,6 +10,7 @@ from tfc.utils.api_serializers import (
     StrictInputSerializer,
 )
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField  # noqa: F401
+from tracer.serializers.usage_coverage import CostCoverageSerializer
 from tracer.services.clickhouse.graph_metric_statistic import (
     METRIC_STATISTIC_CHOICES as OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
 )
@@ -1194,6 +1195,7 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     value = serializers.FloatField(allow_null=True)
     primary_traffic = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
 
 
 class ObserveGraphDataResultSerializer(serializers.Serializer):

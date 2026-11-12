@@ -1,5 +1,6 @@
 from accounts.models.audit_log import AuditLog
 from accounts.models.aws_marketplace import AWSMarketplaceCustomer
+from accounts.models.demo_seed import DemoSeedRequest, DemoTracePublication
 from accounts.models.gcp_marketplace import (
     GCPMarketplaceAccount,
     GCPMarketplaceAccountState,

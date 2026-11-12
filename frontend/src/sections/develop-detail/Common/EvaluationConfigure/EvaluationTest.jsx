@@ -71,7 +71,7 @@ const EvaluationTest = ({ testingEvalData, onClose }) => {
     >
       <Box display="flex" flexDirection="column" gap={theme.spacing(1)}>
         <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography fontSize="14px" fontWeight={700} color="text.secondary">
+          <Typography fontSize="13px" fontWeight={600} color="text.secondary">
             Evaluation Test
           </Typography>
           <Button variant="soft" size="small" onClick={onClose}>

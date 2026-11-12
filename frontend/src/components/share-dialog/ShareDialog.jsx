@@ -59,7 +59,7 @@ const AccessOption = ({
       borderRadius: "6px",
       border: "1.5px solid",
       borderColor: selected ? "primary.main" : "divider",
-      bgcolor: selected ? "rgba(87, 63, 204, 0.04)" : "background.paper",
+      bgcolor: selected ? "action.hover" : "background.paper",
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.6 : 1,
       transition: "all 120ms",
@@ -71,7 +71,7 @@ const AccessOption = ({
         width: 32,
         height: 32,
         borderRadius: "8px",
-        bgcolor: selected ? "rgba(87, 63, 204, 0.1)" : "action.hover",
+        bgcolor: selected ? "status.discovery.bg" : "action.hover",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -89,24 +89,24 @@ const AccessOption = ({
         {label}
       </Typography>
       <Typography
-        sx={{ fontSize: 11, color: "text.disabled", lineHeight: "14px" }}
+        sx={{ fontSize: 12, color: "text.disabled", lineHeight: "14px" }}
       >
         {description}
       </Typography>
     </Box>
     {pending ? (
-      <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
+      <Typography sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}>
         Updating…
       </Typography>
     ) : selected && unconfirmed ? (
-      <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
+      <Typography sx={{ fontSize: 12, color: "text.disabled", flexShrink: 0 }}>
         Last confirmed
       </Typography>
     ) : (
       selected && (
         <Iconify
-          icon="mdi:check-circle"
-          width={18}
+          icon="solar:check-circle-bold"
+          width={20}
           sx={{ color: "primary.main", flexShrink: 0 }}
         />
       )
@@ -229,13 +229,12 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
           borderRadius: "12px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-          maxWidth: 440,
+          maxWidth: 560,
           overflow: "visible",
         },
       }}
@@ -254,20 +253,20 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                 width: 28,
                 height: 28,
                 borderRadius: "6px",
-                bgcolor: "rgba(87, 63, 204, 0.1)",
+                bgcolor: "status.discovery.bg",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
               <Iconify
-                icon="mdi:share-variant-outline"
-                width={15}
+                icon="solar:share-linear"
+                width={16}
                 sx={{ color: "primary.main" }}
               />
             </Box>
             <Typography
-              sx={{ fontSize: 15, fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
             >
               Share
             </Typography>
@@ -277,7 +276,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
             onClick={onClose}
             sx={{ color: "text.disabled" }}
           >
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
 
@@ -297,7 +296,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
             }}
           >
             <Iconify
-              icon="mdi:link-variant"
+              icon="solar:link-linear"
               width={16}
               sx={{ color: "text.disabled", flexShrink: 0 }}
             />
@@ -333,17 +332,12 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               disabled={!copyReady}
               startIcon={
                 <Iconify
-                  icon={copied ? "mdi:check" : "mdi:content-copy"}
+                  icon={copied ? "solar:check-linear" : "solar:copy-linear"}
                   width={14}
                 />
               }
               sx={{
-                textTransform: "none",
-                fontSize: 12,
-                height: 30,
-                px: 1.5,
                 flexShrink: 0,
-                borderRadius: "6px",
                 ...(copied
                   ? {
                       bgcolor: "primary.main",
@@ -389,7 +383,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               fontWeight: 600,
               color: "text.disabled",
               mb: 1,
-              textTransform: "uppercase",
+              textTransform: "none",
               letterSpacing: "0.5px",
             }}
           >
@@ -397,7 +391,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
           </Typography>
           <Stack spacing={1} sx={{ mb: 2 }}>
             <AccessOption
-              icon="mdi:earth"
+              icon="solar:global-linear"
               iconColor="text.disabled"
               label="Anyone with the link"
               description="No sign-in required to view"
@@ -408,7 +402,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               onClick={() => access.changeMode("public")}
             />
             <AccessOption
-              icon="mdi:shield-lock-outline"
+              icon="solar:shield-keyhole-linear"
               iconColor="text.disabled"
               label="Restricted"
               description="Only people you add can view"
@@ -427,7 +421,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               fontWeight: 600,
               color: "text.disabled",
               mb: 1,
-              textTransform: "uppercase",
+              textTransform: "none",
               letterSpacing: "0.5px",
             }}
           >
@@ -449,7 +443,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                 },
                 startAdornment: (
                   <Iconify
-                    icon="mdi:email-outline"
+                    icon="solar:letter-linear"
                     width={16}
                     sx={{ color: "text.disabled", mr: 0.75 }}
                   />
@@ -462,12 +456,8 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               onClick={handleAddEmail}
               disabled={!emailInput.trim() || !shareLinkReady}
               sx={{
-                textTransform: "none",
-                px: 2,
                 flexShrink: 0,
-                borderRadius: "8px",
                 bgcolor: "primary.main",
-                height: 40,
                 "&:hover": { bgcolor: "primary.dark" },
                 "&.Mui-disabled": { bgcolor: "action.disabledBackground" },
               }}
@@ -489,10 +479,10 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
             >
               <Typography
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   px: 1.5,
                   py: 0.75,
@@ -530,7 +520,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                         alignItems: "center",
                         justifyContent: "center",
                         color: "white",
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 600,
                       }}
                     >
@@ -546,7 +536,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                       >
                         {entry.email}
                       </Typography>
-                      <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+                      <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                         Can view
                       </Typography>
                     </Box>
@@ -558,7 +548,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                       onClick={() => handleRemoveEmail(entry)}
                       sx={{ opacity: 0.4, "&:hover": { opacity: 1 } }}
                     >
-                      <Iconify icon="mdi:close" width={14} />
+                      <Iconify icon="solar:close-linear" width={14} />
                     </IconButton>
                   </Tooltip>
                 </Stack>

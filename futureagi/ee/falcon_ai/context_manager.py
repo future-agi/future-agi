@@ -28,7 +28,11 @@ class ContextManager:
     MAX_HISTORY_TOKENS = 120000  # Hard cap for total context sent to LLM
 
     # Message content limits
-    MAX_RESULT_CHARS = 2000  # Max chars for a tool result in history
+    # 6000 chars is ~1.5K tokens: ten such results sit well under
+    # COMPACTION_TOKEN_THRESHOLD, and MAX_HISTORY_TOKENS still bounds the whole
+    # history. The previous 2000 was tight enough that one page of raw API
+    # records arrived cut in half.
+    MAX_RESULT_CHARS = 6000  # Max chars for a tool result in history
     MAX_MESSAGE_CHARS = 4000  # Max chars for any single message in history
     KEEP_RECENT_MESSAGES = 8  # Always keep last N messages uncompacted
 

@@ -110,7 +110,7 @@ const ExperimentListView = React.forwardRef(
           size: 160,
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
               {formatNumberWithCommas(getValue())}
             </Typography>
           ),
@@ -122,7 +122,7 @@ const ExperimentListView = React.forwardRef(
           size: 160,
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
               {formatNumberWithCommas(getValue() ?? 0)}
             </Typography>
           ),
@@ -137,7 +137,7 @@ const ExperimentListView = React.forwardRef(
             if (!val) return null;
             try {
               return (
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {formatDistanceToNow(new Date(val), { addSuffix: true })}
                 </Typography>
               );
@@ -156,7 +156,7 @@ const ExperimentListView = React.forwardRef(
             if (!val) return null;
             try {
               return (
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {formatDistanceToNow(new Date(val), { addSuffix: true })}
                 </Typography>
               );

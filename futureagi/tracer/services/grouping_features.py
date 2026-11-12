@@ -7,7 +7,10 @@ this queue; neither is required for publication to remember the pending work.
 from django.db import transaction
 from django.utils import timezone
 
-from tracer.constants.grouping_versions import FEATURE_POLICY_VERSION
+from tracer.constants.grouping_versions import (
+    GROUPING_POLICY_VERSION,
+    SIMULATION_GROUPING_POLICY_VERSION,
+)
 from tracer.models.trace_grouping import (
     GroupingFeatureState,
     TraceGroupingFeatureJob,
@@ -18,7 +21,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationReport,
     TraceInvestigationSource,
 )
-from tracer.queries.grouping import groupable_findings
+from tracer.queries.grouping import groupable_findings, grouping_feature_policy
 from tracer.services.grouping.control import _eligible_project
 
 
@@ -68,7 +71,7 @@ def enqueue_grouping_features(
             return None
         job, _ = TraceGroupingFeatureJob.no_workspace_objects.get_or_create(
             report=current,
-            policy_version=FEATURE_POLICY_VERSION,
+            policy_version=grouping_feature_policy(current),
             defaults={
                 "publication_result_digest": current.result_digest,
                 "not_before": now,
@@ -79,6 +82,11 @@ def enqueue_grouping_features(
             defaults={
                 "organization_id": current.organization_id,
                 "workspace_id": current.workspace_id,
+                "policy_version": (
+                    SIMULATION_GROUPING_POLICY_VERSION
+                    if current.workload_type == "simulation_test_execution"
+                    else GROUPING_POLICY_VERSION
+                ),
             },
         )
         if (

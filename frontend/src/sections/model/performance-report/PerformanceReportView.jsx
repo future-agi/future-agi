@@ -86,7 +86,7 @@ const PerformanceReportView = () => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-fill" />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
@@ -128,6 +128,7 @@ const PerformanceReportView = () => {
                   </TableCell>
                   <TableCell sx={{ width: "100px" }}>
                     <IconButton
+                      className="row-hover-action"
                       color="error"
                       onClick={(e) => {
                         e.stopPropagation();

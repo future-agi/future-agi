@@ -1,6 +1,7 @@
+import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -44,21 +45,10 @@ import {
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import ContentSkeleton from "src/components/content-skeleton";
+import { seriesColors } from "src/theme/data-colors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
 const hashSeriesName = (name) => {
   const s = String(name || "");
   let h = 0;
@@ -70,26 +60,27 @@ const hashSeriesName = (name) => {
 // Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
 // at 4 series. Walk each name once and, on a taken slot, advance to the next
 // free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
+const getSeriesColorFromMap = (map, name, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 function getApexType(chartType) {
   const map = {
@@ -530,20 +521,31 @@ export default function WidgetChart({
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(series.map((s) => s.name)),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        series.map((s) => s.name),
+        palette,
+      ),
+    [series, palette],
   );
-  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const colorFor = (name) =>
+    getSeriesColorFromMap(seriesColorMap, name, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
   // every pie — the composite series label differs per metric.
   const pieColorMap = useMemo(
-    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        [...new Set(series.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [series, palette],
   );
-  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+  const pieColorFor = (name) =>
+    getSeriesColorFromMap(pieColorMap, name, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(
@@ -640,7 +642,7 @@ export default function WidgetChart({
           minHeight: 0,
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -802,7 +804,7 @@ export default function WidgetChart({
                   textAlign: "left",
                   padding: "6px 10px",
                   fontWeight: 600,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   borderBottom: `2px solid ${theme.palette.divider}`,
                   position: "sticky",
@@ -836,7 +838,7 @@ export default function WidgetChart({
                     textAlign: "right",
                     padding: "6px 10px",
                     fontWeight: 500,
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: theme.palette.text.secondary,
                     borderBottom: `2px solid ${theme.palette.divider}`,
                     position: "sticky",
@@ -859,7 +861,7 @@ export default function WidgetChart({
                       sx={{
                         width: 8,
                         height: 8,
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
@@ -1018,7 +1020,7 @@ export default function WidgetChart({
                 sx={{
                   width: 10,
                   height: 10,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
@@ -1054,7 +1056,7 @@ export default function WidgetChart({
               flexShrink: 0,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Metric
@@ -1065,7 +1067,7 @@ export default function WidgetChart({
               flex: 1,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Value
@@ -1121,10 +1123,8 @@ export default function WidgetChart({
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDark
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                      borderRadius: "3px",
+                      bgcolor: "background.neutral",
+                      borderRadius: "4px",
                       overflow: "hidden",
                     }}
                   >
@@ -1133,7 +1133,7 @@ export default function WidgetChart({
                         height: "100%",
                         width: `${Math.max(pct, 1)}%`,
                         bgcolor: color,
-                        borderRadius: "3px",
+                        borderRadius: "4px",
                         transition: "width 0.4s ease",
                       }}
                     />
@@ -1314,7 +1314,7 @@ export default function WidgetChart({
       ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         datetimeUTC: false,
         ...(!isHorizontal && {
           datetimeFormatter: {
@@ -1371,7 +1371,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: formatVal,
           },
         };
@@ -1402,7 +1402,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: makeFormatter(cfg),
           },
         };
@@ -1434,7 +1434,7 @@ export default function WidgetChart({
     markers: {
       size: markerSizes,
       strokeWidth: 2,
-      strokeColors: isDark ? theme.palette.background.paper : "#fff",
+      strokeColors: theme.palette.background.paper,
       hover: isLineChart
         ? { size: 8, sizeOffset: 2 }
         : { size: 6, sizeOffset: 3 },
@@ -1478,7 +1478,7 @@ export default function WidgetChart({
           intersect: isLineChart && !isDenseSeries,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
-            const color = w.globals.colors[seriesIndex] || "#6366F1";
+            const color = w.globals.colors[seriesIndex] || palette[0];
             const val = s[seriesIndex]?.[dataPointIndex];
             const prevVal =
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
@@ -1489,28 +1489,26 @@ export default function WidgetChart({
               ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
               : leftAxisFormatConfig;
             const fmtVal = makeFormatter(perSeriesCfg)(val);
-            const bg = isDark ? "#1e1e2e" : "#fff";
-            const _border = isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.06)";
-            const textPrimary = isDark ? "#fff" : "#1a1a2e";
-            const textSecondary = isDark
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(0,0,0,0.45)";
+            const bg = theme.palette.background.paper;
+            const border = theme.palette.divider;
+            const textPrimary = theme.palette.text.primary;
+            const textSecondary = theme.palette.text.secondary;
             let changeHtml = "";
             if (prevVal != null && prevVal !== 0 && val != null) {
               const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
               const sign = pct >= 0 ? "+" : "";
-              const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+              const changeColor = statusColors(
+                theme,
+                pct >= 0 ? "success" : "danger",
+              ).fg;
               changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
             }
-            return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-              <div style="width:4px;flex-shrink:0;background:${color}"></div>
-              <div style="padding:14px 16px;flex:1">
-                <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+            return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                            <div style="padding:14px 16px;flex:1">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                 <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                 <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                  <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                  <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                 </div>
                 ${changeHtml}
               </div>

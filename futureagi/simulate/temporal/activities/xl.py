@@ -33,6 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -41,9 +42,9 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
-
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
@@ -198,6 +199,15 @@ async def run_simulate_evaluations(
 # ============================================================================
 
 
+def hosted_assistant_recording(call_execution):
+    metadata = call_execution.call_metadata or {}
+    artifacts = metadata.get("hosted_harness_artifacts") or {}
+    recording = artifacts.get("recording_assistant")
+    if not isinstance(recording, dict):
+        return ""
+    return server_reachable_url(recording.get("url") or "")
+
+
 def _build_transcript_data(call_execution):
     """
     Build transcript data dict from DB records.
@@ -346,6 +356,11 @@ def _build_transcript_data(call_execution):
                         and not transcript_data["voice_recording"]
                     ):
                         transcript_data["voice_recording"] = recording["combined"]
+
+        if not transcript_data["assistant_recording"]:
+            transcript_data["assistant_recording"] = hosted_assistant_recording(
+                call_execution
+            )
 
     except Exception as e:
         logger.error(f"Error building transcript data: {str(e)}")
@@ -554,7 +569,7 @@ def assert_recording_slot_available(
     raise ValueError(
         f"'{mapping_key}' is mapped to '{source_value}', but this call has no such "
         f"recording — combined-only providers produce no stereo or per-channel "
-        f"audio. {hint} Map it to call.voice_recording."
+        f"audio. {hint} Choose a recording that meets this eval's input requirements."
     )
 
 
@@ -774,7 +789,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         eval_template = eval_config.eval_template
 
         # Prepare mapping with transcript and recording data
-        mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+        mapping = effective_simulation_mapping(eval_template, eval_config.mapping or {})
 
         # Get scenario column order
         scenario_ids = call_execution.test_execution.scenario_ids
@@ -1023,7 +1038,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             kb_id=eval_config.kb_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
+            source=eval_source(call_execution.test_execution_id),
             call_context=_call_context,
         )
 
@@ -1794,7 +1809,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     organization=organization,
                     api_call_type=api_call_type,
                     config=source_config,
-                    source="simulate_tool_evaluation",
+                    source=eval_source(test_execution.id, "simulate_tool_evaluation"),
                     source_id=str(test_execution.id),
                     workspace=workspace,
                 )

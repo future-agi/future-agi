@@ -65,11 +65,11 @@ export default function WidgetCanvas({
           }}
         >
           <Iconify
-            icon="mdi:creation-outline"
+            icon="solar:stars-minimalistic-linear"
             width={48}
             sx={{ opacity: 0.3 }}
           />
-          <Typography fontSize={14} fontWeight={500} color="text.secondary">
+          <Typography fontSize={13} fontWeight={500} color="text.secondary">
             Describe what you want to visualize
           </Typography>
           <Typography
@@ -116,9 +116,9 @@ export default function WidgetCanvas({
               minHeight: 0,
               display: "flex",
               flexDirection: "column",
-              transition: "box-shadow 150ms",
+              transition: "border-color 150ms",
               "&:hover": {
-                boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                borderColor: "border.hover",
               },
             }}
           >

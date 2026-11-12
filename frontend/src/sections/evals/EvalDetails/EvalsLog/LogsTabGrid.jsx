@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import { Box, Button, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, {
@@ -28,7 +29,6 @@ import debounce from "lodash/debounce";
 import { useDebounce } from "src/hooks/use-debounce";
 import { ShowComponent } from "src/components/show";
 import PropTypes from "prop-types";
-import SvgColor from "src/components/svg-color";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   CustomCellRender,
@@ -131,7 +131,6 @@ const LogsTabGrid = ({
   const [columnDefs, setColumnDefs] = useState([...sampleColumnDef]);
   const [selectedItems, setSelectedItems] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [isFilterApplied, setIsFilterApplied] = useState(false);
   const [developFilterOpen, setDevelopFilterOpen] = useState(false);
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
   const [columns, setColumns] = useState([]);
@@ -142,15 +141,6 @@ const LogsTabGrid = ({
   const [filters, setFilters] = useState([
     { ...DefaultFilter, id: getRandomId() },
   ]);
-
-  useEffect(() => {
-    const hasActiveFilter = filters?.some((f) =>
-      f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-        ? f.filterConfig.filterValue.length > 0
-        : f.filterConfig.filterValue !== "",
-    );
-    setIsFilterApplied(hasActiveFilter);
-  }, [filters]);
 
   useMemo(() => {
     if (!columns?.length || !columnDefs?.length) return;
@@ -675,7 +665,8 @@ const LogsTabGrid = ({
             setOpenColumnConfigure={setOpenColumnConfigure}
             setCellHeight={setCellHeight}
             setSearchQuery={setSearchQuery}
-            isFilterApplied={isFilterApplied}
+            filterCount={validatedFilters.length}
+            filterOpen={developFilterOpen}
             isData={isData}
           />
         </Box>
@@ -687,73 +678,25 @@ const LogsTabGrid = ({
             ...(isFeedback && { width: "100%" }),
           }}
         >
-          <Box
-            sx={{
-              padding: "4px 16px",
-              gap: "16px",
-              borderRadius: "4px",
-              border: "1px solid",
-              borderColor: "divider",
-              display: "flex",
-            }}
-          >
-            <Typography
-              typography="s1"
-              fontWeight={"fontWeightMedium"}
-              color="primary.main"
-              sx={{
-                paddingRight: "16px",
-                borderRight: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              {selectedItems?.length || 0} Selected
-            </Typography>
-            <Typography
-              typography="s1"
-              fontWeight={"fontWeightRegular"}
-              color="text.primary"
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-                cursor: "pointer",
-              }}
-              onClick={() => {
-                if (
-                  RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
-                    role
-                  ]
-                ) {
-                  setOpenDelete(true);
-                }
-              }}
-            >
-              <SvgColor
-                src="/assets/icons/ic_delete.svg"
-                sx={{ width: 19, height: 19, color: "text.primary" }}
-              />
-              Delete
-            </Typography>
-
-            <Typography
-              typography="s1"
-              fontWeight={"fontWeightRegular"}
-              color="text.primary"
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                cursor: "pointer",
-                paddingLeft: "16px",
-                borderLeft: "1px solid",
-                borderColor: "divider",
-              }}
-              onClick={() => onSelectionChanged(null)}
-            >
-              Cancel
-            </Typography>
-          </Box>
+          <SelectionBar
+            count={selectedItems?.length || 0}
+            onCancel={() => onSelectionChanged(null)}
+            actions={[
+              {
+                label: "Delete",
+                icon: "solar:trash-bin-trash-linear",
+                onClick: () => {
+                  if (
+                    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
+                      role
+                    ]
+                  ) {
+                    setOpenDelete(true);
+                  }
+                },
+              },
+            ]}
+          />
         </Box>
       </Box>
       <Box>
@@ -772,10 +715,10 @@ const LogsTabGrid = ({
             px: 1.5,
             py: 0.75,
             fontSize: 12,
-            color: "warning.main",
-            bgcolor: "warning.lighter",
+            color: "status.warning.fg",
+            bgcolor: "status.warning.bg",
             borderBottom: "1px solid",
-            borderColor: "warning.light",
+            borderColor: "status.warning.border",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",

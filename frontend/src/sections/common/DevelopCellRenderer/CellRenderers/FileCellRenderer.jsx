@@ -400,7 +400,7 @@ const FileCellRenderer = ({
                       component="span"
                       sx={{
                         color: theme.palette.text.secondary,
-                        fontSize: "0.7rem",
+                        fontSize: "0.75rem",
                       }}
                     >
                       (PDF, DOCX, DOC, TXT)

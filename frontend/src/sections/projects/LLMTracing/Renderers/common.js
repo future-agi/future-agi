@@ -1,27 +1,27 @@
 export const HEADER_ICON_CONFIG = {
   "Node Type": {
     type: "iconify",
-    icon: "ph:tree-view",
+    icon: "solar:graph-linear",
     color: "text.primary",
   },
   "User Email": {
     type: "iconify",
-    icon: "mage:email",
+    icon: "solar:letter-linear",
     color: "text.primary",
   },
   "User Phone Number": {
     type: "iconify",
-    icon: "line-md:phone",
+    icon: "solar:phone-linear",
     color: "text.primary",
   },
   "Start Time": {
     type: "iconify",
-    icon: "material-symbols:schedule-outline",
+    icon: "solar:clock-circle-linear",
     color: "text.primary",
   },
   "Latency (ms)": {
     type: "iconify",
-    icon: "material-symbols:schedule-outline",
+    icon: "solar:clock-circle-linear",
     color: "text.primary",
   },
   "Total Tokens": {

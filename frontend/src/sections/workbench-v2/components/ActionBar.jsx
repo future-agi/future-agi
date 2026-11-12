@@ -13,6 +13,7 @@ import PropTypes from "prop-types";
 import { Link, useParams } from "react-router-dom";
 import SvgColor from "src/components/svg-color";
 import { Events, PropertyName, trackEvent } from "../../../utils/Mixpanel";
+import { usePromptStore } from "../store/usePromptStore";
 
 const SORT_OPTIONS = [
   {
@@ -37,6 +38,7 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
   const hasItems = items.length > 0;
   const { folder } = useParams();
   const _theme = useTheme();
+  const totalCount = usePromptStore((s) => s.totalCount);
   const [anchorEl, setAnchorEl] = useState(null);
 
   const open = Boolean(anchorEl);
@@ -89,7 +91,8 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
     <Stack
       direction={"row"}
       justifyContent={"space-between"}
-      sx={{ padding: 2 }}
+      alignItems={"center"}
+      sx={{ px: 2, py: 1.5 }}
     >
       <Stack direction={"row"} alignItems={"center"}>
         <Link
@@ -97,9 +100,8 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
           to={`/dashboard/workbench/${folder === "my-templates" ? folder : "all"}`}
         >
           <Typography
-            typography={"m3"}
+            typography={"title_xs"}
             color={!hasItems ? "text.primary" : "text.secondary"}
-            fontWeight={"fontWeightMedium"}
           >
             {folder === "my-templates" ? "My templates" : "All Prompts"}
           </Typography>
@@ -107,23 +109,29 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
         {items?.map((child, index) => (
           <Stack key={index} direction={"row"} alignItems={"center"}>
             <SvgColor
-              sx={{ height: 24, width: 24, color: "text.primary" }}
+              sx={{ height: 16, width: 16, color: "text.tertiary" }}
               src="/assets/icons/custom/lucide--chevron-right.svg"
             />
             <Link
               style={{ textDecoration: "none" }}
               to={`/dashboard/workbench/${child?.id}`}
             >
-              <Typography
-                typography={"m3"}
-                color={"text.primary"}
-                fontWeight={"fontWeightMedium"}
-              >
+              <Typography typography={"title_xs"} color={"text.primary"}>
                 {child?.name}
               </Typography>
             </Link>
           </Stack>
         ))}
+        {totalCount !== null && totalCount !== undefined && (
+          <Typography
+            typography={"s2"}
+            fontWeight={"fontWeightRegular"}
+            color={"text.tertiary"}
+            sx={{ ml: 1.5 }}
+          >
+            No.of prompts: {totalCount}
+          </Typography>
+        )}
       </Stack>
       <Button
         size="small"
@@ -146,7 +154,7 @@ export default function ActionBar({ items = [], setSortConfig, sortConfig }) {
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}
-        PaperProps={{ sx: { mt: 1, minWidth: 160, p: 0.5 } }}
+        PaperProps={{ sx: { mt: 1, minWidth: 200, p: 0.5 } }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >

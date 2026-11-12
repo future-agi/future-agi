@@ -1,3 +1,4 @@
+import React from "react";
 import {
   act,
   fireEvent,
@@ -239,6 +240,17 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     expect(
       await screen.findByRole("option", { name: /Run one/ }),
     ).toBeVisible();
+  });
+
+  it("omits the model override when the Code playground supplies no model", async () => {
+    mocks.post.mockResolvedValueOnce({ data: { status: true, result: { output: 1 } } });
+    const ref = React.createRef();
+    const ready = vi.fn();
+    render(<SimulationTestMode ref={ref} templateId="code-eval" model="" initialRunTestId="run-1" variables={[]} onReadyChange={ready} />);
+    await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true, expect.anything()));
+    await act(async () => { ref.current.runTest(); });
+    await waitFor(() => expect(mocks.post).toHaveBeenCalled());
+    expect(mocks.post.mock.calls[0][1]).not.toHaveProperty("model");
   });
 
   it("uses explicit read-more for executions and calls with a 9s request wall", async () => {

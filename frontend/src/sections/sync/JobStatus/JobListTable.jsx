@@ -5,9 +5,9 @@ import {
   TableCell,
   TableContainer,
   TableHead,
-  TablePagination,
   TableRow,
 } from "@mui/material";
+import { TablePaginationCustom } from "src/components/table";
 import React from "react";
 import PropTypes from "prop-types";
 
@@ -83,14 +83,9 @@ const JobListTable = ({
           </TableBody>
         </Table>
       </TableContainer>
-      <TablePagination
-        sx={{ position: "absolute", bottom: 0, right: 16 }}
-        rowsPerPageOptions={[
-          { label: "10", value: 10 },
-          { label: "20", value: 20 },
-          { label: "10", value: 30 },
-        ]}
-        component="div"
+      <TablePaginationCustom
+        sx={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        rowsPerPageOptions={[10, 20, 30]}
         count={tableData?.count || 0}
         page={page - 1}
         onPageChange={(e, newPage) => onPageChange(newPage + 1)}

@@ -2535,3 +2535,44 @@ class TestObservabilityServiceIntegration:
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("Authorization") == "Bearer test-retell-api-key-67890"
         assert page.calls == []
+
+
+class TestGetCallLogsForRowsWithoutHostedHistory:
+    """A row that names no hosted provider has no call history to poll."""
+
+    @patch("tracer.services.observability_providers.requests.post")
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_get_call_logs_answers_empty_for_an_others_row(self, mock_get, mock_post):
+        provider = Mock()
+        provider.provider = ProviderChoices.OTHERS
+
+        assert ObservabilityService.get_call_logs(provider) == []
+
+        # No request is made, so nothing is fetched or exported for the row.
+        mock_get.assert_not_called()
+        mock_post.assert_not_called()
+
+        # LiveKit answers the same way.
+        provider.provider = ProviderChoices.LIVEKIT
+        assert ObservabilityService.get_call_logs(provider) == []
+        mock_get.assert_not_called()
+        mock_post.assert_not_called()
+
+    def test_a_vapi_row_is_still_fetched(self):
+        provider = Mock()
+        provider.provider = ProviderChoices.VAPI
+
+        with patch.object(
+            ObservabilityService, "_fetch_vapi_logs", return_value=[{"id": "call-1"}]
+        ) as fetch:
+            result = ObservabilityService.get_call_logs(provider)
+
+        assert result == [{"id": "call-1"}]
+        fetch.assert_called_once_with(provider, None, None)
+
+    def test_an_unlisted_provider_still_raises(self):
+        provider = Mock()
+        provider.provider = "unknown-provider"
+
+        with pytest.raises(NotImplementedError):
+            ObservabilityService.get_call_logs(provider)

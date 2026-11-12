@@ -267,6 +267,32 @@ func TestLlamaGuard_Safe(t *testing.T) {
 	}
 }
 
+func TestLlamaGuard_FullChatCompletionsEndpoint(t *testing.T) {
+	var requestedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{"message": map[string]string{"content": "safe"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := New("test-llamaguard", map[string]interface{}{
+		"provider": "llama_guard",
+		"endpoint": srv.URL + "/v1/chat/completions",
+	})
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hello")}))
+	if !result.Pass {
+		t.Fatal("expected pass")
+	}
+	if requestedPath != "/v1/chat/completions" {
+		t.Fatalf("expected /v1/chat/completions, got %s", requestedPath)
+	}
+}
+
 func TestLlamaGuard_EmptyChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"choices": []interface{}{}})

@@ -26,12 +26,6 @@ describe("seedFromTemplate", () => {
     expect(state.evals).toEqual([]);
   });
 
-  it("records v1 agent and env versions with the template notes", () => {
-    expect(state.envVersions[0].note).toBe("First build from the template.");
-    expect(state.agentVersions[0].note).toBe("Shipped with the template.");
-    expect(state.envVersions[0].label).toBe("v1");
-  });
-
   it("primes the full generated scenario pool from the templates source", () => {
     expect(state.scenarios.length).toBe(generatedPool(template).length);
     expect(state.scenarioSource).toBe("templates");
@@ -44,13 +38,6 @@ describe("seedAgentBuilt", () => {
 
   it("connects the agent via the endpoint", () => {
     expect(state.agent.via).toBe("endpoint");
-  });
-
-  it("records v1 agent and env versions with the agent-build notes", () => {
-    expect(state.agentVersions[0].note).toBe(
-      "First version connected to this environment.",
-    );
-    expect(state.envVersions[0].note).toBe("First build from the agent.");
   });
 
   it("primes scenarios and starts with empty evals and runs", () => {

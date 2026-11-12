@@ -140,7 +140,7 @@ const PromtLeftSidebar = ({
         margin={"8px 0 22px 0"}
         padding={"0 12px"}
       >
-        ALL PROMPTS
+        All prompts
       </Typography>
 
       {/* search bar */}
@@ -166,7 +166,8 @@ const PromtLeftSidebar = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </InputAdornment>
@@ -203,26 +204,32 @@ const PromtLeftSidebar = ({
               }}
               sx={{
                 display: "flex",
-                backgroundColor: `${index === currentIndex ? "action.hover" : "transparent"}`,
-                color: "text.secondary",
+                backgroundColor: `${index === currentIndex ? "action.selected" : "transparent"}`,
+                color: "text.primary",
                 alignItems: "center",
-                padding: "12px",
-                borderRadius: "8px",
+                padding: "0 8px",
+                minHeight: 28,
+                borderRadius: "6px",
                 cursor: "pointer",
                 "&:hover": {
-                  backgroundColor: "background.neutral",
+                  backgroundColor:
+                    index === currentIndex ? "action.selected" : "action.hover",
+                },
+                "&:hover .row-hover-action, &:focus-within .row-hover-action": {
+                  opacity: 1,
                 },
               }}
               secondaryAction={
                 <IconButton
                   size="small"
+                  className="row-hover-action"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(title?.id);
                   }}
-                  sx={{ borderRadius: 0.75 }}
                 >
                   <Iconify
+                    width={16}
                     sx={{
                       cursor: "pointer",
                       "&:hover": {
@@ -235,16 +242,17 @@ const PromtLeftSidebar = ({
                 </IconButton>
               }
             >
-              <ListItemIcon>
+              <ListItemIcon sx={{ minWidth: 24 }}>
                 <Iconify
-                  icon="fluent:calendar-agenda-24-regular"
+                  width={16}
+                  icon="solar:calendar-linear"
                   color={`${index === currentIndex ? "primary.main" : "text.disabled"}`}
                 />
               </ListItemIcon>
               <ListItemText
                 primaryTypographyProps={{
-                  variant: "body2",
-                  fontWeight: "fontWeightMedium",
+                  fontSize: 13,
+                  fontWeight: index === currentIndex ? 500 : 400,
                   width: "83%",
                 }}
                 primary={title?.name}
@@ -255,8 +263,8 @@ const PromtLeftSidebar = ({
             <ListItem>
               <ListItemText
                 primaryTypographyProps={{
-                  variant: "body2",
-                  fontWeight: "fontWeightMedium",
+                  fontSize: 13,
+                  fontWeight: "fontWeightRegular",
                   width: "83%",
                   color: "text.disabled",
                 }}

@@ -169,7 +169,6 @@ export default function ChatInput({ onSend, onStop }) {
     [onSend, triggerSkillsMenu, resetChat, setCurrentConversation],
   );
 
-  const isDark = theme.palette.mode === "dark";
   const router = useRouter();
   const connectors = useFalconStore((s) => s.connectors);
   const [plusMenuAnchor, setPlusMenuAnchor] = useState(null);
@@ -248,30 +247,16 @@ export default function ChatInput({ onSend, onStop }) {
         sx={{
           position: "relative",
           border: isDragging ? 2 : 1,
-          borderColor: isDragging
-            ? "primary.main"
-            : isDark
-              ? alpha(theme.palette.common.white, 0.12)
-              : alpha(theme.palette.common.black, 0.12),
+          borderColor: isDragging ? "primary.main" : "border.default",
           borderStyle: isDragging ? "dashed" : "solid",
-          borderRadius: "20px",
+          borderRadius: "12px",
           overflow: "visible",
           bgcolor: isDragging
             ? alpha(theme.palette.primary.main, 0.04)
-            : isDark
-              ? alpha(theme.palette.common.white, 0.04)
-              : theme.palette.background.paper,
-          boxShadow: isDark
-            ? `0 0 0 1px ${alpha(theme.palette.common.white, 0.06)}`
-            : `0 2px 12px ${alpha(theme.palette.common.black, 0.06)}`,
-          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+            : "background.paper",
+          transition: "border-color 0.2s ease",
           "&:focus-within": {
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.24)
-              : alpha(theme.palette.primary.main, 0.4),
-            boxShadow: isDark
-              ? `0 0 0 1px ${alpha(theme.palette.common.white, 0.12)}`
-              : `0 2px 16px ${alpha(theme.palette.primary.main, 0.08)}`,
+            borderColor: "border.hover",
           },
         }}
       >
@@ -345,7 +330,7 @@ export default function ChatInput({ onSend, onStop }) {
               <Chip
                 key={s.slug}
                 icon={
-                  <Iconify icon={s.icon || "mdi:lightning-bolt"} width={13} />
+                  <Iconify icon={s.icon || "solar:bolt-linear"} width={14} />
                 }
                 label={s.name}
                 size="small"
@@ -356,15 +341,11 @@ export default function ChatInput({ onSend, onStop }) {
                   );
                 }}
                 sx={{
-                  height: 24,
-                  fontSize: 11,
-                  fontWeight: 600,
                   bgcolor: alpha(theme.palette.primary.main, 0.12),
                   color: "primary.main",
                   "& .MuiChip-icon": { color: "primary.main" },
                   "& .MuiChip-deleteIcon": {
                     color: alpha(theme.palette.primary.main, 0.4),
-                    fontSize: 14,
                     "&:hover": { color: "primary.main" },
                   },
                 }}
@@ -393,7 +374,7 @@ export default function ChatInput({ onSend, onStop }) {
             pt: 1.5,
             pb: 0.5,
             "& .MuiInputBase-input": {
-              fontSize: 14,
+              fontSize: 13,
               lineHeight: 1.6,
               color: "text.primary",
               "&::placeholder": {
@@ -430,8 +411,8 @@ export default function ChatInput({ onSend, onStop }) {
               }}
             >
               <Iconify
-                icon={isUploading ? "mdi:loading" : "mdi:paperclip"}
-                width={18}
+                icon={isUploading ? "mdi:loading" : "solar:paperclip-linear"}
+                width={20}
                 sx={
                   isUploading
                     ? {
@@ -453,7 +434,7 @@ export default function ChatInput({ onSend, onStop }) {
                 "&:hover": { color: "text.secondary" },
               }}
             >
-              <Iconify icon="mdi:plus" width={18} />
+              <Iconify icon="solar:add-linear" width={20} />
             </IconButton>
 
             {/* Plus menu */}
@@ -467,10 +448,7 @@ export default function ChatInput({ onSend, onStop }) {
                 paper: {
                   sx: {
                     borderRadius: "12px",
-                    minWidth: 220,
-                    boxShadow: isDark
-                      ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                      : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
+                    minWidth: 240,
                   },
                 },
               }}
@@ -485,13 +463,13 @@ export default function ChatInput({ onSend, onStop }) {
                 sx={{ gap: 1.5, py: 1 }}
               >
                 <Iconify
-                  icon="mdi:paperclip"
-                  width={18}
+                  icon="solar:paperclip-linear"
+                  width={20}
                   sx={{ color: "text.secondary" }}
                 />
                 <ListItemText
                   primary={isUploading ? "Uploading..." : "Attach files"}
-                  primaryTypographyProps={{ fontSize: 14 }}
+                  primaryTypographyProps={{ fontSize: 13 }}
                 />
               </MenuItem>
 
@@ -501,14 +479,14 @@ export default function ChatInput({ onSend, onStop }) {
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                   <Iconify
-                    icon="mdi:puzzle-outline"
-                    width={18}
+                    icon="solar:widget-linear"
+                    width={16}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography sx={{ fontSize: 14 }}>Connectors</Typography>
+                  <Typography sx={{ fontSize: 13 }}>Connectors</Typography>
                 </Box>
                 <Iconify
-                  icon="mdi:chevron-right"
+                  icon="solar:alt-arrow-right-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -528,9 +506,6 @@ export default function ChatInput({ onSend, onStop }) {
                     borderRadius: "12px",
                     minWidth: 240,
                     ml: 0.5,
-                    boxShadow: isDark
-                      ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                      : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
                   },
                 },
               }}
@@ -579,7 +554,7 @@ export default function ChatInput({ onSend, onStop }) {
                 sx={{ gap: 1.5, py: 1 }}
               >
                 <Iconify
-                  icon="mdi:cog-outline"
+                  icon="solar:settings-linear"
                   width={16}
                   sx={{ color: "text.secondary" }}
                 />
@@ -596,14 +571,12 @@ export default function ChatInput({ onSend, onStop }) {
               sx={{
                 bgcolor: "error.main",
                 color: "error.contrastText",
-                width: 32,
-                height: 32,
                 "&:hover": {
                   bgcolor: "error.dark",
                 },
               }}
             >
-              <Iconify icon="mdi:stop" width={16} />
+              <Iconify icon="solar:stop-linear" width={16} />
             </IconButton>
           ) : (
             <IconButton
@@ -618,19 +591,13 @@ export default function ChatInput({ onSend, onStop }) {
                     : "transparent",
                 color:
                   text.trim() || attachedFiles.length > 0
-                    ? isDark
-                      ? "common.black"
-                      : "common.white"
+                    ? "background.paper"
                     : "text.disabled",
-                width: 32,
-                height: 32,
                 transition: "all 0.15s ease",
                 "&:hover": {
                   bgcolor:
                     text.trim() || attachedFiles.length > 0
-                      ? isDark
-                        ? "grey.300"
-                        : "grey.800"
+                      ? "text.secondary"
                       : "transparent",
                 },
                 "&.Mui-disabled": {
@@ -638,7 +605,7 @@ export default function ChatInput({ onSend, onStop }) {
                 },
               }}
             >
-              <Iconify icon="mdi:arrow-up" width={18} />
+              <Iconify icon="solar:arrow-up-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -651,7 +618,7 @@ export default function ChatInput({ onSend, onStop }) {
           textAlign: "center",
           mt: 0.5,
           mb: 0.5,
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           userSelect: "none",
         }}

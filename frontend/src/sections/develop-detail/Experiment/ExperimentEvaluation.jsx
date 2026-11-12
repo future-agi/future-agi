@@ -102,7 +102,7 @@ const ExperimentEvaluation = ({
         }}
       >
         <Box sx={{ gap: "12px", display: "flex", flexDirection: "column" }}>
-          <Typography fontWeight={700} color="text.secondary" fontSize="14px">
+          <Typography fontWeight={600} color="text.secondary" fontSize="13px">
             Added Evaluations
           </Typography>
           <Typography variant="body2" fontSize="12px">

@@ -38,8 +38,12 @@ class ListApiKeysTool(BaseTool):
 
         org = context.organization
 
-        qs = OrgApiKey.no_workspace_objects.filter(organization=org).order_by(
-            "-created_at"
+        # Sandbox ingest keys belong to the platform, so they are never listed,
+        # whatever ``key_type`` asks for.
+        qs = (
+            OrgApiKey.no_workspace_objects.filter(organization=org)
+            .exclude(type="ingest")
+            .order_by("-created_at")
         )
 
         if params.key_type:

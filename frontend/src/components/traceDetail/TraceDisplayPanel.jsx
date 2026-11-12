@@ -12,9 +12,11 @@ import {
   MenuItem,
   Popover,
   Switch,
+  Tab,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { getTypeConfig } from "./spanTypeConfig";
 import { SpanTypes } from "src/utils/constant";
 
@@ -41,10 +43,10 @@ export const DEFAULT_VIEW_CONFIG = {
 const SectionHeader = ({ children }) => (
   <Typography
     sx={{
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: 400,
       color: "text.secondary",
-      letterSpacing: "0.04em",
+      letterSpacing: 0,
       px: 0.5,
       pt: 1,
       pb: 0.25,
@@ -72,7 +74,7 @@ const MetricToggle = ({ label, checked, onChange }) => (
   >
     <Typography
       sx={{
-        fontSize: 14,
+        fontSize: 13,
         fontFamily: "'IBM Plex Sans', sans-serif",
         color: "text.primary",
         overflow: "hidden",
@@ -101,61 +103,13 @@ MetricToggle.propTypes = {
 // View mode tabs — large pills with icon on top + label below
 // ---------------------------------------------------------------------------
 const VIEW_MODES = [
-  { key: "tree", label: "Trace View", icon: "mdi:sitemap-outline" },
+  { key: "tree", label: "Trace View", icon: "solar:graph-linear" },
   {
     key: "timeline",
     label: "Timeline View",
-    icon: "mdi:timeline-clock-outline",
+    icon: "solar:clock-circle-linear",
   },
 ];
-
-const ViewTabButton = ({ icon, label, isActive, onClick }) => (
-  <ButtonBase
-    onClick={onClick}
-    sx={{
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "2px",
-      flex: 1,
-      py: 0.75,
-      px: 1,
-      borderRadius: "4px",
-      bgcolor: isActive ? "background.paper" : "transparent",
-      boxShadow: isActive ? "2px 2px 6px 0px rgba(0,0,0,0.08)" : "none",
-      "&:hover": { bgcolor: isActive ? "background.paper" : "action.hover" },
-    }}
-  >
-    <Iconify
-      icon={icon}
-      width={16}
-      sx={{
-        color: isActive ? "text.primary" : "text.secondary",
-        flexShrink: 0,
-      }}
-    />
-    <Typography
-      sx={{
-        fontSize: 12,
-        fontWeight: 400,
-        color: isActive ? "text.primary" : "text.secondary",
-        whiteSpace: "nowrap",
-        fontFamily: "'IBM Plex Sans', sans-serif",
-        lineHeight: "18px",
-      }}
-    >
-      {label}
-    </Typography>
-  </ButtonBase>
-);
-
-ViewTabButton.propTypes = {
-  icon: PropTypes.string.isRequired,
-  label: PropTypes.string.isRequired,
-  isActive: PropTypes.bool,
-  onClick: PropTypes.func,
-};
 
 // ---------------------------------------------------------------------------
 // Span type options
@@ -225,41 +179,36 @@ const TraceDisplayPanel = ({
       slotProps={{
         paper: {
           sx: {
-            width: 335,
+            width: 320,
             maxHeight: 560,
             mt: 0.5,
             p: 1,
             border: "1px solid",
             borderColor: "divider",
-            boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
-            borderRadius: "4px",
+            borderRadius: "8px",
           },
         },
       }}
     >
-      {/* View mode tabs — pill toggle */}
-      <Box
-        sx={{
-          display: "flex",
-          gap: 0,
-          bgcolor: "background.neutral",
-          borderRadius: "4px",
-          p: 0.5,
-        }}
+      {/* View mode tabs */}
+      <SegmentedTabs
+        value={viewMode}
+        onChange={(_, key) => onViewModeChange?.(key)}
+        sx={{ width: "100%", "& .MuiTab-root": { flex: 1 } }}
       >
         {VIEW_MODES.map((mode) => (
-          <ViewTabButton
+          <Tab
             key={mode.key}
-            icon={mode.icon}
+            value={mode.key}
+            icon={<Iconify icon={mode.icon} width={16} />}
+            iconPosition="start"
             label={mode.label}
-            isActive={viewMode === mode.key}
-            onClick={() => onViewModeChange?.(mode.key)}
           />
         ))}
-      </Box>
+      </SegmentedTabs>
 
       {/* TRACE VIEW section */}
-      <SectionHeader>TRACE VIEW</SectionHeader>
+      <SectionHeader>Trace view</SectionHeader>
       <Box
         sx={{
           display: "flex",
@@ -272,7 +221,7 @@ const TraceDisplayPanel = ({
       >
         <Typography
           sx={{
-            fontSize: 14,
+            fontSize: 13,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
           }}
@@ -306,7 +255,11 @@ const TraceDisplayPanel = ({
           >
             {displayLabel}
           </Typography>
-          <Iconify icon="mdi:chevron-down" width={16} color="text.secondary" />
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            width={16}
+            color="text.secondary"
+          />
         </ButtonBase>
       </Box>
 
@@ -317,7 +270,7 @@ const TraceDisplayPanel = ({
         onClose={() => setSpanTypeAnchor(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 180, mt: 0.5 } } }}
+        slotProps={{ paper: { sx: { minWidth: 200, mt: 0.5 } } }}
       >
         {SPAN_TYPES.map((st) => {
           const cfg = getTypeConfig(st.key);
@@ -347,7 +300,7 @@ const TraceDisplayPanel = ({
       <Divider sx={{ my: 0.75 }} />
 
       {/* SPAN METRICS section */}
-      <SectionHeader>SPAN METRICS</SectionHeader>
+      <SectionHeader>Span metrics</SectionHeader>
       <MetricToggle
         label="Latency"
         checked={visibleMetrics?.latency ?? true}
@@ -382,7 +335,7 @@ const TraceDisplayPanel = ({
       <Divider sx={{ my: 0.75 }} />
 
       {/* AGENT GRAPH section */}
-      <SectionHeader>AGENT GRAPH</SectionHeader>
+      <SectionHeader>Agent graph</SectionHeader>
       <MetricToggle
         label="Show agent graph"
         checked={showAgentGraph ?? true}
@@ -408,7 +361,7 @@ const TraceDisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 14,
+            fontSize: 13,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
             py: 0.5,
@@ -423,10 +376,9 @@ const TraceDisplayPanel = ({
               onClose();
             }}
             sx={{
-              fontSize: 14,
+              fontSize: 13,
               fontFamily: "'IBM Plex Sans', sans-serif",
-              color: (t) =>
-                t.palette.mode === "dark" ? "text.primary" : "#573FCC",
+              color: "text.link",
               py: 0.5,
             }}
           >

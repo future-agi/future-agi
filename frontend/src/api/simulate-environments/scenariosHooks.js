@@ -10,6 +10,11 @@ import {
   amendScenarios,
   scenarioCoverage,
 } from "src/api/simulate-environments/scenarios";
+import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
+import {
+  environmentVersionsKey,
+  refreshDrafts,
+} from "src/api/simulate-environments/versions";
 
 /**
  * The scenarios list read path, mirroring useMyEnvironments: 0-indexed page in
@@ -106,7 +111,8 @@ export function useScenarioCoverage(
 // receipts (including `why` on a refusal), so the global error toast is
 // suppressed. A success invalidates the whole scenarios prefix — both the
 // visible list page and the coverage grid — since a drop or a re-proof reshapes
-// the suite and the counts.
+// the suite and the counts. An edit to a versioned environment also records a
+// new scenario version, so the version history is refreshed too.
 export function useAmendScenarios(jobId) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -114,6 +120,15 @@ export function useAmendScenarios(jobId) {
     mutationFn: (body) => amendScenarios(jobId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
+      // The header and tab badge read the scenario count from the detail.
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(jobId) });
+      // Only the list: a saved version's own diff and scenarios never change.
+      queryClient.invalidateQueries({
+        queryKey: environmentVersionsKey(jobId),
+        exact: true,
+      });
+      // With versioning on, the edit lands in the unsaved changes.
+      refreshDrafts(queryClient, jobId);
     },
   });
 }

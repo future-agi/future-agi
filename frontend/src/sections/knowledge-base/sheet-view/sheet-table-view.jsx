@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useMemo, forwardRef, useRef, useEffect } from "react";
@@ -293,7 +294,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={54}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}

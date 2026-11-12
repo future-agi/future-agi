@@ -185,8 +185,8 @@ const analytics = {
       low: 12.5,
       high: 95.1,
       effective_n: 3,
+      scenarios: 2,
       evaluated: 3,
-      clusters: 2,
     },
     rows: [
       {
@@ -342,25 +342,27 @@ describe("RunAnalytics", () => {
     useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
     render(<RunAnalytics executionId="execution-1" />);
   };
-  const tile = (label) => screen.getByText(label).parentElement;
+  // A tile's label is a <p>; a widget of the same name is an <h3>.
+  const tile = (label) =>
+    screen.getAllByText(label).find((el) => el.tagName === "P").parentElement;
 
   it("shows call and voice metric tiles", () => {
     renderWithMetrics([...callMetrics, ...voiceMetrics]);
 
-    expect(within(tile("Total Calls")).getByText("4")).toBeInTheDocument();
+    expect(within(tile("Total calls")).getByText("4")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("3")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("of 4")).toBeInTheDocument();
     expect(
-      within(tile("Calls Connected (%)")).getByText("75%"),
+      within(tile("Calls connected (%)")).getByText("75%"),
     ).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("462ms"),
+      within(tile("Agent latency")).getByText("462ms"),
     ).toBeInTheDocument();
     expect(within(tile("Agent WPM")).getByText("167")).toBeInTheDocument();
     expect(
-      within(tile("Agent Stop Latency")).getByText("289ms"),
+      within(tile("Agent stop latency")).getByText("289ms"),
     ).toBeInTheDocument();
-    expect(within(tile("Talk Ratio")).getByText("48/52")).toBeInTheDocument();
+    expect(within(tile("Talk ratio")).getByText("48/52")).toBeInTheDocument();
     expect(within(tile("Avg duration")).getByText("11.9s")).toBeInTheDocument();
     expect(within(tile("Avg turns")).getByText("9.1")).toBeInTheDocument();
   });
@@ -371,12 +373,12 @@ describe("RunAnalytics", () => {
       callMetric("agent_latency", null, "ms"),
     ]);
 
-    for (const label of ["Agent WPM", "Agent Stop Latency", "Talk Ratio"]) {
+    for (const label of ["Agent WPM", "Agent stop latency", "Talk ratio"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
-    expect(within(tile("Agent Latency")).getByText("-")).toBeInTheDocument();
+    expect(within(tile("Agent latency")).getByText("-")).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("Not reported"),
+      within(tile("Agent latency")).getByText("Not reported"),
     ).toBeInTheDocument();
   });
 
@@ -412,7 +414,7 @@ describe("RunAnalytics", () => {
     ).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        /2 scenarios × 2 trials · pass rate 95% range 12.5%–95.1%/,
+        /2 scenarios × 2 trials · pass\^1 95% range 12.5%–95.1%/,
       ),
     ).toBeInTheDocument();
   });
@@ -434,21 +436,29 @@ describe("RunAnalytics", () => {
     const data = structuredClone(analytics);
     data.reliability.scenarios = 5;
     data.reliability.consistent_pass = 1;
-    const row = (scenario, passed, evaluated, error, verdict) => ({
+    const row = (
+      scenario,
+      passed,
+      evaluated,
+      error,
+      inconclusive,
+      verdict,
+    ) => ({
       scenario_key: scenario,
       scenario,
       runs: 2,
       passed,
       evaluated,
       error,
+      inconclusive,
       verdict,
     });
     data.reliability.rows = [
-      row("All pass", 2, 2, 0, "passed"),
-      row("Pass plus error", 1, 1, 1, "passed"),
-      row("Pass plus inconclusive", 1, 1, 0, "passed"),
-      row("Fail plus error", 0, 1, 1, "failed"),
-      row("All error", 0, 0, 2, "not_evaluated"),
+      row("All pass", 2, 2, 0, 0, "passed"),
+      row("Pass plus error", 1, 1, 1, 0, "passed"),
+      row("Pass plus inconclusive", 1, 1, 0, 1, "passed"),
+      row("Fail plus error", 0, 1, 1, 0, "failed"),
+      row("All error", 0, 0, 2, 0, "not_evaluated"),
     ];
     useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
 
@@ -470,16 +480,20 @@ describe("RunAnalytics", () => {
       expect(
         within(row).getByText("Passed all evaluated trials"),
       ).toBeInTheDocument();
-      expect(within(row).getByText("1 / 2")).toBeInTheDocument();
+      expect(within(row).getByText("1/1 trials passed")).toBeInTheDocument();
+      expect(within(row).getByText("1")).toBeInTheDocument();
     }
     const failed = within(panel).getByText("Fail plus error").closest("tr");
     expect(
       within(failed).getByText("Failed all evaluated trials"),
     ).toBeInTheDocument();
-    expect(within(failed).getByText("1 / 2")).toBeInTheDocument();
+    expect(within(failed).getByText("0/1 trials passed")).toBeInTheDocument();
     const allError = within(panel).getByText("All error").closest("tr");
     expect(within(allError).getByText("Not evaluated")).toBeInTheDocument();
-    expect(within(allError).getByText("0 / 2")).toBeInTheDocument();
+    expect(
+      within(allError).getByText("No conclusive trial"),
+    ).toBeInTheDocument();
+    expect(within(allError).getByText("2")).toBeInTheDocument();
   });
 
   it("hides provider-only charts when no provider reported them", () => {

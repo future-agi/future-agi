@@ -374,7 +374,7 @@ func TestResolveProjectsSameNameIsBoundToAuthenticatedWorkspaceAndCache(t *testi
 	if _, ok := left.GetProjectInWorkspace("workspace-b", "shared-name"); ok {
 		t.Fatal("workspace-b read a workspace-a cached mapping")
 	}
-	if a.cache.addProjectsScoped("key-a", "same-org", "workspace-b", map[string]string{"poison": "foreign"}) {
+	if a.cache.addProjectsScoped("key-a", right, map[string]string{"poison": "foreign"}) {
 		t.Fatal("cross-workspace cache merge was accepted")
 	}
 	if _, ok := left.GetProject("poison"); ok {

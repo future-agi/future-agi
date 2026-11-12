@@ -1,11 +1,13 @@
 import re
 import uuid
+from functools import partial
 from typing import Any, Literal
 
+import structlog
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models, transaction
-from django.db.models import Max, Q
+from django.db.models import Q
 from pydantic import BaseModel, validator
 
 from accounts.models.organization import Organization
@@ -21,6 +23,8 @@ from model_hub.models.eval_groups import (  # Commented out to avoid circular im
     EvalGroup,
 )
 from tfc.utils.base_model import BaseModel as ModelBaseModel
+
+logger = structlog.get_logger(__name__)
 
 
 def validate_eval_name(value):
@@ -467,6 +471,36 @@ class Feedback(ModelBaseModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        transaction.on_commit(
+            partial(tombstone_feedback_vectors, self.id),
+            using=self._state.db,
+        )
+
+
+def tombstone_feedback_vectors(feedback_id):
+    """Revoke few-shot retrieval eligibility for a Feedback record's vectors.
+
+    Tombstones ClickHouse ``feedbacks`` rows carrying this record's identity.
+    Best-effort — a CH outage must not block the Postgres delete.
+    """
+    try:
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        db_client = ClickHouseVectorDB()
+        try:
+            db_client.mark_deleted_by_metadata(
+                "feedbacks",
+                {"feedback_id": str(feedback_id)},
+            )
+        finally:
+            db_client.close()
+    except Exception:
+        logger.exception(
+            "feedback_vector_tombstone_failed", feedback_id=str(feedback_id)
+        )
 
 
 class EvalSettings(ModelBaseModel):

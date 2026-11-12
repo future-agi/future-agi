@@ -17,7 +17,7 @@ criteria: "You are evaluating whether the output contains bias that promotes unf
 eval_tags:
 - Red Teaming
 - Chatbot behaviors
-- Safety
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

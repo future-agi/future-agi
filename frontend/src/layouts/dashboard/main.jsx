@@ -12,7 +12,11 @@ export default function Main({ children, sx, ...other }) {
         display: "flex",
         flexDirection: "column",
         overflow: "auto",
+        // Content sits straight on the page surface; a 1px line on the
+        // sidebar's edge is the only division.
         height: "100vh",
+        minWidth: 0,
+        bgcolor: "background.paper",
         ...sx,
       }}
       {...other}

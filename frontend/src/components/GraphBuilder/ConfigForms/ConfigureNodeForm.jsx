@@ -42,7 +42,7 @@ const ConfigureNodeForm = ({ onClose, node, onChange }) => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box

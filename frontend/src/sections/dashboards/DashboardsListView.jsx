@@ -1,4 +1,6 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useMemo } from "react";
+import PageHeader from "src/components/page-header";
 import PropTypes from "prop-types";
 import {
   Avatar,
@@ -39,25 +41,6 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { formatDistanceToNowStrict, format } from "date-fns";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-function getAvatarColor(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 function getInitials(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
@@ -88,8 +71,6 @@ function getDashboardViewers(db) {
 }
 
 function ViewerAvatars({ db }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const viewers = getDashboardViewers(db);
   if (!viewers.length) return null;
 
@@ -98,29 +79,18 @@ function ViewerAvatars({ db }) {
 
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       placement="bottom-start"
       arrow
       componentsProps={{
         tooltip: {
           sx: {
-            bgcolor: isDark ? "#1a1a2e" : "#fff",
-            borderRadius: 2,
-            p: 2,
             minWidth: 240,
-            boxShadow: isDark
-              ? "0 4px 20px rgba(0,0,0,0.5)"
-              : "0 4px 20px rgba(0,0,0,0.12)",
-            border: isDark ? "none" : "1px solid",
-            borderColor: isDark ? "transparent" : "divider",
           },
         },
         arrow: {
           sx: {
-            color: isDark ? "#1a1a2e" : "#fff",
-            "&::before": {
-              border: isDark ? "none" : "1px solid",
-              borderColor: isDark ? "transparent" : "divider",
-            },
+            "&::before": {},
           },
         },
       }}
@@ -136,13 +106,10 @@ function ViewerAvatars({ db }) {
             >
               <Avatar
                 sx={{
-                  width: 28,
-                  height: 28,
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  bgcolor: getAvatarColor(
-                    db.created_by.name || db.created_by.email,
-                  ),
+                  width: 24,
+                  height: 24,
+                  fontSize: "12px",
+                  fontWeight: 600,
                 }}
               >
                 {getInitials(db.created_by.name || db.created_by.email)}
@@ -152,7 +119,7 @@ function ViewerAvatars({ db }) {
                   variant="body2"
                   sx={{
                     fontWeight: 500,
-                    color: isDark ? "#fff" : "text.primary",
+                    color: "text.primary",
                     lineHeight: 1.3,
                   }}
                 >
@@ -161,7 +128,7 @@ function ViewerAvatars({ db }) {
                 <Typography
                   variant="caption"
                   sx={{
-                    color: isDark ? "rgba(255,255,255,0.45)" : "text.secondary",
+                    color: "text.secondary",
                   }}
                 >
                   {db.created_at
@@ -179,7 +146,7 @@ function ViewerAvatars({ db }) {
           <Box
             sx={{
               borderTop: "1px solid",
-              borderColor: isDark ? "rgba(255,255,255,0.1)" : "divider",
+              borderColor: "divider",
               mb: 1.5,
             }}
           />
@@ -188,7 +155,7 @@ function ViewerAvatars({ db }) {
           <Typography
             variant="caption"
             sx={{
-              color: isDark ? "rgba(255,255,255,0.5)" : "text.disabled",
+              color: "text.disabled",
               fontWeight: 600,
               mb: 1.5,
               display: "block",
@@ -201,11 +168,10 @@ function ViewerAvatars({ db }) {
               <Stack key={i} direction="row" alignItems="center" gap={1.5}>
                 <Avatar
                   sx={{
-                    width: 28,
-                    height: 28,
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    bgcolor: getAvatarColor(v.displayName),
+                    width: 24,
+                    height: 24,
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {getInitials(v.displayName)}
@@ -215,7 +181,7 @@ function ViewerAvatars({ db }) {
                   sx={{
                     flex: 1,
                     fontWeight: 500,
-                    color: isDark ? "#fff" : "text.primary",
+                    color: "text.primary",
                   }}
                 >
                   {v.displayName}
@@ -223,7 +189,7 @@ function ViewerAvatars({ db }) {
                 <Typography
                   variant="caption"
                   sx={{
-                    color: isDark ? "rgba(255,255,255,0.45)" : "text.secondary",
+                    color: "text.secondary",
                     whiteSpace: "nowrap",
                   }}
                 >
@@ -238,7 +204,7 @@ function ViewerAvatars({ db }) {
             <Box
               sx={{
                 borderTop: "1px solid",
-                borderColor: isDark ? "rgba(255,255,255,0.1)" : "divider",
+                borderColor: "divider",
                 mt: 1.5,
                 pt: 1.5,
               }}
@@ -246,7 +212,7 @@ function ViewerAvatars({ db }) {
               <Typography
                 variant="caption"
                 sx={{
-                  color: isDark ? "rgba(255,255,255,0.5)" : "text.secondary",
+                  color: "text.secondary",
                   display: "block",
                 }}
               >
@@ -255,7 +221,7 @@ function ViewerAvatars({ db }) {
               <Typography
                 variant="caption"
                 sx={{
-                  color: isDark ? "rgba(255,255,255,0.5)" : "text.secondary",
+                  color: "text.secondary",
                 }}
               >
                 {db.updated_at
@@ -280,16 +246,14 @@ function ViewerAvatars({ db }) {
             "& .MuiAvatar-root": {
               width: 26,
               height: 26,
-              fontSize: "11px",
-              fontWeight: 700,
+              fontSize: "12px",
+              fontWeight: 600,
               borderWidth: 2,
             },
           }}
         >
           {shown.map((v, i) => (
-            <Avatar key={i} sx={{ bgcolor: getAvatarColor(v.displayName) }}>
-              {getInitials(v.displayName)}
-            </Avatar>
+            <Avatar key={i}>{getInitials(v.displayName)}</Avatar>
           ))}
         </AvatarGroup>
         {extra > 0 && (
@@ -393,9 +357,7 @@ export default function DashboardsListView() {
   };
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
   return (
@@ -410,190 +372,199 @@ export default function DashboardsListView() {
         height: "100%",
       }}
     >
-      {/* Header */}
-      <Stack gap={theme.spacing(0.5)}>
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight="fontWeightSemiBold"
-        >
-          Dashboard
-        </Typography>
-        <Typography
-          typography="s1"
-          color="text.primary"
-          fontWeight="fontWeightRegular"
-        >
-          Create dashboard to monitor
-        </Typography>
-      </Stack>
+      <PageHeader
+        title="Dashboard"
+        description="Build charts from traces, evals and cost to monitor your agents over time."
+        sx={{ mb: 0 }}
+      />
 
       {/* Search + Actions row */}
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Stack direction="row" gap={1} alignItems="center">
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-          />
-          <Button
-            size="small"
-            variant={creatorFilter.length > 0 ? "contained" : "outlined"}
-            onClick={(e) => setCreatorMenuAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="mdi:account-outline" width={18} />}
-            endIcon={<Iconify icon="mdi:chevron-down" width={16} />}
-            sx={{
-              height: 38,
-              borderColor: "divider",
-              color: creatorFilter.length > 0 ? undefined : "text.secondary",
-              textTransform: "none",
-              fontSize: "13px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {creatorFilter.length === 0
-              ? "Created by anyone"
-              : creatorFilter.length === 1
-                ? creators.find((c) => c.email === creatorFilter[0])?.name ||
-                  creatorFilter[0]
-                : `${creatorFilter.length} creators`}
-          </Button>
-          <Menu
-            anchorEl={creatorMenuAnchor}
-            open={Boolean(creatorMenuAnchor)}
-            onClose={() => setCreatorMenuAnchor(null)}
-            slotProps={{
-              paper: {
-                sx: { minWidth: 220, mt: 0.5 },
-              },
-            }}
-          >
-            <MenuItem onClick={() => setCreatorFilter([])} sx={{ py: 0.5 }}>
-              <Checkbox
-                size="small"
-                checked={creatorFilter.length === 0}
-                sx={{ mr: 0.5 }}
-              />
-              <Stack direction="row" alignItems="center" gap={1}>
-                <Iconify icon="mdi:account-group-outline" width={18} />
-                <Typography variant="body2">Anyone</Typography>
-              </Stack>
-            </MenuItem>
-            <Divider />
-            {creators.map((c) => {
-              const checked = creatorFilter.includes(c.email);
-              return (
-                <MenuItem
-                  key={c.email}
-                  onClick={() => {
-                    setCreatorFilter((prev) =>
-                      checked
-                        ? prev.filter((e) => e !== c.email)
-                        : [...prev, c.email],
-                    );
-                  }}
-                  sx={{ py: 0.5 }}
-                >
-                  <Checkbox size="small" checked={checked} sx={{ mr: 0.5 }} />
-                  <Stack direction="row" alignItems="center" gap={1}>
-                    <Avatar
-                      sx={{
-                        width: 22,
-                        height: 22,
-                        fontSize: "10px",
-                        fontWeight: 700,
-                        bgcolor: getAvatarColor(c.name),
-                      }}
-                    >
-                      {getInitials(c.name)}
-                    </Avatar>
-                    <Typography variant="body2">{c.name}</Typography>
-                  </Stack>
-                </MenuItem>
-              );
-            })}
-          </Menu>
-        </Stack>
-        <Stack direction="row" gap={1}>
-          <Button
-            variant="outlined"
-            size="small"
-            sx={{
-              borderRadius: "4px",
-              height: "30px",
-              px: "4px",
-              width: "105px",
-            }}
-            onClick={() => {
-              window.open(
-                "https://docs.futureagi.com/docs/observe/features/dashboard",
-                "_blank",
-              );
-            }}
-          >
-            <SvgColor
-              src="/assets/icons/agent/docs.svg"
-              sx={{ height: 16, width: 16, mr: 1 }}
+      {dashboards.length > 0 && (
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Stack direction="row" gap={1} alignItems="center">
+            <FormSearchField
+              size="small"
+              placeholder="Search"
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{
+                minWidth: "250px",
+                "& .MuiOutlinedInput-root": { height: "30px" },
+              }}
             />
-            <Typography typography="s2" fontWeight="fontWeightMedium">
-              View Docs
-            </Typography>
-          </Button>
-          <CustomTooltip
-            show={!canCreate}
-            type=""
-            title="You don't have permission to create dashboards."
-            size="small"
-            arrow
-          >
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={
-                  createMutation.isPending ? (
-                    <CircularProgress size={16} color="inherit" />
-                  ) : (
-                    <Iconify icon="mdi:plus" />
-                  )
-                }
-                onClick={handleCreate}
-                disabled={createMutation.isPending || !canCreate}
-                sx={{ height: "38px" }}
-              >
-                {createMutation.isPending ? "Creating..." : "Create Dashboard"}
-              </Button>
-            </span>
-          </CustomTooltip>
+            <Button
+              size="small"
+              variant={creatorFilter.length > 0 ? "contained" : "outlined"}
+              onClick={(e) => setCreatorMenuAnchor(e.currentTarget)}
+              startIcon={<Iconify icon="solar:user-linear" width={20} />}
+              endIcon={
+                <Iconify icon="solar:alt-arrow-down-linear" width={16} />
+              }
+              sx={{
+                borderColor: "divider",
+                color: creatorFilter.length > 0 ? undefined : "text.secondary",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {creatorFilter.length === 0
+                ? "Created by anyone"
+                : creatorFilter.length === 1
+                  ? creators.find((c) => c.email === creatorFilter[0])?.name ||
+                    creatorFilter[0]
+                  : `${creatorFilter.length} creators`}
+            </Button>
+            <Menu
+              anchorEl={creatorMenuAnchor}
+              open={Boolean(creatorMenuAnchor)}
+              onClose={() => setCreatorMenuAnchor(null)}
+              slotProps={{
+                paper: {
+                  sx: { minWidth: 240, mt: 0.5 },
+                },
+              }}
+            >
+              <MenuItem onClick={() => setCreatorFilter([])} sx={{ py: 0.5 }}>
+                <Checkbox
+                  size="small"
+                  checked={creatorFilter.length === 0}
+                  sx={{ mr: 0.5 }}
+                />
+                <Stack direction="row" alignItems="center" gap={1}>
+                  <Iconify icon="solar:users-group-rounded-linear" width={16} />
+                  <Typography variant="body2">Anyone</Typography>
+                </Stack>
+              </MenuItem>
+              <Divider />
+              {creators.map((c) => {
+                const checked = creatorFilter.includes(c.email);
+                return (
+                  <MenuItem
+                    key={c.email}
+                    onClick={() => {
+                      setCreatorFilter((prev) =>
+                        checked
+                          ? prev.filter((e) => e !== c.email)
+                          : [...prev, c.email],
+                      );
+                    }}
+                    sx={{ py: 0.5 }}
+                  >
+                    <Checkbox size="small" checked={checked} sx={{ mr: 0.5 }} />
+                    <Stack direction="row" alignItems="center" gap={1}>
+                      <Avatar
+                        sx={{
+                          width: 22,
+                          height: 22,
+                          fontSize: "12px",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {getInitials(c.name)}
+                      </Avatar>
+                      <Typography variant="body2">{c.name}</Typography>
+                    </Stack>
+                  </MenuItem>
+                );
+              })}
+            </Menu>
+          </Stack>
+          <Stack direction="row" gap={1}>
+            <Button
+              variant="outlined"
+              size="small"
+              sx={{
+                flexShrink: 0,
+              }}
+              onClick={() => {
+                window.open(
+                  "https://docs.futureagi.com/docs/observe/features/dashboard",
+                  "_blank",
+                );
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/agent/docs.svg"
+                sx={{ height: 16, width: 16, mr: 1 }}
+              />
+              <Typography typography="s2" fontWeight="fontWeightMedium">
+                View Docs
+              </Typography>
+            </Button>
+            <CustomTooltip
+              show={!canCreate}
+              type=""
+              title="You don't have permission to create dashboards."
+              size="small"
+              arrow
+            >
+              <span>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={
+                    createMutation.isPending ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <Iconify icon="solar:add-linear" />
+                    )
+                  }
+                  onClick={handleCreate}
+                  disabled={createMutation.isPending || !canCreate}
+                >
+                  {createMutation.isPending
+                    ? "Creating..."
+                    : "Create Dashboard"}
+                </Button>
+              </span>
+            </CustomTooltip>
+          </Stack>
         </Stack>
-      </Stack>
+      )}
 
       {/* Dashboard list */}
       <Box sx={{ flex: 1 }}>
         {filteredDashboards.length === 0 ? (
           searchQuery ? (
-            <Stack alignItems="center" gap={1} sx={{ py: 8 }}>
-              <Iconify
-                icon="mdi:magnify"
-                width={48}
-                sx={{ color: "text.disabled" }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                No dashboards match your search
-              </Typography>
-            </Stack>
+            <EmptyState
+              variant="no-results"
+              icon="solar:magnifier-linear"
+              title="No dashboards match your search"
+              onClearFilters={() => setSearchQuery("")}
+            />
           ) : (
             <EmptyLayout
-              title="Create your first dashboard"
-              description="Build custom dashboards to visualize traces, evaluations, and simulation metrics in one place."
+              title="No dashboards yet"
+              description="Chart traces, evals and simulation metrics side by side, with your own filters and time ranges."
               link="https://docs.futureagi.com"
-              linkText="Learn more"
+              linkText="Read the docs"
               icon="/assets/icons/navbar/ic_dashboard.svg"
+              action={
+                <CustomTooltip
+                  show={!canCreate}
+                  type=""
+                  title="You don't have permission to create dashboards."
+                  size="small"
+                  arrow
+                >
+                  <span>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      onClick={handleCreate}
+                      disabled={createMutation.isPending || !canCreate}
+                    >
+                      {createMutation.isPending
+                        ? "Creating..."
+                        : "Create dashboard"}
+                    </Button>
+                  </span>
+                </CustomTooltip>
+              }
             />
           )
         ) : (
@@ -610,30 +581,20 @@ export default function DashboardsListView() {
                   px: 2,
                   py: 1.25,
                   cursor: "pointer",
-                  borderRadius: 1.5,
-                  border: (t) =>
-                    `1px solid ${
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(0,0,0,0.08)"
-                    }`,
+                  borderRadius: "8px",
+                  border: 1,
+                  borderColor: "divider",
                   transition: "all 0.15s",
                   "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                    borderColor: (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.16)"
-                        : "rgba(0,0,0,0.16)",
+                    bgcolor: "action.hover",
+                    borderColor: "border.hover",
                     "& .row-actions": { opacity: 1 },
                   },
                 }}
               >
                 <Iconify
-                  icon="mdi:view-dashboard-outline"
-                  width={18}
+                  icon="solar:widget-4-linear"
+                  width={20}
                   sx={{ color: "primary.main", mr: 1.5, flexShrink: 0 }}
                 />
 
@@ -678,7 +639,7 @@ export default function DashboardsListView() {
                       flexShrink: 0,
                     }}
                   >
-                    <Iconify icon="mdi:delete-outline" width={18} />
+                    <Iconify icon="solar:trash-bin-trash-linear" width={20} />
                   </IconButton>
                 )}
               </Stack>
@@ -695,7 +656,8 @@ export default function DashboardsListView() {
           setNewName("");
           setNewDescription("");
         }}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle sx={{ pb: 0 }}>
@@ -708,7 +670,7 @@ export default function DashboardsListView() {
               Create Custom Dashboard
             </Typography>
             <IconButton onClick={() => setCreateOpen(false)} size="small">
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>

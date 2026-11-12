@@ -60,8 +60,8 @@ export default function VoiceSelectorPopover({
       PaperProps={{
         sx: {
           p: 1,
-          width: 170,
-          borderRadius: 0.5,
+          width: 200,
+          borderRadius: "4px",
         },
       }}
     >

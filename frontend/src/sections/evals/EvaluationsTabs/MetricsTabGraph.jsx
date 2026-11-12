@@ -2,6 +2,7 @@ import { Alert, Box, Button, Grid, Skeleton, useTheme } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvaluationDateTimeRangePicker from "../EvalsChartsView/EvaluationDateTimeRangePicker";
 import ReactApexChart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -114,13 +115,13 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           name: lineSeriesName,
           type: "line",
           data: primaryData,
-          color: "#CC91EA",
+          color: seriesColor(theme, 0),
         },
         {
           name: barSeriesName,
           type: "column",
           data: trafficData,
-          color: isDark ? "#3f3f46" : "#F0ECFF",
+          color: theme.palette.border.default,
         },
       ],
       options: {
@@ -130,7 +131,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           type: "line",
           stacked: false,
           background: "transparent",
-          foreColor: isDark ? "#a1a1aa" : undefined,
+          foreColor: theme.palette.text.secondary,
           toolbar: {
             show: false,
           },
@@ -175,7 +176,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           intersect: false,
         },
         grid: {
-          borderColor: isDark ? "#27272a" : undefined,
+          borderColor: theme.palette.divider,
         },
         legend: {
           position: "top",
@@ -183,7 +184,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
         },
       },
     };
-  }, [graphData?.result, isDark, chartId]);
+  }, [graphData?.result, isDark, theme, chartId]);
 
   return (
     <Box sx={{ paddingY: 1, height: "100%", overflow: "hidden" }}>

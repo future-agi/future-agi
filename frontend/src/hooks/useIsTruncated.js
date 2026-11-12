@@ -21,7 +21,20 @@ export default function useIsTruncated(text) {
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
-    return () => observer.disconnect();
+
+    // A web font can change text width without resizing its fixed-width box.
+    const fonts = node.ownerDocument.fonts;
+    let active = true;
+    fonts?.ready?.then(() => {
+      if (active) measure();
+    });
+    fonts?.addEventListener?.("loadingdone", measure);
+
+    return () => {
+      active = false;
+      observer.disconnect();
+      fonts?.removeEventListener?.("loadingdone", measure);
+    };
   }, [measure, node, text]);
 
   return [setNode, isTruncated];

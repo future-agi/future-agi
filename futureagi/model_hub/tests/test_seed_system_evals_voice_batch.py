@@ -1,27 +1,19 @@
 """Voice-agent system evals (eval_id 209-218) load through the seeder with a
-well-formed judge contract, and tag additions survive the catalog override.
+well-formed judge contract and the tags written in their YAML.
 
 A voice agent's conversation can arrive as audio or transcript; these evals use
 the existing Audio chip rather than a separate Voice tag.
 
-The seeder replaces a YAML's ``eval_tags`` with the entry in
-``evaluations/catalog/system_evals.yaml`` whenever the eval name is listed
-there, so a tag added only to the YAML of a catalog-listed eval is silently
-dropped at seed time. The override tests pin that the tags land in both.
-
-The ten are also catalog entries, which is what makes the environments harness
-offer them; the last tests check that without a database.
+The ten set ``offered_in_environments``, which is what makes the environments
+harness offer them; the last tests check that without a database.
 """
 
 import re
 from pathlib import Path
 
 import pytest
-import yaml
 
 from model_hub.management.commands.seed_system_evals import (
-    CATALOG_YAML,
-    SYSTEM_EVALS_DIR,
     _yaml_to_template_fields,
     load_yaml_evals,
 )
@@ -104,7 +96,7 @@ def test_output_contract(evals_by_name, name):
         ("tool_call_accuracy", "Tools"),
     ],
 )
-def test_tag_additions_survive_catalog_override(evals_by_name, name, tag):
+def test_tag_additions_are_kept(evals_by_name, name, tag):
     assert tag in evals_by_name[name]["eval_tags"]
 
 
@@ -115,33 +107,17 @@ def test_every_new_eval_tag_has_a_filter_chip(evals_by_name):
         assert not missing, f"{name}: tags without a filter chip: {missing}"
 
 
-# --- Environments: the catalog lists them, the harness offers them -------------
-
-
-@pytest.fixture(scope="module")
-def catalog():
-    return yaml.safe_load(Path(CATALOG_YAML).read_text()) or {}
+# --- Environments: their YAML offers them, the harness offers them -----------
 
 
 @pytest.mark.parametrize("name", sorted(NEW_EVALS.values()))
-def test_catalog_entry_mirrors_the_legacy_yaml(catalog, name):
-    """The catalog is what the environments harness offers from and where the
-    seeder takes tags from, so each entry must match its legacy YAML."""
-    legacy = yaml.safe_load(
-        (Path(SYSTEM_EVALS_DIR) / "agent" / f"{name}.yaml").read_text()
-    )
-    entry = catalog[name]
-    assert entry["eval_type"] == "agent"
-    assert entry["output"] == legacy["config"]["output"]
-    assert entry["required_keys"] == legacy["config"]["required_keys"]
-    assert entry["tags"] == legacy["eval_tags"]
-    assert entry["description"] == legacy["description"]
-    assert entry["rule_prompt"] == legacy["config"]["rule_prompt"]
+def test_yaml_offers_the_eval_to_environments(evals_by_name, name):
+    assert evals_by_name[name]["offered_in_environments"] is True
 
 
 @pytest.mark.parametrize("name", sorted(NEW_EVALS.values()))
 def test_offered_to_the_right_agent_kinds(evals_by_name, name):
-    """Built from the seeded fields (catalog tags merged), without a database."""
+    """Built from the seeded fields, without a database."""
     e = evals_by_name[name]
     template = EvalTemplate(
         name=name, config=e["config"], eval_tags=list(e["eval_tags"]), owner="system"

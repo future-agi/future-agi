@@ -44,7 +44,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
       <AccordionSummary
         sx={{
           fontSize: "16px",
-          fontWeight: "bold",
+          fontWeight: "600",
           color: "grey",
         }}
       >
@@ -63,7 +63,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
             zIndex: 1,
           }}
         >
-          <Iconify icon="tabler:copy" color="grey" width={18} />
+          <Iconify icon="solar:copy-linear" color="grey" width={20} />
         </IconButton>
         All Attributes
       </AccordionSummary>
@@ -72,7 +72,7 @@ const BottomAttributesTab = ({ observationSpan, isLoading, sx = {} }) => {
         <Box
           sx={{
             backgroundColor: "background.paper",
-            fontSize: "14px",
+            fontSize: "13px",
             whiteSpace: "pre-wrap",
             maxHeight: "72vh",
             overflow: "auto",

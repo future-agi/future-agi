@@ -6,7 +6,6 @@ import {
   IconButton,
   Box,
   Button,
-  CircularProgress,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useEffect, useMemo } from "react";
@@ -24,6 +23,8 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { useGetGraphDataset } from "../../../../api/agent-playground/agent-playground";
 import EmptyVariable from "src/components/VariableDrawer/EmptyVariable";
 import { escapeModelKey } from "src/sections/develop-detail/Experiment/utils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Dummy API call for uploading JSON - replace with actual endpoint
 const uploadGlobalVariablesJson = async (file) => {
@@ -308,7 +309,7 @@ export default function GlobalVariableDrawer({ open, onClose }) {
             height: 200,
           }}
         >
-          <CircularProgress size={24} />
+          <ContentSkeleton variant="panel" />
         </Box>
       );
     }
@@ -349,15 +350,17 @@ export default function GlobalVariableDrawer({ open, onClose }) {
     }
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          boxShadow: "none !important",
+          boxShadow: "none",
           borderRadius: "0px !important",
           borderLeft: "1px solid",
           borderColor: "divider",
@@ -439,7 +442,6 @@ export default function GlobalVariableDrawer({ open, onClose }) {
             variant="contained"
             color="error"
             onClick={confirmClose}
-            sx={{ paddingX: "24px" }}
           >
             Discard Changes
           </Button>

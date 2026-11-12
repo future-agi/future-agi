@@ -66,10 +66,7 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 			return pipeline.ResultError(err)
 		}
 
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
+		input := checkInput(rc, false)
 
 		result := p.engine.RunPre(ctx, input, keyPolicy, reqPolicy)
 		pluginResult := p.processResult(rc, result)
@@ -91,16 +88,16 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 			return pipeline.ResultError(err)
 		}
 
-		input := &CheckInput{
-			Request:  rc.Request,
-			Response: rc.Response,
-			Metadata: rc.Metadata,
-		}
+		input := checkInput(rc, true)
 
 		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
 
 		if result.Blocked {
-			rc.Response = nil
+			// The content goes; the usage stays. The upstream billed the
+			// request, so cost, budgets and credits must still count it.
+			if rc.Response != nil {
+				rc.Response = &models.ChatCompletionResponse{Model: rc.Response.Model, Usage: rc.Response.Usage}
+			}
 			rc.Flags.GuardrailTriggered = true
 			if len(result.Triggered) > 0 {
 				tg := result.Triggered[0]
@@ -173,13 +170,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 
 		// Build input.
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
-		if stage == StagePost {
-			input.Response = rc.Response
-		}
+		input := checkInput(rc, stage == StagePost)
 
 		// Run with timeout and panic recovery.
 		cr := p.runGuardrailSafe(ctx, g, input, timeout)
@@ -235,6 +226,27 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// checkInput is what a guardrail checks. On a route that forwards the client's
+// own body, Request is nil and Response holds usage only; the handler puts the
+// text in GuardrailRequest and GuardrailResponse instead.
+//
+// A guardrail that rewrites content, as PII redaction does, rewrites Request,
+// which is what the gateway sends upstream. On those routes it rewrites a
+// copy, so it finds and reports what it would remove but cannot remove it.
+func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
+	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
+	if input.Request == nil {
+		input.Request = rc.GuardrailRequest
+	}
+	if withResponse {
+		input.Response = rc.Response
+		if rc.GuardrailResponse != nil {
+			input.Response = rc.GuardrailResponse
+		}
+	}
+	return input
 }
 
 // getGuardrail resolves a guardrail implementation by name.

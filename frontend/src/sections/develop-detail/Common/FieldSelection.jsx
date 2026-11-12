@@ -1,4 +1,4 @@
-import { Box, Checkbox, TextField, Typography, useTheme } from "@mui/material";
+import { Box, Checkbox, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useController } from "react-hook-form";
@@ -82,7 +82,7 @@ const FieldSelection = ({
         sx={{
           display: "flex",
           gap: 1.5,
-          alignItems: "flex-start",
+          alignItems: "center",
           justifyContent: "space-between",
           width: rest?.module === "task" ? "700px" : "100%",
         }}
@@ -92,22 +92,6 @@ const FieldSelection = ({
             <Checkbox
               checked={isChecked}
               onChange={handleCheckbox}
-              icon={
-                <Iconify
-                  icon="system-uicons:checkbox-empty"
-                  color="action.selected"
-                  width="24px"
-                  height="24px"
-                />
-              }
-              checkedIcon={
-                <Iconify
-                  icon="famicons:checkbox"
-                  color="primary.light"
-                  width="24px"
-                  height="24px"
-                />
-              }
               sx={{
                 padding: 1,
                 color: "divider",
@@ -130,73 +114,41 @@ const FieldSelection = ({
               ],
             }}
           >
+            {/* The source column is a name, not an input: plain text on
+                the row's line, with a lock when it can't be unticked. */}
             <Box
               sx={{
-                width: theme.spacing(21.125),
+                width: theme.spacing(21),
+                height: 32,
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                minWidth: 0,
+                color: check && !isChecked ? "text.disabled" : "text.primary",
               }}
             >
-              <TextField
-                value={field}
-                InputProps={{
-                  readOnly: true,
-                  endAdornment: check ? (
-                    ""
-                  ) : (
-                    <Iconify
-                      icon="material-symbols:lock-outline"
-                      color="text.secondary"
-                      sx={{
-                        width: theme.spacing(3),
-                        height: theme.spacing(3),
-                      }}
-                    />
-                  ),
-                }}
-                size="small"
-                sx={{
-                  width: "100%",
-                  input: { color: "text.primary", textOverflow: "ellipsis" },
-                  "& .MuiOutlinedInput-notchedOutline": {
-                    borderColor: isChecked
-                      ? theme.palette.text.disabled
-                      : theme.palette.divider,
-                  },
-                  "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
-                    {
-                      borderColor: isChecked
-                        ? theme.palette.text.disabled
-                        : theme.palette.divider,
-                    },
-                  "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline":
-                    {
-                      borderColor: isChecked
-                        ? theme.palette.text.disabled
-                        : theme.palette.divider,
-                    },
-                  ...(isChecked && {
-                    boxShadow: `inset 0 0 0 1px ${theme.palette.text.disabled}`,
-                    borderRadius: "4px",
-                  }),
-                  ...(!isChecked && {
-                    pointerEvents: "none",
-                  }),
-                }}
-              />
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontWeight: 500, color: "inherit", minWidth: 0 }}
+              >
+                {field}
+              </Typography>
+              {!check && (
+                <Iconify
+                  icon="solar:lock-linear"
+                  width={14}
+                  sx={{ color: "text.disabled", flexShrink: 0 }}
+                />
+              )}
             </Box>
           </CustomTooltip>
           <ShowComponent condition={!rest?.hideFieldColumns}>
-            <svg
-              width="89"
-              height="8"
-              viewBox="0 0 89 8"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M0.533333 4C0.533333 5.91459 2.08541 7.46667 4 7.46667C5.91459 7.46667 7.46667 5.91459 7.46667 4C7.46667 2.08541 5.91459 0.533333 4 0.533333C2.08541 0.533333 0.533333 2.08541 0.533333 4ZM89 4L82.5 0.247223V7.75278L89 4ZM4 4V4.65H83.15V4V3.35H4V4Z"
-                fill="var(--border-light)"
-              />
-            </svg>
+            <Iconify
+              icon="solar:arrow-right-linear"
+              width={16}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
           </ShowComponent>
         </Box>
         <ShowComponent condition={!rest?.hideFieldColumns}>
@@ -215,38 +167,11 @@ const FieldSelection = ({
                 control={control}
                 fullWidth
                 size="small"
-                label="column"
-                placeholder="Enter a column Name"
+                placeholder="Column name"
                 sx={{
-                  "& .MuiOutlinedInput-root": {
-                    ...(isChecked && {
-                      boxShadow: `inset 0 0 0 1px ${theme.palette.text.disabled}`,
-                      borderRadius: "4px",
-                    }),
-                  },
                   "& .MuiOutlinedInput-notchedOutline": {
-                    borderColor: error
-                      ? "error.main"
-                      : isChecked
-                        ? theme.palette.text.disabled
-                        : theme.palette.divider,
+                    borderColor: error ? "error.main" : "divider",
                   },
-                  "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
-                    {
-                      borderColor: error
-                        ? "error.main"
-                        : isChecked
-                          ? theme.palette.text.disabled
-                          : theme.palette.divider,
-                    },
-                  "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline":
-                    {
-                      borderColor: error
-                        ? "error.main"
-                        : isChecked
-                          ? theme.palette.text.disabled
-                          : theme.palette.divider,
-                    },
                 }}
               />
             ) : (

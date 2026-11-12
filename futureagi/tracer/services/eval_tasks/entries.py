@@ -15,11 +15,13 @@ from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from django.db import transaction
 from django.utils import timezone
 
 from tracer.models.eval_task import RowType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
+from tracer.queries.eval_clustering import retire_eval_memberships
 from tracer.selectors.eval_tasks.row_resolver import (
     EvalTaskSelectionRejected,
     TraceFilterWitness,
@@ -29,8 +31,12 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+logger = structlog.get_logger(__name__)
 
 _TARGET_TYPE = {
     RowType.SPANS: EvalTargetType.SPAN,
@@ -324,10 +330,24 @@ def _iter_materialize_batches(row_ids: Iterable[str]) -> Iterator[list[str]]:
         yield batch
 
 
+def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
+    """Soft-delete eval results. Every EvalLogger delete goes through here.
+
+    Their Error Feed memberships are retired in the same transaction, so an
+    issue never keeps a trace whose eval no longer exists. Returns the count.
+    """
+    with transaction.atomic():
+        # Eval rows first, then the issues (as clustering does): a clustering
+        # run that holds a row finishes its membership before this retires it.
+        list(results.select_for_update(of=("self",)).values_list("id", flat=True))
+        retire_eval_memberships(results)
+        return results.update(deleted=True, deleted_at=timezone.now())
+
+
 def soft_delete_live(task: EvalTask) -> int:
     """Soft-delete every live entry of the task (Delete & rerun). Returns count."""
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).update(
-        deleted=True, deleted_at=timezone.now()
+    return soft_delete_eval_results(
+        EvalLogger.objects.filter(eval_task_id=str(task.id))
     )
 
 
@@ -398,7 +418,27 @@ def mark_terminal(
     epoch = epoch if epoch is not None else _engine_entry_epoch.get()
     if epoch is not None:
         fence["updated_at"] = epoch
-    return EvalLogger.objects.filter(**fence).update(**fields) > 0
+    landed = EvalLogger.objects.filter(**fence).update(**fields) > 0
+    if landed:
+        _record_instant_answer(entry.id, entry.eval_task_id)
+    return landed
+
+
+def _record_instant_answer(entry_id, task_id) -> None:
+    """Instant eval keeps each row's answer in a narrow table of its own (see
+    ``instant_eval_answers``); copy this one over. Every other eval task's
+    entry costs no SQL here. Never fails the entry: a missed copy is caught
+    up when the run finishes."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answer
+
+    try:
+        if not task_id or not is_instant_task(task_id):
+            return
+        # A savepoint, so a failed copy can't break a surrounding transaction.
+        with transaction.atomic():
+            record_answer(entry_id)
+    except Exception:
+        logger.warning("instant_eval_answer_copy_failed", exc_info=True)
 
 
 def _resolve_entry_fks(

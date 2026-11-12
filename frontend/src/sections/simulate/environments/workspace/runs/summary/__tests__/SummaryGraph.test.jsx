@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render as baseRender } from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 // Capture what the graph hands ApexCharts — jsdom can't lay the chart out.
 const chartProps = vi.fn();
@@ -12,12 +13,19 @@ vi.mock("react-apexcharts", () => ({
 
 const { default: SummaryGraph } = await import("../SummaryGraph");
 
+// The graph reads its series colours from the theme's data palette by index.
+const theme = createTheme({
+  palette: { data: ["#16A34A", "#7857FC", "#2563EB"] },
+});
+const render = (ui) =>
+  baseRender(<ThemeProvider theme={theme}>{ui}</ThemeProvider>);
+
 const SERIES = [
-  { id: "task", name: "Task success", color: "#16A34A", data: [40, 80] },
+  { id: "task", name: "Task success", colorIndex: 0, data: [40, 80] },
   {
     id: "policy",
     name: "Policy adherence",
-    color: "#7857FC",
+    colorIndex: 1,
     data: [60, null],
   },
 ];
@@ -57,9 +65,9 @@ describe("SummaryGraph", () => {
 
   it("dashes lines that sit exactly on top of each other so each colour shows", () => {
     const same = [
-      { id: "a", name: "A", color: "#16A34A", data: [100, 100] },
-      { id: "b", name: "B", color: "#7857FC", data: [60, 70] },
-      { id: "c", name: "C", color: "#2563EB", data: [100, 100] },
+      { id: "a", name: "A", colorIndex: 0, data: [100, 100] },
+      { id: "b", name: "B", colorIndex: 1, data: [60, 70] },
+      { id: "c", name: "C", colorIndex: 2, data: [100, 100] },
     ];
     render(<SummaryGraph categories={["Run 1", "Run 2"]} series={same} />);
 
@@ -110,8 +118,8 @@ describe("SummaryGraph", () => {
   // run has no points to anchor to, while swapping in the new run's text.
   it("hides the tooltip over a run with no scores instead of leaving it on the last run", () => {
     const gappy = [
-      { id: "a", name: "A", color: "#16A34A", data: [40, null, 80] },
-      { id: "b", name: "B", color: "#7857FC", data: [60, null, null] },
+      { id: "a", name: "A", colorIndex: 0, data: [40, null, 80] },
+      { id: "b", name: "B", colorIndex: 1, data: [60, null, null] },
     ];
     render(
       <SummaryGraph categories={["Run 1", "Run 2", "Run 3"]} series={gappy} />,

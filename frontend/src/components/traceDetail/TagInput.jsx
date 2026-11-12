@@ -92,8 +92,7 @@ const TagInput = ({
             bgcolor: previewColor,
             cursor: "pointer",
             flexShrink: 0,
-            transition: "transform 100ms, background-color 150ms",
-            "&:hover": { transform: "scale(1.3)" },
+            transition: "background-color 150ms",
           }}
         />
         <Box
@@ -130,7 +129,10 @@ const TagInput = ({
               "&:hover": { opacity: 0.7 },
             }}
           >
-            <Iconify icon="mdi:keyboard-return" width={compact ? 12 : 14} />
+            <Iconify
+              icon="solar:arrow-left-down-linear"
+              width={compact ? 12 : 14}
+            />
           </Box>
         )}
       </Box>
@@ -152,8 +154,7 @@ const TagInput = ({
                 border: "2px solid",
                 borderColor:
                   c === previewColor ? "text.primary" : "transparent",
-                transition: "transform 100ms, border-color 100ms",
-                "&:hover": { transform: "scale(1.2)" },
+                transition: "border-color 120ms",
               }}
             />
           ))}

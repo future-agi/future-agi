@@ -1,5 +1,6 @@
+import SelectionBar from "src/components/selection-bar";
 import React, { useState, useRef } from "react";
-import { Box, Button, Drawer, Typography } from "@mui/material";
+import { Box, Button, Drawer } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
@@ -12,6 +13,7 @@ import DrawerHeaderbar from "./DrawerHeaderbar";
 import VariablesTable from "./Variables/VariablesTable";
 import NoVariables from "./Variables/NoVariables";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const Variables = (props) => {
   const {
@@ -109,6 +111,7 @@ const Variables = (props) => {
 
   useBeforeUnload(isPending);
 
+  const covered = useDrawerCovered(open);
   return (
     <Box
       sx={{
@@ -133,89 +136,42 @@ const Variables = (props) => {
               }}
             >
               {selected?.length > 0 ? (
-                <Box
-                  sx={{
-                    padding: "6px 16px",
-                    gap: "16px",
-                    borderRadius: "8px",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    display: "flex",
-                  }}
-                >
-                  <Typography
-                    sx={{
-                      fontSize: "14px",
-                      fontWeight: 500,
-                      lineHeight: "22px",
-                      color: "rgba(120, 87, 252, 1)",
-                      paddingRight: "16px",
-                      borderRight: "2px solid",
-                      borderRightColor: "divider",
-                    }}
-                  >
-                    {selected?.length || 0} Selected
-                  </Typography>
-                  <Typography
-                    sx={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "text.secondary",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "5px",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => setOpenDelete(true)}
-                  >
-                    <Iconify icon="solar:trash-bin-trash-bold" />
-                    Delete
-                  </Typography>
-
-                  <Typography
-                    sx={{
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "text.secondary",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => onSelectionChanged(null)}
-                  >
-                    Cancel
-                  </Typography>
-                </Box>
+                <SelectionBar
+                  count={selected.length}
+                  onCancel={() => onSelectionChanged(null)}
+                  actions={[
+                    {
+                      label: "Delete",
+                      icon: "solar:trash-bin-trash-linear",
+                      onClick: () => setOpenDelete(true),
+                    },
+                  ]}
+                />
               ) : (
                 <Box sx={{ display: "flex", gap: "10px" }}>
                   <LoadingButton
-                    startIcon={<Iconify icon="mingcute:pencil-2-ai-line" />}
+                    startIcon={<Iconify icon="solar:pen-linear" />}
                     loading={isPending}
                     disabled={isPending}
                     onClick={generateData}
                     sx={{
-                      fontSize: 12,
-                      fontWeight: 600,
                       paddingLeft: 2,
                       paddingRight: 2,
                       fontFamily: "IBM Plex Sans, sans-serif",
-                      color: "#A792FD",
-                      backgroundColor: "rgba(120, 87, 252, 0.16)",
+                      color: "primary.main",
+                      backgroundColor: "action.selected",
                       boxShadow: "none",
-                      borderRadius: "10px",
                       lineHeight: 1,
                       "&:hover": {
-                        backgroundColor: "rgba(120, 87, 252, 0.32)",
+                        backgroundColor: "action.hover",
                         boxShadow: "none",
                       },
                       "&:active": {
                         boxShadow: "none",
                       },
                       "&.Mui-disabled": {
-                        backgroundColor: "rgba(0, 0, 0, 0.12)",
+                        backgroundColor: "action.disabledBackground",
                       },
-                      textTransform: "none",
                     }}
                   >
                     Generate Data
@@ -262,14 +218,15 @@ const Variables = (props) => {
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setOpen(false)}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "700px",
+            width: "640px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}

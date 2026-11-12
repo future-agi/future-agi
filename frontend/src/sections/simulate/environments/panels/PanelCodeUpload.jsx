@@ -1,16 +1,19 @@
 import PropTypes from "prop-types";
 import { useReducer, useRef } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fData } from "src/utils/format-number";
-import { uploadHarnessSource } from "src/api/harness/harness";
-import { prepareSourceFolder } from "src/pages/dashboard/harness/sourceUpload";
+import {
+  prepareSourceFolder,
+  uploadErrorText,
+  uploadSourceFolder,
+} from "src/pages/dashboard/harness/sourceUpload";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Field from "../components/Field";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
 import ScenarioCount from "./ScenarioCount";
+import ObservabilityChoice from "./ObservabilityChoice";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
@@ -26,6 +29,7 @@ const initial = {
   egress: "",
   secretFiles: [],
   scenarioCount: DEFAULT_SCENARIOS,
+  observabilityEnabled: false,
   summary: null, // { fileCount, totalBytes, excluded } from the upload response
   archiveArtifactId: null,
   uploading: false,
@@ -71,7 +75,7 @@ function reducer(s, a) {
 // Hidden folder picker reused by both the empty drop zone and the Replace
 // button. webkitdirectory/directory are spread via Box (a raw <input> trips
 // react/no-unknown-property), matching the product's HarnessCreate.
-function FolderInput({ onPick }) {
+export function FolderInput({ onPick }) {
   return (
     <Box
       component="input"
@@ -112,6 +116,7 @@ export default function PanelCodeUpload() {
     egress,
     secretFiles,
     scenarioCount,
+    observabilityEnabled,
     summary,
     archiveArtifactId,
     uploading,
@@ -141,6 +146,7 @@ export default function PanelCodeUpload() {
     egress: egress.trim() || null,
     secretFiles,
     scenarioCount: Number(scenarioCount) || undefined,
+    observabilityEnabled,
   });
 
   const onDrop = async (list) => {
@@ -160,17 +166,9 @@ export default function PanelCodeUpload() {
       fileNames: prepared.paths,
     });
 
-    const formData = new FormData();
-    prepared.files.forEach((file, i) => {
-      formData.append("files", file, file.name);
-      formData.append("paths", prepared.paths[i]);
-    });
-    formData.append("name", prepared.name);
     try {
-      const result = await uploadHarnessSource(formData, (evt) => {
-        if (seq === uploadSeq.current && evt?.total) {
-          dispatch({ type: "progress", value: Math.round((evt.loaded / evt.total) * 100) });
-        }
+      const result = await uploadSourceFolder(prepared, (value) => {
+        if (seq === uploadSeq.current) dispatch({ type: "progress", value });
       });
       if (seq !== uploadSeq.current) return;
       dispatch({
@@ -185,32 +183,30 @@ export default function PanelCodeUpload() {
       });
     } catch (e) {
       if (seq !== uploadSeq.current) return;
-      // A 400 here is almost always the runner's per-request field-count limit
-      // (each file sends two fields), so name that cause instead of a generic error.
-      // The axios interceptor exposes the status as `statusCode` (not response.status).
-      const status = e?.statusCode ?? e?.response?.status;
-      const message = status === 400 ? CODE_UPLOAD_COPY.tooManyFiles : errorMessage(e);
-      dispatch({ type: "uploadFail", message });
+      dispatch({
+        type: "uploadFail",
+        message: uploadErrorText(e, errorMessage),
+      });
     }
   };
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       {!chosen ? (
         <Box
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); if (e.dataTransfer?.files) onDrop(e.dataTransfer.files); }}
           sx={{
             border: "1px dashed",
-            borderColor: (th) => th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.25) : th.palette.divider,
-            borderRadius: 1.5,
-            bgcolor: (th) => alpha(th.palette.text.primary, 0.02),
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
             p: 3,
             textAlign: "center",
           }}
         >
           <Iconify icon="solar:cloud-upload-linear" width={28} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mt: 1 }}>
+          <Typography sx={{ typography: "s1_2", fontWeight: 500, mt: 1 }}>
             {CODE_UPLOAD_COPY.title}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
@@ -220,7 +216,7 @@ export default function PanelCodeUpload() {
             component="label"
             size="small"
             variant="outlined"
-            sx={{ mt: 1.5, typography: "s2", fontWeight: "fontWeightBold" }}
+            sx={{ mt: 1.5 }}
           >
             {CODE_UPLOAD_COPY.choose}
             <FolderInput onPick={onDrop} />
@@ -233,15 +229,15 @@ export default function PanelCodeUpload() {
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1.5,
-            bgcolor: (th) => alpha(th.palette.text.primary, 0.02),
-            p: 1.75,
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
+            p: 1.5,
           }}
         >
           <Stack direction="row" alignItems="center" spacing={1.5}>
             <Iconify icon="solar:folder-with-files-bold" width={24} sx={{ color: "text.subtitle", flexShrink: 0 }} />
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }} noWrap>
+              <Typography sx={{ typography: "s1_2", fontWeight: 500 }} noWrap>
                 {summary?.name || folderName || CODE_UPLOAD_COPY.title}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }} noWrap>
@@ -253,7 +249,7 @@ export default function PanelCodeUpload() {
               size="small"
               color="inherit"
               disabled={uploading}
-              sx={{ flexShrink: 0, typography: "s2", fontWeight: "fontWeightBold" }}
+              sx={{ flexShrink: 0 }}
             >
               {CODE_UPLOAD_COPY.replace}
               <FolderInput onPick={onDrop} />
@@ -270,7 +266,7 @@ export default function PanelCodeUpload() {
       )}
 
       {error && (
-        <Typography sx={{ typography: "s3" }} color="error.main">
+        <Typography sx={{ typography: "s3", color: "status.danger.fg" }}>
           {error}
         </Typography>
       )}
@@ -290,6 +286,7 @@ export default function PanelCodeUpload() {
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
+      <ObservabilityChoice checked={observabilityEnabled} onChange={set("observabilityEnabled")} />
       <ParallelismField
         value={build.parallelism}
         input={build.parallelismInput}

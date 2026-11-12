@@ -22,7 +22,11 @@ from typing import Any
 
 from django.conf import settings
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
+    eval_logger_source,
+    latest_completed_eval_rows,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
@@ -149,6 +153,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         bounded_identity_only: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -161,6 +166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self._annotation_label_set_known = annotation_label_ids is not None
         self.annotation_label_ids = annotation_label_ids or []
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self._bounded_internal_scan = bool(bounded_internal_scan)
         self._bounded_identity_only = bool(bounded_identity_only)
         if (bounded_sampling_salt is None) != (bounded_sampling_rate is None):
@@ -247,6 +253,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 self.annotation_label_ids if self._annotation_label_set_known else None
             ),
             eval_filter_metadata=self.eval_filter_metadata,
+            eval_count_mode=self.eval_count_mode,
             # The voice wrapper is normally an internal trace-selector proxy.
             # Candidate-witness capability checks must retain the public list
             # planning contract, otherwise the trace builder intentionally
@@ -946,6 +953,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1018,6 +1026,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1157,6 +1166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching voice calls."""
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1216,8 +1226,15 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
-        """Build eval-scores query for a page of trace IDs."""
+        """Build eval-scores query for a page of trace IDs.
+
+        ``count_mode`` adds the exact pass/fail counts and target type the
+        call-log count tiles read, counting each span once by its newest
+        completed result, as the Observe trace list does.
+        """
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
@@ -1229,7 +1246,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         table, _ = self._EVAL_LOGGER_SOURCE()
         is_v2 = table.endswith("_v2")
         version = "_version" if is_v2 else "_peerdb_version"
-        status_aggregate = "'completed'" if is_v2 else f"argMax(status, {version})"
+        status_aggregate = (
+            "'completed'" if is_v2 else f"argMax(tuple(status), {version}).1"
+        )
         skipped_reason_aggregate = (
             "CAST(NULL AS Nullable(String))"
             if is_v2
@@ -1240,7 +1259,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             if is_v2
             else (
                 f"greatest(argMax(_peerdb_is_deleted, {version}), "
-                f"coalesce(argMax(deleted, {version}), 0))"
+                f"coalesce(argMax(tuple(deleted), {version}).1, 0))"
             )
         )
 
@@ -1257,36 +1276,24 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # trace_id, eval_config_id, avg_score, pass_rate, success_count,
         # error_count, eval_count, str_lists — new per-status columns are
         # appended after ``str_lists`` so the pivot's positional fallbacks hold.
-        query = f"""
-        SELECT
-            latest_trace_id AS trace_id,
-            toString(latest_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
-            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                latest_output_float,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN latest_output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                latest_error = 1 OR ifNull(latest_output_str, '') = 'ERROR' OR latest_status = 'errored'
-            ) AS error_count,
-            count() AS eval_count,
-            groupArrayIf(
-                latest_output_str_list,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists,
-            countIf(latest_status = 'skipped') AS skipped_count,
-            countIf(latest_status = 'running') AS running_count,
-            countIf(latest_status = 'pending') AS pending_count,
-            anyIf(latest_skipped_reason, latest_status = 'skipped') AS skipped_reason
-        FROM (
+        completed = (
+            "latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' "
+            "AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+        )
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            count_projection = f"""
+            , countIf(if(isNull(latest_output_bool), latest_output_float >= 0.5, latest_output_bool = 1) AND {completed}) AS pass_count
+            , countIf(if(isNull(latest_output_bool), latest_output_float < 0.5, latest_output_bool = 0) AND {completed}) AS fail_count
+            , argMax(latest_target_type, latest_created_at) AS target_type
+            """
+            count_inner_projection = f""",
+                argMax(observation_span_id, {version}) AS latest_observation_span_id,
+                argMax(created_at, {version}) AS latest_created_at,
+                argMax(target_type, {version}) AS latest_target_type"""
+
+        collapsed = f"""(
             SELECT
                 id AS grouped_eval_id,
                 argMax(trace_id, {version}) AS latest_trace_id,
@@ -1298,13 +1305,55 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 argMax(error, {version}) AS latest_error,
                 {status_aggregate} AS latest_status,
                 {skipped_reason_aggregate} AS latest_skipped_reason,
-                {deleted_aggregate} AS latest_is_deleted
+                {deleted_aggregate} AS latest_is_deleted{count_inner_projection}
             FROM {table}
             PREWHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(eval_config_ids)s
             GROUP BY id
-        ) AS latest_voice_evals
-        WHERE latest_is_deleted = 0
+        )"""
+        if count_mode:
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                "latest_is_deleted = 0",
+                "latest_trace_id, latest_eval_config_id, latest_observation_span_id",
+                completed_predicate=completed,
+                newest_first="latest_created_at DESC, toString(grouped_eval_id) DESC",
+            )
+        else:
+            eval_source = f"""{collapsed} AS latest_voice_evals
+        WHERE latest_is_deleted = 0"""
+
+        query = f"""
+        SELECT
+            latest_trace_id AS trace_id,
+            toString(latest_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
+            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                latest_output_float,
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN latest_output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                latest_error = 1 OR ifNull(latest_output_str, '') = 'ERROR' OR latest_status = 'errored'
+            ) AS error_count,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array("latest_") if count_mode else "latest_output_str_list"},
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(latest_status = 'skipped') AS skipped_count,
+            countIf(latest_status = 'running') AS running_count,
+            countIf(latest_status = 'pending') AS pending_count,
+            anyIf(latest_skipped_reason, latest_status = 'skipped') AS skipped_reason
+            {count_projection}
+        FROM {eval_source}
         GROUP BY latest_trace_id, latest_eval_config_id
         ORDER BY latest_trace_id ASC, latest_eval_config_id ASC
         LIMIT 5001

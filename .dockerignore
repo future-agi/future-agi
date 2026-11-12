@@ -1,7 +1,7 @@
-# Root build context (docker-compose.dev.yml builds Dockerfile.oss with
-# `context: .`). futureagi/.dockerignore is NOT read for these builds — Docker
-# only reads <context>/.dockerignore — so every rule that matters there has to
-# be restated here.
+# Root build contexts (the distributed dev backend/simulation runner and
+# bin/e2e's backend overlay). futureagi/.dockerignore is NOT read here — Docker
+# reads <context>/.dockerignore unless a Dockerfile-specific ignore file
+# replaces it — so every rule that matters there has to be restated here.
 #
 # Patterns are relative to the context root, so a bare `.env` would only match
 # `/.env`. Secrets live under futureagi/, hence the `**/` prefixes throughout.
@@ -172,3 +172,7 @@ changelog/
 # build. The CE base image must not carry cloud code — Dockerfile.ee in the
 # private repo overlays it at runtime.
 futureagi/ee/cloud/
+
+# Private updater state contains complete retained env files (including secrets).
+# Keep this recursive exclusion LAST: later negations must not re-include it.
+**/.futureagi-updates/

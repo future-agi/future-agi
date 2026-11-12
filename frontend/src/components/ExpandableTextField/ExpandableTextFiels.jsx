@@ -17,6 +17,9 @@ import SvgColor from "../svg-color/svg-color";
 import _ from "lodash";
 import CustomTooltip from "src/components/tooltip";
 
+// Design system dialog widths: form 560, wide 720, data 960.
+const DIALOG_WIDTH = { xs: 560, sm: 720, md: 960, lg: 960 };
+
 const ExpandableTextField = ({
   children,
   fieldName,
@@ -103,8 +106,6 @@ const ExpandableTextField = ({
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                padding: "5px",
-                borderRadius: "4px",
                 bgcolor: "background.paper",
                 "&:hover": {
                   bgcolor: "background.paper",
@@ -128,10 +129,11 @@ const ExpandableTextField = ({
       <Dialog
         open={open}
         onClose={handleClose}
-        maxWidth={dialogMaxWidth}
+        maxWidth={false}
         fullWidth={fullWidth}
         PaperProps={{
           sx: {
+            maxWidth: DIALOG_WIDTH[dialogMaxWidth] || 960,
             p: 2,
             display: "flex",
             flexDirection: "column",
@@ -146,18 +148,10 @@ const ExpandableTextField = ({
             p: 0,
           }}
         >
-          <Typography
-            typography={"m3"}
-            fontWeight={"fontWeightBold"}
-            color={"text.primary"}
-          >
+          <Typography typography={"m3"} fontWeight={600} color={"text.primary"}>
             {dialogTitle}
           </Typography>
-          <IconButton
-            onClick={handleClose}
-            size="small"
-            sx={{ ml: 2, fontSize: "18px" }}
-          >
+          <IconButton onClick={handleClose} size="small" sx={{ ml: 2 }}>
             <SvgColor
               src="/assets/icons/ic_close.svg"
               sx={{

@@ -339,7 +339,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 network["allow_out"] = allow_out
         sandbox = _call(
             Sandbox.create,
-            template=self.template_reference,
+            template=spec.runtime_name or self.template_reference,
             timeout=spec.ttl_seconds,
             secure=True,
             allow_internet_access=True,

@@ -123,7 +123,7 @@ const CompareSection = ({
           <Typography
             color="text.primary"
             lineHeight={"22px"}
-            fontSize="14px"
+            fontSize="13px"
             fontWeight={600}
           >
             {traceData?.projectVersionName}
@@ -138,7 +138,7 @@ const CompareSection = ({
             display: "flex",
             flexDirection: "column",
             gap: "14px",
-            transition: isDragging ? "none" : "height 400ms ease-in-out",
+            transition: isDragging ? "none" : "height 200ms ease-in-out",
           }}
         >
           <Box
@@ -178,7 +178,7 @@ const CompareSection = ({
             onClick={toggleHeight}
           >
             <Iconify
-              icon="bi:arrows-collapse"
+              icon="solar:chevrons-down-up-linear"
               width={16}
               sx={{ color: "text.disabled" }}
             />
@@ -189,7 +189,7 @@ const CompareSection = ({
           <Typography
             color="text.primary"
             lineHeight={"22px"}
-            fontSize="14px"
+            fontSize="13px"
             fontWeight={500}
           >
             System Metrics:
@@ -204,7 +204,7 @@ const CompareSection = ({
                     sx={{ display: "flex", alignItems: "center", gap: "8px" }}
                   >
                     <Iconify
-                      icon="dashicons:money-alt"
+                      icon="solar:dollar-minimalistic-linear"
                       width="12px"
                       color="text.disabled"
                       sx={{ lineHeight: "18px" }}
@@ -216,12 +216,8 @@ const CompareSection = ({
                   backgroundColor: theme.palette.blue.o10,
                   borderColor: theme.palette.blue[200],
                   color: "text.primary",
-                  fontSize: "12px",
-                  fontWeight: "400",
                   lineHeight: "18px",
                   heigth: "22px",
-                  borderRadius: "8px",
-                  padding: "6px 0px",
                 }}
               />
             </Box>
@@ -246,12 +242,8 @@ const CompareSection = ({
                   backgroundColor: theme.palette.orange.o5,
                   borderColor: theme.palette.orange[200],
                   color: "text.primary",
-                  fontSize: "12px",
-                  fontWeight: "400",
                   lineHeight: "18px",
-                  borderRadius: "8px",
                   heigth: "22px",
-                  padding: "6px 0px",
                 }}
               />
             </Box>
@@ -288,7 +280,7 @@ const CompareSection = ({
               >
                 <Typography
                   color="text.primary"
-                  fontSize="14px"
+                  fontSize="13px"
                   lineHeight={"22px"}
                   fontWeight={500}
                 >
@@ -301,14 +293,14 @@ const CompareSection = ({
                     size="small"
                     variant="outlined"
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "13px",
                       borderRadius: "4px",
                       backgroundColor: isTraceOpen ? "divider" : "",
                     }}
                     onClick={() => toggleOpen("trace", !isTraceOpen)}
                     startIcon={
                       <Iconify
-                        icon="oui:apm-trace"
+                        icon="solar:routing-2-linear"
                         sx={{ color: "text.disabled", marginRight: "5px" }}
                         width={"13px"}
                       />
@@ -320,14 +312,14 @@ const CompareSection = ({
                     size="small"
                     variant="outlined"
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "13px",
                       borderRadius: "4px",
                       backgroundColor: isAnnotateOpen ? "divider" : "",
                     }}
                     onClick={() => toggleOpen("annotate", !isAnnotateOpen)}
                     startIcon={
                       <Iconify
-                        icon="line-md:star"
+                        icon="solar:star-linear"
                         sx={{ color: "text.disabled", marginRight: "5px" }}
                         width={"16px"}
                       />

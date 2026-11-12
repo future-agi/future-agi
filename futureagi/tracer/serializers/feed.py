@@ -319,10 +319,10 @@ class TracesAggregatesSerializer(serializers.Serializer):
     total_traces = serializers.IntegerField()
     failing_traces = serializers.IntegerField()
     passing_traces = serializers.IntegerField()
-    avg_score = serializers.FloatField()
+    avg_score = serializers.FloatField(allow_null=True)
     p50_latency = serializers.IntegerField()
     p95_latency = serializers.IntegerField()
-    avg_turns = serializers.FloatField()
+    avg_turns = serializers.FloatField(allow_null=True)
 
 
 class TracesListRowSerializer(serializers.Serializer):

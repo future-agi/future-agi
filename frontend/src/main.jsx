@@ -12,6 +12,7 @@ import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 
 import App from "./app";
+import { bootstrapSamlSession } from "./auth/saml-bootstrap";
 import { SplashScreen } from "./components/loading-screen";
 import {
   CellSelectionModule,
@@ -23,7 +24,11 @@ import {
   ServerSideRowModelModule,
   StatusBarModule,
 } from "ag-grid-enterprise";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import {
+  AllCommunityModule,
+  ModuleRegistry,
+  provideGlobalGridOptions,
+} from "ag-grid-community";
 
 ModuleRegistry.registerModules([
   AllCommunityModule,
@@ -36,6 +41,12 @@ ModuleRegistry.registerModules([
   ClipboardModule,
   CellSelectionModule,
 ]);
+
+// AG Grid's built-in pager says "Rows per page:", same as DataTablePagination.
+provideGlobalGridOptions(
+  { localeText: { pageSizeSelectorLabel: "Rows per page:" } },
+  "deep",
+);
 import { LicenseManager } from "ag-grid-enterprise";
 import {
   CURRENT_ENVIRONMENT,
@@ -243,6 +254,8 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 // ----------------------------------------------------------------------
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
+
+bootstrapSamlSession();
 
 root.render(
   <HelmetProvider>

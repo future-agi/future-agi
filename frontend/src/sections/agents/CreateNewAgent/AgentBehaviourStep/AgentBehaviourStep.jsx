@@ -71,11 +71,11 @@ const AgentBehaviourStep = ({ control }) => {
             </Typography>
             <Link
               href="https://docs.futureagi.com/docs/knowledge-base"
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="14px"
+              fontSize="13px"
               sx={{ textDecoration: "underline" }}
             >
               Learn more

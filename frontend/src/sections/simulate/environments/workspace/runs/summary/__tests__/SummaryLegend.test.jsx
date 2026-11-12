@@ -10,7 +10,7 @@ const EVALS = [
   "Lead qualification",
   "Tone",
   "Brevity",
-].map((name, i) => ({ id: `e${i}`, name, color: "#16A34A" }));
+].map((name, i) => ({ id: `e${i}`, name, colorIndex: 0 }));
 
 describe("SummaryLegend", () => {
   it("shows the first three evals and folds the rest into a +N more chip", () => {
@@ -56,7 +56,7 @@ describe("SummaryLegend", () => {
     const many = Array.from({ length: 25 }, (_, i) => ({
       id: `m${i}`,
       name: `Eval ${i}`,
-      color: "#16A34A",
+      colorIndex: 0,
     }));
     render(<SummaryLegend evals={many} onHighlight={vi.fn()} />);
 

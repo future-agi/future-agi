@@ -26,6 +26,7 @@ import { AddColumnApiCallChild } from "../AddColumnApiCall/AddColumnApiCall";
 import { zodResolver } from "@hookform/resolvers/zod";
 import _ from "lodash";
 import { transformParameterType } from "../../RunPrompt/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const FORM_COMPONENTS = {
   run_prompt: RunPromptForm,
@@ -239,18 +240,19 @@ const ConditionalNodeV2 = () => {
     staleTime: 0, // Consider data stale immediately
   });
 
+  const covered = useDrawerCovered(openConditionalNode);
   return (
     <Drawer
       anchor="right"
       open={openConditionalNode}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

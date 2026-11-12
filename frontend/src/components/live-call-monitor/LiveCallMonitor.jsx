@@ -25,8 +25,12 @@ import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
+import {
+  COVERED_DRAWER_SX,
+  useDrawerCovered,
+} from "src/hooks/use-drawer-stack";
 
-const DRAWER_WIDTH = 380;
+const DRAWER_WIDTH = 480;
 
 class LiveKitErrorBoundary extends Component {
   static propTypes = { children: PropTypes.node };
@@ -260,7 +264,7 @@ function RoomContent({ onDisconnected, callId }) {
                   alignItems: "center",
                   py: 2,
                   px: 1,
-                  borderRadius: 1,
+                  borderRadius: "8px",
                   bgcolor: p.isSpeaking ? `${color}.o10` : "background.neutral",
                   border: "1px solid",
                   borderColor: p.isSpeaking ? `${color}.300` : "divider",
@@ -277,16 +281,12 @@ function RoomContent({ onDisconnected, callId }) {
                     justifyContent: "center",
                     bgcolor: `${color}.o10`,
                     color: `${color}.500`,
-                    fontSize: 15,
-                    fontWeight: 700,
+                    fontSize: 13,
+                    fontWeight: 600,
                     border: "1.5px solid",
                     borderColor: p.isSpeaking ? `${color}.400` : `${color}.200`,
                     mb: 1,
                     transition: "all 0.2s ease",
-                    ...(p.isSpeaking && {
-                      boxShadow: (theme) =>
-                        `0 0 12px ${theme.palette[color]?.[500] || theme.palette.primary.main}40`,
-                    }),
                   }}
                 >
                   {initials}
@@ -362,8 +362,8 @@ function RoomContent({ onDisconnected, callId }) {
                   >
                     <Typography
                       typography="s3"
-                      fontWeight="fontWeightBold"
-                      color={isAgent ? "blue.500" : "orange.500"}
+                      fontWeight={600}
+                      color={isAgent ? "status.info.fg" : "status.warning.fg"}
                     >
                       {speakerName}
                     </Typography>
@@ -402,6 +402,7 @@ export default function LiveCallMonitor({ callId, open, onClose }) {
   const [error, setError] = useState(null);
   const [connected, setConnected] = useState(false);
   const abortControllerRef = useRef(null);
+  const covered = useDrawerCovered(open);
 
   const fetchToken = useCallback(async () => {
     if (!callId) return;
@@ -450,15 +451,12 @@ export default function LiveCallMonitor({ callId, open, onClose }) {
       anchor="right"
       open={open}
       onClose={handleClose}
+      sx={covered ? COVERED_DRAWER_SX : undefined}
       PaperProps={{
         sx: {
           width: DRAWER_WIDTH,
           bgcolor: "background.default",
           borderRadius: "0px !important",
-          boxShadow: (theme) =>
-            theme.palette.mode === "dark"
-              ? "-10px 0px 100px #00000055"
-              : "-10px 0px 100px #00000035",
         },
       }}
     >
@@ -479,33 +477,12 @@ export default function LiveCallMonitor({ callId, open, onClose }) {
         }}
       >
         <Stack direction="row" spacing={1} alignItems="center">
-          <Typography
-            typography="s1"
-            fontWeight="fontWeightBold"
-            color="text.primary"
-          >
+          <Typography typography="m3" fontWeight={600} color="text.primary">
             Live Call Monitor
           </Typography>
-          {connected && (
-            <Chip
-              label="LIVE"
-              size="small"
-              sx={{
-                height: 18,
-                fontSize: 10,
-                fontWeight: 700,
-                bgcolor: "red.o10",
-                color: "red.600",
-                "& .MuiChip-label": { px: 0.75 },
-              }}
-            />
-          )}
+          {connected && <Chip label="LIVE" size="small" color="error" />}
         </Stack>
-        <IconButton
-          size="small"
-          onClick={handleClose}
-          sx={{ width: 28, height: 28 }}
-        >
+        <IconButton size="small" onClick={handleClose}>
           <SvgColor
             src="/assets/icons/custom/lucide--x.svg"
             sx={{ width: 14, height: 14 }}
@@ -531,10 +508,10 @@ export default function LiveCallMonitor({ callId, open, onClose }) {
         )}
         {error && (
           <Box p={2}>
-            <Typography typography="s2" color="red.600" mb={1}>
+            <Typography typography="s2" color="status.danger.fg" mb={1}>
               {error}
             </Typography>
-            <Button size="small" onClick={fetchToken} sx={{ fontSize: 12 }}>
+            <Button size="small" onClick={fetchToken}>
               Retry
             </Button>
           </Box>
@@ -576,16 +553,12 @@ export default function LiveCallMonitor({ callId, open, onClose }) {
             size="small"
             onClick={handleClose}
             sx={{
-              borderRadius: 0.5,
-              py: 0.5,
-              fontWeight: 600,
-              fontSize: 12,
               color: "text.secondary",
               borderColor: "divider",
               "&:hover": {
-                borderColor: "red.300",
-                color: "red.600",
-                bgcolor: "red.o10",
+                borderColor: "status.danger.border",
+                color: "status.danger.fg",
+                bgcolor: "status.danger.bg",
               },
             }}
           >

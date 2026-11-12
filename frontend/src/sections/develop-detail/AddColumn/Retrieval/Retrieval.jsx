@@ -22,6 +22,7 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "src/components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -182,7 +183,7 @@ export const RetrievalChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Retrieval" : "Retrieval"}
           </Typography>
           <IconButton
@@ -192,7 +193,7 @@ export const RetrievalChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -286,10 +287,12 @@ const Retrieval = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(Boolean(openRetrieval));
   return (
     <Drawer
       anchor="right"
       open={Boolean(openRetrieval)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -297,8 +300,7 @@ const Retrieval = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

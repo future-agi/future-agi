@@ -12,11 +12,11 @@ const StyledSnackbarButton = styled(Button)(({ theme }) => ({
   background: "transparent",
   border: "none",
   padding: "7px 8px",
-  fontSize: "14px",
+  fontSize: "13px",
   fontWeight: 500,
   lineHeight: "22px",
   letterSpacing: "0.02em",
-  color: theme.palette.green[500],
+  color: theme.palette.status.success.fg,
   textDecoration: "underline",
   boxShadow: "none",
   "&:hover": {

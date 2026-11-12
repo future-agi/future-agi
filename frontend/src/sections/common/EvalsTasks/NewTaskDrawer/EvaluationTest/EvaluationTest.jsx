@@ -38,7 +38,7 @@ const EvaluationTest = () => {
           <Iconify
             icon="solar:info-circle-bold"
             color="text.disabled"
-            width={18}
+            width={20}
           />
           <Typography fontSize="13px" color="text.secondary">
             Run a sample evals to see how it works
@@ -51,7 +51,7 @@ const EvaluationTest = () => {
           marginTop: 2,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "10px",
+          borderRadius: "8px",
         }}
       >
         <Box
@@ -84,7 +84,7 @@ const EvaluationTest = () => {
             outline: "none",
             backgroundColor: theme.palette.background.default,
             verticalAlign: "top",
-            fontSize: "15px",
+            fontSize: "13px",
           }}
         />
       </Box>
@@ -93,7 +93,7 @@ const EvaluationTest = () => {
           marginTop: 2,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "10px",
+          borderRadius: "8px",
         }}
       >
         <Box
@@ -126,7 +126,7 @@ const EvaluationTest = () => {
             outline: "none",
             backgroundColor: theme.palette.background.default,
             verticalAlign: "top",
-            fontSize: "15px",
+            fontSize: "13px",
             color: theme.palette.text.primary,
           }}
         />
@@ -136,7 +136,7 @@ const EvaluationTest = () => {
           marginTop: 2,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "10px",
+          borderRadius: "8px",
           minHeight: "220px",
           position: "relative",
         }}
@@ -160,24 +160,23 @@ const EvaluationTest = () => {
             sx={{
               borderWidth: "1px",
               borderStyle: "solid",
-              borderRadius: "10px",
               ...(resultStatus === "Passed"
                 ? {
-                    backgroundColor: theme.palette.success.light,
-                    borderColor: theme.palette.success.main,
+                    backgroundColor: "status.success.bg",
+                    borderColor: "status.success.border",
                     color: "text.secondary",
                     "&:hover": {
-                      backgroundColor: theme.palette.success.light,
-                      borderColor: theme.palette.success.main,
+                      backgroundColor: "status.success.bg",
+                      borderColor: "status.success.border",
                     },
                   }
                 : {
-                    backgroundColor: "#DB2F2D14",
-                    borderColor: "#DB2F2D29",
+                    backgroundColor: "status.danger.bg",
+                    borderColor: "status.danger.border",
                     color: "text.secondary",
                     "&:hover": {
-                      backgroundColor: "#DB2F2D14",
-                      borderColor: "#DB2F2D29",
+                      backgroundColor: "status.danger.bg",
+                      borderColor: "status.danger.border",
                     },
                   }),
             }}
@@ -230,7 +229,11 @@ const EvaluationTest = () => {
             gap: 0.5,
           }}
         >
-          <Iconify icon="mdi:clock-outline" width={18} color="text.primary" />{" "}
+          <Iconify
+            icon="solar:clock-circle-linear"
+            width={20}
+            color="text.primary"
+          />{" "}
           <Typography variant="body2" color="text.primary">
             Ran in 13 sec
           </Typography>

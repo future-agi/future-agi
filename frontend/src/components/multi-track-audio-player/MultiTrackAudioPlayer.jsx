@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (waveform colours) */
 import React, {
   useEffect,
   useMemo,
@@ -41,7 +42,8 @@ const MultiTrackAudioPlayer = ({
   onInstance,
 }) => {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const cursorColor = theme.palette.text.primary;
+  const trackBackground = theme.palette.background.paper;
   const multiTrackAudioRef = useRef(null);
   const mtRef = useRef(null);
   const mediasRef = useRef([]);
@@ -145,9 +147,9 @@ const MultiTrackAudioPlayer = ({
 
     const multitrack = new MultiTrack(tracks, {
       container: multiTrackAudioRef.current,
-      cursorColor: isDark ? "#fafafa" : "#0F172A",
+      cursorColor,
       cursorWidth: 2,
-      trackBackground: isDark ? "#18181b" : "#FFFFFF",
+      trackBackground,
 
       rightButtonDrag: true,
       dragBounds: true,
@@ -194,7 +196,7 @@ const MultiTrackAudioPlayer = ({
     };
     // `attempt` is the retry lever: bumping it tears the tracks down and
     // rebuilds them from scratch.
-  }, [playable, height, isDark, attempt]);
+  }, [playable, height, cursorColor, trackBackground, attempt]);
 
   useEffect(() => {
     if (!isReady || reportedInstanceRef.current || !mtRef.current) return;
@@ -235,7 +237,7 @@ const MultiTrackAudioPlayer = ({
       gap={0}
       sx={{
         width: "100%",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Box
@@ -284,7 +286,7 @@ const MultiTrackAudioPlayer = ({
           sx={{
             visibility: !isReady ? "hidden" : "visible",
             opacity: !isReady ? 0 : 1,
-            transition: "opacity 0.3s ease-in-out",
+            transition: "opacity 0.2s ease-in-out",
             // The hidden container reserves 170px, which would prop the
             // failure box open past the footprint above.
             minHeight: failure ? 0 : 170,
@@ -318,12 +320,12 @@ const MultiTrackAudioPlayer = ({
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               opacity: isReady ? 1 : 0.5,
             }}
           >
             <Icon
-              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              icon={isPlaying ? "solar:pause-linear" : "solar:play-linear"}
               width={20}
               height={20}
               color="text.primary"

@@ -22,7 +22,7 @@ const NoAnnotationSection = ({ onCreateLabel }) => {
         variant="outlined"
         color="primary"
         size="small"
-        startIcon={<Iconify icon="mingcute:add-line" width={16} height={16} />}
+        startIcon={<Iconify icon="solar:add-linear" width={16} height={16} />}
         onClick={onCreateLabel}
       >
         Add Label

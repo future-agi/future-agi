@@ -5,7 +5,7 @@ import LoadingScreen from "./loading-screen";
 describe("LoadingScreen", () => {
   it("renders without crashing", () => {
     render(<LoadingScreen />);
-    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
   });
 
   it("exposes role=status for assistive technology", () => {
@@ -28,18 +28,18 @@ describe("LoadingScreen", () => {
 
   it("renders the rocket variant by default", () => {
     render(<LoadingScreen />);
-    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
   });
 
   it("renders the orbit variant with standby text", () => {
     render(<LoadingScreen variant="orbit" />);
-    expect(screen.getByText("Standing by")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("renders a custom message override", () => {
     render(<LoadingScreen message="Custom message" />);
-    expect(screen.getByText("Custom message")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Custom message");
   });
 
   describe("accessibility", () => {

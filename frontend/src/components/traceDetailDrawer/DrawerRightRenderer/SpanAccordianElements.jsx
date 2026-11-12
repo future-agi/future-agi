@@ -25,7 +25,7 @@ export const AccordionSummary = styled((props) => (
   <MuiAccordionSummary
     expandIcon={
       <Iconify
-        icon="material-symbols:arrow-forward-ios-rounded"
+        icon="solar:alt-arrow-right-linear"
         sx={{ color: "text.primary" }}
         width={16}
       />
@@ -34,10 +34,10 @@ export const AccordionSummary = styled((props) => (
   />
 ))(({ theme }) => ({
   backgroundColor: theme.palette.background.paper,
-  borderRadius: "10px",
+  borderRadius: "8px",
   flexDirection: "row-reverse",
   fontWeight: 500,
-  fontSize: "14px",
+  fontSize: "13px",
   color: "text.primary",
   "& .MuiAccordionSummary-expandIconWrapper.Mui-expanded": {
     transform: "rotate(90deg)",

@@ -6,6 +6,9 @@ import { TraceGraphView } from "../OverviewTab";
 vi.mock("src/api/project/trace-detail", () => ({
   useGetTraceDetail: vi.fn(),
 }));
+vi.mock("src/api/shared-links", () => ({
+  useSharedIssueTrace: () => ({ data: undefined, isLoading: false }),
+}));
 
 describe("Feed trace graph", () => {
   beforeEach(() => vi.clearAllMocks());

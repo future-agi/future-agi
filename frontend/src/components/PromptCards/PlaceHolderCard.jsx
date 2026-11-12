@@ -22,7 +22,7 @@ const PlaceHolderCard = ({ placeholder, onPlaceholderChange, onRemove }) => {
           {onRemove && (
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
               <CustomTooltip show title="Delete" arrow size="small">
-                <IconButton size="small" sx={{ p: 0 }} onClick={onRemove}>
+                <IconButton size="small" onClick={onRemove}>
                   <SvgColor
                     src="/assets/icons/ic_delete.svg"
                     sx={{

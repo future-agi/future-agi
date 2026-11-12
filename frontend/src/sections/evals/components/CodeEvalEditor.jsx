@@ -7,6 +7,7 @@ import {
   Select,
   Tooltip,
   Typography,
+  Button,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useState } from "react";
@@ -280,12 +281,8 @@ const CodeEvalEditor = ({
               ...(disabled && { cursor: "not-allowed" }),
             }}
           >
-            <MenuItem value="python" sx={{ fontSize: "12px" }}>
-              Python
-            </MenuItem>
-            <MenuItem value="javascript" sx={{ fontSize: "12px" }}>
-              JavaScript
-            </MenuItem>
+            <MenuItem value="python">Python</MenuItem>
+            <MenuItem value="javascript">JavaScript</MenuItem>
           </Select>
         </Box>
       </Box>
@@ -298,8 +295,7 @@ const CodeEvalEditor = ({
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "8px",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark" ? "#1a1a2e" : "#fafafe",
+            backgroundColor: "background.aiSurface",
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", px: 1.5, pt: 1 }}>
@@ -362,37 +358,20 @@ const CodeEvalEditor = ({
             >
               {hasResult && (
                 <>
-                  <Box
-                    component="button"
+                  <Button
+                    size="small"
                     onClick={handleReject}
-                    sx={{
-                      border: "none",
-                      background: "none",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      color: "text.secondary",
-                      p: "4px 8px",
-                    }}
+                    sx={{ color: "text.secondary" }}
                   >
                     Reject
-                  </Box>
-                  <Box
-                    component="button"
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
                     onClick={handleAccept}
-                    sx={{
-                      border: "1px solid",
-                      borderColor: "primary.main",
-                      background: "none",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      color: "primary.main",
-                      fontWeight: 600,
-                      p: "4px 10px",
-                      borderRadius: "4px",
-                    }}
                   >
                     Accept
-                  </Box>
+                  </Button>
                 </>
               )}
               {!hasResult && !aiLoading && (
@@ -400,7 +379,6 @@ const CodeEvalEditor = ({
                   size="small"
                   onClick={() => handleAiGenerate(aiPrompt)}
                   disabled={!aiPrompt.trim()}
-                  sx={{ p: 0.5 }}
                 >
                   <SvgColor
                     src="/assets/icons/navbar/ic_falcon_ai.svg"
@@ -412,9 +390,9 @@ const CodeEvalEditor = ({
                   />
                 </IconButton>
               )}
-              <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+              <IconButton size="small" onClick={handleClose}>
                 <Iconify
-                  icon="mdi:close"
+                  icon="solar:close-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -478,17 +456,9 @@ const CodeEvalEditor = ({
                 position: "absolute",
                 bottom: 12,
                 right: 12,
-                width: 32,
-                height: 32,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(124,77,255,0.15)"
-                    : "rgba(124,77,255,0.08)",
+                backgroundColor: "status.discovery.bg",
                 "&:hover": {
-                  backgroundColor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(124,77,255,0.25)"
-                      : "rgba(124,77,255,0.15)",
+                  backgroundColor: "status.discovery.bg",
                 },
               }}
             >

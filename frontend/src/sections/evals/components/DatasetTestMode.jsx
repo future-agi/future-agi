@@ -13,6 +13,7 @@ import {
   Tabs,
   TextField,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import PropTypes from "prop-types";
@@ -38,6 +39,7 @@ import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
 import RequiredMark from "src/components/RequiredMark";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -55,7 +57,7 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         component="pre"
         sx={{
           fontFamily: "monospace",
-          fontSize: "11px",
+          fontSize: "12px",
           color: "primary.main",
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
@@ -90,10 +92,11 @@ export function JsonValueTree({ value, expanded, onToggle }) {
   return (
     <Box>
       {/* Toggle */}
-      <Box
+      <ButtonBase
         onClick={onToggle}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
           alignItems: "center",
           gap: 0.5,
           cursor: "pointer",
@@ -101,20 +104,24 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         }}
       >
         <Iconify
-          icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-down-linear"
+              : "solar:alt-arrow-right-linear"
+          }
           width={14}
           sx={{ color: "text.disabled" }}
         />
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {Array.isArray(parsed)
             ? `Array (${parsed.length} items)`
             : `Object (${Object.keys(parsed).length} keys)`}
         </Typography>
-      </Box>
+      </ButtonBase>
 
       {/* Expanded content */}
       {expanded && (
@@ -140,7 +147,7 @@ function JsonEntries({ data, depth = 0 }) {
       <Typography
         variant="caption"
         color="text.disabled"
-        sx={{ fontSize: "10px" }}
+        sx={{ fontSize: "12px" }}
       >
         ...
       </Typography>
@@ -196,7 +203,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
       >
         {isObject && (
           <Iconify
-            icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled", mt: 0.25, flexShrink: 0 }}
           />
@@ -218,7 +229,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
             variant="caption"
             fontWeight={600}
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               minWidth: 60,
               flexShrink: 0,
               color: "text.secondary",
@@ -234,7 +245,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
                 setValueExpanded((v) => !v);
               }}
               sx={{
-                fontSize: "11px",
+                fontSize: "12px",
                 color: "primary.main",
                 wordBreak: "break-all",
                 overflow: "hidden",
@@ -259,7 +270,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "10px" }}
+              sx={{ fontSize: "12px" }}
             >
               {Array.isArray(entryValue)
                 ? `[${entryValue.length}]`
@@ -326,7 +337,11 @@ function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
       >
         {hasKids ? (
           <Iconify
-            icon={effectiveOpen ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              effectiveOpen
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={16}
             onClick={toggle}
             sx={{ color: "text.secondary", flexShrink: 0, cursor: "pointer" }}
@@ -349,8 +364,8 @@ function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
         </Typography>
         {selected && (
           <Iconify
-            icon="mdi:check"
-            width={15}
+            icon="solar:check-linear"
+            width={16}
             sx={{ color: "primary.main", flexShrink: 0 }}
           />
         )}
@@ -360,14 +375,14 @@ function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
               flexShrink: 0,
               minWidth: 20,
               px: 0.75,
-              borderRadius: "10px",
+              borderRadius: "8px",
               bgcolor: "action.hover",
               textAlign: "center",
             }}
           >
             <Typography
               sx={{
-                fontSize: "11px",
+                fontSize: "12px",
                 fontFamily: "Inter, sans-serif",
                 color: "text.secondary",
                 lineHeight: "18px",
@@ -459,7 +474,11 @@ function ColumnTreeSelect({
               <CircularProgress size={14} />
             ) : (
               <Iconify
-                icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+                icon={
+                  open
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
                 width={16}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
                 onClick={(e) => {
@@ -516,16 +535,7 @@ function ColumnTreeSelect({
               setSearch("");
             }}
           >
-            <Paper
-              elevation={0}
-              sx={{
-                mt: 0.5,
-                borderRadius: "8px",
-                border: "1px solid",
-                borderColor: "divider",
-                boxShadow: (theme) => theme.customShadows.dropdown,
-              }}
-            >
+            <Paper sx={{ mt: 0.5 }}>
               <Box sx={{ p: 0.75 }}>
                 <TextField
                   size="small"
@@ -544,7 +554,7 @@ function ColumnTreeSelect({
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="eva:search-fill"
+                          icon="solar:magnifier-linear"
                           width={16}
                           sx={{ color: "text.disabled" }}
                         />
@@ -553,8 +563,8 @@ function ColumnTreeSelect({
                     endAdornment: search ? (
                       <InputAdornment position="end">
                         <Iconify
-                          icon="mdi:close"
-                          width={15}
+                          icon="solar:close-linear"
+                          width={16}
                           sx={{ color: "text.disabled", cursor: "pointer" }}
                           onClick={() => setSearch("")}
                         />
@@ -670,6 +680,7 @@ const DatasetTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       initialDatasetId = "",
@@ -1257,9 +1268,10 @@ const DatasetTestMode = React.forwardRef(
               )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1335,6 +1347,7 @@ const DatasetTestMode = React.forwardRef(
       isWorkbenchMode,
       sourceNameToField,
       codeParams,
+      runConfig,
       isComposite,
       compositeAdhocConfig,
       model,
@@ -1517,9 +1530,8 @@ const DatasetTestMode = React.forwardRef(
                 setError(null);
                 onClearResult?.();
               }}
-              sx={{ width: 24, height: 24 }}
             >
-              <Iconify icon="mdi:chevron-left" width={16} />
+              <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             </IconButton>
             <IconButton
               size="small"
@@ -1530,9 +1542,8 @@ const DatasetTestMode = React.forwardRef(
                 setError(null);
                 onClearResult?.();
               }}
-              sx={{ width: 24, height: 24 }}
             >
-              <Iconify icon="mdi:chevron-right" width={16} />
+              <Iconify icon="solar:alt-arrow-right-linear" width={16} />
             </IconButton>
           </Box>
         )}
@@ -1540,7 +1551,7 @@ const DatasetTestMode = React.forwardRef(
         {/* Loading */}
         {!isWorkbenchMode && loadingData && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 
@@ -1562,7 +1573,7 @@ const DatasetTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1608,7 +1619,7 @@ const DatasetTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1625,10 +1636,7 @@ const DatasetTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "#fafafa",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1798,7 +1806,10 @@ const DatasetTestMode = React.forwardRef(
                 fontWeight={600}
               >
                 Variable Mapping
-                <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+                <Box
+                  component="span"
+                  sx={{ color: "status.danger.fg", ml: 0.25 }}
+                >
                   *
                 </Box>
               </Typography>
@@ -1810,7 +1821,6 @@ const DatasetTestMode = React.forwardRef(
                     label={`${unmapped} unmapped`}
                     size="small"
                     color="warning"
-                    sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
                   />
                 );
               })()}
@@ -1836,7 +1846,7 @@ const DatasetTestMode = React.forwardRef(
                     }}
                   >
                     <Iconify
-                      icon="mdi:code-braces"
+                      icon="solar:code-linear"
                       width={14}
                       sx={{ color: "text.secondary" }}
                     />
@@ -1845,7 +1855,7 @@ const DatasetTestMode = React.forwardRef(
                     </Typography>
                   </Box>
                   <Iconify
-                    icon="mdi:arrow-right"
+                    icon="solar:arrow-right-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1932,11 +1942,11 @@ const DatasetTestMode = React.forwardRef(
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: "error.main",
-              backgroundColor: "error.lighter",
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
             }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -1952,6 +1962,7 @@ DatasetTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   initialDatasetId: PropTypes.string,

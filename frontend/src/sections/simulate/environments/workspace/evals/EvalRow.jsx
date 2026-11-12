@@ -13,7 +13,7 @@ export default function EvalRow({ item, action, dense }) {
         sx={{
           width: 30,
           height: 30,
-          borderRadius: 0.875,
+          borderRadius: "8px",
           display: "grid",
           placeItems: "center",
           flexShrink: 0,
@@ -25,7 +25,7 @@ export default function EvalRow({ item, action, dense }) {
       </Box>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={0.75}>
-          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+          <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
             {item.name}
           </Typography>
           {item.category && (

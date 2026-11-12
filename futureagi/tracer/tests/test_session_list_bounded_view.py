@@ -793,6 +793,8 @@ def test_user_detail_reverse_lookup_keeps_transport_safety_not_statement_caps(
 
     client = mock.MagicMock()
     client.query.return_value = SimpleNamespace(result_rows=[])
+    # The factory wraps client.query for tracing; keep the mock to inspect calls.
+    query = client.query
     client_factory = mock.MagicMock(return_value=client)
     monkeypatch.setattr(reader, "_client", None)
     monkeypatch.setattr(
@@ -838,7 +840,7 @@ def test_user_detail_reverse_lookup_keeps_transport_safety_not_statement_caps(
     assert client_factory.call_args.kwargs["settings"]["max_execution_time"] == 0
     assert client.timeout.read_timeout is None
     assert client.timeout.connect_timeout == 10
-    query_settings = client.query.call_args.kwargs["settings"]
+    query_settings = query.call_args.kwargs["settings"]
     assert query_settings["max_execution_time"] == 0
     assert query_settings["max_rows_to_read"] == 0
     assert query_settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024

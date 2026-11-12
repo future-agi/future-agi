@@ -15,6 +15,18 @@ import {
 } from "src/components/run-tests/common";
 
 const picker = vi.hoisted(() => ({ props: null }));
+// The drawer asks whether error localization is available here; the real
+// hook would read deployment info through the axios mock below.
+const errorLocalization = vi.hoisted(() => ({ available: true }));
+vi.mock("src/hooks/useErrorLocalization", () => ({
+  useErrorLocalizationAvailable: () => errorLocalization.available,
+}));
+// The picker's localizer toggle is also inert while agentic evals are locked.
+const agentEval = vi.hoisted(() => ({ locked: false }));
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureLocked: () => ({ locked: agentEval.locked }),
+}));
 
 vi.mock("src/sections/common/EvalPicker", async () => ({
   serializeEvalConfig: (
@@ -63,6 +75,7 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   renameHarnessEnvironment: vi.fn(),
   getHarnessEnvironment: vi.fn(),
   deleteAppliedEvaluation: vi.fn(),
+  updateAppliedEvaluation: vi.fn(),
 }));
 
 const PICKED = {
@@ -79,19 +92,20 @@ const CONFIGS = [
     name: "no_misselling",
     template_id: "tpl-bound",
     mapping: { conversation: "voice_recording" },
+    editable: true,
   },
   {
     id: "c2",
     name: "call_quality_score",
     template_id: "tpl-result",
     mapping: {},
+    editable: false,
   },
 ];
 
 const axios = (await import("src/utils/axios")).default;
-const { addRunEvaluation, getHarnessEnvironment } = await import(
-  "src/api/simulate-environments/harnessEnvironments"
-);
+const { addRunEvaluation, getHarnessEnvironment, updateAppliedEvaluation } =
+  await import("src/api/simulate-environments/harnessEnvironments");
 const { enqueueSnackbar } = await import("notistack");
 const { default: AddEvaluationDrawer } = await import("../AddEvaluationDrawer");
 
@@ -122,6 +136,8 @@ const detail = ({ agentType = "voice", runTestId = "rt-1" } = {}) => ({
 });
 
 beforeEach(() => {
+  errorLocalization.available = true;
+  agentEval.locked = false;
   picker.props = null;
   getHarnessEnvironment.mockReset();
   getHarnessEnvironment.mockResolvedValue(detail());
@@ -132,6 +148,7 @@ beforeEach(() => {
   axios.post.mockReset();
   axios.post.mockResolvedValue({ data: {} });
   addRunEvaluation.mockReset();
+  updateAppliedEvaluation.mockReset();
   enqueueSnackbar.mockReset();
 });
 
@@ -156,6 +173,13 @@ describe("AddEvaluationDrawer — Evaluations tab", () => {
       ],
     });
     expect(picker.props.addedEvalAction).toBeFalsy();
+  });
+
+  it("lists only single evals, since the harness can't grade a composite", async () => {
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.lockedFilters).toEqual({ template_type: ["single"] });
+    expect(picker.props.hideCompositeCreate).toBe(true);
   });
 
   it("offers the chat fields to a chat environment", async () => {
@@ -589,6 +613,346 @@ describe("AddEvaluationDrawer — load states", () => {
       2,
       "Couldn’t refresh the evaluations already added here, so that list may be out of date.",
       { variant: "warning" },
+    );
+  });
+});
+
+describe("AddEvaluationDrawer — editing an eval", () => {
+  const EDITING = {
+    id: "c1",
+    name: "no_misselling",
+    template_id: "tpl-bound",
+    mapping: { conversation: "voice_recording" },
+    config: { output: "Pass/Fail", run_config: { model: "turing_large" } },
+    editable: true,
+  };
+  const EDITED = {
+    templateId: "tpl-bound",
+    name: "no_misselling",
+    model: "turing_large",
+    mapping: { conversation: "call.transcript" },
+    config: { output: "Pass/Fail" },
+    error_localizer_enabled: false,
+  };
+  const renderEdit = (props = {}) =>
+    render(
+      <AddEvaluationDrawer
+        open
+        env={ENV}
+        editingEval={EDITING}
+        onClose={vi.fn()}
+        {...props}
+      />,
+    );
+
+  it("opens the picker on the eval's own settings, with nothing marked added", async () => {
+    renderEdit();
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.initialEval).toEqual({
+      id: "tpl-bound",
+      userEvalId: "c1",
+      template_id: "tpl-bound",
+      name: "no_misselling",
+      mapping: { conversation: "voice_recording" },
+      config: EDITING.config,
+      run_config: { model: "turing_large" },
+    });
+    expect(picker.props.existingEvals).toEqual([]);
+    expect(picker.props.addedEvals).toBeFalsy();
+    expect(picker.props.addedEvalAction).toBeFalsy();
+    expect(picker.props.requireInputs).toBe(true);
+  });
+
+  it("saves through the environment's edit, without the locked name or the template, and hands back the updated eval", async () => {
+    const updated = { ...EDITING, mapping: EDITED.mapping, editable: true };
+    updateAppliedEvaluation.mockResolvedValue(updated);
+    const onEdited = vi.fn();
+    renderEdit({ onEdited });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const {
+      name: _name,
+      template_id: _templateId,
+      ...body
+    } = serializeEvalConfig(EDITED);
+    expect(updateAppliedEvaluation).toHaveBeenCalledWith("env-1", "c1", body);
+    // The environment's edit route refuses a template id as an unknown field.
+    expect(updateAppliedEvaluation.mock.calls[0][2]).not.toHaveProperty(
+      "template_id",
+    );
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith("Evaluation updated", {
+      variant: "success",
+    });
+    expect(onEdited).toHaveBeenCalledWith(updated);
+  });
+
+  it("shows a refusal as returned and keeps the picker open", async () => {
+    updateAppliedEvaluation.mockRejectedValue({
+      detail: "no_misselling is set by the harness and can't be edited here.",
+    });
+    const onEdited = vi.fn();
+    renderEdit({ onEdited });
+    await screen.findByTestId("eval-picker");
+    await expect(picker.props.onEvalAdded(EDITED)).rejects.toBeTruthy();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "no_misselling is set by the harness and can't be edited here.",
+      { variant: "error" },
+    );
+    expect(onEdited).not.toHaveBeenCalled();
+  });
+
+  it("refuses an edit that leaves no inputs mapped before sending anything", async () => {
+    renderEdit();
+    await screen.findByTestId("eval-picker");
+    await expect(
+      picker.props.onEvalAdded({ ...EDITED, mapping: {} }),
+    ).rejects.toBeTruthy();
+    expect(updateAppliedEvaluation).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "This evaluation has no inputs to map, so it can't run in an environment.",
+      { variant: "error" },
+    );
+  });
+
+  it("does not grade the run by name after an edit, even from a run", async () => {
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit({ executionId: "ex-1" });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+    expect(addRunEvaluation).not.toHaveBeenCalled();
+  });
+
+  it("hands the picker the next eval when another one is edited", async () => {
+    const c = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const drawer = (editingEval) => (
+      <QueryClientProvider client={c}>
+        <AddEvaluationDrawer
+          open
+          env={ENV}
+          editingEval={editingEval}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = rtlRender(drawer(EDITING));
+    await screen.findByTestId("eval-picker");
+    rerender(drawer({ ...EDITING, id: "c9", name: "other" }));
+    await waitFor(() =>
+      expect(picker.props?.initialEval?.userEvalId).toBe("c9"),
+    );
+  });
+
+  it("seeds the row's own model and error localizer into the picker's run_config", async () => {
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        model: "gpt-4o",
+        error_localizer: true,
+        config: { output: "Pass/Fail" },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.initialEval.run_config).toEqual({
+      model: "gpt-4o",
+      error_localizer_enabled: true,
+    });
+  });
+
+  it("lets a value already saved in run_config win over the row's own", async () => {
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        model: "gpt-4o",
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { model: "turing_small", error_localizer_enabled: false },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    expect(picker.props.initialEval.run_config).toEqual({
+      model: "turing_small",
+      error_localizer_enabled: false,
+    });
+  });
+
+  it("sends the row's own error localizer back, not the inert toggle's, where error localization isn't available", async () => {
+    errorLocalization.available = false;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { error_localizer_enabled: true },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body.error_localizer).toBe(true);
+    expect(body.config.run_config.error_localizer_enabled).toBe(true);
+    expect(body.mapping).toEqual(EDITED.mapping);
+    expect(body.model).toBe("turing_large");
+  });
+
+  it("sends the row's own error localizer back, not the inert toggle's, while agentic evals are locked", async () => {
+    agentEval.locked = true;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit({
+      editingEval: {
+        ...EDITING,
+        error_localizer: true,
+        config: {
+          output: "Pass/Fail",
+          run_config: { error_localizer_enabled: true },
+        },
+      },
+    });
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body.error_localizer).toBe(true);
+    expect(body.config.run_config.error_localizer_enabled).toBe(true);
+  });
+
+  it("says nothing about the error localizer where it isn't available and the row never set it", async () => {
+    errorLocalization.available = false;
+    updateAppliedEvaluation.mockResolvedValue(EDITING);
+    renderEdit();
+    await screen.findByTestId("eval-picker");
+    await act(() => picker.props.onEvalAdded(EDITED));
+
+    const body = updateAppliedEvaluation.mock.calls[0][2];
+    expect(body).not.toHaveProperty("error_localizer");
+    expect(body.config.run_config).not.toHaveProperty(
+      "error_localizer_enabled",
+    );
+  });
+});
+
+describe("AddEvaluationDrawer — editing an eval by id", () => {
+  const renderById = (props = {}) =>
+    render(
+      <AddEvaluationDrawer
+        open
+        env={ENV}
+        editingEvalId="c1"
+        onClose={vi.fn()}
+        {...props}
+      />,
+    );
+
+  it("opens the picker on the run test's own row for that id", async () => {
+    renderById();
+    await waitFor(() =>
+      expect(picker.props?.initialEval?.userEvalId).toBe("c1"),
+    );
+    expect(picker.props.initialEval).toMatchObject({
+      id: "tpl-bound",
+      template_id: "tpl-bound",
+      name: "no_misselling",
+      mapping: { conversation: "voice_recording" },
+    });
+    expect(picker.props.existingEvals).toEqual([]);
+    expect(picker.props.addedEvals).toBeFalsy();
+  });
+
+  it("saves the looked-up eval through the environment's edit", async () => {
+    updateAppliedEvaluation.mockResolvedValue(CONFIGS[0]);
+    const onEdited = vi.fn();
+    renderById({ onEdited });
+    await waitFor(() =>
+      expect(picker.props?.initialEval?.userEvalId).toBe("c1"),
+    );
+    const edited = {
+      templateId: "tpl-bound",
+      name: "no_misselling",
+      mapping: { conversation: "call.transcript" },
+      config: {},
+    };
+    await act(() => picker.props.onEvalAdded(edited));
+
+    const {
+      name: _name,
+      template_id: _templateId,
+      ...body
+    } = serializeEvalConfig(edited);
+    expect(updateAppliedEvaluation).toHaveBeenCalledWith("env-1", "c1", body);
+    expect(updateAppliedEvaluation.mock.calls[0][2]).not.toHaveProperty(
+      "template_id",
+    );
+    expect(onEdited).toHaveBeenCalledWith(CONFIGS[0]);
+  });
+
+  it("says so when the eval is gone, and offers a way back", async () => {
+    const onClose = vi.fn();
+    renderById({ editingEvalId: "gone", onClose });
+
+    expect(
+      await screen.findByText("This evaluation no longer exists."),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("eval-picker")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to evaluations" }),
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("does not open the form on an eval the server marks not editable", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        simulate_eval_configs_detail: [{ ...CONFIGS[0], editable: false }],
+      },
+    });
+    renderById();
+
+    expect(
+      await screen.findByText(
+        "Set by the harness, so it can't be edited here.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("eval-picker")).toBeNull();
+  });
+
+  it("does not open the form on an eval the server didn't mark editable", async () => {
+    const { editable: _editable, ...unmarked } = CONFIGS[0];
+    axios.get.mockResolvedValue({
+      data: { simulate_eval_configs_detail: [unmarked] },
+    });
+    renderById();
+
+    expect(
+      await screen.findByText(
+        "Set by the harness, so it can't be edited here.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("eval-picker")).toBeNull();
+  });
+
+  it("waits for the run test's evals rather than calling the eval gone", async () => {
+    axios.get.mockReturnValue(new Promise(() => {}));
+    renderById();
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByText("This evaluation no longer exists.")).toBeNull();
+  });
+
+  it("uses a whole row handed to it over the id", async () => {
+    renderById({
+      editingEval: { ...CONFIGS[1], mapping: { a: "b" }, editable: true },
+    });
+    await waitFor(() =>
+      expect(picker.props?.initialEval?.userEvalId).toBe("c2"),
     );
   });
 });

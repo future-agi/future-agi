@@ -154,6 +154,16 @@ def _worker_plans() -> list[_QueuePlan]:
                 max_workflow_tasks=1,
             )
         )
+    if "sql_workbench" not in excluded:
+        plans.append(
+            _QueuePlan(
+                "sql_workbench",
+                [],
+                get_activities_for_queue("sql_workbench"),
+                max_activities=2,
+                max_workflow_tasks=2,
+            )
+        )
     return plans
 
 
@@ -173,28 +183,15 @@ class _QueueRoutingExecutor(concurrent.futures.ThreadPoolExecutor):
 
 
 def _activity_interceptor(pool: concurrent.futures.Executor):
-    from asgiref.sync import ThreadSensitiveContext, sync_to_async
-    from django.db import close_old_connections
-    from temporalio.worker import (
-        ActivityInboundInterceptor,
-        ExecuteActivityInput,
-        Interceptor,
-    )
+    from temporalio.worker import ExecuteActivityInput, Interceptor
 
-    class _Inbound(ActivityInboundInterceptor):
+    from tfc.temporal.common.activity_thread import OwnThreadActivityInbound
+
+    class _Inbound(OwnThreadActivityInbound):
         async def execute_activity(self, input: ExecuteActivityInput):
             token = _activity_pool.set(pool)
             try:
-                async with ThreadSensitiveContext():
-                    try:
-                        return await super().execute_activity(input)
-                    finally:
-                        # The context's private thread dies with the context;
-                        # close the DB connection it opened instead of leaving
-                        # it to GC.
-                        await sync_to_async(
-                            close_old_connections, thread_sensitive=True
-                        )()
+                return await super().execute_activity(input)
             finally:
                 _activity_pool.reset(token)
 

@@ -23,7 +23,7 @@ const AgentTypeCellRenderer = ({ data }) => {
         size="small"
         sx={{
           backgroundColor: "background.neutral",
-          borderRadius: "2px",
+          borderRadius: "4px",
           border: "1px solid",
           borderColor: "divider",
           color: "text.primary",

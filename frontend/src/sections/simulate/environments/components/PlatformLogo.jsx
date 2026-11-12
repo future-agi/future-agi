@@ -7,10 +7,9 @@ import { PLATFORM_LOGOS } from "./platformLogos";
  *
  * Renders the vendor's official logo (inlined, so it inherits `currentColor`
  * and adapts to light/dark). Platforms without a bundled logo — e.g. the chat
- * providers — fall back to a brand-coloured monogram tile so the picker still
- * reads as branded.
+ * providers — fall back to a neutral monogram tile.
  */
-export default function PlatformLogo({ id, name, brand }) {
+export default function PlatformLogo({ id, name }) {
   const spec = PLATFORM_LOGOS[id];
   if (spec) {
     const isMark = spec.type === "mark";
@@ -38,14 +37,14 @@ export default function PlatformLogo({ id, name, brand }) {
     <Box
       sx={{
         width: 15, height: 15, borderRadius: 0.5, flexShrink: 0,
-        bgcolor: brand || "text.disabled",
+        bgcolor: "action.selected",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
-      <Typography sx={{ fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 1 }}>
+      <Typography sx={{ fontSize: 11, fontWeight: 600, color: "text.secondary", lineHeight: 1 }}>
         {(name || "?").trim()[0]?.toUpperCase()}
       </Typography>
     </Box>
   );
 }
-PlatformLogo.propTypes = { id: PropTypes.string, name: PropTypes.string, brand: PropTypes.string };
+PlatformLogo.propTypes = { id: PropTypes.string, name: PropTypes.string };

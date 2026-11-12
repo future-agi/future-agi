@@ -53,7 +53,7 @@ const TestDetailSystemMetrics = ({ latencies }) => {
             style: {
               color: theme.palette.text.secondary,
               background: "transparent",
-              fontSize: "10px",
+              fontSize: "12px",
               fontFamily: "Inter",
               fontWeight: 400,
             },
@@ -104,7 +104,7 @@ const TestDetailSystemMetrics = ({ latencies }) => {
           return `${value.toFixed(2)}ms`;
         },
         style: {
-          fontSize: "10px",
+          fontSize: "12px",
           fontFamily: "Inter",
           fontWeight: 400,
           colors: [theme.palette.common.white],
@@ -131,7 +131,7 @@ const TestDetailSystemMetrics = ({ latencies }) => {
         labels: {
           formatter: (val) => Math.round(val),
           style: {
-            fontSize: "11px",
+            fontSize: "12px",
             fontFamily: "Inter",
             fontWeight: 400,
             colors: [theme.palette.text.secondary],
@@ -163,7 +163,7 @@ const TestDetailSystemMetrics = ({ latencies }) => {
             colors: theme.palette.text.primary,
             fontSize: "16px",
             fontFamily: "Inter",
-            fontWeight: 450,
+            fontWeight: 500,
           },
           align: "left",
           offsetX: -60,

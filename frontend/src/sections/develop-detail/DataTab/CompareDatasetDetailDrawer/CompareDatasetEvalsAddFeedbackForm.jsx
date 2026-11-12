@@ -76,7 +76,7 @@ const AllSelectField = ({ label, ...rest }) => {
         {...rest}
         fullWidth
         sx={{
-          backgroundColor: "rgba(147, 143, 163, 0.08)",
+          backgroundColor: "background.neutral",
           "& .MuiOutlinedInput-root": {
             "&:hover .MuiOutlinedInput-notchedOutline": {
               border: "1px solid var(--border-default)",
@@ -100,7 +100,7 @@ const AllSelectField = ({ label, ...rest }) => {
 const Label1 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re-tune
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -114,7 +114,7 @@ const Label1 = () => {
 const Label2 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re- calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -128,7 +128,7 @@ const Label2 = () => {
 const Label3 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re-tune and re-calculate for this dataset
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -250,13 +250,13 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: "14px",
+            fontSize: "13px",
             fontWeight: "400",
             lineHeight: "21px",
             padding: "16px",
             borderRadius: "8px",
             border: "1px solid var(--border-default)",
-            backgroundColor: "rgba(147, 143, 163, 0.08)",
+            backgroundColor: "background.neutral",
           }}
         >
           {data?.valueInfos?.reason}
@@ -364,7 +364,7 @@ const SubmittedFeedback = ({ control, data }) => {
     >
       <Typography
         sx={{
-          fontSize: "18px",
+          fontSize: "16px",
           fontWeight: "600",
           lineHeight: "26px",
         }}
@@ -378,7 +378,7 @@ const SubmittedFeedback = ({ control, data }) => {
           borderRadius: "12px",
         }}
       >
-        <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+        <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
           {data?.eval_name}
         </Typography>
         <Typography sx={{ fontSize: "12px" }}>
@@ -584,9 +584,9 @@ export default function CompareDatasetEvalsAddFeedbackForm({
       }
       PaperProps={{
         sx: {
-          width: "500px",
+          width: "560px",
           maxWidth: "none",
-          borderRadius: "16px !important",
+          borderRadius: "12px !important",
           padding: "20px !important",
         },
       }}
@@ -613,7 +613,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
               disabled={isSubmitting || submittingFields}
               onClick={handleClose}
             >
-              <Iconify icon="material-symbols:close-rounded" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
           {/* <Typography

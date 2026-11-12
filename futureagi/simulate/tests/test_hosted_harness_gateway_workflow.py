@@ -45,9 +45,13 @@ class TransientPollActivities:
 
 
 @pytest.mark.asyncio
-async def test_poll_retry_exhaustion_does_not_kill_running_guest():
+async def test_poll_retry_exhaustion_does_not_kill_running_guest(
+    temporal_test_server_options,
+):
     activities = TransientPollActivities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
@@ -80,20 +84,28 @@ class FailedLaunchActivities:
         self.recorded_job_id = None
 
     @activity.defn(name="launch_hosted_harness_job")
-    async def launch(self, _input: HostedHarnessGatewayInput) -> HostedHarnessLaunchOutput:
+    async def launch(
+        self, _input: HostedHarnessGatewayInput
+    ) -> HostedHarnessLaunchOutput:
         self.launch_calls += 1
         raise ApplicationError("platform simulator credential unavailable")
 
     @activity.defn(name="record_hosted_harness_launch_failure")
-    async def record(self, input: HostedHarnessLaunchFailureInput) -> HostedHarnessLaunchRecoveryOutput:
+    async def record(
+        self, input: HostedHarnessLaunchFailureInput
+    ) -> HostedHarnessLaunchRecoveryOutput:
         self.recorded_job_id = input.job_id
         return HostedHarnessLaunchRecoveryOutput(state="failed")
 
 
 @pytest.mark.asyncio
-async def test_exhausted_launch_marks_job_failed_instead_of_leaving_it_queued():
+async def test_exhausted_launch_marks_job_failed_instead_of_leaving_it_queued(
+    temporal_test_server_options,
+):
     activities = FailedLaunchActivities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,
@@ -121,9 +133,13 @@ async def test_exhausted_launch_marks_job_failed_instead_of_leaving_it_queued():
 
 class LostLaunchResponseActivities(FailedLaunchActivities):
     @activity.defn(name="record_hosted_harness_launch_failure")
-    async def record(self, input: HostedHarnessLaunchFailureInput) -> HostedHarnessLaunchRecoveryOutput:
+    async def record(
+        self, input: HostedHarnessLaunchFailureInput
+    ) -> HostedHarnessLaunchRecoveryOutput:
         self.recorded_job_id = input.job_id
-        return HostedHarnessLaunchRecoveryOutput(state="running", attempt_id="existing-attempt")
+        return HostedHarnessLaunchRecoveryOutput(
+            state="running", attempt_id="existing-attempt"
+        )
 
     @activity.defn(name="poll_hosted_harness_attempt")
     async def poll(self, input: HostedHarnessAttemptInput) -> HostedHarnessPollOutput:
@@ -132,9 +148,13 @@ class LostLaunchResponseActivities(FailedLaunchActivities):
 
 
 @pytest.mark.asyncio
-async def test_lost_launch_response_resumes_existing_attempt_instead_of_abandoning_it():
+async def test_lost_launch_response_resumes_existing_attempt_instead_of_abandoning_it(
+    temporal_test_server_options,
+):
     activities = LostLaunchResponseActivities()
-    async with await WorkflowEnvironment.start_time_skipping() as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
         async with Worker(
             env.client,
             task_queue=QUEUE_RUNNER,

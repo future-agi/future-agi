@@ -25,7 +25,10 @@ from tracer.selectors.eval_tasks.row_resolver import (
 )
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_CURSOR_OVERLAP
-from tracer.services.eval_tasks.entries import materialize_pending
+from tracer.services.eval_tasks.entries import (
+    materialize_pending,
+    soft_delete_eval_results,
+)
 
 # How far behind "now" the continuous cursor is parked after each pass: the
 # window each reconcile re-scans to catch late CH arrivals and version changes.
@@ -116,6 +119,8 @@ def _apply_resolved(
     else:
         requeued, dropped = _requeue_and_drop(task, resolved=resolved)
         result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
+    if result.created or result.requeued:
+        _stamp_last_run(task, now)
     # Candidate overflow catch-up may prove only a strict prefix of the frozen
     # arrival window. Advance from that exact proof ceiling, in this same DB
     # transaction, never from the later wall-clock ceiling the pass requested.
@@ -123,6 +128,15 @@ def _apply_resolved(
     if resolved.full_state:
         _stamp_reclassified_revision(task)
     return result
+
+
+def _stamp_last_run(task: EvalTask, now: datetime) -> None:
+    """Stamp the list's "Last Run": the last pass that produced work (created
+    or requeued entries), not the last poll."""
+    if not isinstance(task, EvalTask):
+        return
+    task.last_run = now
+    EvalTask.objects.filter(id=task.id).update(last_run=now)
 
 
 def _stamp_reclassified_revision(task: EvalTask) -> None:
@@ -284,9 +298,7 @@ def _requeue_and_drop(
             )
     dropped = 0
     if drop_ids:
-        dropped = EvalLogger.objects.filter(id__in=drop_ids).update(
-            deleted=True, deleted_at=timezone.now()
-        )
+        dropped = soft_delete_eval_results(EvalLogger.objects.filter(id__in=drop_ids))
     return requeued, dropped
 
 
@@ -324,9 +336,7 @@ def _evals_revision(task: EvalTask) -> str:
     """Content revision of the task's eval set: the sorted (config id, hash)
     pairs. Changes whenever an eval is added, removed, or edited."""
     pairs = sorted((str(cfg.id), resolved_config_hash(cfg)) for cfg in task.evals.all())
-    return hashlib.sha256(
-        json.dumps(pairs, separators=(",", ":")).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
 
 
 def _task_revision(task: EvalTask) -> str:

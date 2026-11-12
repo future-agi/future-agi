@@ -1,6 +1,6 @@
 import {
   Box,
-  IconButton,
+  Button,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -24,9 +24,9 @@ const allMenuItems = [
   {
     id: 1,
     title: "Disable Key",
-    icon: "mdi:cancel",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    icon: "solar:forbidden-circle-linear",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "iconify",
     actionType: "disable",
   },
@@ -43,8 +43,8 @@ const allMenuItems = [
     id: 3,
     title: "Delete Key",
     icon: "/assets/icons/ic_delete.svg",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "svg",
     actionType: "delete",
   },
@@ -111,41 +111,29 @@ const ActionMenu = ({ data, onRefresh }) => {
           height: "100%",
         }}
       >
-        <Box
-          sx={{
-            display: "flex",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            height: "26px",
-            width: "71px",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            "&:hover": {
-              backgroundColor: "background.default",
-            },
-          }}
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          aria-label="Actions"
           onClick={handleClick}
-        >
-          <SvgColor
-            sx={{
-              color: "text.disabled",
-              width: "16px",
-              height: "16px",
-              ml: 1,
-            }}
-            src="/assets/icons/action_buttons/ic_configure.svg"
-          />
-          <IconButton size="small" sx={{ ml: 0.2 }}>
+          startIcon={
+            <SvgColor
+              width={16}
+              sx={{ color: "text.disabled" }}
+              src="/assets/icons/action_buttons/ic_configure.svg"
+            />
+          }
+          endIcon={
             <Iconify
               icon={`fluent:chevron-${open ? "up" : "down"}-16-filled`}
               width="18px"
               height="18px"
               color="text.disabled"
             />
-          </IconButton>
-        </Box>
+          }
+          sx={{ borderColor: "divider" }}
+        />
       </Box>
 
       <Menu
@@ -165,7 +153,7 @@ const ActionMenu = ({ data, onRefresh }) => {
         }}
         PaperProps={{
           sx: {
-            width: 224,
+            width: 240,
             border: "1px solid",
             borderColor: (theme) => theme.palette.divider,
             borderRadius: "8px",
@@ -191,7 +179,6 @@ const ActionMenu = ({ data, onRefresh }) => {
                   "&:hover": {
                     bgcolor: "action.hover",
                     "& .MuiTypography-root": {
-                      fontWeight: 500,
                     },
                   },
                 }}
@@ -200,7 +187,7 @@ const ActionMenu = ({ data, onRefresh }) => {
                   {item.iconType === "svg" && (
                     <SvgColor
                       src={item.icon}
-                      sx={{ width: 20, height: 20, color: item.iconColor }}
+                      sx={{ width: 16, height: 16, color: item.iconColor }}
                     />
                   )}
                   {item.iconType === "iconify" && (

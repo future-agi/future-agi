@@ -1,3 +1,4 @@
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /* eslint-disable react/prop-types */
 /**
  * PrimaryGraph
@@ -917,7 +918,8 @@ const PrimaryGraph = ({
       const ts = item.timestamp.replace(/\+00:00$/, "");
       mData.push({
         x: new Date(ts).getTime(),
-        y: item.value == null ? null : Number(item.value),
+        y: isIncompleteCost(item.cost_coverage) || item.value == null ? null : Number(item.value),
+        cost_coverage: item.cost_coverage,
       });
       tData.push({
         x: new Date(ts).getTime(),
@@ -954,7 +956,9 @@ const PrimaryGraph = ({
   const metricSeriesName = metricSeriesQualifiers.length
     ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
-  const lineSeriesName = metricSeriesName;
+  const lineSeriesName = metricData.some((point) => isIncompleteCost(point.cost_coverage))
+    ? `${metricSeriesName} · Cost coverage incomplete`
+    : metricSeriesName;
   const trafficSeriesName = "Traffic";
 
   // Series: metric line FIRST (left axis), traffic bars SECOND (right axis)
@@ -1030,7 +1034,7 @@ const PrimaryGraph = ({
         type: "datetime",
         labels: {
           datetimeUTC: false,
-          style: { fontSize: "10px", colors: theme.palette.text.disabled },
+          style: { fontSize: "12px", colors: theme.palette.text.disabled },
           datetimeFormatter: {
             year: "yyyy",
             month: "MMM 'yy",
@@ -1051,7 +1055,7 @@ const PrimaryGraph = ({
           opposite: false,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => {
               if (v == null) return "";
               if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
@@ -1069,7 +1073,7 @@ const PrimaryGraph = ({
           opposite: true,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => (v != null ? Math.round(v).toLocaleString() : ""),
             offsetX: 4,
           },
@@ -1092,7 +1096,9 @@ const PrimaryGraph = ({
         theme: theme.palette.mode,
         x: { format: "dd MMM yyyy" },
         y: {
-          formatter: (v, { seriesIndex }) => {
+          formatter: (v, { seriesIndex, dataPointIndex }) => {
+            const coverage = metricData[dataPointIndex]?.cost_coverage;
+            if (seriesIndex === 0 && isIncompleteCost(coverage)) return monetaryCostLabel(null, coverage);
             if (v == null) return "-";
             if (seriesIndex === 0) {
               return metricDef.unit
@@ -1114,20 +1120,9 @@ const PrimaryGraph = ({
       handleZoomed,
       trafficLabel,
       trafficSeriesName,
+      metricData,
     ],
   );
-
-  if (isColdGraphLoading) {
-    return (
-      <Box
-        role="status"
-        aria-label={GRAPH_LOADING_MESSAGE}
-        sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}
-      >
-        <GraphSkeleton />
-      </Box>
-    );
-  }
 
   const hasData = metricData.length > 0;
 
@@ -1172,7 +1167,7 @@ const PrimaryGraph = ({
               {metricDef.label}
             </Typography>
             <Iconify
-              icon="mdi:chevron-down"
+              icon="solar:alt-arrow-down-linear"
               width={14}
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
@@ -1226,7 +1221,7 @@ const PrimaryGraph = ({
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="mdi:magnify"
+                          icon="solar:magnifier-linear"
                           width={16}
                           sx={{ color: "text.disabled" }}
                         />
@@ -1247,10 +1242,10 @@ const PrimaryGraph = ({
                   <Box key={groupKey}>
                     <Typography
                       sx={{
-                        fontSize: 10,
-                        fontWeight: 700,
+                        fontSize: 12,
+                        fontWeight: 600,
                         color: "text.disabled",
-                        textTransform: "uppercase",
+                        textTransform: "none",
                         letterSpacing: 0.5,
                         px: 1.5,
                         pt: 1,
@@ -1292,7 +1287,7 @@ const PrimaryGraph = ({
                         {m.unit && (
                           <Typography
                             sx={{
-                              fontSize: 10,
+                              fontSize: 12,
                               color: "text.disabled",
                               flexShrink: 0,
                             }}
@@ -1355,8 +1350,10 @@ const PrimaryGraph = ({
                 ref={dateButtonRef}
                 variant="outlined"
                 size="small"
-                startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-                endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+                startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                }
                 onClick={(e) => setDateAnchor(e.currentTarget)}
                 sx={pillSx}
               >
@@ -1379,7 +1376,7 @@ const PrimaryGraph = ({
                     key={opt.key}
                     selected={dateFilter?.dateOption === opt.key}
                     onClick={() => handleDateOptionChange(opt.key)}
-                    sx={{ fontSize: 13, py: 0.75 }}
+                    sx={{ py: 0.75 }}
                   >
                     {opt.label}
                   </MenuItem>
@@ -1389,6 +1386,7 @@ const PrimaryGraph = ({
                 open={customDateOpen}
                 onClose={() => setCustomDateOpen(false)}
                 anchorEl={dateButtonRef.current}
+                value={dateFilter?.dateFilter}
                 setDateFilter={(range) => {
                   setDateFilter?.((prev) => ({
                     ...prev,
@@ -1406,10 +1404,10 @@ const PrimaryGraph = ({
                   startIcon={
                     hasActiveFilter ? (
                       <Badge variant="dot" color="error" overlap="circular">
-                        <Iconify icon="mdi:filter-outline" width={16} />
+                        <Iconify icon="solar:filter-linear" width={16} />
                       </Badge>
                     ) : (
-                      <Iconify icon="mdi:filter-outline" width={16} />
+                      <Iconify icon="solar:filter-linear" width={16} />
                     )
                   }
                   onClick={(e) => onFilterToggle(e)}
@@ -1433,7 +1431,7 @@ const PrimaryGraph = ({
                 bgcolor: lineColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               {lineSeriesName}
             </Typography>
           </Box>
@@ -1442,11 +1440,11 @@ const PrimaryGraph = ({
               sx={{
                 width: 10,
                 height: 10,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 bgcolor: barColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               Traffic
             </Typography>
           </Box>
@@ -1457,12 +1455,22 @@ const PrimaryGraph = ({
       {graphStatusMessage && displaySnapshot ? (
         <Typography
           role="status"
-          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+          sx={{ px: 1, fontSize: 12, color: "text.secondary" }}
         >
           {graphStatusMessage}
         </Typography>
       ) : null}
-      {hasData ? (
+      {/* Only the chart area loads: the header stays mounted because an open
+          filter panel is anchored to its Filter button. */}
+      {isColdGraphLoading ? (
+        <Box
+          role="status"
+          aria-label={GRAPH_LOADING_MESSAGE}
+          sx={{ height: CHART_HEIGHT }}
+        >
+          <GraphSkeleton />
+        </Box>
+      ) : hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
             options={chartOptions}

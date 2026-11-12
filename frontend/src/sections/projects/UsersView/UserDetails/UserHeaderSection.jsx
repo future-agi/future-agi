@@ -118,7 +118,7 @@ const UserHeaderSection = ({
             />
           </Box>
           <Button
-            startIcon={<Iconify icon="clarity:refresh-line" />}
+            startIcon={<Iconify icon="solar:refresh-linear" />}
             onClick={() => {
               setZoomRange(DEFAULT_ZOOM_RANGE);
               setDateFilter(DEFAULT_DATE_FILTER);
@@ -145,7 +145,6 @@ const UserHeaderSection = ({
                 navigate,
               })
             }
-            sx={{ paddingX: "16px" }}
             startIcon={<SvgColor src="/assets/icons/navbar/ic_llm.svg" />}
           >
             View Traces
@@ -164,7 +163,6 @@ const UserHeaderSection = ({
                 navigate,
               })
             }
-            sx={{ paddingX: "16px" }}
             startIcon={<SvgColor src="/assets/icons/navbar/ic_sessions.svg" />}
           >
             View Sessions

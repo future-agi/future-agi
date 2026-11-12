@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // --- Gemini embedding native types ---
@@ -105,7 +106,7 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading embed response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading embed response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -164,7 +165,7 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading batch embed response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading batch embed response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -184,22 +185,13 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 // buildModelURL constructs the URL for Gemini model-scoped API calls.
 // Uses the same URL patterns as buildNativeURL but adds API key for non-Vertex.
 func (p *Provider) buildModelURL(model string, action string) string {
-	base := p.buildNativeURL(model, action)
-	if !p.vertexAI && p.apiKey != "" {
-		base += "?key=" + p.apiKey
-	}
-	return base
+	return p.buildNativeURL(model, action)
 }
 
 // setAuthHeaders sets Content-Type and authentication headers for Gemini requests.
 func (p *Provider) setAuthHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
-	if p.vertexAI {
-		if tok := p.bearerToken(); tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-		}
-	}
-	// For non-Vertex, API key is passed in the URL query string.
+	p.setAPIKey(req)
 	for k, v := range p.headers {
 		req.Header.Set(k, v)
 	}

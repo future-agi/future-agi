@@ -1,5 +1,6 @@
-import { Box, LinearProgress, useTheme } from "@mui/material";
-import React, { useMemo, useState } from "react";
+import { Box, LinearProgress, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import React, { useState } from "react";
 import { Events, handleOnDocsClicked, trackEvent } from "src/utils/Mixpanel";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -7,14 +8,8 @@ import axios, { endpoints } from "src/utils/axios";
 import InstructionTitle from "./InstructionTitle";
 import InstructionCodeCopy from "./InstructionCodeCopy";
 import ObserveInstruments from "./ObserveInstuments";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 
 const NewObserve = () => {
-  const theme = useTheme();
   const [languageTab, setLanguageTab] = useState("python");
   const {
     data: keysData,
@@ -36,14 +31,6 @@ const NewObserve = () => {
     { label: "Python", value: "python", disabled: false },
     { label: "Typescript", value: "typescript", disabled: false },
   ];
-
-  const tabWrapperStyles = useMemo(
-    () => ({
-      marginBottom: 0,
-      alignSelf: "flex-start",
-    }),
-    [],
-  );
 
   const cleanCode = (code) => {
     if (typeof code !== "string") return "Code not available";
@@ -80,30 +67,21 @@ const NewObserve = () => {
         <InstructionTitle description="Configure your application to send traces to Future AGI" />
 
         {/* Tab selector for installation */}
-        <TabWrapper sx={tabWrapperStyles}>
-          <CustomTabs
-            textColor="primary"
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs
             value={languageTab}
             onChange={(e, value) => setLanguageTab(value)}
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
           >
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={`config-${tab.value}`}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
 
         <InstructionCodeCopy
           text={getCodeBySection("installation_guide")}
@@ -134,30 +112,21 @@ const NewObserve = () => {
         />
 
         {/* Separate tab selector for telemetry */}
-        <TabWrapper sx={tabWrapperStyles}>
-          <CustomTabs
-            textColor="primary"
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs
             value={languageTab}
             onChange={(e, value) => setLanguageTab(value)}
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
           >
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={`telemetry-${tab.value}`}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
 
         <InstructionCodeCopy
           text={getCodeBySection("project_add_code")}

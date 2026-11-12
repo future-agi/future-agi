@@ -159,7 +159,7 @@ triggers=$(kubectl -n "$ns" exec "statefulset/$release-postgres" -- sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_trigger WHERE tgname LIKE '"'"'fi_cdc_%'"'"'"')
 [ "${triggers:-0}" -gt 0 ] || fail "no outbox CDC capture triggers in Postgres"
 kubectl -n "$ns" exec "statefulset/$release-temporal" -- \
-  temporal schedule list --address 127.0.0.1:7233 | grep -q outbox-cdc-drain ||
+  temporal schedule list --address 127.0.0.1:7233 | grep outbox-cdc-drain >/dev/null ||
   fail "the outbox CDC drain schedule is not registered"
 echo "ok   ClickHouse schema, $triggers CDC triggers, Temporal schedules"
 
@@ -190,7 +190,7 @@ after=$(kubectl -n "$ns" get secret "$release-secrets" -o jsonpath='{.data.SECRE
 [ -n "$before" ] && [ "$before" = "$after" ] || fail "SECRET_KEY changed on upgrade"
 kubectl -n "$ns" get "job/$release-bootstrap" -o jsonpath='{.status.succeeded}' | grep -qx 1 ||
   fail "the pre-upgrade bootstrap job did not succeed"
-kubectl -n "$ns" logs "job/$release-bootstrap" | grep -qF "first admin $admin_email already exists: left unchanged" ||
+kubectl -n "$ns" logs "job/$release-bootstrap" | grep -F "first admin $admin_email already exists: left unchanged" >/dev/null ||
   fail "the pre-upgrade bootstrap job did not leave the first admin as it was"
 kubectl -n "$ns" rollout status "deploy/$release-backend" --timeout=5m
 helm test "$release" --namespace "$ns" --timeout 5m

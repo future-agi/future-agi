@@ -9,7 +9,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { iconStyles, PROMPT_ICON_MAPPER } from "../common";
+import { PROMPT_ICON_MAPPER } from "../common";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
@@ -79,7 +79,7 @@ export default function SavePromptTemplate({ open, onClose, data }) {
       isValid={templateName?.trim()?.length > 0}
       onSubmit={handleSaveTemplate}
       isLoading={isPending}
-      modalWidth="499px"
+      modalWidth="560px"
     >
       <Divider />
       <Stack
@@ -95,7 +95,6 @@ export default function SavePromptTemplate({ open, onClose, data }) {
       >
         <Box
           sx={{
-            boxShadow: iconStyles.boxShadow,
             height: 44,
             width: 44,
             bgcolor: "background.paper",

@@ -79,7 +79,7 @@ const FunctionOutput = ({ toolCalls }) => {
                           sx={{
                             ml: 1,
                             fontFamily: "monospace",
-                            fontSize: "11px",
+                            fontSize: "12px",
                           }}
                         >
                           {toolCall.id}
@@ -120,7 +120,7 @@ const FunctionOutput = ({ toolCalls }) => {
                         <Typography
                           sx={{
                             padding: 1.5,
-                            fontSize: "14px",
+                            fontSize: "13px",
                             backgroundColor: "background.neutral",
                             whiteSpace: "pre-wrap",
                             fontFamily:

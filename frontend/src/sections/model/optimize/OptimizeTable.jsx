@@ -1,3 +1,4 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
@@ -5,7 +6,6 @@ import { useParams } from "src/routes/hooks";
 import {
   Box,
   Button,
-  Chip,
   CircularProgress,
   Table,
   TableBody,
@@ -56,11 +56,11 @@ const OptimizeTable = ({
     if (value === "status") {
       return row?.[value] === "Completed" ? (
         <CustomTableCell>
-          <Chip label="Completed" color="success" variant="soft" size="small" />
+          <StatusBadge status="Completed" role="success" />
         </CustomTableCell>
       ) : (
         <CustomTableCell>
-          <Chip label="Running" color="warning" variant="soft" size="small" />
+          <StatusBadge status="Running" role="warning" />
         </CustomTableCell>
       );
     }
@@ -127,6 +127,7 @@ const OptimizeTable = ({
                     {enabledColumns?.map(({ value }) => renderCol(row, value))}
                     <CustomTableCell>
                       <Button
+                        className="row-hover-action"
                         onClick={(e) => {
                           e.stopPropagation();
                           onViewClick(row);
@@ -136,13 +137,9 @@ const OptimizeTable = ({
                           // });
                         }}
                         startIcon={
-                          <Iconify
-                            icon="solar:info-circle-bold"
-                            color="white"
-                            width="16px"
-                          />
+                          <Iconify icon="solar:info-circle-bold" width="16px" />
                         }
-                        variant="contained"
+                        variant="outlined"
                         size="small"
                         color="primary"
                       >

@@ -16,7 +16,8 @@ criteria: "You are evaluating whether the agent correctly detects and responds i
   \ occasional lapses. Score 1.0 if it correctly matches the customer's language throughout.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

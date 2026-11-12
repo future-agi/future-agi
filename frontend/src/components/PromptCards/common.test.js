@@ -128,6 +128,26 @@ describe("getBlocks", () => {
     ]);
   });
 
+  it("keeps the pdf blot's file_name and size on save (AC-9.1)", () => {
+    const quill = mockQuill([
+      {
+        insert: {
+          PdfBlot: {
+            pdfData: {
+              url: "https://pdf.dev",
+              pdf_name: "doc.pdf",
+              pdf_size: 300,
+            },
+          },
+        },
+      },
+    ]);
+    const [block] = getBlocks(quill);
+    expect(block.pdf_url.file_name).toBe("doc.pdf");
+    expect(block.pdf_url.pdf_size).toBe(300);
+    expect(block.pdf_url.url).toBe("https://pdf.dev");
+  });
+
   it("returns pdf block with snake_case key and renamed field", () => {
     const quill = mockQuill([
       {

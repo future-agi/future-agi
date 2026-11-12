@@ -64,7 +64,6 @@ const MetricEmptyState = () => {
             <IconButton
               sx={{
                 p: 0.5,
-                borderRadius: "50%",
                 zIndex: 1,
                 mb: 1,
               }}
@@ -97,7 +96,7 @@ const MetricEmptyState = () => {
                 },
                 "&::-webkit-scrollbar-thumb": {
                   backgroundColor: "var(--scrollbar-thumb)",
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                 },
                 "&::-webkit-scrollbar-thumb:hover": {
                   backgroundColor: "var(--scrollbar-thumb)",

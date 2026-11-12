@@ -58,7 +58,11 @@ const FilterValue = ({ value, updateFilter, dataType, options, disabled }) => {
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="eva:search-fill" color="divider" />
+                  <Iconify
+                    icon="solar:magnifier-linear"
+                    width={16}
+                    color="divider"
+                  />
                 </InputAdornment>
               ),
             }}

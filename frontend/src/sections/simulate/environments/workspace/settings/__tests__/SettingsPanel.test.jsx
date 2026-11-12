@@ -41,6 +41,14 @@ function renderPanel({ backed = true, locked = false, seedDetail = true } = {}) 
 
 beforeEach(() => mutate.mockClear());
 
+describe("SettingsPanel — layout", () => {
+  it("opens on its content, with no heading repeating the tab", () => {
+    renderPanel();
+    expect(screen.queryByText(/How this environment was built/)).toBeNull();
+    expect(screen.getByText("Environment info")).toBeInTheDocument();
+  });
+});
+
 describe("SettingsPanel — environment variables (§11, read-only)", () => {
   it("renders secrets + config in the flat env-vars list with a kind chip", () => {
     renderPanel();

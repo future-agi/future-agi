@@ -18,11 +18,10 @@ function escapeHtml(s) {
 
 export default function WidgetMarkdown({ config }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const content = config.content || "";
 
-  const codeBg = isDark ? "#2d2d2d" : "#f5f5f5";
-  const inlineBg = isDark ? "#3a3a3a" : "#f0f0f0";
+  const codeBg = theme.palette.background.neutral;
+  const inlineBg = theme.palette.action.selected;
 
   const html = escapeHtml(content)
     .replace(

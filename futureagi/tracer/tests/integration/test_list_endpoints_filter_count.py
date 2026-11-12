@@ -6,7 +6,9 @@ we rebind to the real seeded values at parametrize-time inside the test body.
 """
 
 import json
+from dataclasses import replace
 from datetime import timedelta
+from math import fsum
 
 import pytest
 
@@ -24,8 +26,43 @@ ENDPOINTS = {
 }
 
 
+def _is_observe_usage_case(case) -> bool:
+    return (
+        case.target_type == "traces"
+        and case.col_type == "SYSTEM_METRIC"
+        and case.column_id
+        in {"cost", "total_tokens", "prompt_tokens", "completion_tokens"}
+    )
+
+
+def _observe_usage_rows(seeded: list[SeededRow]) -> list[SeededRow]:
+    """Independent whole-trace oracle for this corpus's non-summary spans.
+
+    Observe usage filters now match displayed totals, not the root alone. Keep
+    root identity/time and sum every independent member, including equal calls.
+    This corpus has no repeated Pydantic summaries; their exclusion is exercised
+    separately in test_openrouter_broadcast_list_rollups_ch25.py. Do not import
+    the production aggregator here or change span/voice expectations.
+    """
+    groups: dict[str, list[SeededRow]] = {}
+    for row in seeded:
+        groups.setdefault(row.trace_id, []).append(row)
+    return [
+        replace(
+            next(row for row in rows if row.parent_span_id is None),
+            cost=fsum(row.cost for row in rows),
+            total_tokens=sum(row.total_tokens for row in rows),
+            prompt_tokens=sum(row.prompt_tokens for row in rows),
+            completion_tokens=sum(row.completion_tokens for row in rows),
+        )
+        for rows in groups.values()
+    ]
+
+
 def _expected_count(case, seeded: list[SeededRow]) -> int:
     """Aggregate per-span predicate to the case's target unit."""
+    if _is_observe_usage_case(case):
+        return sum(case.expected_predicate(row) for row in _observe_usage_rows(seeded))
     if case.meta_kind is not None:
         return _expected_meta_count(case, seeded)
     if case.aggregate_predicate is not None:
@@ -39,7 +76,9 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
         # does not prove that the whole session is missing the attribute.
         rows_by_entity: dict[str, list[SeededRow]] = {}
         for row in seeded:
-            entity_id = row.session_id if case.target_type == "sessions" else row.trace_id
+            entity_id = (
+                row.session_id if case.target_type == "sessions" else row.trace_id
+            )
             rows_by_entity.setdefault(entity_id, []).append(row)
         entity_matches = {
             entity_id
@@ -108,15 +147,29 @@ def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
     raise AssertionError(case.target_type)
 
 
+def _session_aggregate_groups(
+    case, seeded: list[SeededRow]
+) -> dict[str, list[SeededRow]]:
+    """Usage sums independent members; trace count still counts live roots.
+
+    The corpus has no source summaries or replacements. Keep this oracle
+    independent of the production reducer, including equal-valued LLM calls.
+    """
+    groups: dict[str, list[SeededRow]] = {}
+    for row in seeded:
+        if (
+            case.column_id in {"total_cost", "total_tokens"}
+            or row.parent_span_id is None
+        ):
+            groups.setdefault(row.session_id, []).append(row)
+    return groups
+
+
 def _expected_aggregate_count(case, seeded: list[SeededRow]) -> int:
-    """Session aggregate cases: the backend aggregates over ROOT spans only
-    (session_list restricts the inner scan to parent_span_id IS NULL). Group
-    each session's root spans and count groups whose aggregate_predicate holds."""
-    groups: dict = {}
-    for r in seeded:
-        if r.parent_span_id is None:
-            groups.setdefault(r.session_id, []).append(r)
-    return sum(1 for g in groups.values() if case.aggregate_predicate(g))
+    return sum(
+        case.aggregate_predicate(rows)
+        for rows in _session_aggregate_groups(case, seeded).values()
+    )
 
 
 # EVAL_METRIC / ANNOTATION / annotator cases carry placeholder ids at
@@ -247,6 +300,39 @@ def test_list_endpoint_total_rows(
     assert total == expected, (
         f"{case.case_id}: endpoint returned {total}, predicate expected {expected}"
     )
+    if _is_observe_usage_case(case):
+        expected_rows = {
+            row.trace_id: row
+            for row in _observe_usage_rows(seeded)
+            if case.expected_predicate(row)
+        }
+        actual_rows = resp.data["result"]["table"]
+        assert sorted(row["trace_id"] for row in actual_rows) == sorted(expected_rows)
+        for row in actual_rows:
+            oracle = expected_rows[row["trace_id"]]
+            assert row["cost"] == pytest.approx(oracle.cost, rel=1e-12, abs=1e-18)
+            assert row["total_tokens"] == oracle.total_tokens
+    if case.target_type == "sessions" and case.aggregate_predicate is not None:
+        expected_groups = {
+            session_id: rows
+            for session_id, rows in _session_aggregate_groups(case, seeded).items()
+            if case.aggregate_predicate(rows)
+        }
+        actual_rows = resp.data["result"]["table"]
+        assert sorted(row["session_id"] for row in actual_rows) == sorted(
+            expected_groups
+        )
+        for row in actual_rows:
+            members = [
+                member for member in seeded if member.session_id == row["session_id"]
+            ]
+            assert row["total_cost"] == pytest.approx(
+                fsum(member.cost for member in members), rel=1e-12, abs=1e-18
+            )
+            assert row["total_tokens"] == sum(member.total_tokens for member in members)
+            assert row["total_traces_count"] == len(
+                {member.trace_id for member in members if member.parent_span_id is None}
+            )
 
 
 def _read_total(body) -> int:

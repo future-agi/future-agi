@@ -119,6 +119,8 @@ def detail_tables(ch_client, monkeypatch):
             eval_explanation Nullable(String),
             error UInt8,
             error_message Nullable(String),
+            target_type LowCardinality(String) DEFAULT 'span',
+            created_at DateTime64(3, 'UTC'),
             is_deleted UInt8,
             _version UInt64
         ) ENGINE = MergeTree ORDER BY (id, _version)

@@ -81,7 +81,11 @@ def _cloud_chat_completion(
     )
 
 
-def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
+def chat_completion(
+    payload: dict[str, Any], *, timeout: float | None = None
+) -> dict[str, Any]:
+    """``timeout`` overrides the transport's own default for callers that
+    know how long their completions run."""
     model = payload.get("model")
     if not is_managed_model(model):
         raise ValueError(f"Model {model!r} is not a FutureAGI-managed model")
@@ -96,11 +100,12 @@ def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
             # agent turn with a large max_tokens routinely runs well past the
             # 30s default, so use the same generous ceiling rather than let a
             # slow-but-valid completion trip a transport timeout.
-            timeout=300.0,
+            timeout=300.0 if timeout is None else timeout,
         )
     return call_managed_service(
         path="/v1/chat/completions",
         json_body=payload,
+        **({} if timeout is None else {"timeout": timeout}),
     )
 
 

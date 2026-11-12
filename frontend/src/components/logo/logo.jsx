@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (brand logo gradients) */
 import React from "react";
 import PropTypes from "prop-types";
 import { forwardRef } from "react";
@@ -119,7 +120,7 @@ const Logo = forwardRef(
     //           gradientUnits="userSpaceOnUse"
     //         >
     //           <stop stopColor="#8B44FF" />
-    //           <stop offset="1" stopColor="#7A40D9" />
+    //           <stop offset="1" stopColor="#7857FC" />
     //         </linearGradient>
     //         <linearGradient
     //           id="paint2_linear_126_28941"
@@ -141,7 +142,7 @@ const Logo = forwardRef(
     //           gradientUnits="userSpaceOnUse"
     //         >
     //           <stop stopColor="#8B44FF" />
-    //           <stop offset="1" stopColor="#7A40D9" />
+    //           <stop offset="1" stopColor="#7857FC" />
     //         </linearGradient>
     //       </defs>
     //     </svg>
@@ -155,7 +156,7 @@ const Logo = forwardRef(
     const g1Start = isDark ? "#FFFFFF" : "#CF6BE8";
     const g1End = isDark ? "#E6E6E7" : "#7857FC";
     const g2Start = isDark ? "#F3F3F3" : "#8B44FF";
-    const g2End = isDark ? "#A9A9AA" : "#7A40D9";
+    const g2End = isDark ? "#A9A9AA" : "#7857FC";
     const textFill = isDark ? "#FAFAFA" : "#7857FC";
 
     const collapsedLogo = (

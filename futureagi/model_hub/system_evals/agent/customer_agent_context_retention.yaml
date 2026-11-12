@@ -15,7 +15,8 @@ criteria: "You are evaluating whether the agent remembers and uses context from 
   \ Score 1.0 if it consistently remembers and applies all shared information.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

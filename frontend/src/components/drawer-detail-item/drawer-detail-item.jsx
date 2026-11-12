@@ -15,7 +15,7 @@ const DetailItem = ({ title, content }) => {
       </Box>
       <Box sx={{ gap: 1, display: "flex", flexDirection: "column", flex: 1 }}>
         <Box>
-          <Typography fontSize={14} fontWeight={700} color="text.disabled">
+          <Typography fontSize={13} fontWeight={600} color="text.disabled">
             {title}
           </Typography>
         </Box>

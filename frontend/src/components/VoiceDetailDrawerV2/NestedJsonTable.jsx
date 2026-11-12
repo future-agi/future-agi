@@ -170,7 +170,7 @@ const Highlight = ({ text, tokens }) => {
         component="span"
         sx={{
           bgcolor: (theme) => alpha(theme.palette.warning.main, 0.28),
-          borderRadius: "2px",
+          borderRadius: "4px",
           px: "1px",
         }}
       >
@@ -202,7 +202,7 @@ const PrimitiveValue = ({ value, tokens }) => {
       <Typography
         component="span"
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           fontFamily: "monospace",
         }}
@@ -216,7 +216,7 @@ const PrimitiveValue = ({ value, tokens }) => {
     return (
       <Typography
         component="span"
-        sx={{ fontSize: 11, color: "text.disabled", fontStyle: "italic" }}
+        sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}
       >
         empty {isArr ? "array" : "object"}
       </Typography>
@@ -230,7 +230,7 @@ const PrimitiveValue = ({ value, tokens }) => {
     <Typography
       component="span"
       sx={{
-        fontSize: 11,
+        fontSize: 12,
         fontFamily: "monospace",
         color: typeof value === "string" ? "syntax.string" : "text.primary",
         overflowWrap: "anywhere",
@@ -286,14 +286,18 @@ const ValueCell = ({ value, tokens }) => {
           }}
         >
           <Iconify
-            icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              expanded
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled" }}
           />
           <Typography
             component="span"
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.secondary",
               fontFamily: "monospace",
             }}
@@ -366,14 +370,14 @@ const NestedRow = ({ path, value, tokens, defaultOpen }) => {
         gap: 0.5,
         py: 0.15,
         px: 0.25,
-        borderRadius: "2px",
+        borderRadius: "4px",
         "&:hover": isComplex ? { bgcolor: "action.hover" } : {},
       }}
     >
       <Typography
         onClick={toggleOpen}
         sx={{
-          fontSize: 10.5,
+          fontSize: 12,
           fontWeight: 500,
           fontFamily: "monospace",
           color: "text.secondary",
@@ -401,14 +405,18 @@ const NestedRow = ({ path, value, tokens, defaultOpen }) => {
               }}
             >
               <Iconify
-                icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  open
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={12}
                 sx={{ color: "text.disabled" }}
               />
               <Typography
                 component="span"
                 sx={{
-                  fontSize: 10.5,
+                  fontSize: 12,
                   color: "text.secondary",
                   fontFamily: "monospace",
                 }}
@@ -471,13 +479,13 @@ export const FlatMatchRow = ({ path, value, tokens }) => (
       columnGap: 0.75,
       py: 0.15,
       px: 0.25,
-      borderRadius: "2px",
+      borderRadius: "4px",
     }}
   >
     <Typography
       component="span"
       sx={{
-        fontSize: 10.5,
+        fontSize: 12,
         fontWeight: 500,
         fontFamily: "monospace",
         color: "text.secondary",
@@ -572,7 +580,7 @@ const NestedJsonTable = ({
           py: 2,
         }}
       >
-        <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
           {emptyMessage}
         </Typography>
       </Box>
@@ -586,7 +594,7 @@ const NestedJsonTable = ({
           {header}
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
               px: 0.5,
@@ -614,7 +622,7 @@ const NestedJsonTable = ({
         {overflow > 0 && (
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
               px: 0.5,

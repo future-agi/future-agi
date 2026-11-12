@@ -16,7 +16,7 @@ export default function UploadedJSON({
         height: "auto",
         overflow: "auto",
         border: "1px solid",
-        borderColor: "whiteScale.500",
+        borderColor: "divider",
         borderRadius: (theme) => theme.spacing(0.5, 0.5, 0, 0),
       }}
     >
@@ -24,7 +24,7 @@ export default function UploadedJSON({
         sx={{
           padding: 1,
           borderBottom: "1px solid",
-          borderColor: "whiteScale.500",
+          borderColor: "divider",
           position: "sticky",
           top: 0,
           backgroundColor: "background.paper",
@@ -43,7 +43,7 @@ export default function UploadedJSON({
         </Typography>
         <IconButton
           sx={{
-            color: "red.500",
+            color: "status.danger.fg",
           }}
           onClick={() => setUploadedJson(null)}
         >

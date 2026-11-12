@@ -20,7 +20,6 @@ const LOGS_WEBHOOK_PATH = '/agentcc/webhook/logs/';
 const WEBHOOK_SECRET =
   process.env.AGENTCC_WEBHOOK_SECRET || 'e2e-agentcc-webhook-secret';
 const REQUEST_LOGS_PATH = '/agentcc/request-logs/';
-const APPLICATION_PLACEHOLDER = 'Select applications...';
 const APPLICATION_CELL = 'tbody tr td:nth-child(4)';
 // Ingestion is synchronous, but the poll keeps a slow runner from flaking.
 const LOG_VISIBLE = POLL.ASYNC_JOB;
@@ -175,12 +174,17 @@ test(
           r.url().includes(`application=${checkout}`),
         { timeout: UI_READY },
       );
-      await page.getByRole('button', { name: 'Filters' }).click();
-      // The picker's options are the metadata-values endpoint's answer.
-      await page.getByPlaceholder(APPLICATION_PLACEHOLDER).click();
-      await page.getByRole('option', { name: checkout, exact: true }).click();
+      // The shared Filter panel applies as values change; there is no Apply.
+      await page.getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.getByRole('button', { name: 'Property', exact: true }).click();
+      await page.getByPlaceholder('Search properties...').fill('Application');
+      await page.locator('[data-filter-property-option="application"]').click();
+      await page.locator('[data-filter-value-trigger="application"]').click();
+      // The value options are the metadata-values endpoint's answer.
+      await page.getByPlaceholder('Search values...').fill(checkout);
+      await page.locator(`[data-filter-value-option="${checkout}"][role="checkbox"]`).click();
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Apply' }).click();
+      await page.keyboard.press('Escape');
       await filtered;
 
       await expect(applicationCells).toHaveText([checkout, checkout], { timeout: UI_READY });

@@ -21,7 +21,7 @@ import {
 } from "src/sections/develop-detail/AccordianElements";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import NewTaskFilterBox from "./NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "./ScheduledRuns";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
@@ -243,7 +243,7 @@ const NewTaskDrawerChild = ({
             width: {
               xs: "100%",
               sm: "100%",
-              md: "590px",
+              md: "640px",
             },
           }}
           role="presentation"
@@ -275,7 +275,7 @@ const NewTaskDrawerChild = ({
               <Link
                 href="https://docs.futureagi.com/docs/observe/features/evals"
                 underline="always"
-                color="blue.500"
+                color="status.info.fg"
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
@@ -289,7 +289,7 @@ const NewTaskDrawerChild = ({
                 padding: 0,
               }}
             >
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <Box
@@ -372,20 +372,14 @@ const NewTaskDrawerChild = ({
                   <Accordion defaultExpanded>
                     <AccordionSummary>Filters</AccordionSummary>
                     <AccordionDetails>
-                      <NewTaskFilterBox
-                        attributes={evalAttributes.map((attr) => {
-                          const key = attributeInventoryKey(attr);
-                          return { label: key, value: key };
-                        })}
-                        getValues={getValues}
-                        setValue={setValue}
+                      <TaskFilterBar
                         control={control}
-                        onAttributeSearchChange={setAttributeSearch}
-                      />
-                      <AttributeInventoryControls
-                        {...inventoryControlProps}
-                        showSearch={false}
-                        search={attributeSearch}
+                        setValue={setValue}
+                        projectId={project}
+                        isSimulator={String(rowType || "")
+                          .toLowerCase()
+                          .startsWith("voice")}
+                        rowType={rowType}
                       />
                     </AccordionDetails>
                   </Accordion>

@@ -449,9 +449,8 @@ func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Anthropic doesn't have "none" -- tool_choice should be nil (omitted).
-	if ar.ToolChoice != nil {
-		t.Errorf("tool_choice = %+v, want nil (anthropic has no 'none' equivalent)", ar.ToolChoice)
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "none" {
+		t.Errorf("tool_choice = %+v, want {type: none}", ar.ToolChoice)
 	}
 }
 

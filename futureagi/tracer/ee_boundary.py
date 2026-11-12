@@ -169,6 +169,57 @@ def price_trace_investigation_usage(
     return TraceInvestigationUsagePricing(True, amount, "")
 
 
+@dataclass(frozen=True)
+class UsageCheck:
+    """Billing's answer to a usage check where nothing is billed: allowed."""
+
+    allowed: bool = True
+    error_code: str = ""
+    reason: str = ""
+
+
+NOT_BILLED = UsageCheck()
+
+
+def jev_credits_per_answer() -> float | None:
+    """What Jev charges for one answer, in credits, or None where its
+    answers aren't billed: without ee's billing, or off Cloud. On Cloud a
+    billing config that fails to load raises, so the caller refuses rather
+    than run unchecked."""
+    try:
+        from ee.jev.metering import credits_per_answer
+        from ee.usage.deployment import DeploymentMode
+    except ImportError:
+        return None
+    if not DeploymentMode.is_cloud():
+        return None
+    return float(credits_per_answer())
+
+
+def jev_key_messages() -> frozenset[str]:
+    """What a failed Jev answer says when the organization's TypeSafe key is
+    missing or TypeSafe rejected it; empty without ee."""
+    try:
+        from ee.jev.errors import key_messages
+    except ImportError:
+        return frozenset()
+    return key_messages()
+
+
+def check_usage(org_id: str, event_type: str, amount: float):
+    """Billing's cap for ``amount`` of ``event_type``, the organization's
+    pause budgets included: its CheckResult, or NOT_BILLED where this
+    deployment has no billing module. A billing error (its Redis, database
+    or config down) raises."""
+    try:
+        from ee.usage.services.budgets import with_pause_budgets
+        from ee.usage.services.metering import check_usage as _check_usage
+    except ImportError:
+        return NOT_BILLED
+    result = _check_usage(org_id, event_type, amount=amount)
+    return with_pause_budgets(org_id, result, amount)
+
+
 def emit_trace_investigation_usage(event_payload: dict) -> None:
     """Emit a feed-specific credit event through the existing billing path."""
     if is_oss():

@@ -14,6 +14,20 @@ export function useRunAnalytics(executionId) {
   });
 }
 
+// The run header's reliability numbers, without the full analytics payload.
+// Keyed under the analytics key so every analytics invalidation refreshes it.
+export function useRunReliability(executionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["simulation-run-analytics-v3", executionId, "reliability"],
+    queryFn: () =>
+      axios
+        .get(endpoints.runResultsV3.reliability(executionId))
+        .then((response) => response.data),
+    enabled: !!executionId && enabled,
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
 export async function exportRunResults(executionId, query = {}) {
   const response = await axios.post(
     endpoints.runResultsV3.export(executionId),

@@ -24,7 +24,7 @@ import {
 } from "src/sections/develop-detail/AccordianElements";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import NewTaskFilterBox from "./NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "./ScheduledRuns";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
@@ -41,11 +41,11 @@ import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundar
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // ── Configured Eval Card ──
 
 const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
-  const theme = useTheme();
   const name =
     evalItem?.name ||
     evalItem?.eval_template?.name ||
@@ -63,10 +63,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -81,8 +78,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
                 label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "action.hover",
                   "& .MuiChip-label": { px: 0.5 },
                 }}
@@ -93,8 +88,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
                 label={`+${mappedKeys.length - 3}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -107,7 +100,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
         onClick={onRemove}
         sx={{ p: 0.25, color: "text.secondary" }}
       >
-        <Iconify icon="mingcute:close-line" width={16} />
+        <Iconify icon="solar:close-linear" width={16} />
       </IconButton>
     </Box>
   );
@@ -316,16 +309,18 @@ const NewTaskDrawerV2 = ({
     [project, addEval],
   );
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant="temporary"
         onClose={handleClose}
         PaperProps={{
           sx: {
-            width: { xs: "100%", sm: "100%", md: "590px" },
+            width: { xs: "100%", sm: "100%", md: "640px" },
             height: "100vh",
             position: "fixed",
             zIndex: 10,
@@ -379,7 +374,7 @@ const NewTaskDrawerV2 = ({
               </Link>
             </Box>
             <IconButton onClick={handleClose} sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
 
@@ -456,18 +451,14 @@ const NewTaskDrawerV2 = ({
                   <Accordion defaultExpanded>
                     <AccordionSummary>Filters</AccordionSummary>
                     <AccordionDetails>
-                      <NewTaskFilterBox
-                        attributes={
-                          Array.isArray(evalAttributes)
-                            ? evalAttributes.map((attr) => ({
-                                label: attr,
-                                value: attr,
-                              }))
-                            : []
-                        }
-                        getValues={getValues}
-                        setValue={setValue}
+                      <TaskFilterBar
                         control={control}
+                        setValue={setValue}
+                        projectId={project}
+                        isSimulator={String(rowType || "")
+                          .toLowerCase()
+                          .startsWith("voice")}
+                        rowType={rowType}
                       />
                     </AccordionDetails>
                   </Accordion>
@@ -499,11 +490,9 @@ const NewTaskDrawerV2 = ({
                         disabled={!isProjectSelected}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
-                          <Iconify icon="mingcute:add-line" width={16} />
+                          <Iconify icon="solar:add-linear" width={16} />
                         }
                         sx={{
-                          textTransform: "none",
-                          fontWeight: 500,
                           alignSelf: "flex-start",
                         }}
                       >

@@ -9,7 +9,13 @@ import {
 import PropTypes from "prop-types";
 
 const BulkDeleteDialog = ({ open, count, onConfirm, onCancel, isLoading }) => (
-  <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth>
+  <Dialog
+    open={open}
+    onClose={onCancel}
+    maxWidth={false}
+    PaperProps={{ sx: { maxWidth: 400 } }}
+    fullWidth
+  >
     <DialogTitle>
       Delete {count} evaluation{count !== 1 ? "s" : ""}?
     </DialogTitle>
@@ -17,7 +23,9 @@ const BulkDeleteDialog = ({ open, count, onConfirm, onCancel, isLoading }) => (
       <DialogContentText>
         This action cannot be undone. System evaluations will not be deleted.
       </DialogContentText>
-      <DialogContentText sx={{ mt: 1, fontSize: "0.8rem", color: "text.secondary" }}>
+      <DialogContentText
+        sx={{ mt: 1, fontSize: "13px", color: "text.secondary" }}
+      >
         This will also remove evaluation results from linked datasets.
       </DialogContentText>
     </DialogContent>

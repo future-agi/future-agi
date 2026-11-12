@@ -62,9 +62,13 @@ export default function AccountSocialLinks({ socialLinks }) {
                       ""
                     }
                     color={
+                      // eslint-disable-next-line no-restricted-syntax -- ds: brand (social network)
                       (link === "facebook" && "#1877F2") ||
+                      // eslint-disable-next-line no-restricted-syntax -- ds: brand (social network)
                       (link === "instagram" && "#DF3E30") ||
+                      // eslint-disable-next-line no-restricted-syntax -- ds: brand (social network)
                       (link === "linkedin" && "#006097") ||
+                      // eslint-disable-next-line no-restricted-syntax -- ds: brand (social network)
                       (link === "twitter" && "#1C9CEA") ||
                       ""
                     }

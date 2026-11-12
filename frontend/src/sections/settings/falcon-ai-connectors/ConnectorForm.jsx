@@ -113,7 +113,13 @@ export default function ConnectorForm({ open, connector, onClose }) {
   const canSave = form.name.trim() && form.server_url.trim();
 
   return (
-    <Dialog open={open} onClose={() => onClose(false)} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={() => onClose(false)}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ pb: 1 }}>
         <Typography variant="h6" component="span">
           {isEdit ? "Edit Connector" : "Add Connector"}
@@ -220,7 +226,7 @@ export default function ConnectorForm({ open, connector, onClose }) {
               testing ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="mdi:connection" width={18} />
+                <Iconify icon="solar:plug-circle-linear" width={20} />
               )
             }
             sx={{ mr: "auto" }}

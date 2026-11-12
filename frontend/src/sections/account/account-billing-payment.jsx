@@ -26,7 +26,7 @@ export default function AccountBillingPayment() {
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={newCard.onTrue}
             >
               New Card

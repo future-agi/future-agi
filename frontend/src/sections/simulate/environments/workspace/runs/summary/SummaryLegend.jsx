@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import { dataColor } from "../runs.constants";
 
 const INLINE_COUNT = 3;
 
@@ -16,7 +17,7 @@ function LegendItem({ item, onHighlight }) {
       sx={{
         px: 0.5,
         py: 0.25,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         minWidth: 0,
         cursor: "default",
       }}
@@ -27,7 +28,7 @@ function LegendItem({ item, onHighlight }) {
           height: 8,
           borderRadius: "50%",
           flexShrink: 0,
-          bgcolor: item.color,
+          bgcolor: (t) => dataColor(t, item.colorIndex),
         }}
       />
       <Typography
@@ -43,7 +44,7 @@ LegendItem.propTypes = {
   item: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
-    color: PropTypes.string,
+    colorIndex: PropTypes.number,
   }).isRequired,
   onHighlight: PropTypes.func.isRequired,
 };
@@ -100,13 +101,12 @@ export default function SummaryLegend({ evals, onHighlight }) {
               flexShrink: 0,
               px: 1,
               py: 0.25,
-              borderRadius: 0.75,
+              borderRadius: "4px",
               cursor: "default",
-              border: "1px solid",
-              borderColor: "divider",
+              bgcolor: "action.selected",
               typography: "s3",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
+              fontWeight: 500,
+              color: "text.secondary",
             }}
           >
             +{folded.length} more
@@ -122,7 +122,7 @@ SummaryLegend.propTypes = {
     PropTypes.shape({
       id: PropTypes.string,
       name: PropTypes.string,
-      color: PropTypes.string,
+      colorIndex: PropTypes.number,
     }),
   ).isRequired,
   onHighlight: PropTypes.func.isRequired,

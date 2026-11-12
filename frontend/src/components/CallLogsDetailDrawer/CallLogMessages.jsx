@@ -12,7 +12,7 @@ const CallLogMessages = ({ data }) => {
       flexGrow={1}
       border="1px solid"
       borderColor="divider"
-      borderRadius={0.5}
+      borderRadius="4px"
       width={"100%"}
       p={1}
     >
@@ -36,7 +36,7 @@ const CallLogMessages = ({ data }) => {
               sx={{
                 backgroundColor: "background.paper",
                 borderRadius: "4px",
-                fontSize: "14px",
+                fontSize: "13px",
                 whiteSpace: "pre-wrap",
                 maxHeight: "72vh",
                 overflow: "auto",

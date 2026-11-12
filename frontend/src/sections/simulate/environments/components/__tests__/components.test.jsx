@@ -16,9 +16,15 @@ describe("SurfaceIcon", () => {
     expect(icon).toHaveStyle({ color: "rgb(120, 87, 252)" });
   });
 
-  it("falls back to the first surface for an unknown id", () => {
+  it("shows a neutral channel icon for an unknown id instead of guessing Voice", () => {
     render(<SurfaceIcon surface="not-a-surface" />);
-    expect(screen.getByRole("img", { name: "Voice" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Channel not known" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Voice" })).toBeNull();
+  });
+
+  it("shows the neutral icon when no channel is set yet", () => {
+    render(<SurfaceIcon surface={undefined} />);
+    expect(screen.getByRole("img", { name: "Channel not known" })).toBeInTheDocument();
   });
 });
 

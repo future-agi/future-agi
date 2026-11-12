@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -205,6 +207,42 @@ func TestWaitForFirstStreamChunkReturnsContextCancellation(t *testing.T) {
 	}
 	if err != context.Canceled {
 		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+// A provider sends its error before it closes chunks, so when both are ready
+// the error is the answer. A select that took the closed channel first used to
+// answer a generic 502 about half the time.
+func TestWaitForFirstStreamChunkReportsTheQueuedError(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		chunks := make(chan models.StreamChunk)
+		errs := make(chan error, 1)
+		errs <- models.ErrBadRequest("model_not_found", "no such model")
+		close(errs)
+		close(chunks)
+
+		_, err := waitForFirstStreamChunk(context.Background(), chunks, errs)
+		var apiErr *models.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest {
+			t.Fatalf("run %d: error = %v, want the provider's 400", i, err)
+		}
+	}
+}
+
+// Once ctx is done a provider sends no error, so the deadline is the answer.
+func TestWaitForFirstStreamChunkAtTheDeadlineReportsIt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	for i := 0; i < 100; i++ {
+		chunks := make(chan models.StreamChunk)
+		errs := make(chan error)
+		close(errs)
+		close(chunks)
+
+		if _, err := waitForFirstStreamChunk(ctx, chunks, errs); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("run %d: error = %v, want the deadline", i, err)
+		}
 	}
 }
 

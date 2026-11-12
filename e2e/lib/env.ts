@@ -6,6 +6,7 @@ export const E2E = {
   apiUrl: process.env.E2E_API_URL ?? 'http://localhost:8100',
   collectorUrl: process.env.E2E_COLLECTOR_URL ?? 'http://localhost:24318',
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',
+  slackMockUrl: process.env.E2E_SLACK_MOCK_URL ?? 'http://localhost:28081',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
   // The managed stacks' CH_PASSWORD (e2e/stack/*.env), for user `default`.

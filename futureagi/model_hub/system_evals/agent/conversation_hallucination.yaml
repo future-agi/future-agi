@@ -31,6 +31,7 @@ eval_tags:
 - Hallucination
 - Conversation
 - Agents
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

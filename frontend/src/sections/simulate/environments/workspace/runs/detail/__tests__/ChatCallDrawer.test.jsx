@@ -2,11 +2,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
+const mocks = vi.hoisted(() => ({
+  runTraces: vi.fn(() => ({ projectId: null, traces: [], isError: false })),
+}));
+
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
+    useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });
 
