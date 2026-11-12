@@ -16,11 +16,12 @@ ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
-# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
-# dedicated exact-aggregation worker. PeerDB is included through the same
+# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus
+# dedicated exact-aggregation and SQL workers. The generic worker deliberately
+# excludes both admission-bound queues. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
-SERVICES=(frontend backend worker worker-exact-aggregation
+SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
