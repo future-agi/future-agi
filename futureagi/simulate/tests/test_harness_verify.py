@@ -19,7 +19,13 @@ from simulate.models import (
 )
 from simulate.models import TestExecution as Execution
 from simulate.models.harness_versioning import VersionStatus
-from simulate.selectors.held_back import held_back, verify_run, version_verify
+from simulate.selectors.held_back import (
+    CAUSE_WORDS,
+    coding_agent_failure_message,
+    held_back,
+    verify_run,
+    version_verify,
+)
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.services.harness_environment import annotate_for_list, environment_row
 from simulate.services.harness_verify import (
@@ -36,7 +42,10 @@ from simulate.services.hosted_harness import (
     create_selected_harness_run,
     project_terminal_job_onto_run,
 )
-from simulate.services.hosted_harness_gateway import RUNTIME_VALIDATION_FAILED
+from simulate.services.hosted_harness_gateway import (
+    FAILURE_CAUSES,
+    RUNTIME_VALIDATION_FAILED,
+)
 from simulate.services.run_compare import wilson_interval
 from simulate.tests.test_agent_fix_services import (
     KEYS,
@@ -1038,7 +1047,7 @@ class TestWhatACodingAgentReads:
         job = _as(api_client, keys.coder, "get", job_path)
         call_read = _as(api_client, keys.coder, "get", call_path)
 
-        message = f"{RUNTIME_VALIDATION_FAILED} (cause: {read})"
+        message = f"{RUNTIME_VALIDATION_FAILED}. {CAUSE_WORDS[read]} (cause: {read})"
         assert job.json()["status"]["failure"] == {
             "domain": "environment",
             "stage": "validating_environment",
@@ -1046,7 +1055,7 @@ class TestWhatACodingAgentReads:
             "cause": read,
             "message": message,
         }
-        assert message in json.dumps(call_read.json())
+        assert message in json.dumps(call_read.json(), ensure_ascii=False)
         for response in (job, call_read):
             assert hidden not in json.dumps(response.json())
 
@@ -1105,3 +1114,19 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
+    """The words a coding agent reads; the code stays at the end for a program to match."""
+    failure = {
+        "code": "authoring_runtime_validation_failed",
+        "cause": "agent_exited_before_ready",
+    }
+
+    assert coding_agent_failure_message(failure) == (
+        "Generated environment failed real-runtime validation after bounded repair. "
+        "Didn't start — the agent exited before it was ready. Fix the crash on startup, "
+        "then push a new agent version. (cause: agent_exited_before_ready)"
+    )
+    # Every value the cause can take, unknown included, has words.
+    assert set(CAUSE_WORDS) == {*FAILURE_CAUSES, "unknown"}

@@ -140,16 +140,37 @@ _FAILURE_LABELS = {
     "authoring_runtime_validation_failed": RUNTIME_VALIDATION_FAILED,
     "authoring_failed": AUTHORING_FAILED,
 }
+# What each cause means and what to do next, in plain words; the stable code stays beside it.
+CAUSE_WORDS = {
+    "agent_exited_before_ready": (
+        "Didn't start — the agent exited before it was ready. "
+        "Fix the crash on startup, then push a new agent version."
+    ),
+    "agent_not_ready_in_time": (
+        "Didn't start — the agent wasn't listening in time. "
+        "Make it start faster or listen sooner, then push a new agent version."
+    ),
+    "chat_target_timeout": (
+        "Stopped — the agent didn't reply to a message in time. "
+        "Run it again. If it repeats, make the agent reply faster."
+    ),
+    "chat_target_refused": (
+        "Stopped — the agent refused the connection. "
+        "Check that it listens on the port it was given, then push a new agent version."
+    ),
+    "unknown": "Stopped — the reason wasn't recorded. Run it again.",
+}
 
 
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
-    """A failure's message as a coding agent reads it: fixed text for its code, and the
-    cause when the failure has one."""
+    """A failure's message as a coding agent reads it: fixed text for its code, and, when
+    the failure has a cause, what it means and what to do, with the cause's code."""
     code = str(failure.get("code") or "failed")
     label = _FAILURE_LABELS.get(code, f"The run failed ({code})")
     if "cause" not in failure:
         return label
-    return f"{label} (cause: {closed_failure_cause(failure['cause'])})"
+    cause = closed_failure_cause(failure["cause"])
+    return f"{label}. {CAUSE_WORDS[cause]} (cause: {cause})"
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
