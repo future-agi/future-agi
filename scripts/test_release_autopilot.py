@@ -1835,7 +1835,7 @@ class SdkSyncWorkflowTests(unittest.TestCase):
         for step in self.steps[1:]:
             self.assertNotIn("inputs.sdk-base", repr(step))
         sdk = next(step for step in self.steps if step.get("with", {}).get("repository") == "future-agi/futureagi-sdk")
-        self.assertEqual(sdk["with"]["ref"], "${{ steps.release.outputs.sdk-base }}")
+        self.assertEqual(sdk["with"]["ref"], "refs/heads/${{ steps.release.outputs.sdk-base }}")
         opener = next(step for step in self.steps if step.get("name") == "Open the pull request")
         self.assertEqual(opener["env"]["BASE"], "${{ steps.release.outputs.sdk-base }}")
         # A dispatch and a release-images completion both resolve with dev.
@@ -1861,6 +1861,166 @@ class SdkSyncWorkflowTests(unittest.TestCase):
                 self.assertEqual((code, outputs), (0, ["skip=true"]))
                 self.assertNotIn("\nsdk-base=feat/x", log)
         self.assertEqual(self.resolve(run_ref="v2.0.0")[1], ["version=v2.0.0", "sdk-base=dev"])
+
+    def step(self, name):
+        return next(step for step in self.steps if step.get("name") == name)
+
+    @staticmethod
+    def evaluate(expression, context):
+        """Evaluate a job `if:` the way GitHub does for this grammar: ==, &&, ||, startsWith, case-insensitive."""
+        def value(name):
+            node = context
+            for key in name.split("."):
+                node = node.get(key) if isinstance(node, dict) else None
+            return node
+
+        def fold(text):
+            return text.lower() if isinstance(text, str) else text
+
+        code = []
+        for token in re.findall(r"'[^']*'|\|\||&&|==|[(),]|[A-Za-z_][A-Za-z0-9_.-]*|\S", expression):
+            if token in ("||", "&&"):
+                code.append({"||": " or ", "&&": " and "}[token])
+            elif token == "==":
+                code.append(" == ")
+            elif token in "(),":
+                code.append(token)
+            elif token == "startsWith":
+                code.append("starts")
+            elif token.startswith("'"):
+                code.append(repr(fold(token[1:-1])))
+            elif re.fullmatch(r"(github|inputs)(\.[A-Za-z0-9_-]+)+", token):
+                code.append(f"value({token!r})")
+            else:
+                raise AssertionError(f"unexpected token {token!r} in {expression!r}")
+        return eval("".join(code), {"__builtins__": {}},  # noqa: S307 - the workflow's own expression
+                    {"value": lambda name: fold(value(name)),
+                     "starts": lambda text, prefix: isinstance(text, str) and text.startswith(prefix)})
+
+    def test_only_this_repositorys_successful_release_tag_runs_start_a_sync(self):
+        condition = self.workflow["jobs"]["sync"]["if"]
+
+        def run(**fields):
+            event = {"conclusion": "success", "head_branch": "v1.58.0", "event": "push",
+                     "head_repository": {"full_name": "future-agi/future-agi"}, **fields}
+            return {"github": {"event_name": "workflow_run", "repository": "future-agi/future-agi",
+                               "event": {"workflow_run": event}}}
+
+        # Real release-images runs: 41655444775 (v1.58.0, tag push) and
+        # 39725016867 (v1.53.0, a dispatch from the tag after the push run failed).
+        for context in (run(), run(head_branch="v1.53.0", event="workflow_dispatch"),
+                        {"github": {"event_name": "workflow_dispatch", "repository": "future-agi/future-agi"}}):
+            with self.subTest(context=context):
+                self.assertIs(self.evaluate(condition, context), True)
+        for context in (run(conclusion="failure"), run(head_branch="main"),
+                        run(head_repository={"full_name": "someone/future-agi"}), run(head_repository=None)):
+            with self.subTest(context=context):
+                self.assertIs(self.evaluate(condition, context), False)
+
+    def test_the_contract_is_checked_out_by_its_full_tag_ref_and_verified_before_any_token(self):
+        names = [step.get("name") or step.get("uses") for step in self.steps]
+        contract = self.step("Check out the contract at the release")
+        self.assertEqual(contract["with"]["ref"], "refs/tags/${{ steps.release.outputs.version }}")
+        verify = names.index("Verify the contract is the release tag")
+        self.assertEqual(verify, names.index("Check out the contract at the release") + 1)
+        token = next(index for index, step in enumerate(self.steps)
+                     if "create-github-app-token" in step.get("uses", ""))
+        self.assertLess(verify, token)
+        sdk = names.index("Check out futureagi-sdk")
+        self.assertEqual(names.index("Verify the SDK checkout is the base branch"), sdk + 1)
+        # Every checkout names a full ref: a bare name lets a branch stand in for a tag.
+        for step in self.steps:
+            if "actions/checkout" in step.get("uses", ""):
+                with self.subTest(step=step.get("name")):
+                    self.assertRegex(step["with"]["ref"], r"^refs/(tags|heads)/\$\{\{ steps\.release\.outputs\.")
+
+    def git_repository(self, root):
+        def git(*args):
+            return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                                   "-c", "tag.gpgsign=false", "-c", "user.name=Synthetic",
+                                   "-c", "user.email=synthetic@example.invalid", *args],
+                                  cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+        root.mkdir(parents=True)
+        git("init", "-q", "-b", "main")
+        return git
+
+    def run_step(self, name, cwd, **env):
+        script = self.step(name)["run"]
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-c", script], cwd=cwd, text=True,
+                                capture_output=True, env={"PATH": os.environ.get("PATH", ""), "HOME": str(cwd),
+                                                          "GIT_CONFIG_NOSYSTEM": "1",
+                                                          "GIT_CONFIG_GLOBAL": os.devnull, **env})
+        return result.returncode, result.stdout + result.stderr
+
+    def test_the_contract_check_passes_only_on_the_tags_commit(self):
+        name = "Verify the contract is the release tag"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "contract"
+            git = self.git_repository(root)
+            (root / "swagger.json").write_text("{}\n")
+            git("add", ".")
+            git("commit", "-q", "-m", "release")
+            release = git("rev-parse", "HEAD")
+            git("tag", "v1.58.0")
+            git("tag", "-a", "-m", "annotated", "v1.59.0")
+            git("tag", "v1.60.0")
+            # A writer's branch named like that release, holding another contract.
+            git("checkout", "-q", "-b", "v1.60.0")
+            (root / "swagger.json").write_text('{"planted": true}\n')
+            git("commit", "-q", "-am", "planted")
+            planted = git("rev-parse", "HEAD")
+            git("tag", "v1.61.0", f"{release}^{{tree}}")
+            # What actions/checkout does for ref: refs/tags/<version>: a detached tag checkout.
+            for version in ("v1.58.0", "v1.59.0"):
+                with self.subTest(version=version):
+                    git("checkout", "-q", "--detach", f"refs/tags/{version}")
+                    code, log = self.run_step(name, root, VERSION=version)
+                    self.assertEqual(code, 0, log)
+                    self.assertIn(f"contract from refs/tags/{version} at {release}", log)
+            refusals = (
+                # A bare ref resolved to a same-named branch: checkout -B <name> origin/<name>.
+                ("v1.60.0", ["checkout", "-q", "-B", "v1.60.0", planted], "on a branch"),
+                ("v1.58.0", ["checkout", "-q", "-B", "v1.58.0", release], "on a branch"),
+                ("v1.58.0", ["checkout", "-q", "--detach", planted], "not the commit"),
+                ("v1.62.0", ["checkout", "-q", "--detach", release], "object type: missing"),
+                ("v1.61.0", ["checkout", "-q", "--detach", release], "object type: tree"),
+            )
+            for version, checkout, reason in refusals:
+                with self.subTest(version=version, checkout=checkout):
+                    git(*checkout)
+                    code, log = self.run_step(name, root, VERSION=version)
+                    self.assertNotEqual(code, 0)
+                    self.assertIn(reason, log)
+                    self.assertNotIn("contract from", log)
+
+    def test_the_sdk_check_passes_only_on_the_fetched_base_branch(self):
+        name = "Verify the SDK checkout is the base branch"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "futureagi-sdk"
+            git = self.git_repository(root)
+            git("commit", "-q", "--allow-empty", "-m", "dev")
+            fetched = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/dev", fetched)
+            git("commit", "-q", "--allow-empty", "-m", "other")
+            other = git("rev-parse", "HEAD")
+            git("tag", "dev", other)
+            # What actions/checkout does for ref: refs/heads/dev.
+            git("checkout", "-q", "-B", "dev", "refs/remotes/origin/dev")
+            code, log = self.run_step(name, root, BASE="dev")
+            self.assertEqual(code, 0, log)
+            for checkout, reason in ((["checkout", "-q", "--detach", "refs/tags/dev"], "not on refs/heads/dev"),
+                                     (["checkout", "-q", "--detach", fetched], "not on refs/heads/dev"),
+                                     (["checkout", "-q", "-B", "dev", other], "not the fetched dev")):
+                with self.subTest(checkout=checkout):
+                    git(*checkout)
+                    code, log = self.run_step(name, root, BASE="dev")
+                    self.assertNotEqual(code, 0)
+                    self.assertIn(reason, log)
+            git("checkout", "-q", "-B", "dev", fetched)
+            git("update-ref", "-d", "refs/remotes/origin/dev")
+            code, log = self.run_step(name, root, BASE="dev")
+            self.assertNotEqual(code, 0)
+            self.assertIn("refs/remotes/origin/dev is missing", log)
 
 
 def yq_stub(directory):

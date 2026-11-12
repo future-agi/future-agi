@@ -199,10 +199,24 @@ changes none of them.
     dispatch so far (run 41805312254, 4 Nov)
     used `feat/sdk-docs-reference`; that value now fails the run. To sync a
     feature branch, run `sdkgen/sync_contract.py` and `sdkgen/generate.py` on
-    that branch locally. futureagi-sdk `dev` needs one approval from the
-    organisation ruleset today. But Actions approvals are on there and
-    last-push approval is off (read-only check, 12 Nov), so one writer can
-    still merge into it alone. Turn Actions approvals off and add a
+    that branch locally. The job also reads the contract
+    (`api_contracts/openapi/swagger.json`) only from the release tag. It
+    checks out `refs/tags/<version>`, not the bare version: for a bare name,
+    actions/checkout takes a branch of that name before the tag, and any
+    writer can create a branch named `v1.59.0`. A step then checks, before
+    any token is minted, that `refs/tags/<version>` names a commit and that
+    the checkout is that commit, detached. The SDK checkout names
+    `refs/heads/dev`, and a step checks that it is on that branch at the
+    fetched commit. A `workflow_run` start also requires the release-images
+    run to come from this repository. The contract is data, not code, but
+    sdkgen writes its strings into the generated SDK source, so its origin
+    matters. Optionally, a branch ruleset that blocks creating branches
+    named `v[0-9]*` removes look-alike branches altogether. Each sync pull
+    request waits for a person's approval: no futureagi-sdk workflow
+    approves it, and the job only arms auto-merge. futureagi-sdk `dev`
+    needs one approval from the organisation ruleset today. But Actions
+    approvals are on there and last-push approval is off (read-only check,
+    12 Nov), so one writer can still merge into it alone. Turn Actions approvals off and add a
     last-push ruleset on futureagi-sdk `dev` too, after the
     `release-please.yml` change described under "Actions approvals off".
   - `refresh-disposable-domains.yml` runs `scripts/generate_disposable_domains.py`
