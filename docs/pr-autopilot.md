@@ -427,7 +427,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    From the same rules call, an active `pull_request` rule must have
    `dismiss_stale_reviews_on_push`. The bot's approval names one head, but
    GitHub counts it for the PR, so only that setting stops a later push from
-   being merged on it. It acts only on a push after the approval. For a push
+   being merged on it. It acts only on a push after the approval, and a push
+   that only merges `dev` into the branch may leave the approval counting
+   (item 7). For a push
    that lands while the approval is being posted, the controller withdraws
    its own approval (item 6). A missing stale-approval rule or inaccessible
    evidence stops automation. Check
@@ -552,8 +554,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
      protection lets a person, the author included, merge it by hand on that
      approval without updating the branch, as with any person's approval
      today.
-   - GitHub's documentation says that merging the base branch into a PR does
-     not dismiss approvals (not tested here). So after "Update branch" the
+   - A review note cites GitHub's documentation: merging the base branch
+     into a PR does not dismiss approvals. Neither that page nor the
+     behaviour was checked here. If it holds, after "Update branch" the
      App's approval of the older head may still count. If the review of the
      new head then blocks or does not finish, the PR shows that approval
      beside the bot's escalation, and a person can merge on it. A maintainer
@@ -927,7 +930,10 @@ have measured a live revert rate during offline development.
 
 **Stop new automation:** unset `PR_AUTOPILOT` or set it to `off`. For an immediate
 stop, also cancel active autopilot runs; their variable snapshot may still be
-`on`. Add `autopilot-hold` to affected open PRs. A missing review key or empty
+`on`. With the switch off no sweep runs, so a merge whose run ended before its
+follow-ups is not recovered until the switch is on again; the reconciliation
+query in [Guardrail: revert rate](#guardrail-revert-rate) lists such PRs.
+Add `autopilot-hold` to affected open PRs. A missing review key or empty
 trust list also prevents new automatic approvals/merges, but explicit off plus
 cancellation is the clearest emergency procedure. Removing the approver App's
 key from the `pr-autopilot` environment also stops every approval; each PR
@@ -1005,7 +1011,13 @@ Suggested rollout:
      another branch cannot read the environment's key; with the key
      removed, the merge step still runs and the PR gets the approver note;
      and a sweep run, a PR-event run and a dispatch run that only waits show
-     `approve-and-merge` as skipped, not failed.
+     `approve-and-merge` as skipped, not failed;
+   - a recovered merge: in the disposable repository, merge an
+     `autopilot-approved` PR with a workflow token from a scratch workflow,
+     without follow-ups. `GET .../pulls/<n>` must show `merged_by.login`
+     `github-actions[bot]` (no such merge exists in the organisation to
+     read), and a sweep at least 15 minutes later must post one merged
+     record, dispatch once and add `autopilot-merged`.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust

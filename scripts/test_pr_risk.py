@@ -2600,6 +2600,18 @@ class ControllerTests(unittest.TestCase):
         self.later_sweep(50)
         self.assertEqual(self.post_merge_dispatches(), sent)
 
+    def test_a_recovery_record_whose_answer_is_lost_still_dispatches_once(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        self.merge_with_lost_answer()
+        # GitHub stores the record, but the sweep gets no answer: it retries.
+        self.failing(lambda method, route, data: (method, route) == ("POST", "issues/42/comments"),
+                     1, status=None, lose_response=True)
+        self.later_sweep(20)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+        self.assertEqual(len(self.merged_records()), 2)
+        self.later_sweep(35)
+        self.assertEqual(self.post_merge_dispatches(), planned)
+
     def test_merge_recovery_respects_the_dev_cdn_switch(self):
         self.assertIn("DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}", workflow_job("prepare"))
         for switch, cdn in (("false", False), ("", True)):

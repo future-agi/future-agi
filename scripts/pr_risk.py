@@ -1405,13 +1405,15 @@ def recover_merge(api, policy, settings, number):
         raise PolicyError("the merge commit is unknown")
     plan = post_merge_plan(policy, api.pages(f"pulls/{number}/files"), settings)
     names = ", ".join(f"`{safe_text(entry['workflow'])}`" for entry in plan) or "none"
-    comment(
+    # Retried: a record applied with its answer lost would stop every later
+    # sweep before any dispatch. A second copy of the record is harmless.
+    retrying(lambda: comment(
         api,
         number,
         f"{MERGED_MARKER}\nAutopilot merged head `{head}` (merge SHA `{merge_sha}`), but the run "
         "that merged it ended before its follow-ups. A later sweep started them: post-merge "
         f"dispatches on dev: {names}. They test the current dev tip, which may include later merges.",
-    )
+    ))
     missed = dispatch_plan(api, plan)
     try:
         add_label(api, number, policy["labels"]["merged"])
