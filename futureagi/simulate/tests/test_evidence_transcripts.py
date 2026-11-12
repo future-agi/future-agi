@@ -255,6 +255,23 @@ class TestRefused:
         assert field in str(response.data)
         assert not EvidenceImport.no_workspace_objects.exists()
 
+    def test_a_nul_is_refused_raw_and_dropped_once_parsed(
+        self, client, environment, no_observe
+    ):
+        raw = _post(client, environment, _transcript("User: hi\x00\nAgent: ok"))
+        escaped = _post(
+            client,
+            environment,
+            _transcript(
+                json.dumps([{"role": "user", "content": "hi\x00 there"}]), "json"
+            ),
+        )
+
+        assert raw.status_code == status.HTTP_400_BAD_REQUEST
+        assert escaped.status_code == status.HTTP_201_CREATED, escaped.data
+        [case] = escaped.json()["cases"]
+        assert case["transcript"]["turns"][0]["text"] == "hi there"
+
     def test_a_transcript_import_needs_transcripts(self, client, environment):
         response = client.post(
             f"{ENVIRONMENTS}/{environment.id}/evidence-imports/",

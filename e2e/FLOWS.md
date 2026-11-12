@@ -2522,7 +2522,7 @@
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:42`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:43`
 
 **Tags:** —
 
@@ -2539,6 +2539,6 @@
 - the first import is answered 400 transcript_unreadable naming transcript 1 and line 2, the dialog shows that message, and no simulate_evidence_import row is made
 - from the fixed import on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201
 - simulate_evidence_import has one row for the actor org and the seeded environment: source_kind transcript, no project, not declared production, with one pending case transcript-1
-- neither the import's stored redaction nor its case's stored transcript holds the minted email; the stored transcript holds <EMAIL_ADDRESS> and the minted ask
+- neither the import's stored redaction nor its case's stored transcript holds the minted email, and the stored transcript holds the minted ask
 - the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
 - the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay

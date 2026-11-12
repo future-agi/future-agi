@@ -28,6 +28,9 @@ _TEXT_COLUMNS = ("text", "content", "message")
 # that starts with a link (https://…) or a time (10:30) is not one.
 _SPEAKER = re.compile(r"([A-Za-z]{1,20}):(?:[ \t](.*))?$")
 _JSON_GAP = " \t\r\n,"
+# An unknown speaker is named in the refusal, cut to this: a role cell can hold
+# anything, and the refusal should not repeat a transcript back.
+_SPEAKER_SHOWN = 30
 
 
 class TranscriptError(ValueError):
@@ -74,7 +77,8 @@ def _role(value: object, line: int | None) -> Role | None:
         return "agent"
     if name.lower() in _LEFT_OUT:
         return None
-    raise TranscriptError(f"Unknown speaker {name!r}: use User or Agent.", line)
+    shown = name if len(name) <= _SPEAKER_SHOWN else f"{name[:_SPEAKER_SHOWN]}…"
+    raise TranscriptError(f"Unknown speaker {shown!r}: use User or Agent.", line)
 
 
 def _json(text: str) -> tuple[list[ParsedTurn], int]:
@@ -82,6 +86,8 @@ def _json(text: str) -> tuple[list[ParsedTurn], int]:
         document = json.loads(text)
     except json.JSONDecodeError as error:
         raise TranscriptError(f"Not valid JSON: {error.msg}.", error.lineno) from None
+    except RecursionError:
+        raise TranscriptError("Not valid JSON: it is nested too deeply.") from None
     messages = document.get("messages") if isinstance(document, dict) else document
     if not isinstance(messages, list):
         raise TranscriptError(
@@ -99,8 +105,9 @@ def _json(text: str) -> tuple[list[ParsedTurn], int]:
         content = None if role is None else _content(message, line)
         if role is None or content is None:
             left_out += 1
-        elif content.strip():
-            turns.append(ParsedTurn(role, content.strip()))
+        # An escaped NUL (\u0000) is no text, and a database cannot store it.
+        elif said := content.replace("\x00", "").strip():
+            turns.append(ParsedTurn(role, said))
     return turns, left_out
 
 

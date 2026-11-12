@@ -618,3 +618,44 @@ def test_a_blocked_reason_is_redacted_before_it_is_kept(environment, cases, stor
     assert "jane.doe@example.com" not in reason
     assert "<EMAIL_ADDRESS>" in reason
     assert len(reason) <= 255
+
+
+def test_a_transcript_case_lands_and_is_added_like_an_observe_one(
+    environment, storage, user
+):
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("chat", "text", "User: Refund me\nAgent: Done twice.")
+        ],
+        production=True,
+        user=user,
+    )
+    transcript_cases = list(made.cases.all())
+    conversation, command = _command(environment, transcript_cases, 70)
+    scenario_key = evidence_drafts.scenario_key_for(transcript_cases[0])
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 70)
+    [drafted] = _refreshed(transcript_cases)
+    assert (drafted.status, drafted.scenario_key) == ("drafted", scenario_key)
+
+    with _certifies():
+        saved = add_to_suite(
+            made, [str(drafted.id)], expected={}, idempotency_key="add-t", user=user
+        )
+
+    assert saved is True
+    environment.refresh_from_db()
+    keys = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    assert scenario_key in keys
+    assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"

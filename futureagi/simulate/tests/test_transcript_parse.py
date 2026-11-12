@@ -81,6 +81,16 @@ class TestJson:
         )
         assert _fails(text, "json") == "Line 3: A message has no content."
 
+    def test_json_nested_too_deeply_is_refused_not_crashed(self):
+        assert _fails("[" * 100_000 + "]" * 100_000, "json") == (
+            "Not valid JSON: it is nested too deeply."
+        )
+
+    def test_an_escaped_nul_is_dropped(self):
+        text = json.dumps([{"role": "user", "content": "hi\u0000 there"}])
+        assert "\\u0000" in text
+        assert _turns(text, "json") == [("user", "hi there")]
+
     def test_not_a_list_of_messages(self):
         assert _fails('{"turns": []}', "json").startswith(
             "Line 1: Expected a list of messages"
@@ -167,6 +177,12 @@ class TestCsv:
 
     def test_a_row_without_a_speaker_names_its_line(self):
         assert _fails("role,text\n,hi\n", "csv") == "Line 2: No speaker is given."
+
+    def test_a_long_unknown_speaker_is_cut_in_the_refusal(self):
+        role = "x" * 31 + " my account number is 123"
+        assert _fails(f"role,text\n{role},hi\n", "csv") == (
+            f"Line 2: Unknown speaker '{'x' * 30}…': use User or Agent."
+        )
 
 
 @pytest.mark.parametrize("form", ["json", "text", "csv"])
