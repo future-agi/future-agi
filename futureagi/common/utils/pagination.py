@@ -5,21 +5,31 @@ from rest_framework.request import Request
 DEFAULT_PAGE_SIZE = 10
 
 
+def _positive_int(value, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number > 0 else default
+
+
 def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]:
     """
     Paginate a queryset using ``page_number`` and ``page_size`` query params.
 
-    Uses Django's ``Paginator.get_page()`` which clamps out-of-range page
-    numbers: values above ``total_pages`` return the last page, values
-    below 1 (or non-numeric) return the first page.
+    Invalid input never raises: a non-numeric or non-positive ``page_number``
+    falls back to the first page and a non-numeric or non-positive
+    ``page_size`` falls back to ``DEFAULT_PAGE_SIZE``. Django's
+    ``Paginator.get_page()`` clamps page numbers above ``total_pages`` to
+    the last page.
 
     Args:
         queryset: The Django QuerySet to paginate.
         request: DRF request whose ``query_params`` supply ``page_number``
             (default 1) and ``page_size`` (default 10).
     """
-    page_number = int(request.query_params.get("page_number", 1))
-    page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    page_number = _positive_int(request.query_params.get("page_number"), 1)
+    page_size = _positive_int(request.query_params.get("page_size"), DEFAULT_PAGE_SIZE)
 
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(page_number)
