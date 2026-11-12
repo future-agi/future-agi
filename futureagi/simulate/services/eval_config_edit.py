@@ -29,6 +29,36 @@ def has_own_mapping(eval_config) -> bool:
     return isinstance(mapping, dict) and bool(mapping)
 
 
+def harness_column_refusal(eval_config, *, harness_run: bool) -> str | None:
+    """The refusal for editing a result column the harness fills, or None.
+
+    Later harness runs write into such a column by its fixed id, and grading
+    it again would replace the harness's verdict, so neither edit route may
+    change it. The caller asks whether the run is a harness run, so each route
+    keeps its own lookup and its own order.
+    """
+    if harness_run and not has_own_mapping(eval_config):
+        name = eval_config.name or "This evaluation"
+        return f"{name} is set by the harness and can't be edited here."
+    return None
+
+
+def keeps_own_mapping(name: str):
+    """A ``before_save`` for ``update_eval_config`` that refuses an edit leaving no mapping of its own.
+
+    On a harness run an eval with no mapping reads as a result column the
+    harness fills, so an edit may not turn a person's eval into one. ``name``
+    is taken before the edit, so a rename sent in the same body doesn't change
+    the words.
+    """
+
+    def refuse_without_mapping(edited):
+        if not has_own_mapping(edited):
+            raise EvalConfigEditRefused(f"{name} needs at least one input mapped")
+
+    return refuse_without_mapping
+
+
 def visible_eval_template_query(user_organization, workspace):
     """Templates available from the active workspace plus global system templates."""
     template_query = Q(organization__isnull=True)

@@ -1196,7 +1196,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         from simulate.serializers.run_test import SimulateEvalConfigSimpleSerializer
         from simulate.services.eval_config_edit import (
             EvalConfigEditRefused,
-            has_own_mapping,
+            harness_column_refusal,
+            keeps_own_mapping,
             update_eval_config,
         )
         from simulate.services.harness_evals import is_harness_run_test
@@ -1220,10 +1221,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         name = config.name or "This evaluation"
-        if is_harness_run_test(job.run_test_id) and not has_own_mapping(config):
+        harness_refusal = harness_column_refusal(
+            config, harness_run=is_harness_run_test(job.run_test_id)
+        )
+        if harness_refusal is not None:
             return Response(
                 build_error_envelope(
-                    f"{name} is set by the harness and can't be edited here.",
+                    harness_refusal,
                     status_code=status.HTTP_400_BAD_REQUEST,
                 ),
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1236,10 +1240,6 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        def keeps_its_inputs(edited):
-            if not has_own_mapping(edited):
-                raise EvalConfigEditRefused(f"{name} needs at least one input mapped")
-
         try:
             with transaction.atomic():
                 update_eval_config(
@@ -1247,7 +1247,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                     request.validated_data,
                     organization=request_organization(request),
                     workspace=request_workspace(request),
-                    before_save=keeps_its_inputs,
+                    before_save=keeps_own_mapping(name),
                 )
                 _touch_content(job)
         except EvalConfigEditRefused as refused:
