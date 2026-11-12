@@ -42,7 +42,9 @@ setup = core.setup
 pytestmark = [pytest.mark.unit]
 
 FIXTURES = Path(__file__).parent / "fixtures" / "attachments"
-OGG_FACTS = b'{"mime_type":"audio/ogg","sample_rate":48000,"channels":1,"frame_count":9600}'
+OGG_FACTS = (
+    b'{"mime_type":"audio/ogg","sample_rate":48000,"channels":1,"frame_count":9600}'
+)
 
 
 def fake_run(returncode, output=OGG_FACTS, calls=None):
