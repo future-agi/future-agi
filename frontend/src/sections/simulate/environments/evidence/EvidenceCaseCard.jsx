@@ -14,6 +14,7 @@ const PARTS = Object.keys(PART_LABELS);
 const HELD = new Set(["present", "partial", "truncated"]);
 const TITLE_CHARS = 90;
 const PREVIEW_CHARS = 240;
+const BODY = { typography: "s1", color: "text.secondary" };
 
 // A case is named by what the user asked, as the person saw it in Observe.
 const caseTitle = (item, kind) => {
@@ -32,11 +33,21 @@ const partText = (item, part) => {
     : PART_LABELS[part];
 };
 
+function Label({ children }) {
+  return (
+    <Box component="span" sx={{ fontWeight: 500, color: "text.primary" }}>
+      {children}
+    </Box>
+  );
+}
+
+Label.propTypes = { children: PropTypes.node };
+
 function PartsLine({ label, item, parts }) {
   if (!parts.length) return null;
   return (
-    <Typography variant="body2" color="text.secondary">
-      <strong>{label}</strong>{" "}
+    <Typography sx={BODY}>
+      <Label>{label}</Label>{" "}
       {parts.map((part) => partText(item, part)).join("; ")}
     </Typography>
   );
@@ -50,11 +61,8 @@ PartsLine.propTypes = {
 
 function Turn({ turn }) {
   return (
-    <Typography
-      variant="body2"
-      sx={{ whiteSpace: "pre-wrap", color: "text.secondary" }}
-    >
-      <strong>{turn.role === "user" ? "User" : "Agent"}:</strong>{" "}
+    <Typography sx={{ ...BODY, whiteSpace: "pre-wrap" }}>
+      <Label>{turn.role === "user" ? "User" : "Agent"}:</Label>{" "}
       {cutAtWord(turn.text, PREVIEW_CHARS)}
     </Typography>
   );
@@ -78,12 +86,28 @@ export default function EvidenceCaseCard({
   const missing = PARTS.filter((part) => !HELD.has(item[part]?.status));
   const choice = shows ?? caseShowsDefault(item);
   return (
+    // A panel: flat, with a hairline border and the panel radius.
     <Box
-      sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
+      sx={{
+        border: 1,
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        p: 1.5,
+      }}
       data-testid={`evidence-case-${item.id}`}
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s1",
+            fontWeight: 500,
+            color: "text.primary",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {caseTitle(item, kind)}
         </Typography>
         {simulated ? (
@@ -101,17 +125,17 @@ export default function EvidenceCaseCard({
         />
       </Stack>
       {item.reason ? (
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {item.reason}
-        </Typography>
+        <Typography sx={{ ...BODY, mb: 1 }}>{item.reason}</Typography>
       ) : null}
       {!item.source_available ? (
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        <Typography sx={{ ...BODY, mb: 1 }}>
           {EVIDENCE_COPY.provenanceUnavailable}
         </Typography>
       ) : null}
       {item.changed_since_import ? (
-        <Typography variant="body2" color="warning.main" sx={{ mb: 1 }}>
+        <Typography
+          sx={{ typography: "s1", color: "status.warning.fg", mb: 1 }}
+        >
           {EVIDENCE_COPY.changed}
         </Typography>
       ) : null}
@@ -121,19 +145,19 @@ export default function EvidenceCaseCard({
       </Stack>
       {turns.length ? <Turn turn={turns[0]} /> : null}
       {hidden ? (
-        <Typography variant="body2" color="text.disabled">
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {EVIDENCE_COPY.moreTurns(hidden)}
         </Typography>
       ) : null}
       {turns.length > 1 ? <Turn turn={turns[turns.length - 1]} /> : null}
       {item.status === "drafted" || item.status === "added" ? (
         <Box sx={{ mt: 1 }}>
-          <Typography variant="body2">
+          <Typography sx={{ typography: "s1", color: "text.primary" }}>
             {EVIDENCE_COPY.scenario}:{" "}
-            <strong>{item.scenario_name || item.scenario_key}</strong>
+            <Label>{item.scenario_name || item.scenario_key}</Label>
           </Typography>
           {(item.new_checks ?? []).map((check) => (
-            <Typography key={check.name} variant="body2" color="info.main">
+            <Typography key={check.name} sx={BODY}>
               {EVIDENCE_COPY.newCheck}: {check.what || check.name}
             </Typography>
           ))}

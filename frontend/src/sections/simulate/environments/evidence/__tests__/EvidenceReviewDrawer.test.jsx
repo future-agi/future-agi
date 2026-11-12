@@ -99,7 +99,10 @@ beforeEach(() => {
 describe("EvidenceReviewDrawer", () => {
   it("says what each source holds and lacks, and what redaction replaces", async () => {
     renderDrawer();
-    expect(screen.getByText("Loading this import…")).toBeInTheDocument();
+    // The design system's skeleton keeps the layout while it loads.
+    expect(
+      screen.getByRole("progressbar", { name: "Loading this import…" }),
+    ).toBeInTheDocument();
     const card = await screen.findByTestId("evidence-case-c1");
     // Named by what the user asked, never by the source's id.
     expect(
@@ -210,7 +213,7 @@ describe("EvidenceReviewDrawer", () => {
       "Not set: the builder judges from the evidence",
     );
     expect(
-      screen.getByText(/^Nothing in this source records how it ended/),
+      screen.getByText(/^Nothing here records how it ended/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Draft 1 scenario" }),
@@ -305,7 +308,7 @@ describe("EvidenceReviewDrawer", () => {
       screen.getByRole("button", { name: "Save 0 to the suite" }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/This can take up to 90 minutes; you can close this/),
+      screen.getByText(/^Up to 90 minutes; you can close this meanwhile\./),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Draft scenarios first, then add them here."),
@@ -465,7 +468,7 @@ describe("EvidenceReviewDrawer", () => {
     ).toBeInTheDocument();
   });
 
-  it("says when the import is gone", async () => {
+  it("says when the import is gone, and offers no retry", async () => {
     axios.get.mockImplementation((url) =>
       url === BASE ? Promise.reject({ statusCode: 404 }) : answer(url),
     );
@@ -473,5 +476,25 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       await screen.findByText("This import is not available."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("says a failed load and retries it", async () => {
+    let calls = 0;
+    axios.get.mockImplementation((url) => {
+      if (url !== BASE) return answer(url);
+      calls += 1;
+      return calls === 1
+        ? Promise.reject({ statusCode: 500 })
+        : Promise.resolve({ data: evidence });
+    });
+    renderDrawer();
+    expect(
+      await screen.findByText(
+        "Couldn't load this import. Try again in a moment.",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByTestId("evidence-case-c1")).toBeInTheDocument();
   });
 });

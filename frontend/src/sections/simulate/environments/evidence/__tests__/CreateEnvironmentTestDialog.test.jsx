@@ -114,7 +114,9 @@ describe("CreateEnvironmentTestDialog", () => {
   it("says it is loading, not that there is none, before the list answers", () => {
     envs.answer = { data: undefined, isError: false };
     renderDialog();
-    expect(screen.getByText("Loading your environments…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Loading your environments…" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/No environment to import into/)).toBeNull();
     expect(
       screen.getByRole("button", { name: "Create environment test" }),
@@ -122,11 +124,14 @@ describe("CreateEnvironmentTestDialog", () => {
   });
 
   it("says the list failed, not that there is none", () => {
-    envs.answer = { data: undefined, isError: true };
+    const refetch = vi.fn();
+    envs.answer = { data: undefined, isError: true, refetch };
     renderDialog();
     expect(
       screen.getByText(/Couldn't load your environments/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No environment to import into/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

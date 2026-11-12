@@ -35,7 +35,7 @@ export const EVIDENCE_COPY = {
   // A Simulator project's sources are our own simulations, never production evidence.
   simulated: (kind) => `Simulated ${kind}, not production`,
   simulatedNotice: (kind) =>
-    `These ${kind}s come from a Simulator project: they are simulations, not production. The scenarios drafted from them never claim a customer did this.`,
+    `These ${kind}s come from a Simulator project, so they make tests, never regression tests: no customer did this.`,
   notFound: "This import is not available.",
   loadError: "Couldn't load this import. Try again in a moment.",
   loading: "Loading this import…",
@@ -65,20 +65,20 @@ export const EVIDENCE_COPY = {
   // What each choice keeps from the evidence, and what the builder makes up.
   showsDetail: {
     unset:
-      "Nothing in this source records how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it; pick one above if you know.",
+      "Nothing here records how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it.",
     failure:
-      "Keeps: the situation, what the user said and the failure evidence. Makes: what should have happened, written from the policy, never copied from the agent's answer.",
+      "Keeps: the situation, what the user said and the failure. Makes: what should have happened, from the policy, not the agent's answer.",
     success:
-      "Keeps: the workflow that worked, step by step. Makes: explicit checks; an observed success still needs a reviewed expected outcome.",
+      "Keeps: the workflow that worked, step by step. Makes: explicit checks; you still review the expected outcome.",
     partial:
-      "Keeps: only what the record does show. Makes: checks for that part; anything it does not show is labelled synthetic.",
+      "Keeps: only what the record shows. Makes: checks for that part; the rest is labelled synthetic.",
   },
   startingState:
-    "Observe doesn't record the seed records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels the rest synthetic. Add the real records to the scenario after drafting; the test is not an exact replay.",
+    "Observe doesn't hold the seed records the tools read first (an earlier refund). The draft marks them synthetic: the test is not an exact replay.",
   draft: (n) => `Draft ${n} scenario${n === 1 ? "" : "s"}`,
   drafting: (n) => `Drafting ${n} imported case${n === 1 ? "" : "s"}`,
   draftingBody:
-    "The environment's builder is writing a scenario for each case. This can take up to 90 minutes; you can close this and come back. Changing the environment meanwhile can block the drafted cases.",
+    "Up to 90 minutes; you can close this meanwhile. Editing the environment before it ends blocks the drafted cases.",
   noneWaiting: "No case is waiting to be drafted.",
   noneDrafted: "Draft scenarios first, then add them here.",
   drafted: "Drafted",
@@ -99,10 +99,11 @@ export const EVIDENCE_COPY = {
   addClean: (n) => `Save ${n} to the suite`,
   addBeside: (n) => `Add ${n} to unsaved changes`,
   besideNotice:
-    "The environment has unsaved changes. These cases join them and stay unsaved until you press Save in the draft bar. Until you save, Epoch can't write new variations.",
+    "These cases join the unsaved changes until you press Save in the draft bar. Until you save, Epoch can't write new variations.",
   besideAdded: (n) =>
     `${n} case${n === 1 ? " is" : "s are"} in the unsaved changes. Press Save in the draft bar to make ${n === 1 ? "it" : "them"} live. Until you save, Epoch can't write new variations.`,
   goToSave: "Go to Save",
+  retry: "Retry",
   added_: (n) => `${n} case${n === 1 ? "" : "s"} added to the suite`,
   addedToDraft: (n) =>
     `${n} case${n === 1 ? "" : "s"} added to the unsaved changes`,
