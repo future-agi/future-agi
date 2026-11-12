@@ -179,7 +179,7 @@ func TestStream_TextToToolUse(t *testing.T) {
 							Index: 0,
 							ID:    "toolu_01",
 							Type:  "function",
-							Function: &models.FunctionCall{
+							Function: &models.FunctionCallDelta{
 								Name:      "get_weather",
 								Arguments: `{"city":`,
 							},
@@ -196,7 +196,7 @@ func TestStream_TextToToolUse(t *testing.T) {
 					ToolCalls: []models.ToolCallDelta{
 						{
 							Index: 0,
-							Function: &models.FunctionCall{
+							Function: &models.FunctionCallDelta{
 								Arguments: `"London"}`,
 							},
 						},
@@ -262,7 +262,7 @@ func TestStream_TwoParallelToolCalls(t *testing.T) {
 				{Delta: models.Delta{
 					ToolCalls: []models.ToolCallDelta{
 						{Index: 0, ID: "toolu_01", Type: "function",
-							Function: &models.FunctionCall{Name: "tool_a", Arguments: `{"x":1}`}},
+							Function: &models.FunctionCallDelta{Name: "tool_a", Arguments: `{"x":1}`}},
 					},
 				}},
 			},
@@ -274,7 +274,7 @@ func TestStream_TwoParallelToolCalls(t *testing.T) {
 				{Delta: models.Delta{
 					ToolCalls: []models.ToolCallDelta{
 						{Index: 1, ID: "toolu_02", Type: "function",
-							Function: &models.FunctionCall{Name: "tool_b", Arguments: `{"y":2}`}},
+							Function: &models.FunctionCallDelta{Name: "tool_b", Arguments: `{"y":2}`}},
 					},
 				}},
 			},
