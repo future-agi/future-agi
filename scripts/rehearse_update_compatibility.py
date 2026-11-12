@@ -475,7 +475,7 @@ def select_reference_registry(registry, pending_migration_tables, *, plan=None):
 # relation. RunPython/RunSQL use the gate's reviewed literal UPDATE_SAFETY
 # tables. Unresolvable relations, custom operations and undeclared code refuse.
 PENDING_TABLE_SCOPE = r'''
-from django.db import migrations
+from django.db import migrations, models
 from django.db.backends.utils import strip_quotes, truncate_name
 try:
     from django.db.migrations.utils import resolve_relation
@@ -549,6 +549,26 @@ MODEL_OPS={'AddField','RemoveField','AlterField','RenameField','AddIndex','Remov
     'AddIndexConcurrently','RemoveIndexConcurrently','AddConstraint','RemoveConstraint',
     'AddConstraintNotValid','ValidateConstraint','AlterConstraint','AlterModelTable',
     'AlterModelTableComment','AlterUniqueTogether','AlterIndexTogether','AlterOrderWithRespectTo'}
+def choices_only_charfield(operation, before, after, app, model):
+    # Django's schema editor ignores choices (Field.non_db_attrs). Keep this
+    # exception narrow: exact built-in operation/field, unchanged constructor
+    # apart from choices, and no index/key/relationship effects. Custom fields
+    # and all other changes retain the conservative physical-table scope.
+    if type(operation) is not migrations.AlterField:
+        return False
+    fields=[current.models[(app,model.lower())].fields.get(operation.name) for current in (before,after)]
+    if any(type(field) is not models.CharField or field.primary_key or field.unique
+           or field.db_index or field.remote_field is not None for field in fields):
+        return False
+    signatures=[]
+    for field in fields:
+        if 'choices' not in field.non_db_attrs:
+            return False
+        name,path,args,kwargs=field.deconstruct()
+        kwargs=dict(kwargs)
+        kwargs.pop('choices',None)
+        signatures.append((name,path,args,kwargs))
+    return signatures[0]==signatures[1]
 def touched(operation, migration, state):
     app=migration.app_label
     if type(operation) is migrations.SeparateDatabaseAndState:
@@ -577,6 +597,8 @@ def touched(operation, migration, state):
     assert kind in MODEL_OPS, 'unclassified_operation_table_scope_unavailable'
     model=getattr(operation,'model_name',None) or getattr(operation,'name',None)
     assert type(model) is str and model, 'unclassified_operation_table_scope_unavailable'
+    if choices_only_charfield(operation,state,after,app,model):
+        return set()
     tables={model_table(state,app,model),model_table(after,app,model)}
     if kind in ('AddField','AlterField','RemoveField','RenameField'):
         names=(operation.name,) if kind!='RenameField' else (operation.old_name,operation.new_name)

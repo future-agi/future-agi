@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from tfc.utils.api_errors import build_error_envelope
 
-JEV_MODEL_IDS = ("jev-1.13.0", "jev-latest")
+JEV_MODEL_IDS = ("jev-1.13.0", "jev-1.14.0", "jev-latest")
 
 
 def is_jev_model(model_name: object) -> bool:
@@ -58,11 +58,42 @@ def _jev_denied_response(message: str) -> Response:
 
 
 def jev_gate_for_template(model_name: object, template_id=None, eval_type=None):
+    from evaluations.decision_models import get_decision_model
+
+    if isinstance(model_name, str) and model_name.lower().startswith("decision/"):
+        if get_decision_model(model_name) is None:
+            return Response(
+                build_error_envelope(
+                    "Select a supported decision model and connection.",
+                    code="DECISION_MODEL_UNKNOWN",
+                    extra={"attr": "model", "feature": "decision_models"},
+                ),
+                status=400,
+            )
+        from tfc.ee_loader import has_ee
+
+        if not has_ee("ee.decisions.evaluator"):
+            return Response(
+                build_error_envelope(
+                    "Decision evaluators are not available in this build.",
+                    code="DECISION_UNAVAILABLE",
+                    status_code=402,
+                ),
+                status=402,
+            )
+        from evaluations.decision_models import uses_jev_billing
+
+        if uses_jev_billing(model_name) and _jev_denied_off_cloud():
+            return _jev_denied_response(
+                "Jev models are not available in this deployment."
+            )
+        # Non-Jev connections retain the existing general BYOK policy.
+        return None
     if isinstance(model_name, str) and model_name.lower().startswith("jev-"):
         if not is_jev_model(model_name):
             return Response(
                 build_error_envelope(
-                    "Unsupported Jev model. Supported: jev-1.13.0, jev-latest.",
+                    "Unsupported Jev model. Supported: jev-1.13.0, jev-1.14.0, jev-latest.",
                     code="JEV_MODEL_UNKNOWN",
                     extra={"attr": "model", "feature": "jev"},
                 ),
@@ -88,6 +119,14 @@ def describe_jev_error(exc: BaseException) -> dict | None:
     """The typed code and fixed user-facing text for a failed Jev run, as
     ``{"code", "message", "attr", "details"}``. None when exc is not a Jev
     failure, or when this build has no Jev."""
+    try:
+        from ee.decisions.errors import describe as describe_decision
+    except ImportError:
+        pass
+    else:
+        decision = describe_decision(exc)
+        if decision is not None:
+            return decision
     try:
         from ee.jev.errors import describe
     except ImportError:

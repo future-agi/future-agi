@@ -1,12 +1,14 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
 import { CONSOLE_COPY } from "../build.constants";
-import { Turn, Working } from "./ConsoleTurn";
+import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
+import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
@@ -31,6 +33,24 @@ function composerReducer(state, action) {
   }
 }
 
+// Tight on purpose: rows are about 34px, so anything wider pulls back someone
+// reading the last few rows.
+const NEAR_BOTTOM_PX = 8;
+
+// Things worth reading. Tool rows and other progress only keep the ship flying,
+// or the new-message ping would replace it almost at once. Rebuild and rollback
+// cards are their own system turns, with no steps.
+const MESSAGE_KINDS = new Set(["note", "ask", "error"]);
+
+const countMessages = (turns) =>
+  (turns || []).reduce(
+    (total, turn) =>
+      total +
+      (turn.role === "system" ? 1 : 0) +
+      (turn.steps || []).filter((s) => MESSAGE_KINDS.has(s.kind)).length,
+    0,
+  );
+
 /**
  * The console, as a chat.
  *
@@ -49,6 +69,9 @@ function composerReducer(state, action) {
  * `onCollapse` adds a collapse button to the header. `active` is false while
  * the console is collapsed (mounted but hidden); it skips the auto-scroll then
  * and jumps to the latest turn once the console is shown again.
+ *
+ * Scrolling up stops the list following new events, so the user keeps their
+ * place; a bar above the composer shows work continuing or a new message.
  */
 export default function BuilderConsole({
   turns,
@@ -68,6 +91,10 @@ export default function BuilderConsole({
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { draft, scaffolds } = state;
   const listRef = useRef(null);
+  const lastScrollRef = useRef({ top: 0, height: 0 });
+  const [following, setFollowing] = useState(true);
+  const messageCount = countMessages(turns);
+  const [seenMessages, setSeenMessages] = useState(messageCount);
 
   useEffect(
     () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
@@ -80,12 +107,37 @@ export default function BuilderConsole({
   const lastId = lastTurn?.id;
   const lastSteps = lastTurn?.steps?.length;
   useEffect(() => {
-    if (!active) return;
+    if (!active || !following) return;
     // Scroll only the message list. scrollIntoView would also scroll every
     // ancestor, including the collapsing column's clip box mid-animation.
     const list = listRef.current;
     list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
-  }, [count, lastId, lastSteps, running, canStop, active]);
+  }, [count, lastId, lastSteps, running, canStop, active, following]);
+
+  // Sending from any path (composer, a question card, Stop) and reopening the
+  // console both return to the latest turn. Adjusted during render, so the next
+  // paint already follows.
+  const [prev, setPrev] = useState({ running, active });
+  if (prev.running !== running || prev.active !== active) {
+    if ((running && !prev.running) || (active && !prev.active)) setFollowing(true);
+    setPrev({ running, active });
+  }
+
+  const handleScroll = () => {
+    const list = listRef.current;
+    if (!list || !active) return;
+    const { scrollTop, scrollHeight, clientHeight } = list;
+    if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
+      setFollowing(true);
+    } else if (scrollTop < lastScrollRef.current.top && scrollHeight === lastScrollRef.current.height) {
+      // Only moving up counts as leaving: a big event can land mid smooth scroll
+      // and put the list far from the bottom without the user doing anything. A
+      // changed height means text rewrapped and moved the list, not the user.
+      setFollowing(false);
+      setSeenMessages(messageCount);
+    }
+    lastScrollRef.current = { top: scrollTop, height: scrollHeight };
+  };
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
@@ -99,6 +151,9 @@ export default function BuilderConsole({
   // agent). Distinct from `blocked`, so the composer stays usable while waiting.
   // `working` narrows it when Stop also covers work that only waits.
   const busy = running || working;
+  const hasNewMessage = !following && messageCount > seenMessages;
+  // One button: Stop while there's something to stop, Send as soon as the user types.
+  const showStop = onStop && (canStop || running) && !frozen && !hasContent;
 
   const send = () => {
     const text = draft.trim();
@@ -129,8 +184,14 @@ export default function BuilderConsole({
           <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
-            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+          <Typography role="status" noWrap sx={{ typography: "s1", color: "text.secondary" }}>
+            {frozen
+              ? reason
+              : stopping
+                ? CONSOLE_COPY.stopping
+                : busy
+                  ? CONSOLE_COPY.working
+                  : CONSOLE_COPY.idle}
           </Typography>
         </Box>
         {onCollapse && (
@@ -156,6 +217,7 @@ export default function BuilderConsole({
       <Box
         ref={listRef}
         data-testid="builder-console-list"
+        onScroll={handleScroll}
         sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 3, py: 3 }}
       >
         <Stack spacing={3}>
@@ -175,13 +237,17 @@ export default function BuilderConsole({
               </Typography>
             </Stack>
           ) : (
-            <>
-              {(turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)}
-              {busy && <Working label={CONSOLE_COPY.workingDot} />}
-            </>
+            (turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)
           )}
         </Stack>
       </Box>
+
+      <Box role="status" sx={visuallyHidden}>
+        {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
+      </Box>
+      {!following && (hasNewMessage || busy) && (
+        <JumpToLatestBar hasNewMessage={hasNewMessage} onClick={() => setFollowing(true)} />
+      )}
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
           questionnaire or the selection-context chip drops in here). */}
@@ -257,37 +323,39 @@ export default function BuilderConsole({
 
             <Box flex={1} />
 
-            {onStop && canStop && !frozen && (
+            {showStop ? (
+              <Box sx={{ position: "relative", display: "inline-flex" }}>
+                {busy && <StopOrbit />}
+                <IconButton
+                  aria-label="Stop"
+                  title={CONSOLE_COPY.stop}
+                  disabled={running || stopping}
+                  onClick={onStop}
+                  size="small"
+                  sx={{
+                    color: "text.secondary",
+                    border: "1px solid", borderColor: busy ? "transparent" : "divider",
+                  }}
+                >
+                  <Iconify icon="solar:stop-bold" width={13} />
+                </IconButton>
+              </Box>
+            ) : (
               <IconButton
-                aria-label="Stop"
-                title={CONSOLE_COPY.stop}
-                disabled={running || stopping}
-                onClick={onStop}
+                aria-label="Send"
+                disabled={!hasContent || blocked}
+                onClick={send}
                 size="small"
                 sx={{
-                  mr: 0.5,
-                  color: "text.secondary",
-                  border: "1px solid", borderColor: "divider",
+                  bgcolor: hasContent && !blocked ? "primary.main" : undefined,
+                  color: hasContent && !blocked ? "primary.contrastText" : undefined,
+                  "&:hover": { bgcolor: hasContent && !blocked ? "primary.dark" : undefined },
+                  "&.Mui-disabled": { bgcolor: "action.selected", color: "text.disabled" },
                 }}
               >
-                <Iconify icon="solar:stop-bold" width={13} />
+                <Iconify icon="solar:arrow-up-bold" width={15} />
               </IconButton>
             )}
-
-            <IconButton
-              aria-label="Send"
-              disabled={!hasContent || blocked}
-              onClick={send}
-              size="small"
-              sx={{
-                bgcolor: hasContent && !blocked ? "primary.main" : undefined,
-                color: hasContent && !blocked ? "primary.contrastText" : undefined,
-                "&:hover": { bgcolor: hasContent && !blocked ? "primary.dark" : undefined },
-                "&.Mui-disabled": { bgcolor: "action.selected", color: "text.disabled" },
-              }}
-            >
-              <Iconify icon="solar:arrow-up-bold" width={15} />
-            </IconButton>
           </Stack>
         </Box>
       </Box>

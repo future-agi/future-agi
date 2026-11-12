@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
+	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
 
 // maxSessionIDLen is the maximum allowed byte length for a session ID.
@@ -89,7 +90,10 @@ type Handlers struct {
 	fileStore *files.Store
 
 	// Video generation store.
-	videoStore video.Store
+	videoIPACL    config.IPACLConfig
+	videoStore    video.Store
+	videoService  *lifecycle.Service
+	videoSyncWait time.Duration
 
 	// Phase 12A: Advanced routing components.
 	complexityAnalyzer   *routing.ComplexityAnalyzer

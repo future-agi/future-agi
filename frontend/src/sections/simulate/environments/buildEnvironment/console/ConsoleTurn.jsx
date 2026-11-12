@@ -1,12 +1,10 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
 import Iconify from "src/components/iconify";
 
 import AskUserQuestionCard from "./AskUserQuestionCard";
+import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -25,7 +23,6 @@ const STEP_SHAPE = PropTypes.shape({
     "error",
     "cancelled",
     "completed",
-    "heartbeat",
     "nudge-line",
   ]),
   text: PropTypes.string,
@@ -38,7 +35,6 @@ const STEP_SHAPE = PropTypes.shape({
   value: PropTypes.string,
   count: PropTypes.number,
   lines: PropTypes.arrayOf(PropTypes.string),
-  since: PropTypes.string,
   question: PropTypes.object,
   resolved: PropTypes.bool,
   answerText: PropTypes.string,
@@ -114,7 +110,7 @@ export function Step({ step }) {
 
   if (step.kind === "think" || step.kind === "note") {
     if (step.markdown) {
-      return <Markdown text={step.text} dim={step.kind === "think"} />;
+      return <ChatMarkdown text={step.text} dim={step.kind === "think"} />;
     }
     return (
       <Typography
@@ -259,10 +255,6 @@ export function Step({ step }) {
     );
   }
 
-  if (step.kind === "heartbeat") {
-    return <HeartbeatRow since={step.since} />;
-  }
-
   if (step.kind === "nudge-line") {
     return (
       <Typography
@@ -376,43 +368,6 @@ function ToolStep({ step }) {
 }
 ToolStep.propTypes = { step: STEP_SHAPE };
 
-/* ── markdown prose ──────────────────────────────────────────────────────── */
-
-function Markdown({ text, dim }) {
-  return (
-    <Box
-      sx={{
-        typography: "m3",
-        color: dim ? "text.secondary" : "text.primary",
-        "& p": { m: 0, mb: 1 },
-        "& p:last-of-type": { mb: 0 },
-        "& ul, & ol": { m: 0, mb: 1, pl: 3 },
-        "& code": { fontFamily: MONO, fontSize: "0.85em" },
-        "& a": { color: "text.primary", textDecoration: "underline" },
-        // Code keeps its lines and tables keep whole words, so both scroll
-        // sideways inside their own box rather than widening the chat.
-        "& pre": {
-          m: 0, mb: 1, px: 1.5, py: 1, borderRadius: "4px",
-          bgcolor: "background.neutral", overflowX: "auto", maxWidth: "100%",
-        },
-        "& table": {
-          display: "block", maxWidth: "100%", overflowX: "auto",
-          borderCollapse: "collapse", mb: 1,
-        },
-        "& th, & td": {
-          px: 1, py: 0.5, border: "1px solid", borderColor: "divider",
-          textAlign: "left", overflowWrap: "normal",
-        },
-      }}
-    >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-        {text || ""}
-      </ReactMarkdown>
-    </Box>
-  );
-}
-Markdown.propTypes = { text: PropTypes.string, dim: PropTypes.bool };
-
 /* ── step-row primitive ──────────────────────────────────────────────────── */
 
 // A status dot on the left, whatever the caller passes on the right. No
@@ -441,56 +396,3 @@ QuietRow.propTypes = {
   pulse: PropTypes.bool,
   children: PropTypes.node,
 };
-
-/* ── working indicator ───────────────────────────────────────────────────── */
-
-export function Working({ label }) {
-  return (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Box
-        sx={{
-          width: 8, height: 8, borderRadius: "50%", bgcolor: "text.secondary",
-          animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
-        }}
-      />
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>{label}</Typography>
-    </Stack>
-  );
-}
-Working.propTypes = { label: PropTypes.string };
-
-/* ── autonomous heartbeat ────────────────────────────────────────────────── */
-
-function elapsedLabel(sinceIso) {
-  if (!sinceIso) return null;
-  const ms = Date.now() - Date.parse(sinceIso);
-  if (Number.isNaN(ms) || ms < 0) return null;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function HeartbeatRow({ since }) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const elapsed = elapsedLabel(since);
-  return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-      <Box
-        sx={{
-          width: 8, height: 8, borderRadius: "50%", bgcolor: "status.info.solid",
-          animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
-        }}
-      />
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        ALK is working autonomously{elapsed ? ` · ${elapsed}` : ""}
-      </Typography>
-    </Stack>
-  );
-}
-HeartbeatRow.propTypes = { since: PropTypes.string };

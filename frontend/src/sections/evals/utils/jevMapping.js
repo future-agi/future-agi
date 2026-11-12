@@ -1,3 +1,5 @@
+import { decisionCompatibilityError } from "./decisionModels";
+
 export const JEV_RUBRIC_ERROR =
   "Jev rubric score requires 2 to 10 ordered levels";
 
@@ -88,6 +90,8 @@ export function getJevValidationErrors({
   inputDataTypes,
   messages,
   choiceScores,
+  modelLabel = "Jev",
+  modelGroup,
 }) {
   const features = [];
   if (multiChoice) features.push("Multi-choice");
@@ -166,5 +170,21 @@ export function getJevValidationErrors({
     errors.push(
       "Confirm inclusion of extra messages before saving or testing with Jev.",
     );
-  return errors;
+  const compatibility = decisionCompatibilityError(
+    modelGroup,
+    { noul: "pass_fail", choice: "deterministic", score: "percentage" }[
+      mapping.question_type
+    ],
+    Object.keys(choiceScores || {}).length,
+  );
+  return [
+    ...(compatibility ? [compatibility] : []),
+    ...errors.map((error) =>
+      modelLabel === "Jev"
+        ? error
+        : error
+            .replace(/\bJev models\b/g, modelLabel)
+            .replace(/\bJev\b/g, modelLabel),
+    ),
+  ];
 }

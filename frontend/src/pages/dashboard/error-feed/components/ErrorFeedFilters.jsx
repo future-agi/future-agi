@@ -13,10 +13,7 @@ import {
 import Iconify from "src/components/iconify";
 import SelectionBar from "src/components/selection-bar";
 import { FilterButton } from "src/components/filter";
-import {
-  useObserveProjectList,
-  useUpdateErrorFeedIssue,
-} from "src/api/errorFeed/error-feed";
+import { useUpdateErrorFeedIssue } from "src/api/errorFeed/error-feed";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 
@@ -273,8 +270,17 @@ BulkActionMenu.propTypes = {
   onClear: PropTypes.func,
 };
 
+const DEFAULT_PROJECT_OPTIONS = [{ value: "", label: "All Projects" }];
+
 // ── main filter bar ────────────────────────────────────────────────────────
-export default function ErrorFeedFilters({ selected, onClearSelection }) {
+// The project options come from the page (TH-8209): the view owns the single
+// Observe catalog subscription so the picker and the empty-state decision
+// never disagree about freshness.
+export default function ErrorFeedFilters({
+  selected,
+  onClearSelection,
+  projectOptions = DEFAULT_PROJECT_OPTIONS,
+}) {
   const {
     searchQuery,
     setSearchQuery,
@@ -292,12 +298,6 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     timeRange,
     setTimeRange,
   } = useErrorFeedStore();
-
-  const { data: projects } = useObserveProjectList();
-  const projectOptions = useMemo(
-    () => [{ value: "", label: "All Projects" }, ...(projects ?? [])],
-    [projects],
-  );
 
   const filterFields = useMemo(
     () => buildFilterFields(projectOptions),
@@ -423,4 +423,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
 ErrorFeedFilters.propTypes = {
   selected: PropTypes.array,
   onClearSelection: PropTypes.func,
+  projectOptions: PropTypes.arrayOf(
+    PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  ),
 };
