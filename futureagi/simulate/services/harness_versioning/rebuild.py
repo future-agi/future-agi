@@ -12,8 +12,7 @@ import json
 import logging
 import tarfile
 from collections.abc import Mapping
-from datetime import timedelta
-from datetime import timezone as dt_timezone
+from datetime import UTC, timedelta
 from functools import partial
 from itertools import zip_longest
 from types import SimpleNamespace
@@ -717,7 +716,7 @@ class FailedTurns(NamedTuple):
 def _aware_time(value: Any):
     moment = _event_time(value)
     if moment is not None and timezone.is_naive(moment):
-        return timezone.make_aware(moment, dt_timezone.utc)
+        return timezone.make_aware(moment, UTC)
     return moment
 
 

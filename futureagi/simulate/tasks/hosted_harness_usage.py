@@ -95,8 +95,8 @@ def schedule_sandbox_lifetime_seal(lifetime_id: str) -> bool:
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             dispatch_timeout_seconds=30,
         )
-    except Exception:
-        # Never raise into a delete: the sweep seals an unsettled sandbox.
+    except Exception:  # noqa: BLE001 - never raised into a delete
+        # The sweep seals an unsettled sandbox.
         logger.error(
             "hosted_sandbox_lifetime_seal_not_scheduled", lifetime_id=lifetime_id
         )

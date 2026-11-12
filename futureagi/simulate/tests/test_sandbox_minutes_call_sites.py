@@ -2475,7 +2475,6 @@ def test_rerun_freezes_the_charge_before_it_resets_the_job(
     case, finished_run, calls, workflow, user, workspace, monkeypatch
 ):
     from ee.usage.services import emitter
-
     from simulate.models import TestExecution
     from simulate.services.hosted_harness import rerun_calls_in_run
 
@@ -2596,7 +2595,6 @@ def test_cleanup_records_a_platform_retry(organization, retry_pending):
 )
 def test_budget_pause_blocks_the_next_run_start(user, workspace, settings, monkeypatch):
     from ee.usage.services.emitter import get_redis
-
     from simulate.services.harness_provider import (
         HostedHarnessProvider,
         _usage_limit_response,
