@@ -30,6 +30,7 @@ import argparse
 import json
 import os
 import re
+import time
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -321,6 +322,7 @@ def apply_plan(registry, plan, *, phase, reviewed):
     done = []
     for entry in chosen:
         row = rows[entry["key"]]
+        started = time.perf_counter()
         outcome = {
             "key": entry["key"],
             "action": entry["action"],
@@ -388,6 +390,8 @@ def apply_plan(registry, plan, *, phase, reviewed):
                 checkpoint=result["checkpoint"],
                 output=result,
             )
+        # Each entry's own cost, so reconstruction is measured separately from a resume.
+        outcome["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
         done.append(outcome)
     return {
         "schema": 1,

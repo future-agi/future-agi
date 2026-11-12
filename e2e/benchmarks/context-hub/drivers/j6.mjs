@@ -502,25 +502,28 @@ export async function createDriver({ jobId, runId, registration }) {
         const plan = await guestJson('/state/out/recovery-plan.json');
         const entry = Object.fromEntries(plan.entries.map((item) => [item.key, item]));
         const t1Plan = entry.t1;
-        // The refund call is still pending in the transcript, but its business receipt is already durable.
-        requireValue(t1Plan.action === 'resume' && t1Plan.reason === 'original_identity_available' && t1Plan.pending_tool_calls.length === 1
-          && t1Plan.pending_tool_calls.every((id) => t1Plan.durable_receipts.some((item) => item.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
-        requireValue(entry.t2.action === 'close_and_reconstruct' && entry.t2.reason === 'authority_unavailable' && entry.t2.durable_receipts.length >= 1
-          && entry.t2.order_id === input.orders.o2, 'The expired-credential thread must not be resumable');
-        const expiredHash = await record('expired-credential', { inspect: { reason: entry.t2.reason, receipts: entry.t2.durable_receipts.length, checkpoint: entry.t2.checkpoint }, access_check_status: eDenied.status });
-        faultSeen(ledger, 'expired', expiredHash, { reason: entry.t2.reason, status: eDenied.status });
-        requireValue(entry.t3.action === 'reconstruct' && entry.t3.known === false && entry.t3.reason === 'thread_state_missing' && entry.t3.order_id === input.orders.o3, 'The lost-mapping thread must not be resumable');
-        requireValue(entry.t0.action === 'close_and_recheck' && entry.t0.phase === 'recheck' && entry.t0.order_id === input.orders.o0, 'The superseded incident thread must be rechecked as a clean thread');
         const businessBefore = await guest.business();
         requireValue([input.orders.o2, input.orders.o3].every((order) => businessBefore.operations.filter((item) => item.order_id === order && item.status === 'applied').length === 1), 'The executed refunds must be visible before reconstruction');
-        const lostHash = await record('lost-mapping', { inspect: { known: entry.t3.known, reason: entry.t3.reason }, business_receipts_for_order: 1 });
-        faultSeen(ledger, 'lost', lostHash, { reason: entry.t3.reason });
+        // The operator's review of the plan: what each thread needs and why. A plan that classifies any thread differently is not applied.
+        const reviewPlan = async () => {
+          // The refund call is still pending in the transcript, but its business receipt is already durable.
+          requireValue(t1Plan.action === 'resume' && t1Plan.reason === 'original_identity_available' && t1Plan.pending_tool_calls.length === 1
+            && t1Plan.pending_tool_calls.every((id) => t1Plan.durable_receipts.some((item) => item.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
+          requireValue(entry.t2.action === 'close_and_reconstruct' && entry.t2.reason === 'authority_unavailable' && entry.t2.durable_receipts.length >= 1
+            && entry.t2.order_id === input.orders.o2, 'The expired-credential thread must not be resumable');
+          requireValue(entry.t3.action === 'reconstruct' && entry.t3.known === false && entry.t3.reason === 'thread_state_missing' && entry.t3.order_id === input.orders.o3, 'The lost-mapping thread must not be resumable');
+          requireValue(entry.t0.action === 'close_and_recheck' && entry.t0.phase === 'recheck' && entry.t0.order_id === input.orders.o0, 'The superseded incident thread must be rechecked as a clean thread');
+        };
         // The decision covers the whole plan: resume T1 under its identity; reconstruct E and L as explicit clean threads; close and recheck the incident thread later.
         // Every registered thread is exposed; the three that are not a plain resume are the exceptions the operator must see.
         const decision = decisionFor({ plan: plan.plan_sha256, resume: [t.t1], reconstruct: [t.t2, t.t3], recheck: [t.t0], requests: [VERIFY_REQUEST, REFUND_REQUEST], copied_messages: 0 },
           { t1: [t1Plan.checkpoint, t1Plan.session_id], t2: entry.t2.reason, t3: entry.t3.reason, t0: entry.t0.reason, replay_refunds: false });
         await ledger.measure({ dimension: 'A', primitive: 'recovery_decision', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'resume-one-reconstruct-two',
-          items: plan.entries.map((item) => item.key), exceptionItems: plan.entries.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, async () => {});
+          items: plan.entries.map((item) => item.key), exceptionItems: plan.entries.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, reviewPlan);
+        const expiredHash = await record('expired-credential', { inspect: { reason: entry.t2.reason, receipts: entry.t2.durable_receipts.length, checkpoint: entry.t2.checkpoint }, access_check_status: eDenied.status });
+        faultSeen(ledger, 'expired', expiredHash, { reason: entry.t2.reason, status: eDenied.status });
+        const lostHash = await record('lost-mapping', { inspect: { known: entry.t3.known, reason: entry.t3.reason }, business_receipts_for_order: 1 });
+        faultSeen(ledger, 'lost', lostHash, { reason: entry.t3.reason });
         // A digest other than the reviewed one applies nothing (a control injected like the ABA hops, not operator work).
         const refused = await guest.execute(recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'apply', '--registry', '/state/requests/recovery-registry.json',
           '--plan', '/state/out/recovery-plan.json', '--reviewed-plan-sha256', `sha256:${'0'.repeat(64)}`, '--phase', 'threads', '--output', '/state/out/recovery-refused.json']);
@@ -540,7 +543,8 @@ export async function createDriver({ jobId, runId, registration }) {
         const businessAfter = await guest.business();
         requireValue(businessAfter.request_count === 3 && businessAfter.operations.length === 3 && applied.reconciliation.request_count === 3, 'Clean threads must not replay a business action');
         state.recoverApplied = applied;
-        state.reconstruction = Object.keys(clean).map((key) => ({ thread: key, elapsed_ms: state.timings['apply-thread-recovery'], copied_messages: 0, additional_business_requests: businessAfter.request_count - businessBefore.request_count }));
+        state.reconstruction = Object.entries(clean).map(([key, value]) => ({ thread: key, elapsed_ms: value.entry.elapsed_ms, copied_messages: 0, additional_business_requests: businessAfter.request_count - businessBefore.request_count }));
+        state.reconstructionSharedMs = state.timings['apply-thread-recovery'];
         state.threads.clean = Object.fromEntries(Object.entries(clean).map(([key, value]) => [key, { session_id: value.entry.session_id, version_id: value.entry.version_id, thread: value.entry.clean_thread }]));
         const hash = await record('resume-and-clean-threads', { t1: state.threads.t1, clean: state.threads.clean, reconstruction: state.reconstruction, plan_sha256: plan.plan_sha256 });
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'guest', artifactHash: hash, actionSequences: [], decision });
@@ -701,7 +705,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await writeFile(resolve(output, 'costs.json'), JSON.stringify({ evidence_class: GUEST_EVIDENCE_CLASS,
           live_authorization_latency_ms: { calls: authz.length, mean: authz.length ? Math.round(authz.reduce((sum, row) => sum + row.elapsed_ns, 0) / authz.length / 1e6) : null,
             max: authz.length ? Math.round(Math.max(...authz.map((row) => row.elapsed_ns)) / 1e6) : null, host_lock_restore_ms: { restore: state.timings['restore-locked'] } },
-          cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, operator_fields_typed: { reconstruction_request: 1, lost_mapping_order: 1, original_case_order: 1, original_case_request: 1 }, previously_typed_fields: 9 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
+          cold_thread_reconstruction: { threads: state.reconstruction.length, per_thread: state.reconstruction, shared_apply_command_ms: state.reconstructionSharedMs, operator_fields_typed: { reconstruction_request: 1, lost_mapping_order: 1, original_case_order: 1, original_case_request: 1 }, previously_typed_fields: 9 } }, null, 2) + '\n', { mode: 0o600, flag: 'wx' }).catch(() => {});
       } catch { /* evidence writing never masks teardown */ }
       await Promise.all(browsers.map(async ({ ctx, browser }) => { await ctx.close().catch(() => {}); await browser.close().catch(() => {}); }));
       if (pgReady) await db.end().catch(() => {});

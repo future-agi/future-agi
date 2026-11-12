@@ -284,6 +284,7 @@ def test_apply_runs_one_reviewed_phase_and_never_copies_old_threads(fleet):
     ]
     assert [call["body"]["stage"] for call in reports] == ["closed"]
     assert first["reconciliation"]["request_count"] == 3
+    assert all(isinstance(row["elapsed_ms"], int) for row in first["threads"])
     second = recover.apply_plan(
         fleet["registry"], plan, phase="recheck", reviewed=plan["plan_sha256"]
     )
