@@ -518,11 +518,21 @@ def _new_choices(
                 )
         problems += _sharing_the_caller(before, after, suite_files or {}, rules)
     problems += _knowledge_problems(before, after, files, rules, stores)
+    model = after.get("model")
+    if model and model != before.get("model") and model not in actor_models(rules):
+        problems.append(
+            f"{actor_id}'s model {model!r} is not one of: {', '.join(actor_models(rules))}."
+        )
     known = [one["action"] for one in world_actions(files, rules)]
-    old = set(before.get("permitted_actions") or [])
+    old = {
+        str(one)
+        for one in before.get("permitted_actions") or []
+        if isinstance(one, (str, int))
+    }
+    given = after.get("permitted_actions")
     added = [
-        one
-        for one in after.get("permitted_actions") or []
+        str(one)
+        for one in (given if isinstance(given, list) else [])
         if one not in old and one not in known
     ]
     tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
@@ -652,7 +662,9 @@ def _record_problems(
         subject = (
             "The id"
             if where == "id"
-            else f"{actor_id}'s {where}:" if where else f"{actor_id}:"
+            else f"{actor_id}'s {where}:"
+            if where
+            else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
     for path, field in (rules.get("equal_when_set") or {}).items():
@@ -756,6 +768,9 @@ def actor_problems(
     known = {str(one.get("id") or "") for one in actors}
     actor = next(one for one in actors if one.get("id") == actor_id)
     problems = _record_problems(actor, rules, new_id=new_id)
+    if problems:
+        # The links are read only from a record of the right shape.
+        return problems
     problems += [
         f"{actor_id}'s {path} {other!r} is not another listed actor."
         for path, other in _broken_references(actor, known, rules)
@@ -769,16 +784,36 @@ def actor_problems(
 
 
 def _removal_problems(
-    actors: list[ActorRecord], actor_id: str, rules: ActorRules
+    actors: list[ActorRecord],
+    actor_id: str,
+    rules: ActorRules,
+    before: list[ActorRecord],
 ) -> list[str]:
     """Another actor naming the removed one would point at nobody."""
     known = {str(one.get("id") or "") for one in actors}
+    names = {
+        str(one.get("id") or ""): str(one.get("name") or one.get("id"))
+        for one in before
+    }
+    removed = names.get(actor_id, actor_id)
     return [
-        f"{one.get('id')}'s {path} is {actor_id}; change it first."
+        f"{_naming(path, names[str(one.get('id') or '')], removed)}; change that on "
+        f"{names[str(one.get('id') or '')]} before removing {removed}."
         for one in actors
         for path, other in _broken_references(one, known, rules)
         if other == actor_id
     ]
+
+
+def _naming(path: str, holder: str, named: str) -> str:
+    """How one actor's record names another, in the editor's words."""
+    if path == "parent":
+        return f"{holder} is brought in by {named}"
+    if path == "activation.fallback":
+        return f"{holder} has {named} answer instead when {holder} does not"
+    if path == "on_behalf_of":
+        return f"{holder} acts on behalf of {named}"
+    return f"{holder}'s {path} names {named}"
 
 
 def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str]:
@@ -923,11 +958,11 @@ def write_actor_edit(
     )
     rules = actor_rules(environment_files)
     if op == "delete":
-        problems = _removal_problems(actors, actor_id, rules)
+        problems = _removal_problems(actors, actor_id, rules, before)
     else:
-        problems = actor_problems(
-            actors, actor_id, rules, new_id=op == "create"
-        ) + _new_choices(
+        problems = actor_problems(actors, actor_id, rules, new_id=op == "create")
+        # The choices are read only from a record of the right shape: a list of numbers is a type to fix first.
+        problems = problems or _new_choices(
             next((one for one in before if one.get("id") == actor_id), None),
             next(one for one in actors if one.get("id") == actor_id),
             environment_files,

@@ -296,40 +296,59 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     }
 
 
-def _actor_records(environment: Mapping[str, bytes]) -> list[dict[str, Any]] | None:
+# The environment's actor limits, listed with its actors so a limits edit reads as a change; never an actor id, which
+# is lowercase letters, digits and underscores.
+ACTOR_LIMITS_KEY = "#limits"
+ACTOR_LIMITS_NAME = "Actor limits"
+
+
+def _actor_body(environment: Mapping[str, bytes]) -> dict[str, Any] | None:
     raw = environment.get("actors.json")
     try:
         body = json.loads(raw) if raw else {}
     except ValueError:
         return None
+    return body if isinstance(body, dict) else {}
+
+
+def _actor_records(body: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
         actor
-        for actor in (body.get("actors") if isinstance(body, dict) else None) or []
+        for actor in body.get("actors") or []
         if isinstance(actor, dict) and actor.get("id")
     ]
 
 
 def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str] | None:
-    """A digest of each actor's record in the environment's `actors.json`, keyed by its id; who last set it is left
-    out, so only a change to the actor itself reads as a change. None when the file is not valid JSON: the cast is
-    unknown."""
-    actors = _actor_records(environment)
-    if actors is None:
+    """A digest of each actor's record in the environment's `actors.json`, keyed by its id, and of the actor limits
+    when any are set; who last set a record is left out, so only a change to the actor itself reads as a change. None
+    when the file is not valid JSON: the cast is unknown."""
+    body = _actor_body(environment)
+    if body is None:
         return None
-    return {
+    digests = {
         str(actor["id"]): canonical_digest(
             {field: value for field, value in actor.items() if field != "provenance"}
         )
-        for actor in actors
+        for actor in _actor_records(body)
     }
+    if body.get("limits"):
+        digests[ACTOR_LIMITS_KEY] = canonical_digest(body["limits"])
+    return digests
 
 
 def actor_names(environment: Mapping[str, bytes]) -> dict[str, str] | None:
     """Each actor's name by its id, so a change is shown by who it is about; None when the cast is unknown."""
-    actors = _actor_records(environment)
-    if actors is None:
+    body = _actor_body(environment)
+    if body is None:
         return None
-    return {str(actor["id"]): str(actor.get("name") or actor["id"]) for actor in actors}
+    names = {
+        str(actor["id"]): str(actor.get("name") or actor["id"])
+        for actor in _actor_records(body)
+    }
+    if body.get("limits"):
+        names[ACTOR_LIMITS_KEY] = ACTOR_LIMITS_NAME
+    return names
 
 
 def organization_credential_key(organization_id: object) -> bytes:

@@ -203,6 +203,26 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     });
   });
 
+  it("sends one save for a double click, so the second click is never refused as someone else's edit", async () => {
+    await openEdit();
+    let answer;
+    axios.put.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(axios.put).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answer({ data: cast([MANAGER], { revision: 4 }) });
+    await waitFor(() => expect(screen.queryByText("Save to draft")).toBeNull());
+    expect(axios.put).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+  });
+
   it("saves on top of a document uploaded from the open form, in one request at the upload's revision", async () => {
     const uploaded = cast([MANAGER], {
       revision: 4,
@@ -635,7 +655,9 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
     // A live or speaking actor is given these; the form never says they are unused.
     expect(
-      screen.getByText(/Given to them as background whenever they speak or decide in the moment/),
+      screen.getByText(
+        /Given to them as background whenever they speak or decide in the moment/,
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });
@@ -755,6 +777,53 @@ describe("WorldActorsPanel", () => {
     expect(role).toHaveAttribute("maxLength", "12");
     fireEvent.change(role, { target: { value: "twelve chars" } });
     expect(screen.getByText("At most 12 characters")).toBeInTheDocument();
+  });
+
+  it("will not save a negative wait and says what a wait may be", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    const wait = screen.getByLabelText("Waits, in seconds (optional)");
+    fireEvent.change(wait, { target: { value: "-5" } });
+    expect(
+      screen.getByText("A number of seconds, 0 or more"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+    fireEvent.change(wait, { target: { value: "2.5" } });
+    expect(screen.getByRole("button", { name: "Save to draft" })).toBeEnabled();
+  });
+
+  it("says a change made offline is kept and saves once back online", () => {
+    editState = { isPending: true, isPaused: true, error: null };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(
+      screen.getByText(
+        "No connection: your change is kept and saves once you are back online",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("will not save an actor too long for the server and says by how much", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    const facts = screen.getByLabelText(
+      "What they know (optional, one per line)",
+    );
+    fireEvent.change(facts, { target: { value: "é".repeat(70000) } });
+    expect(screen.getByText(/characters too long to save/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+    fireEvent.change(facts, { target: { value: "é".repeat(60000) } });
+    expect(screen.queryByText(/characters too long to save/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Save to draft" })).toBeEnabled();
   });
 
   it("says who already has a typed id and will not save it, and offers any actor, one who speaks too, to be brought in by", () => {
@@ -877,6 +946,22 @@ describe("WorldActorsPanel", () => {
     expect(save).not.toBeDisabled();
   });
 
+  it("keeps the form open and Save off while the record match is half-typed JSON", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add an actor"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Nair" },
+    });
+    choose("Comes in", "Once a record exists");
+    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+      target: { value: '{"status": ' },
+    });
+    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+  });
+
   it("keeps Save off for a cap that is not a whole number, and saves the number as typed", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
@@ -983,6 +1068,40 @@ describe("WorldActorsPanel", () => {
       expect(screen.getByText(words)).toBeInTheDocument();
     },
   );
+
+  it("will not remove an actor another actor still names, and says who to change first", () => {
+    actorsData = cast([
+      { ...MANAGER, id: "temp", name: "Temp Tina" },
+      {
+        id: "fred",
+        name: "Fallback Fred",
+        activation: { trigger: { kind: "always" }, fallback: "temp" },
+      },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Temp Tina" }));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByText(
+        "Fallback Fred still names Temp Tina, as who answers instead or who brings them in. Change that first.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps how an actor joins fixed while scenarios use it, and says why", () => {
+    actorsData = cast([{ ...MANAGER, channel: "audio_mix", scenarios: 2 }]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    expect(
+      screen.getByText(
+        "In 2 scenarios, so how they join stays as it is. Take them out of those scenarios first to change it.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("How they join the conversation"),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
 
   it("clears the in-use warning when a form opens", () => {
     actorsData = cast([{ ...MANAGER, scenarios: 2 }]);

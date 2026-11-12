@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   KEPT_TRIGGER,
   capProblem,
+  recordOverBy,
   hasEdits,
   hidden,
   idFrom,
@@ -9,6 +10,7 @@ import {
   parsedArguments,
   readable,
   seenValue,
+  timeoutProblem,
   toRecord,
   triggerProblem,
 } from "../actorUtils";
@@ -403,6 +405,20 @@ describe("capProblem", () => {
   });
 });
 
+describe("timeoutProblem", () => {
+  it.each([
+    ["", null],
+    ["0", null],
+    ["2.5", null],
+    ["90", null],
+    ["-5", "A number of seconds, 0 or more"],
+    ["-0.5", "A number of seconds, 0 or more"],
+    ["e", "A number of seconds, 0 or more"],
+  ])("a typed wait of %j: %s", (typed, expected) => {
+    expect(timeoutProblem(typed)).toBe(expected);
+  });
+});
+
 describe("triggerProblem", () => {
   const reader = (fields) => (name) => fields[name] ?? "";
   it.each([
@@ -497,5 +513,28 @@ describe("a fallback action's arguments", () => {
     expect(parsedArguments("")).toEqual({});
     expect(parsedArguments("[1]")).toBeNull();
     expect(parsedArguments("{oops")).toBeNull();
+  });
+});
+
+describe("recordOverBy", () => {
+  const context = { records: {}, knowledgeSources: {} };
+  const actor = { id: "a", name: "A" };
+  it("counts the record the form would save as compact JSON in characters, as the server does", () => {
+    const room = 65536 - JSON.stringify({ ...actor, goal: "" }).length;
+    expect(recordOverBy(actor, { goal: "ü".repeat(room) }, context)).toBe(0);
+    expect(recordOverBy(actor, { goal: "ü".repeat(room + 3) }, context)).toBe(
+      3,
+    );
+    // One character outside the basic plane is one character, not two.
+    expect(recordOverBy(actor, { goal: "😀".repeat(room) }, context)).toBe(0);
+  });
+  it("is 0 while a field cannot make a record yet", () => {
+    expect(
+      recordOverBy(
+        actor,
+        { mode: "conditional", triggerCollection: "deals", triggerWhere: "{" },
+        context,
+      ),
+    ).toBe(0);
   });
 });

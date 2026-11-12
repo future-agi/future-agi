@@ -60003,11 +60003,11 @@ export type simulateApiHarnessEnvironmentsActorLimitsResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsActorLimitsResponseSuccess =
   simulateApiHarnessEnvironmentsActorLimitsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsActorLimitsResponseError =
   simulateApiHarnessEnvironmentsActorLimitsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsActorLimitsResponse =
@@ -60049,11 +60049,11 @@ export type simulateApiHarnessEnvironmentsActorsResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsActorsResponseSuccess =
   simulateApiHarnessEnvironmentsActorsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsActorsResponseError =
   simulateApiHarnessEnvironmentsActorsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsActorsResponse =
@@ -60092,11 +60092,11 @@ export type simulateApiHarnessEnvironmentsCreateActorResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsCreateActorResponseSuccess =
   simulateApiHarnessEnvironmentsCreateActorResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsCreateActorResponseError =
   simulateApiHarnessEnvironmentsCreateActorResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsCreateActorResponse =
@@ -60138,11 +60138,11 @@ export type simulateApiHarnessEnvironmentsActorViewResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsActorViewResponseSuccess =
   simulateApiHarnessEnvironmentsActorViewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsActorViewResponseError =
   simulateApiHarnessEnvironmentsActorViewResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsActorViewResponse =
@@ -60203,11 +60203,11 @@ export type simulateApiHarnessEnvironmentsReplaceActorResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsReplaceActorResponseSuccess =
   simulateApiHarnessEnvironmentsReplaceActorResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsReplaceActorResponseError =
   simulateApiHarnessEnvironmentsReplaceActorResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsReplaceActorResponse =
@@ -60253,11 +60253,11 @@ export type simulateApiHarnessEnvironmentsDeleteActorResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDeleteActorResponseSuccess =
   simulateApiHarnessEnvironmentsDeleteActorResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDeleteActorResponseError =
   simulateApiHarnessEnvironmentsDeleteActorResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDeleteActorResponse =
@@ -61226,11 +61226,11 @@ export type simulateApiHarnessEnvironmentsUploadFileResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsUploadFileResponseSuccess =
   simulateApiHarnessEnvironmentsUploadFileResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsUploadFileResponseError =
   simulateApiHarnessEnvironmentsUploadFileResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsUploadFileResponse =

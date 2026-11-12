@@ -231,8 +231,9 @@ def test_a_call_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_p
         "Rowan (not the person being served): Add a stop.",
         "Customer: Just the airport.",
     ]
-    assert "Rowan (not the person being served): Add a stop." in (
-        _build_transcript_data(call)["transcript"]
+    assert (
+        "Rowan (not the person being served): Add a stop."
+        in (_build_transcript_data(call)["transcript"])
     )
 
 

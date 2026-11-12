@@ -39,7 +39,9 @@
       "world.sqlite",
       "simulator_prompt.md",
       "source-data-invariants.json",
-      "scenarios.json"
+      "scenarios.json",
+      "schema.sql",
+      "sub_actors.json"
     ],
     "prefixes": [
       "generic-harness/",
@@ -47,8 +49,13 @@
       "seed/",
       "scenarios/",
       "checks/",
+      "env/",
       "."
     ]
+  },
+  "record_changes": {
+    "never_prefix": "_alk_",
+    "never": ["harness_seed_sentinel"]
   },
   "situation_before": "Your details:",
   "reserved_ids": ["agent"],

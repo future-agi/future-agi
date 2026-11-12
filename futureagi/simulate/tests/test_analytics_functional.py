@@ -1317,6 +1317,64 @@ class TestRunResultsV3Views:
         assert "skipped" not in body["summary"]["outcomes"]
         assert body["dashboard"]["run_health"]["attempted"] == body["summary"]["total"]
 
+    def test_a_call_its_actor_never_reached_or_a_stopped_call_says_why_and_no_other_failure_does(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        missing, crashed = analytics_call_executions[0], analytics_call_executions[1]
+        for call, failure in (
+            (
+                missing,
+                {
+                    "code": "actor_missing",
+                    "message": "inconclusive: scenario problem, not the agent's: did not reach the agent: "
+                    "Sam Rivera (not_triggered), Jo Park (not_delivered: the model did not answer), "
+                    "Lee (not_delivered: the world refused its post_message)",
+                },
+            ),
+            (
+                crashed,
+                {"code": "call_failed", "message": "RuntimeError: internal detail"},
+            ),
+        ):
+            call.status = CallExecution.CallStatus.COMPLETED
+            call.call_metadata = {
+                "harness_outcome_status": "errored",
+                "hosted_harness_receipt": {
+                    "status": "errored",
+                    "sub_goals": [],
+                    "failure": failure,
+                },
+            }
+            call.eval_outputs = {}
+            call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        rows = {
+            item["id"]: item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+        }
+        assert rows[str(missing.id)]["outcome_reason"] == (
+            "Inconclusive, a problem of the scenario, not the agent: did not reach the agent: "
+            "Sam Rivera (never came in), Jo Park (came in but never spoke: the model did not answer), "
+            "Lee (came in but never spoke: the world refused its post_message)"
+        )
+        assert rows[str(crashed.id)]["outcome_reason"] is None
+        crashed.status = CallExecution.CallStatus.CANCELLED
+        crashed.call_metadata = {}
+        crashed.save(update_fields=["status", "call_metadata"])
+        stopped = next(
+            item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+            if item["id"] == str(crashed.id)
+        )
+        assert (stopped["outcome"], stopped["outcome_reason"]) == (
+            "error",
+            "Stopped before it finished: the run was cancelled",
+        )
+
     def test_a_call_where_nothing_it_tests_happened_reads_no_score(
         self, auth_client, test_execution, analytics_call_executions
     ):
