@@ -19570,6 +19570,8 @@ export interface HarnessCapabilityPairingApi {
   /** pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with. */
   evidence: HarnessCapabilityPairingApiEvidence;
   agent_tools?: HarnessCapabilityAgentToolsApi;
+  /** The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read. */
+  evidence_unreadable?: boolean;
 }
 
 /**

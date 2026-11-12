@@ -102775,6 +102775,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_tools: {
           $ref: "#/definitions/HarnessCapabilityAgentTools",
         },
+        evidence_unreadable: {
+          title: "Evidence unreadable",
+          description:
+            "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
+          type: "boolean",
+        },
       },
     },
     HarnessCapabilitySelectionCounts: {
