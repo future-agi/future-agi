@@ -349,6 +349,15 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_USERNAME" "observed_catalog_writer" -}}
 {{- end -}}
 {{- if not $redisTls }}{{ $_ := set $plain "FI_AUTH_REDIS_ADDR" (printf "%s:%s" (include "futureagi.redis.host" $root) (include "futureagi.redis.port" $root)) }}{{ end -}}
+{{- /* Attachments: the collector follows the backend's switch (backend.extraEnv,
+else config.extraEnv), so LiveKit calls map to Voice exactly when the
+backend serves their recordings. fiCollector.extraEnv still wins. */ -}}
+{{- $attachments := "FI_ATTACHMENTS_ENABLED" -}}
+{{- if hasKey ($v.backend.extraEnv | default dict) $attachments -}}
+{{- $_ := set $plain $attachments (get $v.backend.extraEnv $attachments | toString) -}}
+{{- else if hasKey ($v.config.extraEnv | default dict) $attachments -}}
+{{- $_ := set $plain $attachments (get $v.config.extraEnv $attachments | toString) -}}
+{{- end -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.platform" (dict "root" $root "kind" "collector") | fromYaml) $overrides -}}
 {{- range $name := keys $plain | sortAlpha }}
 - name: {{ $name }}

@@ -3,6 +3,19 @@
 Everything here is inert while `FI_ATTACHMENTS_ENABLED` is not `true`.
 Nothing in this file implies a Cloud rollout.
 
+## Turning it on
+
+Set `FI_ATTACHMENTS_ENABLED=true` where the backend and workers read it; the
+fi-collector follows the same switch (it maps an untyped LiveKit call root to
+a Voice `conversation` only when it is on):
+
+- Docker Compose (standalone): in `.env`. The collector runs in the `app`
+  container and inherits it.
+- Docker Compose (distributed, production overlay, e2e): in `.env`; the
+  `fi-collector` service reads `${FI_ATTACHMENTS_ENABLED}` from the same file.
+- Helm: `config.extraEnv` (or `backend.extraEnv`). The collector takes the
+  backend's value; `fiCollector.extraEnv` overrides it.
+
 ## Lifecycle schedules
 
 Three Temporal schedules (`tfc/temporal/schedules/attachment_lifecycle.py`)
