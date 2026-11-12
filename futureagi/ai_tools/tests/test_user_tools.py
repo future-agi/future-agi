@@ -168,3 +168,187 @@ class TestListApiKeysTool:
         assert not by_type.is_error
         assert by_type.data["api_keys"] == []
         assert by_type.data["total"] == 0
+
+
+# ===================================================================
+# WRITE TOOLS: who may act
+# ===================================================================
+
+
+def _acting_context(tool_context, *, legacy_role, level):
+    from accounts.tests.test_rbac_regressions import _make_workspace_user
+    from ai_tools.base import ToolContext
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    workspace_role, workspace_level = (
+        (OrganizationRoles.WORKSPACE_ADMIN, Level.WORKSPACE_ADMIN)
+        if level >= Level.ADMIN
+        else (OrganizationRoles.WORKSPACE_MEMBER, Level.WORKSPACE_MEMBER)
+    )
+    actor = _make_workspace_user(
+        tool_context.organization,
+        tool_context.workspace,
+        org_role=legacy_role,
+        org_level=level,
+        ws_role=workspace_role,
+        ws_level=workspace_level,
+        prefix="tool-actor",
+    )
+    return ToolContext(
+        user=actor,
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+    )
+
+
+def _member_in_the_organization(tool_context, *, legacy_role=None, level=None):
+    from accounts.tests.test_rbac_regressions import _make_workspace_user
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    return _make_workspace_user(
+        tool_context.organization,
+        tool_context.workspace,
+        org_role=legacy_role or OrganizationRoles.MEMBER,
+        org_level=level or Level.MEMBER,
+        ws_role=OrganizationRoles.WORKSPACE_MEMBER,
+        ws_level=Level.WORKSPACE_MEMBER,
+        prefix="tool-target",
+    )
+
+
+def _someone_elses_key(tool_context):
+    from accounts.models.user import OrgApiKey
+
+    return OrgApiKey.no_workspace_objects.create(
+        name=f"team key {uuid.uuid4().hex[:6]}",
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+        type="user",
+        user=tool_context.user,
+    )
+
+
+USER_WRITE_TOOLS = [
+    ("create_api_key", lambda owner, target: {"name": f"k-{uuid.uuid4().hex[:6]}"}),
+    (
+        "revoke_api_key",
+        lambda owner, target: {"key_id": str(_someone_elses_key(owner).id)},
+    ),
+    (
+        "update_user_role",
+        lambda owner, target: {
+            "user_id": str(target.id),
+            "new_role": "Admin",
+            "level": "org",
+        },
+    ),
+    ("remove_user", lambda owner, target: {"user_id": str(target.id)}),
+    ("deactivate_user", lambda owner, target: {"user_id": str(target.id)}),
+    (
+        "add_workspace_member",
+        lambda owner, target: {
+            "workspace_id": str(owner.workspace.id),
+            "user_id": str(target.id),
+            "role": "workspace_member",
+        },
+    ),
+    ("create_workspace", lambda owner, target: {"name": f"ws-{uuid.uuid4().hex[:6]}"}),
+    (
+        "update_workspace",
+        lambda owner, target: {
+            "workspace_id": str(owner.workspace.id),
+            "description": "updated by a tool",
+        },
+    ),
+    (
+        "invite_users",
+        lambda owner, target: {"emails": [f"new-{uuid.uuid4().hex[:6]}@futureagi.com"]},
+    ),
+]
+
+TARGET_OWNER_TOOLS = ["update_user_role", "remove_user", "deactivate_user"]
+
+
+@pytest.mark.parametrize(("tool_name", "params_for"), USER_WRITE_TOOLS)
+def test_a_member_of_the_organization_cannot_run_user_write_tools(
+    tool_context, tool_name, params_for
+):
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.OWNER, level=Level.MEMBER
+    )
+    target = _member_in_the_organization(tool_context)
+
+    result = run_tool(tool_name, params_for(tool_context, target), actor)
+
+    assert result.is_error, result.content
+    assert result.error_code == "PERMISSION_DENIED", result.content
+
+
+@pytest.mark.parametrize(("tool_name", "params_for"), USER_WRITE_TOOLS)
+def test_an_admin_of_the_organization_runs_user_write_tools(
+    tool_context, tool_name, params_for
+):
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.MEMBER_VIEW_ONLY, level=Level.ADMIN
+    )
+    target = _member_in_the_organization(tool_context)
+
+    result = run_tool(tool_name, params_for(tool_context, target), actor)
+
+    assert not result.is_error, result.content
+
+
+def test_the_creator_of_a_key_revokes_it(tool_context):
+    from accounts.models.user import OrgApiKey
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.MEMBER, level=Level.MEMBER
+    )
+    own_key = OrgApiKey.no_workspace_objects.create(
+        name="my key",
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+        type="user",
+        user=actor.user,
+    )
+
+    result = run_tool("revoke_api_key", {"key_id": str(own_key.id)}, actor)
+
+    assert not result.is_error, result.content
+    own_key.refresh_from_db()
+    assert own_key.enabled is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "params_for"),
+    [call for call in USER_WRITE_TOOLS if call[0] in TARGET_OWNER_TOOLS],
+)
+def test_an_admin_cannot_change_an_owner_of_the_organization(
+    tool_context, tool_name, params_for
+):
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.ADMIN, level=Level.ADMIN
+    )
+    owner = _member_in_the_organization(
+        tool_context, legacy_role=OrganizationRoles.MEMBER, level=Level.OWNER
+    )
+
+    result = run_tool(tool_name, params_for(tool_context, owner), actor)
+
+    assert result.is_error, result.content
+    assert result.error_code == "PERMISSION_DENIED", result.content
+    owner.refresh_from_db()
+    assert owner.is_active is True

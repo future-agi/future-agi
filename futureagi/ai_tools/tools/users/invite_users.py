@@ -6,7 +6,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import key_value_block, markdown_table, section
+from ai_tools.formatting import markdown_table, section
 from ai_tools.registry import register_tool
 
 
@@ -48,21 +48,17 @@ class InviteUsersTool(BaseTool):
             Workspace,
             WorkspaceMembership,
         )
+        from accounts.services.organization_access import is_organization_admin
         from accounts.utils import generate_password
-        from tfc.constants.roles import RoleMapping, RolePermissions
+        from tfc.constants.roles import RoleMapping
 
         org = context.organization
         inviter = context.user
 
-        # Permission check: only Owner/Admin/Member can invite
-        if inviter.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
+        if not is_organization_admin(inviter, org):
             return ToolResult.error(
                 "You do not have permission to invite users. "
-                "Only Owner, Admin, or Member roles can invite.",
+                "Only Owner or Admin roles can invite.",
                 error_code="PERMISSION_DENIED",
             )
 

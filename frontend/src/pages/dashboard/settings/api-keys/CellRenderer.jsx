@@ -20,6 +20,11 @@ import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
+import CustomTooltip from "src/components/tooltip";
+import {
+  KEY_SWITCH_DENIED,
+  switchLocked,
+} from "src/sections/keys/keys.constants";
 
 const allMenuItems = [
   {
@@ -173,42 +178,52 @@ const ActionMenu = (props) => {
         }}
       >
         {menuItems.map((item, index) => (
-          <MenuItem
+          <CustomTooltip
             key={index}
-            onClick={() => handleMenuItemClick(item)}
-            sx={{
-              py: 0.5,
-              "&:hover": {
-                bgcolor: "action.hover",
-                "& .MuiTypography-root": {
-                },
-              },
-            }}
+            show={switchLocked(data, item.actionType)}
+            title={KEY_SWITCH_DENIED}
+            placement="left"
+            size="small"
+            arrow
           >
-            <ListItemIcon sx={{ minWidth: 30, mr: 0 }}>
-              {item.iconType === "svg" && (
-                <SvgColor
-                  src={item.icon}
-                  sx={{ width: 16, height: 16, color: item.iconColor }}
+            <Box>
+              <MenuItem
+                onClick={() => handleMenuItemClick(item)}
+                disabled={switchLocked(data, item.actionType)}
+                sx={{
+                  py: 0.5,
+                  "&:hover": {
+                    bgcolor: "action.hover",
+                    "& .MuiTypography-root": {},
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 30, mr: 0 }}>
+                  {item.iconType === "svg" && (
+                    <SvgColor
+                      src={item.icon}
+                      sx={{ width: 16, height: 16, color: item.iconColor }}
+                    />
+                  )}
+                  {item.iconType === "iconify" && (
+                    <Iconify
+                      icon={item.icon}
+                      width="16px"
+                      height="16px"
+                      color={item.iconColor}
+                    />
+                  )}
+                </ListItemIcon>
+                <ListItemText
+                  primary={item.title}
+                  primaryTypographyProps={{
+                    variant: "body2",
+                    color: item.titleColor,
+                  }}
                 />
-              )}
-              {item.iconType === "iconify" && (
-                <Iconify
-                  icon={item.icon}
-                  width="16px"
-                  height="16px"
-                  color={item.iconColor}
-                />
-              )}
-            </ListItemIcon>
-            <ListItemText
-              primary={item.title}
-              primaryTypographyProps={{
-                variant: "body2",
-                color: item.titleColor,
-              }}
-            />
-          </MenuItem>
+              </MenuItem>
+            </Box>
+          </CustomTooltip>
         ))}
       </Menu>
       <ConfirmDialog

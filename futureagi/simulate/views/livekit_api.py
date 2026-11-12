@@ -31,7 +31,11 @@ from simulate.repositories import (
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
-from simulate.services.agent_definition import is_masked
+from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    is_masked,
+    refuse_moved_secrets,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -571,23 +575,37 @@ class ValidateLiveKitCredentialsView(APIView):
         # mask is "abcd...wxyz" / 11 chars from mask_key(); the secret mask
         # is "********"). Sending those verbatim to LiveKit Cloud yields a
         # 401 because they aren't real credentials. Rehydrate any masked
-        # field from the stored ProviderCredentials before validating. The
-        # url is plaintext on read so it doesn't need this branch.
+        # field from the stored ProviderCredentials before validating. Stored
+        # credentials are only ever sent to the stored server, never to a url
+        # from the request.
         if agent_definition_id and (is_masked(api_key) or is_masked(api_secret)):
+            agent = AgentDefinition.objects.filter(
+                id=agent_definition_id,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                deleted=False,
+            ).first()
+            version = (agent.active_version or agent.latest_version) if agent else None
             try:
-                agent = AgentDefinition.objects.get(id=agent_definition_id)
-                version = agent.active_version or agent.latest_version
-                if version:
-                    try:
-                        creds = version.credentials
-                        if is_masked(api_key):
-                            api_key = creds.get_api_key()
-                        if is_masked(api_secret):
-                            api_secret = creds.get_api_secret()
-                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                        pass
-            except AgentDefinition.DoesNotExist:
-                pass
+                creds = version.credentials if version else None
+            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                creds = None
+            if creds is not None:
+                stored_url = (creds.server_url or "").strip()
+                try:
+                    refuse_moved_secrets(
+                        stored_url=stored_url,
+                        new_url=livekit_url,
+                        api_key=api_key,
+                        api_secret=api_secret,
+                    )
+                except CredentialsNeedReentry as error:
+                    return self.gm.bad_request(error.message)
+                if is_masked(api_key):
+                    api_key = creds.get_api_key()
+                if is_masked(api_secret):
+                    api_secret = creds.get_api_secret()
+                livekit_url = stored_url
 
         if not all([livekit_url, api_key, api_secret]):
             return self.gm.bad_request("All credential fields are required.")

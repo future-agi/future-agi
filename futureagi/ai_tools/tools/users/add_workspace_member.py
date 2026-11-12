@@ -30,26 +30,17 @@ class AddWorkspaceMemberTool(BaseTool):
     def execute(
         self, params: AddWorkspaceMemberInput, context: ToolContext
     ) -> ToolResult:
-
         from accounts.models.user import User
-        from accounts.models.workspace import (
-            OrganizationRoles,
-            Workspace,
-            WorkspaceMembership,
-        )
+        from accounts.models.workspace import Workspace, WorkspaceMembership
+        from accounts.services.organization_access import is_organization_admin
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
+        if not is_organization_admin(actor, org):
             return ToolResult.error(
                 "You do not have permission to add workspace members. "
-                "Only Owner, Admin, or Member roles can add members to workspaces.",
+                "Only Owner or Admin roles can add members to workspaces.",
                 error_code="PERMISSION_DENIED",
             )
 

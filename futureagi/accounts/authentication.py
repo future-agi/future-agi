@@ -38,7 +38,7 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
-from tfc.constants.roles import OrganizationRoles
+from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
 from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
@@ -129,16 +129,27 @@ _VIEWER_REASON_PREFIX = "/simulate/"
 # - Don't modify workspace data (switch operations, profile updates)
 # - Or need to be accessible regardless of workspace role
 WORKSPACE_WRITE_EXEMPT_PATHS = (
-    "workspace/switch/",
-    "organizations/switch/",
-    "update-user-full-name",  # Users can always update their own profile
-    "onboarding/",  # Users can always update their own onboarding profile
-    "logout/",  # Users can always invalidate their own access token
-    "2fa/",  # Users can always manage their own second factor state
-    "passkey/",  # Users can always manage their own passkey challenges
-    "passkeys/",  # Users can always manage their own passkey records
+    "/accounts/workspace/switch/",
+    "/accounts/organizations/switch/",
+    "/accounts/update-user-full-name/",  # Users can always update their own profile
+    "/accounts/onboarding/",  # Users can always update their own onboarding profile
+    "/accounts/logout/",  # Users can always invalidate their own access token
+    "/accounts/2fa/",  # Users can always manage their own second factor state
+    "/accounts/passkey/",  # Users can always manage their own passkey challenges
+    "/accounts/passkeys/",  # Users can always manage their own passkey records
 )
 _WRITE_METHODS = ("post", "put", "patch", "delete")
+NO_ORGANIZATION_WRITE_DENIED = "You're not a member of any organization."
+
+
+def _is_workspace_write(request) -> bool:
+    if (getattr(request, "method", "") or "").lower() not in _WRITE_METHODS:
+        return False
+    return not (
+        _is_workspace_write_exempt_view(request)
+        or request.path.startswith(WORKSPACE_WRITE_EXEMPT_PATHS)
+        or _is_annotation_queue_role_scoped_write_path(request.path)
+    )
 
 
 def _with_viewer_refusal(schema):
@@ -378,9 +389,30 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
+            if _is_workspace_write(request):
+                logger.info(
+                    "access_denied",
+                    reason="no_organization",
+                    user_id=str(user.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                raise PermissionDenied(NO_ORGANIZATION_WRITE_DENIED)
             request.workspace = None
             request.organization = None
             return
+
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            logger.warning(
+                "access_denied",
+                reason="not_an_organization_member",
+                user_id=str(user.id),
+                organization_id=str(organization.id),
+                path=request.path,
+                method=request.method,
+            )
+            raise PermissionDenied("You're not a member of this organization.")
 
         # --- Step 2: Resolve workspace within that org ---
         workspace = self._get_requested_workspace(request, user, organization)
@@ -395,21 +427,24 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        should_skip_write_check = (
-            _is_workspace_write_exempt_view(request)
-            or any(
-                exempt_path in request.path
-                for exempt_path in WORKSPACE_WRITE_EXEMPT_PATHS
-            )
-            or _is_annotation_queue_role_scoped_write_path(request.path)
-        )
-
-        if (
-            request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
-            and not should_skip_write_check
-        ):
-            if not self._can_write_to_workspace(user, workspace):
+        if _is_workspace_write(request):
+            if workspace is None:
+                can_write = org_level >= Level.ADMIN
+            else:
+                can_write = self._can_write_to_workspace(user, workspace)
+            if not can_write:
+                logger.info(
+                    "access_denied",
+                    reason="read_only" if workspace else "no_workspace",
+                    user_id=str(user.id),
+                    organization_id=str(organization.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                if workspace is None and org_level >= Level.MEMBER:
+                    raise PermissionDenied(
+                        "Ask an admin to add you to a workspace before making changes."
+                    )
                 raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
@@ -696,9 +731,13 @@ class APIKeyAuthentication(BaseAuthentication):
         """Get or create the default workspace for an organization.
 
         Also ensures the user has a WorkspaceMembership for the workspace,
-        creating one (as workspace_admin) if missing.  Without a membership
-        the next request's ``_user_has_workspace_access`` check would fail.
+        creating one at the role their organization level grants if missing.
+        Without a membership the next request's ``_user_has_workspace_access``
+        check would fail.
         """
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            return None
         try:
             default_workspace = Workspace.objects.get(
                 organization=organization, is_default=True, is_active=True
@@ -741,7 +780,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
-                    role=OrganizationRoles.WORKSPACE_ADMIN,
+                    role=Level.to_ws_role(Level.get_default_ws_level(org_level)),
                     invited_by=user,
                 )
             except IntegrityError:
