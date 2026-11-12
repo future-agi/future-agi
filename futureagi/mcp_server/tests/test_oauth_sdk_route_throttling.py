@@ -13,6 +13,7 @@ import uuid
 
 import httpx
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from django.test import override_settings
 from redis.exceptions import RedisError
@@ -497,3 +498,28 @@ async def test_sdk_token_outage_releases_reservation_off_the_event_loop(monkeypa
     response = await _post("/token", _code_form("any-client", "x"), "203.0.113.143")
     _assert_throttled(response, "Token throttling temporarily unavailable")
     assert calls and "event-loop" not in calls
+
+
+@override_settings(
+    **LOCKOUT_SETTINGS, REST_FRAMEWORK={**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+)
+async def test_sdk_token_lockout_uses_the_proxy_added_forwarded_line(monkeypatch):
+    # A proxy that adds its own X-Forwarded-For line leaves the client's line
+    # first. Like Django's ASGIRequest, the throttle must join all the lines,
+    # so the trusted (last) address keys the lockout, not one the client sends.
+    client_id, _secret = await _register()
+    lookups = _count_client_lookups(monkeypatch)
+    statuses = []
+    for i in range(4):
+        async with _client("10.0.0.1") as http:
+            response = await http.post(
+                "/token",
+                data=_code_form(client_id, "wrong-secret"),
+                headers=[
+                    ("X-Forwarded-For", f"192.0.2.{10 + i}"),
+                    ("X-Forwarded-For", "198.51.100.50"),
+                ],
+            )
+        statuses.append(response.status_code)
+    assert statuses == [401, 401, 429, 429]
+    assert len(lookups) == 2
