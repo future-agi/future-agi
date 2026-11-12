@@ -33,7 +33,10 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
-from simulate.services.hosted_harness_validation import receipt_call_times
+from simulate.services.hosted_harness_validation import (
+    receipt_call_times,
+    validate_jsonb_strings,
+)
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -114,6 +117,9 @@ def _normalized_artifact_content_type(
 def ingest_event_batch(
     attempt: HostedHarnessAttempt, events: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or any event, watermark
+    # or heartbeat write, matching the conversation event channel.
+    validate_jsonb_strings(events, field="events")
     rejected: list[dict[str, Any]] = []
     with transaction.atomic():
         attempt = (
@@ -1262,6 +1268,9 @@ def _read_hosted_tool_trace(
                 if base_time is not None and isinstance(at, (int, float)) and at > 0:
                     value["start_time_ms"] = int(round((at - base_time) * 1000))
                 calls.append(value)
+        # These calls are stored in provider_call_data. Malformed lines are skipped
+        # above, but readable text Postgres cannot store fails the receipt instead.
+        validate_jsonb_strings(calls, field="tool trace artifact")
         return calls
     finally:
         if response is not None:
@@ -1391,6 +1400,9 @@ def _ingest_hosted_transcript(
                 if base_time is not None and at is not None:
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))
                 segments.append(segment)
+            # Reject before replacing the stored chat, so the receipt rolls back to
+            # a stable 400 rather than a database error the runner would retry.
+            validate_jsonb_strings(segments, field="transcript artifact")
             ChatMessageModel.objects.filter(call_execution=call).delete()
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
@@ -1483,6 +1495,10 @@ def _ingest_hosted_transcript(
                     content=str(payload["transcript"]),
                 )
             )
+        # Transcript text columns reject U+0000 and lone surrogates as JSONB does.
+        validate_jsonb_strings(
+            [row.content for row in rows], field="transcript artifact"
+        )
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)

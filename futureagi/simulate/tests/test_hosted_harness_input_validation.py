@@ -12,7 +12,10 @@ import pytest
 from rest_framework.test import APIClient
 
 from simulate.models import (
+    CallExecution,
+    CallTranscript,
     HostedHarnessConversationTranscript,
+    HostedHarnessEvent,
     HostedHarnessJob,
     HostedHarnessReceipt,
 )
@@ -34,7 +37,9 @@ from simulate.services.hosted_harness_conversation import (
 )
 from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 from simulate.services.hosted_harness_ingestion import (
+    _ingest_hosted_transcript,
     ingest_artifact,
+    ingest_event_batch,
     ingest_result_receipt,
 )
 from simulate.tests.test_hosted_harness_channels import _headers as attempt_headers
@@ -491,3 +496,311 @@ def test_supported_cancellation_persists_job_and_attempt_reason(organization, re
     capability.attempt.refresh_from_db()
     assert job.cancel_reason == capability.attempt.terminal_reason == reason
     assert job.state == HostedHarnessJob.State.CANCELED
+
+
+ATTEMPTS = "/simulate/api/harness/attempts"
+
+
+@pytest.fixture
+def attempt_channel(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="attempt-event-validation"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    return capability
+
+
+def _attempt_event(capability, sequence, payload):
+    attempt = capability.attempt
+    event = {
+        "event_id": f"attempt-validation-{sequence}",
+        "job_id": str(attempt.job_id),
+        "attempt_id": str(attempt.id),
+        "attempt_number": attempt.attempt_number,
+        "sequence": sequence,
+        "emitted_at": "2026-01-02T03:04:05Z",
+        "stage": "running",
+        "type": "log",
+        "payload": payload,
+    }
+    try:
+        event["digest"] = canonical_digest(payload)
+    except UnicodeEncodeError:
+        # Invalid surrogate input must be rejected before attempting UTF-8 hashing.
+        event["digest"] = "sha256:" + "0" * 64
+    return event
+
+
+def _post_attempt_events(capability, events):
+    return APIClient().generic(
+        "POST",
+        f"{ATTEMPTS}/{capability.attempt.id}/events/",
+        json.dumps({"schema_version": "futureagi.harness-event.v1", "events": events}),
+        content_type="application/json",
+        **attempt_headers(capability),
+    )
+
+
+@pytest.mark.parametrize("bad", [{"message": "private-tool \x00 output"}, *BAD_JSON])
+@pytest.mark.parametrize("via_api", [False, True])
+def test_attempt_event_batch_rejects_unstorable_json_without_acknowledging(
+    attempt_channel, bad, via_api
+):
+    capability = attempt_channel
+    attempt = capability.attempt
+    control = _attempt_event(capability, 1, {"level": "info", "message": "control"})
+    assert ingest_event_batch(attempt, [control]) == {
+        "acked_through_sequence": 1,
+        "rejected": [],
+    }
+    attempt.refresh_from_db()
+    heartbeat_at = attempt.heartbeat_at
+    events = [
+        _attempt_event(capability, 2, {"level": "info", "message": "valid"}),
+        _attempt_event(capability, 3, {"level": "info", "message": "tool", **bad}),
+    ]
+    original = copy.deepcopy(events)
+    if via_api:
+        response = _post_attempt_events(capability, events)
+        assert response.status_code == 400, response.content
+        assert response.json()["error"] == "invalid_jsonb_string"
+        assert response.json()["retryable"] is False
+        assert "private-" not in response.content.decode()
+    else:
+        with pytest.raises(HostedHarnessError) as error:
+            ingest_event_batch(attempt, events)
+        assert error.value.status_code == 400
+        assert error.value.code == "invalid_jsonb_string"
+    assert events == original
+    attempt.refresh_from_db()
+    assert attempt.event_watermark == 1
+    assert attempt.heartbeat_at == heartbeat_at
+    assert list(
+        HostedHarnessEvent.no_workspace_objects.filter(attempt=attempt).values_list(
+            "sequence", flat=True
+        )
+    ) == [1]
+    corrected = _attempt_event(
+        capability, 2, {"level": "info", "message": "binary output encoded as AA=="}
+    )
+    assert ingest_event_batch(attempt, [corrected]) == {
+        "acked_through_sequence": 2,
+        "rejected": [],
+    }
+
+
+def test_attempt_event_batch_stores_valid_unicode_verbatim(attempt_channel):
+    capability = attempt_channel
+    payload = {"level": "info", "message": "café 😀 \\u0000", "文😀": ["é"]}
+    event = _attempt_event(capability, 1, payload)
+    response = _post_attempt_events(capability, [event])
+    assert response.status_code == 200, response.content
+    assert response.json() == {"acked_through_sequence": 1, "rejected": []}
+    stored = HostedHarnessEvent.no_workspace_objects.get(attempt=capability.attempt)
+    assert stored.accepted is True
+    assert stored.payload == payload
+
+
+def _artifact_storage(objects):
+    """Object storage double that serves each uploaded artifact by its digest."""
+    storage = MagicMock()
+
+    def get_object(_bucket, object_key):
+        response = MagicMock()
+        response.read.return_value = objects[object_key.rsplit("/", 1)[-1]]
+        return response
+
+    storage.get_object.side_effect = get_object
+    return storage
+
+
+def _upload(capability, objects, content, kind):
+    digest = hashlib.sha256(content).hexdigest()
+    objects[digest] = content
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=_artifact_storage(objects),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{ATTEMPTS}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND=kind,
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="one",
+            **attempt_headers(capability),
+        )
+    assert response.status_code == 201, response.content
+    return digest
+
+
+def _transcript(*contents, tool_calls=None):
+    messages = [
+        {"role": ("user", "assistant")[index % 2], "content": content}
+        for index, content in enumerate(contents)
+    ]
+    if tool_calls is not None:
+        messages[-1]["tool_calls"] = tool_calls
+    return json.dumps({"messages": messages}).encode()
+
+
+UNSTORABLE_TRANSCRIPTS = [
+    _transcript("Hello", "private-tool said \x00 here"),
+    _transcript("Hello", "private-reply \ud800"),
+    _transcript("Hello", "Hi", tool_calls=[{"private-key\x00": "lookup"}]),
+    # Older guests upload rendered text rather than JSON.
+    b"customer: Hello\nagent: private-raw \x00 reply",
+]
+
+
+def _post_receipt(capability, objects, body, *, via_api):
+    body["digest"] = canonical_digest(body)
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=_artifact_storage(objects),
+    ):
+        if via_api:
+            return APIClient().generic(
+                "POST",
+                f"{ATTEMPTS}/{capability.attempt.id}/results/",
+                json.dumps(body),
+                content_type="application/json",
+                **attempt_headers(capability),
+            )
+        return ingest_result_receipt(capability.attempt, body, replay_usage=False)
+
+
+def _assert_receipt_rejected(capability, objects, body, *, via_api):
+    if via_api:
+        response = _post_receipt(capability, objects, body, via_api=True)
+        assert response.status_code == 400, response.content
+        assert response.json()["error"] == "invalid_jsonb_string"
+        assert response.json()["retryable"] is False
+        assert "private-" not in response.content.decode()
+    else:
+        with pytest.raises(HostedHarnessError) as error:
+            _post_receipt(capability, objects, body, via_api=False)
+        assert error.value.status_code == 400
+        assert error.value.code == "invalid_jsonb_string"
+        assert "private-" not in str(error.value)
+
+
+def _call_state(call):
+    call.refresh_from_db()
+    return {
+        "status": call.status,
+        "started_at": call.started_at,
+        "ended_at": call.ended_at,
+        "transcript_available": call.transcript_available,
+        "call_metadata": call.call_metadata,
+        "provider_call_data": call.provider_call_data,
+        "chat_rows": ChatMessageModel.objects.filter(call_execution=call).count(),
+        "transcript_rows": CallTranscript.objects.filter(call_execution=call).count(),
+    }
+
+
+@pytest.mark.parametrize("content", UNSTORABLE_TRANSCRIPTS)
+@pytest.mark.parametrize("via_api", [False, True])
+def test_receipt_rejects_unstorable_transcript_artifact_without_writes(
+    receipt_channel, content, via_api
+):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    rejected_body = copy.deepcopy(body)
+    rejected_body["call"]["transcript_artifact"] = (
+        f"sha256:{_upload(capability, objects, content, 'transcript')}"
+    )
+    _assert_receipt_rejected(capability, objects, rejected_body, via_api=via_api)
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+    corrected = _transcript("Hello", "binary output encoded as AA==")
+    body["call"]["transcript_artifact"] = (
+        f"sha256:{_upload(capability, objects, corrected, 'transcript')}"
+    )
+    _, created = _post_receipt(capability, objects, body, via_api=False)
+    assert created
+    assert ChatMessageModel.objects.filter(call_execution=call).count() == 2
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        {"name": "lookup", "result": "private-tool said \x00 here"},
+        {"name": "lookup", "result": "private-\udfff"},
+        {"name": "lookup", "private-key\x00": "result"},
+    ],
+)
+@pytest.mark.parametrize("via_api", [False, True])
+def test_receipt_rejects_unstorable_tool_trace_without_writes(
+    receipt_channel, line, via_api
+):
+    job, capability, body = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    before = _call_state(call)
+    objects = {}
+    trace = json.dumps({"name": "lookup", "at": 1}) + "\n" + json.dumps(line) + "\n"
+    _upload(capability, objects, trace.encode(), "tool_trace")
+    _assert_receipt_rejected(capability, objects, body, via_api=via_api)
+    assert not HostedHarnessReceipt.no_workspace_objects.filter(job=job).exists()
+    assert _call_state(call) == before
+
+
+def test_receipt_stores_valid_unicode_transcript_and_tool_trace(receipt_channel):
+    job, capability, body = receipt_channel
+    text = "café 😀 \\u0000"
+    objects = {}
+    digest = _upload(capability, objects, _transcript("Hello", text), "transcript")
+    body["call"]["transcript_artifact"] = f"sha256:{digest}"
+    trace = json.dumps({"name": "lookup", "result": text}).encode()
+    _upload(capability, objects, trace, "tool_trace")
+    response = _post_receipt(capability, objects, body, via_api=True)
+    assert response.status_code == 200, response.content
+    call = job.scenario_registrations.get().call_execution
+    call.refresh_from_db()
+    reply = ChatMessageModel.objects.get(call_execution=call, role="assistant")
+    assert reply.messages == [text]
+    assert call.provider_call_data["livekit"]["tool_calls"] == [
+        {"name": "lookup", "result": text}
+    ]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"messages": [{"role": "user", "content": "private-caller \x00 said"}]},
+        {"messages": [{"role": "assistant", "content": "private-\ud800"}]},
+        {"transcript": "private-raw \x00 text"},
+    ],
+)
+def test_voice_transcript_rejects_unstorable_text_before_replacing_rows(
+    receipt_channel, document
+):
+    job, _, _ = receipt_channel
+    call = job.scenario_registrations.get().call_execution
+    call.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call.save(update_fields=["simulation_call_type"])
+    CallTranscript.objects.create(
+        call_execution=call, speaker_role="user", content="earlier transcript"
+    )
+    response = MagicMock()
+    response.read.return_value = json.dumps(document).encode()
+    storage = MagicMock()
+    storage.get_object.return_value = response
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        pytest.raises(HostedHarnessError) as error,
+    ):
+        _ingest_hosted_transcript(call, SimpleNamespace(object_key="transcript.json"))
+    assert error.value.status_code == 400
+    assert error.value.code == "invalid_jsonb_string"
+    assert list(call.transcripts.values_list("content", flat=True)) == [
+        "earlier transcript"
+    ]
+    response.close.assert_called_once_with()
+    response.release_conn.assert_called_once_with()
