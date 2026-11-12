@@ -492,11 +492,19 @@ def test_native_trace_tags_preserves_tenant_identity_and_tombstone_replay(
 def test_multiple_native_tags_and_raw_tag_bind_independently():
     # Exact graphs bind the UI overlay at compile time (graph statements also
     # run on executors without a preparation hook). This offline test pins
-    # the routing and binding, with the PostgreSQL overlay read stubbed.
-    with patch(
-        "tracer.services.clickhouse.v2.effective_tags._read_assignments",
-        return_value=[],
-    ) as overlay:
+    # the routing and binding, with the PostgreSQL overlay reads stubbed: the
+    # assignments that carry a filtered name, and the probe for other trace
+    # assignments (none here, so no curated-suppression read follows).
+    with (
+        patch(
+            "tracer.services.clickhouse.v2.effective_tags._read_assignments",
+            return_value=[],
+        ) as overlay,
+        patch(
+            "tracer.services.clickhouse.v2.effective_tags._query_assignments",
+            return_value=[],
+        ) as unmatched_probe,
+    ):
         sql, params = compile_exact_graph_filter_predicates(
             public(
                 [
@@ -514,6 +522,7 @@ def test_multiple_native_tags_and_raw_tag_bind_independently():
     # One overlay read per native leaf. The explicit SPAN_ATTRIBUTE "tag" and
     # "tags" stay raw attributes and read no overlay.
     assert overlay.call_count == 2
+    assert unmatched_probe.call_count == 2
     assert ["first-tag"] in params.values()
     assert ["second-tag"] in params.values()
     assert "raw-singular-tag" in params.values()

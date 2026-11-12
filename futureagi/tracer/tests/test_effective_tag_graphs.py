@@ -16,6 +16,7 @@ from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
+from tracer.models.entity_tag_assignment import EntityTagAssignment
 from tracer.services.clickhouse import graph_dispatch
 from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
@@ -29,6 +30,7 @@ from tracer.services.clickhouse.query_builders.time_series import TimeSeriesQuer
 from tracer.services.clickhouse.read_budget import ReadDeadline
 from tracer.services.clickhouse.v2 import effective_tags
 from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+from tracer.services.clickhouse.v2.entity_tag_targets import TRACE_ASSIGNMENT_HOUR
 from tracer.services.entity_tags import TagReadUnavailable
 from tracer.tests import test_entity_tag_readback as readback
 from tracer.tests.test_effective_tag_filters import (
@@ -352,20 +354,16 @@ def test_observe_graph_endpoint_reader_answers_a_tag_filter(stores, observe_type
     assert sum(point["value"] or 0 for point in response["data"]) == expected
 
 
-@pytest.mark.parametrize("observe_type", ["trace", "span"])
-def test_observe_graph_endpoint_answers_200_for_a_tag_filter(
-    stores, monkeypatch, observe_type
-):
-    """TraceView/ObservationSpanView.get_graph_methods: 400 before, 200 now.
+def post_graph(stores, monkeypatch, observe_type, item):
+    """TraceView/ObservationSpanView.get_graph_methods for one filter.
 
     Only the cache probe and the EXPLAIN-based affordability probe are
     replaced (both are optional decorations of a cold read); compilation,
-    the overlay read, the statement and the HTTP mapping are the real ones.
+    the overlay reads, the statement and the HTTP mapping are the real ones.
     """
     from tracer.views import observation_span as span_views
     from tracer.views import trace as trace_views
 
-    tagged_project(stores)
     project = SimpleNamespace(id=PROJECT, trace_type="observe", organization_id=None)
     projects = SimpleNamespace(
         filter=lambda *a, **k: SimpleNamespace(first=lambda: project)
@@ -391,7 +389,7 @@ def test_observe_graph_endpoint_answers_200_for_a_tag_filter(
     # The browser's POST, through the real request/response contract decorators.
     body = {
         "project_id": PROJECT,
-        "filters": iso_filters(leaf("tag", "wanted", "equals")),
+        "filters": iso_filters(item),
         "interval": "hour",
         "req_data_config": {"type": "SYSTEM_METRIC", "id": "tokens"},
     }
@@ -407,22 +405,34 @@ def test_observe_graph_endpoint_answers_200_for_a_tag_filter(
     )
     view.request = request
     view.format_kwarg = None
-    response = view.get_graph_methods(request)
+    return view.get_graph_methods(request)
+
+
+def graph_total(response):
     assert response.status_code == 200, response.data
-    points = response.data["result"]["data"]
-    expected = (
-        sum(
-            _tokens(t, s)
-            for t in ("alpha", "beta", "gamma", "delta")
-            for s in ("root", "child")
-        )
-        if observe_type == "trace"
-        else _tokens("alpha", "root")
-        + _tokens("beta", "child")
-        + _tokens("gamma", "child")
-        + _tokens("delta", "root")
+    return sum(point["value"] or 0 for point in response.data["result"]["data"])
+
+
+def expected_tokens(observe_type, traces, spans):
+    if observe_type == "trace":
+        return sum(_tokens(t, s) for t in traces for s in ("root", "child"))
+    return sum(_tokens(*span.split("/")) for span in spans)
+
+
+@pytest.mark.parametrize("observe_type", ["trace", "span"])
+def test_observe_graph_endpoint_answers_200_for_a_tag_filter(
+    stores, monkeypatch, observe_type
+):
+    """TraceView/ObservationSpanView.get_graph_methods: 400 before, 200 now."""
+    tagged_project(stores)
+    response = post_graph(
+        stores, monkeypatch, observe_type, leaf("tag", "wanted", "equals")
     )
-    assert sum(point["value"] or 0 for point in points) == expected
+    assert graph_total(response) == expected_tokens(
+        observe_type,
+        ("alpha", "beta", "gamma", "delta"),
+        ("alpha/root", "beta/child", "gamma/child", "delta/root"),
+    )
 
 
 @pytest.mark.parametrize("operation", ["starts_with", "ends_with", "between"])
@@ -459,12 +469,20 @@ def test_tag_overlay_byte_budget_spans_every_graph_leaf(stores, monkeypatch):
     compile_exact_graph_row_predicates(
         [leaf("tag", "wanted")], project_id=PROJECT, observe_type="trace"
     )
-    with pytest.raises(BoundedGraphReadError):
+    from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+        GraphTagFilterTooBroadError,
+    )
+
+    # Over budget is a property of the project's tags: a request error with
+    # its own copy, never a retryable 503.
+    with pytest.raises(GraphTagFilterTooBroadError) as raised:
         compile_exact_graph_row_predicates(
             [leaf("tag", "wanted"), leaf("tag", "wanted")],
             project_id=PROJECT,
             observe_type="trace",
         )
+    assert isinstance(raised.value, UnsupportedFilterShapeError)
+    assert not isinstance(raised.value, BoundedGraphReadError)
 
 
 def test_graph_tag_scope_is_the_requested_project(stores):
@@ -478,3 +496,171 @@ def test_graph_tag_scope_is_the_requested_project(stores):
     span_keys = [v for k, v in plan.params.items() if k.endswith("_span_keys")]
     assert trace_keys == [(("", ""), (PROJECT, "alpha"))]
     assert span_keys == [(("", "", "", 0, "", ""),)]
+
+
+# Above MAX_TAG_OVERLAY_KEYS (2,048) and, at ~60 bytes a key, the 128 KiB
+# rendered budget the graph used to spend binding every trace assignment.
+LIFETIME_ASSIGNMENTS = 2_100
+
+
+def lifetime_assignments(names=("reviewed",), *, count=LIFETIME_ASSIGNMENTS):
+    """What a busy review team leaves behind over a project's lifetime.
+
+    Trace assignments are never pruned: other names, cleared rows (every
+    third one), and traces that aged out of ClickHouse long ago all remain.
+    None of them carries ``wanted``/``other`` or hides a curated tag.
+    """
+    EntityTagAssignment.objects.bulk_create(
+        [
+            EntityTagAssignment(
+                project_id=PROJECT,
+                entity_kind="trace",
+                trace_id=f"aged-{index:05d}",
+                span_id="",
+                start_hour=TRACE_ASSIGNMENT_HOUR,
+                observation_type="",
+                service_name="",
+                manual_tags=[]
+                if index % 3 == 0
+                else [{"name": name, "color": "#123456"} for name in names],
+            )
+            for index in range(count)
+        ]
+    )
+
+
+def bound(plan, suffix):
+    return [value for key, value in plan.params.items() if key.endswith(suffix)]
+
+
+LIFETIME_CASES = [
+    ("tag", "equals", "wanted", {"alpha", "beta", "gamma", "delta"}),
+    ("tag", "not_equals", "wanted", {"epsilon", "zeta", "eta"}),
+    ("tag", "in", ["other"], {"zeta"}),
+    ("tags", "contains", ["wanted"], {"alpha", "delta"}),
+]
+
+
+@pytest.mark.parametrize(
+    "column,operation,value,expected",
+    LIFETIME_CASES,
+    ids=[f"{c}-{o}-{v}" for c, o, v, _ in LIFETIME_CASES],
+)
+def test_lifetime_trace_assignments_do_not_cap_the_graph(
+    stores, column, operation, value, expected
+):
+    """R3-1: a project's lifetime trace assignments never reach the budget.
+
+    Only the assignments that carry the filtered name, and the ones that hide
+    a matching curated tag (epsilon), are bound. Before, every trace
+    assignment was bound, so this project's graph was a permanent 503.
+    """
+    tagged_project(stores)
+    lifetime_assignments()
+    item = leaf(column, value, operation)
+    assert counted(stores, "trace", item) == expected
+    plan = compile_exact_graph_row_predicates(
+        [item], project_id=PROJECT, observe_type="trace"
+    )
+    suppressed = (("", ""), (PROJECT, "epsilon")) if value != ["other"] else (("", ""),)
+    assert bound(plan, "_assigned_keys") == [suppressed]
+
+
+@pytest.mark.parametrize("observe_type", ["trace", "span"])
+def test_lifetime_trace_assignments_keep_the_primary_graph_answering(
+    stores, monkeypatch, observe_type
+):
+    tagged_project(stores)
+    lifetime_assignments()
+    response = post_graph(
+        stores, monkeypatch, observe_type, leaf("tag", "wanted", "equals")
+    )
+    assert graph_total(response) == expected_tokens(
+        observe_type,
+        ("alpha", "beta", "gamma", "delta"),
+        ("alpha/root", "beta/child", "gamma/child", "delta/root"),
+    )
+
+
+def test_lifetime_trace_assignments_keep_the_eval_graph_membership(stores):
+    tagged_project(stores)
+    lifetime_assignments()
+    rows = membership_rows(stores, "trace", leaf("tag", "wanted", "equals"))
+    assert {row["trace_id"] for row in rows} == {"alpha", "beta", "gamma", "delta"}
+
+
+def test_lifetime_trace_assignments_keep_the_window_scan_count(stores, monkeypatch):
+    """The direct count callers' window scan binds the same narrow set."""
+    from tracer.tests.test_effective_tag_scale import window_count
+
+    tagged_project(stores)
+    lifetime_assignments()
+    assert window_count(stores, monkeypatch, "wanted") == 4
+
+
+def test_curated_suppressions_page_when_curated_tags_are_everywhere(
+    stores, monkeypatch
+):
+    """An importer writes curated tags on every trace: the curated set is
+    larger than the budget, so unmatched assignments are paged from
+    PostgreSQL and ClickHouse is asked, a batch at a time, which of them
+    hide a matching curated tag. The answer is the same."""
+    tagged_project(stores)
+    lifetime_assignments()
+    monkeypatch.setattr(effective_tags, "MAX_CURATED_SUPPRESSION_CANDIDATES", 1)
+    item = leaf("tag", "wanted", "equals")
+    assert counted(stores, "trace", item) == {"alpha", "beta", "gamma", "delta"}
+    plan = compile_exact_graph_row_predicates(
+        [item], project_id=PROJECT, observe_type="trace"
+    )
+    assert bound(plan, "_assigned_keys") == [(("", ""), (PROJECT, "epsilon"))]
+
+
+def test_too_many_suppressions_are_over_budget_not_partial(stores, monkeypatch):
+    tagged_project(stores)
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    manual("delta", ["kept"])
+    # delta and epsilon both hide a curated ``wanted``: two suppressions.
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.legacy_suppressions(
+            stores.analytics.execute_ch_query,
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=ReadDeadline.start(10000),
+        )
+
+
+def test_unavailable_curated_read_is_retryable_not_unsuppressed(stores, monkeypatch):
+    tagged_project(stores)
+
+    def unavailable(*args, **kwargs):
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(effective_tags, "graph_overlay_executor", lambda: unavailable)
+    with pytest.raises(BoundedGraphReadError) as raised:
+        compile_exact_graph_row_predicates(
+            [leaf("tag", "wanted")], project_id=PROJECT, observe_type="trace"
+        )
+    assert raised.value.retryable
+
+
+@pytest.mark.parametrize("observe_type", ["trace", "span"])
+@pytest.mark.parametrize("operation", ["is_null", "is_not_null"])
+def test_too_broad_tag_filter_is_a_clear_400_not_a_retry(
+    stores, monkeypatch, observe_type, operation
+):
+    """What remains capped: more traces and spans tagged in the app with the
+    filtered name (any name for is null / is not null) than one statement can
+    bind. That is a property of the project, so the graph says so (400 with
+    its own code and copy) instead of a 503 that asks the user to retry."""
+    tagged_project(stores)
+    lifetime_assignments(count=3 * 1_100)
+    response = post_graph(
+        stores, monkeypatch, observe_type, leaf("tag", None, operation)
+    )
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad"
+    assert response.data["message"] == (
+        "The graph cannot apply this Tag filter: too many traces and spans "
+        "were tagged with it in the app. The list below is still filtered by it."
+    )

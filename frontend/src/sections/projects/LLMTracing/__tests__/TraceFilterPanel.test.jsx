@@ -33,6 +33,7 @@ import TraceFilterPanel, {
   PropertyPickerPaginationControl,
   shouldUseRetainedAttributePages,
   supplementCatalogSearchCategoryCounts,
+  TAG_FILTER_OPERATORS,
   toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
@@ -1456,6 +1457,103 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // Normal trace/spans surfaces retain the OTel status column.
     expect(
       getTraceFilterFields("trace").some((field) => field.value === "status"),
+    ).toBe(true);
+  });
+});
+
+describe("Tag filter operators and surfaces (TH-7275)", () => {
+  // The API's tag membership operators (exact name only).
+  const TAG_OPS = ["in", "not_in", "is_null", "is_not_null"];
+  const tagRow = (operator, extra = {}) => ({
+    field: "tag",
+    fieldName: "Tag",
+    fieldCategory: "system",
+    apiColType: "SYSTEM_METRIC",
+    fieldType: "string",
+    operator,
+    value: ["reviewed"],
+    ...extra,
+  });
+
+  it("offers only exact membership for the Tag field", () => {
+    expect(TAG_FILTER_OPERATORS).toEqual(TAG_OPS);
+    for (const tab of ["trace", "spans"]) {
+      const tag = mergeTraceFilterProperties({ tab, source: "traces" }).find(
+        (property) => property.id === "tag",
+      );
+      expect(tag).toMatchObject({
+        category: "system",
+        apiColType: "SYSTEM_METRIC",
+        operators: TAG_OPS,
+      });
+    }
+  });
+
+  it.each(TAG_OPS)("keeps an offered Tag operator %s", (op) => {
+    expect(normalizeFilterRowOperator(tagRow(op)).operator).toBe(op);
+  });
+
+  it.each([
+    ["starts_with", "in"],
+    ["ends_with", "in"],
+    // "contains" was always exact membership for tags: keep the polarity.
+    ["contains", "in"],
+    ["not_contains", "not_in"],
+  ])("replaces a Tag %s row with %s", (op, expected) => {
+    expect(normalizeFilterRowOperator(tagRow(op)).operator).toBe(expected);
+  });
+
+  it("leaves a raw span attribute named tag on the string operators", () => {
+    const row = tagRow("starts_with", {
+      fieldCategory: "attribute",
+      apiColType: "SPAN_ATTRIBUTE",
+    });
+    expect(normalizeFilterRowOperator(row).operator).toBe("starts_with");
+  });
+
+  it("does not offer Tag on Sessions from any source", () => {
+    const sessions = mergeTraceFilterProperties({
+      tab: undefined,
+      source: "sessions",
+      propertyNamespace: "sessions",
+      dynamicProperties: [
+        { id: "tag", name: "Tag", category: "system", type: "string" },
+        { id: "tags", name: "Tags", category: "system", type: "string" },
+        {
+          id: "tag",
+          name: "tag",
+          category: "attribute",
+          apiColType: "SPAN_ATTRIBUTE",
+          type: "string",
+        },
+      ],
+      filterFields: [
+        { id: "session_id", name: "Session ID", category: "system" },
+        { id: "tag", name: "Tag", category: "system" },
+      ],
+    });
+    expect(
+      sessions.filter(
+        (property) =>
+          ["tag", "tags"].includes(property.id) &&
+          property.category === "system",
+      ),
+    ).toEqual([]);
+    // A raw span attribute that happens to be called "tag" stays selectable.
+    expect(
+      sessions.some(
+        (property) =>
+          property.id === "tag" && property.apiColType === "SPAN_ATTRIBUTE",
+      ),
+    ).toBe(true);
+    expect(sessions.some((property) => property.id === "session_id")).toBe(
+      true,
+    );
+    // Traces keep it.
+    expect(
+      mergeTraceFilterProperties({ tab: "trace", source: "traces" }).some(
+        (property) => property.id === "tag",
+      ),
     ).toBe(true);
   });
 });

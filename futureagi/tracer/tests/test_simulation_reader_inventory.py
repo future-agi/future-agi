@@ -1114,6 +1114,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "leaf's own authorized project set and candidate traces"
             ),
         ),
+        "_legacy_match_query": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "curated traces.tags matches of a window-scan tag leaf's "
+                "authorized project set, optionally limited to a finite batch of "
+                "trace ids its PostgreSQL assignments name; it decides which "
+                "assignments suppress a matching curated tag"
+            ),
+        ),
         "_assignment_vocabulary": filed(
             PROJECT_SET,
             CHILDREN_ATTRIBUTE_PICKERS,

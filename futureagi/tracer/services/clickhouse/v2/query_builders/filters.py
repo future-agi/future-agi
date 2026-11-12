@@ -41,6 +41,7 @@ from tracer.services.clickhouse.query_builders.filters import (
     _coerce_strict_bool,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
     _legacy_ascii_lower_bloom_predicate,
 )
 from tracer.services.clickhouse.v2.query_builders import columns as cols
@@ -469,7 +470,9 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             "is_null",
             "is_not_null",
         }:
-            raise ValueError("unsupported tag membership operation")
+            # A request shape, not a server fault: every list handler answers
+            # 400 for it, as the graphs already do.
+            raise UnsupportedFilterShapeError("unsupported tag membership operation")
         negate = operation in {"not_equals", "not_in", "not_contains", "is_null"}
         relation = self._next_param("effective_tag_rows")
         # ``{names}`` is the Array(String) of one source: the span's own source
@@ -482,7 +485,9 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             if not values or any(
                 not isinstance(item, str) or not item for item in values
             ):
-                raise ValueError("tag membership requires non-empty tag names")
+                raise UnsupportedFilterShapeError(
+                    "tag membership requires non-empty tag names"
+                )
             # Filter the source vocabulary with the public filter limits, not
             # the narrower UI-assignment name limit. SDK names remain intact.
             _normalize_json_array_values(

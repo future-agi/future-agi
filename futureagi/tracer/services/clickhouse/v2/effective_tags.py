@@ -22,6 +22,8 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
+from clickhouse_driver.errors import Error as ClickHouseError
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Q
 
@@ -40,6 +42,9 @@ from tracer.services.postgres_read_policy import application_postgres_reads
 MAX_TAG_OVERLAY_KEYS = 2048
 MAX_TAG_OVERLAY_BYTES = 128 * 1024
 MAX_TAG_CANDIDATE_TRACES = 512
+# Curated matches a window-scan leaf reads before it asks PostgreSQL which of
+# those traces have an assignment; above it the assignments are paged instead.
+MAX_CURATED_SUPPRESSION_CANDIDATES = MAX_TAG_OVERLAY_KEYS
 _ASSIGNMENT_PAGE_SIZE = 1000
 TAG_OVERLAY_SETTINGS = {
     "max_threads": 2,
@@ -266,19 +271,45 @@ def graph_row_tag_sql(prefix: str, names_predicate: str, *, root_only: bool) -> 
     return f"({source} OR ({root} AND {trace}) OR (NOT {root} AND {span}))"
 
 
+def graph_overlay_executor() -> Callable[..., Any]:
+    """The CH25 reader of a graph leaf's curated-tag suppressions.
+
+    Graph statements are compiled where no executor is at hand; they read the
+    same authoritative CH25 ``traces`` the statement itself reads.
+    """
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+
+    try:
+        return V2AnalyticsQueryService().execute_ch_query
+    except (
+        ClickHouseError,
+        ImproperlyConfigured,
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        # An unreachable server or invalid connection settings: unavailable.
+        raise TagReadUnavailable("tag_source_unavailable") from exc
+
+
 def graph_tag_overlay_params(
     prefix: str,
     *,
     project_ids: tuple[str, ...],
     values: tuple[str, ...] | None,
     deadline: ReadDeadline,
+    execute: Callable[..., Any] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Bind one graph leaf's UI overlay now, with its rendered byte size.
 
     Graph statements also run on executors without a preparation hook (the
     background exact-aggregation worker), so they carry concrete parameters,
     never an :class:`EffectiveTagRelation`. The scope is a window scan: the
-    graph's own replay decides liveness and the window.
+    graph's own replay decides liveness and the window. ``execute`` reads the
+    curated tags that decide which trace assignments suppress them; it
+    defaults to the CH25 analytics service and is used only when the project
+    has trace assignments that do not carry the leaf's names.
     """
     if not project_ids:
         raise TagReadUnavailable("tag_scope_required")
@@ -288,6 +319,13 @@ def graph_tag_overlay_params(
         values=values,
         deadline=deadline,
     )
+    if overlay.unmatched_trace_assignments:
+        overlay.assigned |= legacy_suppressions(
+            execute or graph_overlay_executor(),
+            project_ids=project_ids,
+            values=values,
+            deadline=deadline,
+        )
     trace_keys, span_keys, assigned = overlay.keys(values)
     params = {
         f"{prefix}_projects": project_ids,
@@ -452,13 +490,18 @@ def _assignment_pages(
 class TagOverlay:
     """Human-scale UI assignment names keyed by the identity they attach to.
 
-    ``assigned`` holds every trace with a saved assignment, even an empty one:
-    those traces no longer fall back to curated ``traces.tags``.
+    ``assigned`` holds the traces whose saved assignment, even an empty one,
+    suppresses their curated ``traces.tags``. A candidate batch reads every
+    assignment of its traces. A window scan reads only the assignments that
+    carry a requested name; ``unmatched_trace_assignments`` then says whether
+    other trace assignments exist, whose suppressions the caller must add
+    with :func:`legacy_suppressions`.
     """
 
     trace_names: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
     span_names: dict[tuple, tuple[str, ...]] = field(default_factory=dict)
     assigned: set[tuple[str, str]] = field(default_factory=set)
+    unmatched_trace_assignments: bool = False
 
     def add(self, record: dict[str, Any]) -> None:
         key = _assignment_key(record)
@@ -479,11 +522,15 @@ class TagOverlay:
         spans = sorted(key for key, names in self.span_names.items() if matches(names))
         if len(traces) + len(spans) > MAX_TAG_OVERLAY_KEYS:
             raise TagReadUnavailable("tag_overlay_budget_exceeded")
+        # A trace in ``traces`` matches through its own assignment, so whether
+        # it also suppresses curated tags cannot change the result: bind only
+        # the suppressions that can.
+        suppressing = sorted(self.assigned - set(traces))
         # A sentinel keeps a one-key set a set of tuples when rendered.
         return (
             (_TRACE_SENTINEL, *traces),
             (_SPAN_SENTINEL, *spans),
-            (_TRACE_SENTINEL, *sorted(self.assigned)),
+            (_TRACE_SENTINEL, *suppressing),
         )
 
 
@@ -498,25 +545,147 @@ def read_tag_overlay(
 
     Candidate batches read every assignment of their (at most 512) traces.
     Window scans read only assignments carrying a requested name (or any name
-    for the non-empty test) plus every trace assignment, since any of them can
-    suppress a matching curated tag. Liveness and the window are applied
+    for the non-empty test). Every other trace assignment can only suppress a
+    matching curated tag, and only a few of them actually do; the window scan
+    records whether any exist, and :func:`legacy_suppressions` finds the ones
+    that matter. A project's lifetime count of trace assignments therefore
+    never reaches the overlay budget. Liveness and the window are applied
     later, in SQL.
     """
     scope = Q(project_id__in=project_ids, entity_kind__in=("trace", "span"))
+    overlay = TagOverlay()
     if trace_ids is not None:
         predicate = scope & Q(trace_id__in=trace_ids)
     else:
-        if values is None:
-            names = ~Q(manual_tags=[])
-        else:
-            names = Q()
-            for value in values:
-                names |= Q(manual_tags__contains=[{"name": value}])
-        predicate = (scope & names) | Q(project_id__in=project_ids, entity_kind="trace")
-    overlay = TagOverlay()
+        names = _names_predicate(values)
+        predicate = scope & names
+        overlay.unmatched_trace_assignments = bool(
+            _query_assignments(
+                _unmatched_trace_predicate(project_ids, names),
+                deadline=deadline,
+                limit=0,
+            )
+        )
     for record in _read_assignments(predicate, deadline=deadline):
         overlay.add(record)
     return overlay
+
+
+def _names_predicate(values: tuple[str, ...] | None) -> Q:
+    """Assignments carrying a requested name, or any name for ``None``."""
+    if values is None:
+        return ~Q(manual_tags=[])
+    names = Q()
+    for value in values:
+        names |= Q(manual_tags__contains=[{"name": value}])
+    return names
+
+
+def _unmatched_trace_predicate(project_ids: tuple[str, ...], names: Q) -> Q:
+    """Trace assignments that do not carry a requested name."""
+    return Q(project_id__in=project_ids, entity_kind="trace") & ~names
+
+
+def _legacy_match_query(prefix: str, names_predicate: str) -> str:
+    """Latest live curated ``traces.tags`` rows of the scope that match."""
+    legacy = names_predicate.format(names="legacy_names")
+    return f"""
+        SELECT legacy_project, legacy_trace
+        FROM {legacy_trace_tags_sql(prefix)}
+        WHERE {legacy}
+        LIMIT %({prefix}_limit)s
+    """
+
+
+def legacy_suppressions(
+    execute: Callable[..., Any],
+    *,
+    project_ids: tuple[str, ...],
+    values: tuple[str, ...] | None,
+    deadline: ReadDeadline,
+    settings: dict[str, Any] | None = None,
+) -> set[tuple[str, str]]:
+    """Trace assignments that hide a curated tag the leaf would otherwise match.
+
+    A trace assignment that carries none of the leaf's names changes the
+    leaf's result only when the trace's latest live curated ``traces.tags``
+    match; then it suppresses them. That set is bounded by real edits, not by
+    how many traces were ever tagged. Curated matches are read from
+    ClickHouse first; when they are few, PostgreSQL is asked which of those
+    traces have such an assignment. Otherwise (an importer that writes
+    curated tags on every trace) the unmatched assignments are paged from
+    PostgreSQL and ClickHouse is asked, a bounded batch at a time, which of
+    them carry a matching curated tag. Above the overlay budget the leaf is
+    over budget, never a partial suppression set.
+    """
+    if (
+        getattr(
+            getattr(execute, "__self__", None), "supports_per_query_read_settings", True
+        )
+        is False
+    ):
+        raise TagReadUnavailable("tag_source_unavailable")
+    prefix = "tag_suppress"
+    if values is None:
+        names_predicate = "notEmpty({names})"
+    else:
+        names_predicate = "hasAny({names}, %(" + prefix + "_names)s)"
+    unmatched = _unmatched_trace_predicate(project_ids, _names_predicate(values))
+    query = _legacy_match_query(prefix, names_predicate)
+    over_budget = "tag_overlay_budget_exceeded"
+
+    def curated_matches(traces: tuple[str, ...] | None) -> set[tuple[str, str]]:
+        """Matching curated traces of the project, or of ``traces`` only."""
+        limit = (
+            MAX_CURATED_SUPPRESSION_CANDIDATES
+            if traces is None
+            else MAX_TAG_OVERLAY_KEYS
+        )
+        params: dict[str, Any] = {
+            f"{prefix}_projects": project_ids,
+            f"{prefix}_scoped": 0 if traces is None else 1,
+            f"{prefix}_traces": traces or (_UNSCOPED_TRACE,),
+            f"{prefix}_assigned_keys": (_TRACE_SENTINEL,),
+            f"{prefix}_limit": limit + 1,
+        }
+        if values is not None:
+            params[f"{prefix}_names"] = list(values)
+        try:
+            rows = _execute_overlay_read(
+                execute,
+                query,
+                params,
+                deadline=deadline,
+                settings=settings or {},
+                row_limit=limit + 1,
+            )
+        except (ReadDeadlineExceeded, ClickHouseError, OSError, EOFError):
+            # Unavailable, never "nothing is suppressed".
+            raise TagReadUnavailable("tag_source_unavailable") from None
+        return {(str(row["legacy_project"]), str(row["legacy_trace"])) for row in rows}
+
+    curated = curated_matches(None)
+    suppressed: set[tuple[str, str]] = set()
+    if len(curated) <= MAX_CURATED_SUPPRESSION_CANDIDATES:
+        if curated:
+            records = _query_assignments(
+                unmatched & Q(trace_id__in=sorted({trace for _, trace in curated})),
+                deadline=deadline,
+                limit=MAX_TAG_OVERLAY_KEYS,
+            )
+            if len(records) > MAX_TAG_OVERLAY_KEYS:
+                raise TagReadUnavailable(over_budget)
+            suppressed = {_assignment_key(record) for record in records} & curated
+        return suppressed
+    for page in _assignment_pages(unmatched, deadline=deadline):
+        keys = {_assignment_key(record) for record in page}
+        traces = sorted({trace for _, trace in keys})
+        for start in range(0, len(traces), MAX_TAG_CANDIDATE_TRACES):
+            batch = tuple(traces[start : start + MAX_TAG_CANDIDATE_TRACES])
+            suppressed |= curated_matches(batch) & keys
+            if len(suppressed) > MAX_TAG_OVERLAY_KEYS:
+                raise TagReadUnavailable(over_budget)
+    return suppressed
 
 
 def prepare_effective_tag_params(
@@ -566,12 +735,21 @@ def prepare_effective_tag_params(
         bound.update(scope)
         cache_key = (request.project_ids, request.values)
         if cache_key not in cache:
-            cache[cache_key] = read_tag_overlay(
+            overlay = read_tag_overlay(
                 project_ids=request.project_ids,
                 trace_ids=trace_ids,
                 values=request.values,
                 deadline=deadline,
             )
+            if overlay.unmatched_trace_assignments:
+                # A window scan: bind only the suppressions that matter.
+                overlay.assigned |= legacy_suppressions(
+                    execute,
+                    project_ids=request.project_ids,
+                    values=request.values,
+                    deadline=deadline,
+                )
+            cache[cache_key] = overlay
         trace_keys, span_keys, assigned = cache[cache_key].keys(request.values)
         bound[f"{name}_trace_keys"] = trace_keys
         bound[f"{name}_span_keys"] = span_keys

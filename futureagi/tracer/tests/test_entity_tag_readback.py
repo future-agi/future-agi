@@ -17,6 +17,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from tracer.services import entity_tag_assignments as writes
+from tracer.services.clickhouse.v2 import effective_tags
 from tracer.services.entity_tag_reads import enrich_entity_tags
 from tracer.services.entity_tags import TagReadUnavailable
 from tracer.tests.test_entity_tag_assignment_postgres import (
@@ -94,6 +95,13 @@ def stores(request, monkeypatch):
     )
     monkeypatch.setattr(trace_views, "V2AnalyticsQueryService", lambda: analytics)
     monkeypatch.setattr(span_views, "V2AnalyticsQueryService", lambda: analytics)
+    # Graph compilers read curated-tag suppressions from the same CH25 store.
+    monkeypatch.setattr(
+        effective_tags,
+        "graph_overlay_executor",
+        lambda: analytics.execute_ch_query,
+        raising=False,
+    )
     projects = MagicMock()
     projects.filter.return_value.filter.return_value = projects.filter.return_value
     projects.filter.return_value.values_list.return_value.__getitem__.return_value = [

@@ -387,11 +387,9 @@ def test_source_bounds_and_overlay_overflow_are_explicit(stores, monkeypatch):
         (PROJECT, "alpha"),
         (PROJECT, "beta"),
     )
-    assert prepared["effective_tag_rows_1_assigned_keys"] == (
-        ("", ""),
-        (PROJECT, "alpha"),
-        (PROJECT, "beta"),
-    )
+    # alpha and beta match through their own assignment, so whether they also
+    # suppress curated tags cannot change the result: they are not bound twice.
+    assert prepared["effective_tag_rows_1_assigned_keys"] == (("", ""),)
     # Human-scale overlay overflow is unavailable, never a truncated set:
     # by key count, and by rendered bytes so a statement never approaches
     # ClickHouse's max_query_size.

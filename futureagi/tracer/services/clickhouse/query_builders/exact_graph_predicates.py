@@ -52,6 +52,26 @@ _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 GRAPH_TAG_OVERLAY_READ_MS = 5_000
 
 
+class GraphTagFilterTooBroadError(UnsupportedFilterShapeError):
+    """A graph Tag leaf whose UI tag overlay exceeds the statement budget.
+
+    The overlay binds every trace and span tagged in the app with a filtered
+    name (any name for is null / is not null), plus the trace assignments that
+    hide a matching curated tag. It is a property of the project's tags, not a
+    transient fault, so it is a request error with its own copy, never a 503
+    that asks the user to retry.
+    """
+
+    code = "tag_filter_too_broad"
+    message = (
+        "The graph cannot apply this Tag filter: too many traces and spans "
+        "were tagged with it in the app. The list below is still filtered by it."
+    )
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+
 @dataclass(frozen=True)
 class ExactGraphRowPredicatePlan:
     """Bound row predicates evaluated by one physical ``spans`` read."""
@@ -644,8 +664,10 @@ class EffectiveTagGraphCompiler:
     """Compile the effective tag leaves of one graph statement.
 
     Every leaf of the statement shares one overlay read deadline and one
-    rendered byte budget. Unavailable or over-budget assignments are a
-    retryable graph read error (503), never an empty or source-only graph.
+    rendered byte budget. Unavailable assignments are a retryable graph read
+    error (503); an overlay over its budget is a request error
+    (:class:`GraphTagFilterTooBroadError`, 400). Neither is ever an empty or
+    source-only graph.
     """
 
     def __init__(self, *, project_id: str, observe_type: str) -> None:
@@ -679,6 +701,10 @@ class EffectiveTagGraphCompiler:
             if self._rendered > MAX_TAG_OVERLAY_BYTES:
                 raise TagReadUnavailable("tag_overlay_budget_exceeded")
         except TagReadUnavailable as exc:
+            if exc.code == "tag_overlay_budget_exceeded":
+                # Deterministic for this project and filter: retrying the
+                # same graph can never succeed.
+                raise GraphTagFilterTooBroadError() from exc
             raise BoundedGraphReadError("query_failed", retryable=True) from exc
         return requirement
 
@@ -1051,6 +1077,7 @@ def compile_exact_graph_row_predicates(
 __all__ = [
     "EffectiveTagGraphCompiler",
     "ExactGraphRowPredicatePlan",
+    "GraphTagFilterTooBroadError",
     "compile_exact_graph_row_predicates",
     "is_effective_tag_leaf",
 ]

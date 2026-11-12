@@ -148,6 +148,9 @@ from tracer.services.clickhouse.list_cursor import (
 from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
+from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+    GraphTagFilterTooBroadError,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
@@ -3527,6 +3530,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Graph data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
+            )
+        except GraphTagFilterTooBroadError as exc:
+            # A property of the project's tags, not a transient fault: say
+            # so instead of asking the user to retry.
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, exc.message, code=exc.code
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Graph filter configuration is invalid")

@@ -73,6 +73,31 @@ _SEED_WITNESS_ENVELOPE_INDENT = " " * 22
 # asks the rendered statement whether it is referenced at all. One name, so
 # the binder, the predicate and the tests cannot drift apart.
 CANDIDATE_ROOT_SCAN_FLOOR_PARAM = "candidate_root_scan_start_us"
+# The degraded-shape code of an effective tag leaf on the session list.
+SESSION_TAG_FILTER_UNSUPPORTED = "unsupported_session_tag_filter"
+
+
+class SessionTagFilterUnsupportedError(ValueError):
+    """The session list has no exact tag membership; a request error, not 503.
+
+    Effective tags (SDK, UI assignments and curated trace tags) are matched by
+    the trace and span lists, which bind the UI overlay for a finite candidate
+    batch. The session classifier's trace ids exist only inside its SQL, so it
+    cannot bind that overlay and refuses the leaf instead of guessing.
+    """
+
+
+def _is_effective_tag_leaf(item: dict[str, Any]) -> bool:
+    # The routing of ClickHouseFilterBuilderV2._build_condition for tags; an
+    # explicit SPAN_ATTRIBUTE ``tags`` stays an ordinary raw attribute.
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    if not isinstance(config, dict):
+        return False
+    col_type = config.get("col_type") or config.get("colType") or ""
+    return (item.get("column_id") or item.get("columnId")) in {
+        "tag",
+        "tags",
+    } and str(col_type).strip().upper() in {"", "NORMAL", "SYSTEM_METRIC"}
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -520,6 +545,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         has_eval_filters, generic_filters = self._bounded_relational_filter_groups(
             residual_filters
         )
+        if any(_is_effective_tag_leaf(item) for item in generic_filters):
+            raise SessionTagFilterUnsupportedError(
+                "tag filters are not supported by the session list"
+            )
         self._bounded_has_eval_values(has_eval_filters)
 
         allowed_keys = {"annotator", "has_annotation", "my_annotations"}
@@ -881,6 +910,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         if residual:
             try:
                 self._validate_bounded_relational_filters(residual)
+            except SessionTagFilterUnsupportedError:
+                return SESSION_TAG_FILTER_UNSUPPORTED
             except ValueError as exc:
                 if (
                     "unsupported relational" in str(exc)
