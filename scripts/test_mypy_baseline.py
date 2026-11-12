@@ -470,14 +470,28 @@ class WorkflowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_the_workflow_has_no_paths_or_branches_filter(self):
+    def test_every_pr_and_every_push_to_dev_triggers_it(self):
         on = top_level_block(self.text, "on")
-        self.assertRegex(on, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(
-            on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$"
+        pull_request = re.search(r"(?ms)^  pull_request:\n(.*?)(?=^  \S|\Z)", on)
+        push = re.search(r"(?ms)^  push:\n(.*?)(?=^  \S|\Z)", on)
+        self.assertIsNotNone(pull_request)
+        self.assertIsNotNone(push)
+        # No "edited": a body edit would cancel the run in progress.
+        self.assertEqual(
+            pull_request.group(1).strip(), "types: [opened, synchronize, reopened]"
         )
+        self.assertEqual(push.group(1).strip(), "branches: [dev]")
+        self.assertEqual(re.findall(r"(?m)^  (\S+):", on), ["pull_request", "push"])
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
-        self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
+        self.assertNotRegex(on, r"(?m)^\s*branches-ignore\s*:")
+
+    def test_a_push_to_dev_never_cancels_another_commits_run(self):
+        concurrency = top_level_block(self.text, "concurrency")
+        self.assertRegex(
+            concurrency,
+            r"(?m)^  group: python-types-\$\{\{ github\.event_name == 'push' "
+            r"&& github\.sha \|\| github\.ref \}\}\s*$",
+        )
 
     def test_the_header_says_it_is_advisory_and_names_the_summary(self):
         header = self.text.split("\non:", 1)[0]
@@ -492,9 +506,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
         self.assertRegex(
             changes,
-            r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$",
+            r"(?m)^      python: \$\{\{ github\.event_name == 'push' && 'true' "
+            r"\|\| steps\.filter\.outputs\.python \}\}\s*$",
         )
         self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
+        # On a push the filter is skipped and the output is 'true': mypy runs.
+        steps = re.findall(r"(?ms)^      - (.*?)(?=^      - |\Z)", changes)
+        self.assertEqual(len(steps), 2)
+        for step in steps:
+            self.assertRegex(
+                step, r"(?m)^        if: github\.event_name == 'pull_request'\s*$"
+            )
         filters = changes.split("            python:\n", 1)[1]
         listed = re.findall(r"(?m)^              - '([^']+)'\s*$", filters)
         self.assertEqual(sorted(listed), sorted(TYPE_PATHS))
@@ -524,6 +546,26 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(
             script.rstrip().endswith('--input "$RUNNER_TEMP/mypy-output.txt"')
         )
+
+    def test_mypy_loads_the_production_settings_with_only_the_placeholder_key(self):
+        pyproject = (ROOT / "futureagi" / "pyproject.toml").read_text(encoding="utf-8")
+        stubs = re.search(
+            r"(?ms)^\[tool\.django-stubs\]\n(.*?)(?=^\[|\Z)", pyproject
+        ).group(1)
+        self.assertEqual(
+            re.findall(r"(?m)^django_settings_module = (.+)$", stubs),
+            ['"tfc.settings.settings"'],
+        )
+        step = step_block(
+            job_block(self.text, "mypy-baseline"),
+            "Run mypy and compare with the baseline",
+        )
+        env = re.search(r"(?ms)^        env:\n(.*?)(?=^        \S)", step).group(1)
+        names = re.findall(r"(?m)^          ([A-Z_][A-Z0-9_]*):", env)
+        self.assertEqual(names, ["EE_LICENSE_KEY"], "set nothing else")
+        self.assertRegex(env, r"(?m)^          EE_LICENSE_KEY: mypy-placeholder\s*$")
+        # stderr (the settings' log lines) stays out of the parsed output.
+        self.assertNotIn("2>&1", step)
 
     def test_the_self_test_runs_before_mypy_with_the_real_mypy(self):
         job = job_block(self.text, "mypy-baseline")
@@ -636,7 +678,14 @@ class LocalToolingTests(unittest.TestCase):
                 self.assertIn(
                     f"../scripts/mypy_baseline.py {command} --mypy-exit-code", recipe
                 )
-                self.assertIn("mypy . >", recipe)
+                # The venv's mypy, under the same settings environment as CI.
+                self.assertIn(
+                    "EE_LICENSE_KEY=mypy-placeholder .venv/bin/mypy . > "
+                    ".mypy_cache/mypy-output.txt",
+                    recipe,
+                )
+                self.assertIn("test -x .venv/bin/mypy ||", recipe)
+                self.assertNotIn("2>&1", recipe)
         self.assertNotIn("check_mypy.sh", makefile)
         self.assertNotIn("generate_mypy_baseline.sh", makefile)
         self.assertNotIn("mypy-update-baseline", makefile)

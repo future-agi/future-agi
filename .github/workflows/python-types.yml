@@ -11,21 +11,36 @@ name: Python types (advisory)
 # without changes here. A PR that changes none of the paths in the changes job
 # skips mypy, and the summary still passes.
 #
+# Every push to dev runs mypy too (no paths filter), so a merge that adds errors
+# without syncing the baseline shows up as a failed run on dev. It is advisory
+# there as well.
+#
+# mypy's Django plugin imports tfc.settings.settings ([tool.django-stubs] in
+# futureagi/pyproject.toml) to build the model registry. EE_LICENSE_KEY on the
+# mypy step is a placeholder, not a key: any non-empty value registers
+# ee.falcon_ai, as in EE, Cloud and the pytest shards.
+#
 # No .mypy_cache is restored: every run is a cold whole-repo run, so a stale
 # cache can never hide an error.
 #
-# No branches filter: stacked PRs into feature branches get the check too.
+# No branches filter on pull_request: stacked PRs into feature branches get the
+# check too. No "edited" type: a body edit would start a run that cancels the
+# one in progress. A PR moved to another base is checked on its next push, or
+# by re-running the workflow.
 
 on:
   pull_request:
-    # edited: a PR moved to another base branch is checked against that base.
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [dev]
 
 permissions:
   contents: read
 
 concurrency:
-  group: python-types-${{ github.ref }}
+  # One run per PR; a new push cancels the old run. Pushes to dev get one group
+  # per commit, so a later merge never cancels an earlier commit's run.
+  group: python-types-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -41,10 +56,13 @@ jobs:
       contents: read
       pull-requests: read # dorny/paths-filter reads the PR's file list
     outputs:
-      python: ${{ steps.filter.outputs.python }}
+      # A push to dev always runs mypy; a PR runs it when a type path changed.
+      python: ${{ github.event_name == 'push' && 'true' || steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
       - id: filter
+        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           filters: |
@@ -64,9 +82,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # The merge commit (the default): the code and the baseline as they
-      # would be after merging, so an error that only appears in combination
-      # with the current base is caught too.
+      # On a PR, the merge commit (the default): the code and the baseline as
+      # they would be after merging, so an error that only appears in
+      # combination with the current base is caught too. On a push, the
+      # pushed dev commit.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -98,6 +117,12 @@ jobs:
           esac
       - name: Run mypy and compare with the baseline
         working-directory: futureagi
+        env:
+          # A placeholder, not a license key: any non-empty value makes
+          # tfc.settings.settings register ee.falcon_ai. Nothing else is set;
+          # settings import needs no database or secret. Its log lines go to
+          # stderr, which stays out of mypy-output.txt.
+          EE_LICENSE_KEY: mypy-placeholder
         run: |
           started=$SECONDS
           status=0

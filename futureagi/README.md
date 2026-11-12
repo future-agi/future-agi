@@ -20,6 +20,12 @@ make mypy                # whole-repo mypy, compared with mypy-baseline.txt
 make mypy-baseline-sync  # rewrite mypy-baseline.txt from a whole-repo run
 ```
 
+mypy's Django plugin loads the production settings, `tfc.settings.settings`
+(`[tool.django-stubs]` in `pyproject.toml`), with
+`EE_LICENSE_KEY=mypy-placeholder` so the EE apps are registered too. The
+variable is a placeholder, not a key; `make mypy` and CI set it, and both run
+`.venv/bin/mypy`.
+
 Fix a new error rather than syncing it into the baseline. After fixing
 baselined errors, run `make mypy-baseline-sync` and commit the smaller
 baseline. CI's environment is the reference (no `ee/cloud` checkout); its run

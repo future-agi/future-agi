@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Compare whole-repo mypy output with futureagi/mypy-baseline.txt (PostHog-style).
 
 Run from futureagi/ (or use `make mypy` and `make mypy-baseline-sync`):

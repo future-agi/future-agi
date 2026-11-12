@@ -57,8 +57,14 @@ format:
 # .mypy_cache/mypy-output.txt. CI's environment is the reference: with the
 # private ee/cloud checked out, expect extra errors under ee/cloud/ and in
 # files that import it.
+#
+# Both targets run the mypy and stubs locked in uv.lock from this directory's
+# .venv (uv sync --frozen --extra dev). EE_LICENSE_KEY=mypy-placeholder is not a
+# key: any non-empty value makes tfc.settings.settings register ee.falcon_ai, as
+# in CI's run (see [tool.django-stubs] in pyproject.toml).
 mypy:
-	@mkdir -p .mypy_cache; status=0; mypy . > .mypy_cache/mypy-output.txt || status=$$?; \
+	@test -x .venv/bin/mypy || { echo "No .venv/bin/mypy here; run: uv sync --frozen --extra dev" >&2; exit 2; }
+	@mkdir -p .mypy_cache; status=0; EE_LICENSE_KEY=mypy-placeholder .venv/bin/mypy . > .mypy_cache/mypy-output.txt || status=$$?; \
 	python3 -I ../scripts/mypy_baseline.py filter --mypy-exit-code "$$status" --input .mypy_cache/mypy-output.txt
 
 # Rewrite mypy-baseline.txt from a whole-repo run. Refused with ee/cloud
@@ -66,11 +72,12 @@ mypy:
 # download the mypy-output artifact of the "Python types (advisory)" workflow
 # and run: python3 -I ../scripts/mypy_baseline.py sync --input mypy-output.txt
 mypy-baseline-sync:
+	@test -x .venv/bin/mypy || { echo "No .venv/bin/mypy here; run: uv sync --frozen --extra dev" >&2; exit 2; }
 	@if [ -e ee/cloud ]; then \
 		echo "ee/cloud is checked out; the baseline is built without it. Sync from CI's mypy-output artifact instead." >&2; \
 		exit 2; \
 	fi
-	@mkdir -p .mypy_cache; status=0; mypy . > .mypy_cache/mypy-output.txt || status=$$?; \
+	@mkdir -p .mypy_cache; status=0; EE_LICENSE_KEY=mypy-placeholder .venv/bin/mypy . > .mypy_cache/mypy-output.txt || status=$$?; \
 	python3 -I ../scripts/mypy_baseline.py sync --mypy-exit-code "$$status" --input .mypy_cache/mypy-output.txt
 
 # Pre-commit hooks - delegate to the pre-commit tool (.pre-commit-config.yaml).

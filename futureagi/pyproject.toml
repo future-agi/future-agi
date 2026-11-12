@@ -407,7 +407,12 @@ exclude = [
 ]
 
 [tool.django-stubs]
-django_settings_module = "tfc.settings"
+# The production settings, the module every runtime entry point selects. The
+# plugin imports it inside mypy to build the model registry; run mypy with
+# EE_LICENSE_KEY=mypy-placeholder (as `make mypy` and CI do) so ee.falcon_ai is
+# registered too, as in EE, Cloud and the pytest shards. This value wins over
+# DJANGO_SETTINGS_MODULE. Not tfc.settings.test: it prints to stdout on import.
+django_settings_module = "tfc.settings.settings"
 
 [dependency-groups]
 dev = [
