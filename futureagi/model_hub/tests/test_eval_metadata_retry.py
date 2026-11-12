@@ -202,6 +202,21 @@ def run_case(case, path):
     return json.loads(case.output_cell.value_infos)
 
 
+def run_threaded_unstored(case, save_error):
+    """Run the threaded row when no cell write can store its result.
+
+    How the runner reports an unstored result to its caller is the cell
+    persistence contract, not this read boundary's: it may log and return, or
+    raise so update_cell counts the row as failed. update_cell consumes either
+    outcome without running the row again, so accept exactly the injected write
+    failure here and pin only that nothing after the metadata reads is replayed.
+    """
+    try:
+        run_case(case, "threaded")
+    except OperationalError as error:
+        assert error is save_error
+
+
 @pytest.mark.parametrize("path", ["threaded", "direct", "preview"])
 @pytest.mark.parametrize("table", ["model_hub_column", "accounts_workspace"])
 def test_transient_metadata_read_recovers_once(evaluation_case, path, table):
@@ -438,12 +453,16 @@ def test_failures_after_metadata_never_replay_side_effects(evaluation_case, phas
         case.log.save.side_effect = connection_timeout()
     elif phase == "usage":
         case.runner._emit_cell_usage.side_effect = connection_timeout()
-    with (
-        patch.object(Cell, "save", side_effect=connection_timeout())
-        if phase == "cell_save"
-        else patch("model_hub.utils.eval_metadata.time.sleep")
-    ):
-        run_case(case, "threaded")
+    save_error = connection_timeout()
+    if phase == "cell_save":
+        with patch.object(Cell, "save", side_effect=save_error):
+            run_threaded_unstored(case, save_error)
+        case.output_cell.refresh_from_db()
+        # The result was never stored, so it must not read as a pass.
+        assert case.output_cell.status == CellStatus.RUNNING.value
+    else:
+        with patch("model_hub.utils.eval_metadata.time.sleep"):
+            run_case(case, "threaded")
     case.logger.assert_called_once()
     assert case.runner._run_evaluation.call_count == (0 if phase == "logging" else 1)
     assert case.runner._emit_cell_usage.call_count <= 1
@@ -451,11 +470,12 @@ def test_failures_after_metadata_never_replay_side_effects(evaluation_case, phas
 
 def test_outage_during_error_persistence_does_not_restart_evaluation(evaluation_case):
     case = evaluation_case
+    save_error = connection_timeout()
     with (
         connection.execute_wrapper(ReadFault("model_hub_column", failures=10)),
-        patch.object(Cell, "save", side_effect=connection_timeout()),
+        patch.object(Cell, "save", side_effect=save_error),
     ):
-        run_case(case, "threaded")
+        run_threaded_unstored(case, save_error)
     case.output_cell.refresh_from_db()
     # The outage can prevent persistence; do not claim a final error was stored.
     assert case.output_cell.status == CellStatus.RUNNING.value
