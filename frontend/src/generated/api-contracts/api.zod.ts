@@ -39527,6 +39527,12 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         count: zod.number().describe("How many tools it has; 0 when unread."),
       })
       .optional(),
+    evidence_unreadable: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
+      ),
   }),
   validation: zod.object({
     state: zod
@@ -39908,6 +39914,12 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           count: zod.number().describe("How many tools it has; 0 when unread."),
         })
         .optional(),
+      evidence_unreadable: zod
+        .boolean()
+        .optional()
+        .describe(
+          "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
+        ),
     }),
     validation: zod.object({
       state: zod
@@ -56643,6 +56655,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                 .describe("How many tools it has; 0 when unread."),
             })
             .optional(),
+          evidence_unreadable: zod
+            .boolean()
+            .optional()
+            .describe(
+              "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
+            ),
         }),
         validation: zod.object({
           state: zod

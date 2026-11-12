@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 import { CLEARED_FILTER_STATE, createFilterSlice } from "./alertFilterState";
 

@@ -4,7 +4,6 @@ const INLINE_ERRORS = new Set([
   "version_not_pickable",
   "version_not_runnable",
   "scenario_ungradable",
-  "scenario_dropped",
   "scenario_selection_unknown",
   "idempotency_key_reused",
   "pair_validating",

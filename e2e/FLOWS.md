@@ -279,6 +279,30 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session

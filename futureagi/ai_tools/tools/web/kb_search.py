@@ -57,6 +57,7 @@ class KBSearchTool(BaseTool):
                 input_type="text",
                 top_k=params.top_k,
                 threshold=0.25,
+                filter_by={"organization_id": str(context.organization_id)},
             )
 
             if not results:
