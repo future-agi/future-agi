@@ -86,6 +86,18 @@ _COLLECT_SECONDS = 120
 CRASHED = "agent_reading_crashed"
 # The reading finished but not with the files agreed on; retried as well.
 INVALID = "agent_reading_invalid"
+_READING_MATERIAL = frozenset(
+    {
+        "ALK_HARNESS",
+        "ALK_HARNESS_MODEL",
+        "ALK_HARNESS_WORKERS_AT_ONCE",
+        "CLAUDE_CODE_USE_VERTEX",
+        "ALK_CLAUDE_GATEWAY_URL",
+        "ALK_CLAUDE_GATEWAY_API_KEY",
+        "AGENTCC_BASE_URL",
+        "AGENTCC_API_KEY",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -133,9 +145,12 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
         allowed_domains=tuple(sorted(domains)),
     )
     material = {
-        name: value
-        for name, value in simulator_env.items()
-        if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
+        **{
+            name: value
+            for name, value in simulator_env.items()
+            if name in _READING_MATERIAL
+        },
+        "HARNESS_OBSERVABILITY": "off",
     }
     env = {
         **material,

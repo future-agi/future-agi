@@ -390,12 +390,54 @@ class TestReadingSandbox:
         assert uploaded == {
             "ALK_HARNESS": "vertex-gemini",
             "AGENTCC_API_KEY": "harness-virtual-key",
+            "HARNESS_OBSERVABILITY": "off",
         }
         [prepare] = provider.sandbox.commands
         assert prepare.endswith(
             f"chmod 0600 /work/job.json {SECRETS_PATH} {SIMULATOR_SECRETS_PATH}"
         )
         assert provider.deleted is True
+
+    def test_only_the_model_gateway_values_reach_a_reading(
+        self, simulator, monkeypatch
+    ):
+        gateway = {
+            "ALK_HARNESS": "claude",
+            "ALK_HARNESS_MODEL": "vertex_ai/gemini-3.7-flash",
+            "CLAUDE_CODE_USE_VERTEX": "0",
+            "ALK_CLAUDE_GATEWAY_URL": "https://gateway.example.test",
+            "ALK_CLAUDE_GATEWAY_API_KEY": "harness-virtual-key",
+            "AGENTCC_BASE_URL": "https://gateway.example.test",
+            "AGENTCC_API_KEY": "harness-virtual-key",
+        }
+        withheld = {
+            "FI_API_KEY": "fi-key",
+            "FI_SECRET_KEY": "fi-secret",
+            "FI_BASE_URL": "https://collector.example.test",
+            "SIP_OUTBOUND_TRUNK_ID": "trunk-1",
+            "SIP_OUTBOUND_FROM_NUMBER": "+15550100",
+            "SIMULATOR_STT_PROVIDER": "deepgram",
+            "LIVEKIT_API_SECRET": "lk-secret",
+            "HARNESS_OBSERVABILITY": "on",
+        }
+        monkeypatch.setattr(
+            agent_reading_sandbox,
+            "_platform_simulator_material",
+            lambda: {**gateway, **withheld},
+        )
+        provider = _Provider()
+        monkeypatch.setattr(agent_reading_sandbox, "_provider", lambda: provider)
+
+        with _sandbox(b"source", {"job_id": "job-1"}, {}) as (_box, env, _timeout):
+            pass
+
+        uploaded = json.loads(provider.sandbox.uploads[SIMULATOR_SECRETS_PATH])
+        secret_names = set(withheld) - {"HARNESS_OBSERVABILITY"}
+        assert secret_names.isdisjoint(env)
+        assert secret_names.isdisjoint(uploaded)
+        assert uploaded == {**gateway, "HARNESS_OBSERVABILITY": "off"}
+        assert env["HARNESS_OBSERVABILITY"] == "off"
+        assert {name: env[name] for name in gateway} == gateway
 
 
 class TestReadingSpend:
