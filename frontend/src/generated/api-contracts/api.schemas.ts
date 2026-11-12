@@ -20186,7 +20186,7 @@ export const EvidenceLabelApiTarget = {
 } as const;
 
 /**
- * As the annotator recorded it: input evidence, not a verdict.
+ * Any valid JSON value.
  */
 export type EvidenceLabelApiValue = { [key: string]: unknown };
 
@@ -20195,7 +20195,7 @@ export interface EvidenceLabelApi {
   name: string;
   /** @minLength 1 */
   kind: string;
-  /** As the annotator recorded it: input evidence, not a verdict. */
+  /** Any valid JSON value. */
   value: EvidenceLabelApiValue;
   notes: string;
   /** row: a dataset row's label column. */
@@ -20326,7 +20326,6 @@ export interface EvidenceImportApi {
   project_id: string;
   /** A dataset import's dataset; null otherwise. */
   dataset_id: string;
-  dataset_columns: EvidenceDatasetColumnsApi;
   agent_version_id: string;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;

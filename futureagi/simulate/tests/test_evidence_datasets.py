@@ -149,7 +149,6 @@ class TestCreate:
         body = response.json()
         assert (body["source_kind"], body["project_id"]) == ("dataset", None)
         assert body["dataset_id"] == str(dataset.id)
-        assert body["dataset_columns"] == _mapping(columns)
         assert (body["simulated"], body["production"]) == (False, False)
         first, second = body["cases"]
         assert [first["source_id"], second["source_id"]] == [
@@ -245,7 +244,9 @@ class TestCreate:
             "reason": ROW_NO_EXPECTED,
             "text": "",
         }
-        assert body["dataset_columns"]["labels"] == []
+        stored = EvidenceImport.no_workspace_objects.get()
+        assert stored.dataset_columns["labels"] == []
+        assert stored.dataset_columns["expected"] is None
 
     def test_the_expected_outcome_is_redacted_like_the_conversation(
         self, client, environment, dataset, rows, columns

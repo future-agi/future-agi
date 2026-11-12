@@ -26,9 +26,8 @@ const {
   useEvidenceImport,
 } = await import("../evidenceImports");
 const { draftsKey } = await import("../versions");
-const { validateContractedRequestConfig } = await import(
-  "src/api/contracts/openapi-contract"
-);
+const { validateContractedRequestConfig, validateContractedResponse } =
+  await import("src/api/contracts/openapi-contract");
 
 const ENV = "11111111-1111-1111-1111-111111111111";
 const IMPORT = "22222222-2222-2222-2222-222222222222";
@@ -266,6 +265,40 @@ describe("evidence request bodies match the published contract", () => {
     });
   });
 
+  it("accepts a dataset create body, with or without an expected column", async () => {
+    axios.post.mockResolvedValue({ data: bundle() });
+    const { result: create } = renderHook(() => useCreateEvidenceImport(), {
+      wrapper,
+    });
+
+    for (const expected of [null, SUITE]) {
+      await act(() =>
+        create.current.mutateAsync({
+          envId: ENV,
+          datasetId: "55555555-5555-5555-5555-555555555555",
+          sourceKind: "dataset",
+          ids: [CASE],
+          columns: { conversation: SUITE, labels: [], expected },
+          production: false,
+        }),
+      );
+    }
+
+    const [first] = axios.post.mock.calls;
+    expect(first[1]).toEqual({
+      source_kind: "dataset",
+      dataset_id: "55555555-5555-5555-5555-555555555555",
+      ids: [CASE],
+      columns: { conversation: SUITE, labels: [], expected: null },
+      production: false,
+    });
+    axios.post.mock.calls.forEach(([url, data]) => {
+      expect(
+        validateContractedRequestConfig({ url, method: "post", data }).ok,
+      ).toBe(true);
+    });
+  });
+
   it("refuses a record the contract does not name", () => {
     const result = validateContractedRequestConfig({
       url: `${BASE}${IMPORT}/draft/`,
@@ -273,5 +306,98 @@ describe("evidence request bodies match the published contract", () => {
       data: { case_ids: [CASE], shows: { [CASE]: "unknown" } },
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("evidence review bundles match the published contract", () => {
+  const part = (status = "missing", reason = "") => ({ status, reason });
+  const reviewed = (overrides = {}) => ({
+    id: "33333333-3333-3333-3333-333333333333",
+    source_id: "row-1",
+    name: "",
+    status: "pending",
+    reason: "",
+    source_available: true,
+    scenario_key: "",
+    new_checks: [],
+    changed_since_import: false,
+    trace_ids: [],
+    started_at: null,
+    ended_at: null,
+    transcript: {
+      ...part("present"),
+      turns: [
+        { role: "user", text: "hi", truncated: false, trace_id: "", at: null },
+      ],
+    },
+    tool_calls: { ...part(), calls: [] },
+    tool_inputs: part(),
+    tool_outputs: part(),
+    starting_state: part(),
+    labels: {
+      ...part("present"),
+      labels: [
+        {
+          name: "intent",
+          kind: "text",
+          value: "refund",
+          notes: "",
+          target: "row",
+        },
+      ],
+    },
+    expected_outcome: { ...part("present"), text: "Refuse it." },
+    ...overrides,
+  });
+  const full = (overrides = {}) => ({
+    id: IMPORT,
+    environment_id: ENV,
+    project_id: "55555555-5555-5555-5555-555555555555",
+    dataset_id: null,
+    agent_version_id: null,
+    source_kind: "session",
+    created_at: "2026-11-12T10:00:00Z",
+    simulated: false,
+    production: true,
+    drafting: false,
+    cases: [reviewed()],
+    redaction: { method: "presidio", reason: "", findings: [], total: 0 },
+    ...overrides,
+  });
+  const check = (data) =>
+    validateContractedResponse({
+      status: 200,
+      data,
+      config: { method: "get", url: `${BASE}${IMPORT}/` },
+    });
+
+  it("accepts an Observe bundle, whose dataset is null, and a dataset bundle", () => {
+    for (const data of [
+      full(),
+      full({
+        source_kind: "dataset",
+        project_id: null,
+        dataset_id: "55555555-5555-5555-5555-555555555555",
+        production: false,
+      }),
+    ]) {
+      const result = check(data);
+      expect(result.skipped).toBeFalsy();
+      expect(result.ok).toBe(true);
+    }
+  });
+
+  it("accepts a label of any JSON value", () => {
+    for (const value of ["refund", 4, true, { score: 1 }]) {
+      const labels = { ...part("present"), labels: [] };
+      labels.labels.push({
+        name: "x",
+        kind: "text",
+        value,
+        notes: "",
+        target: "span",
+      });
+      expect(check(full({ cases: [reviewed({ labels })] })).ok).toBe(true);
+    }
   });
 });

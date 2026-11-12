@@ -40307,10 +40307,6 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
   import_id: zod.string(),
 });
 
-export const simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsDefault =
-  [];
-export const simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsMax = 10;
-
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemStartMin = 0;
@@ -40330,30 +40326,6 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     .string()
     .uuid()
     .describe("A dataset import's dataset; null otherwise."),
-  dataset_columns: zod
-    .object({
-      conversation: zod
-        .string()
-        .uuid()
-        .describe(
-          'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
-        ),
-      labels: zod
-        .array(zod.string().uuid())
-        .max(
-          simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsMax,
-        )
-        .default(
-          simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsDefault,
-        )
-        .describe("Columns read as the row's labels."),
-      expected: zod
-        .string()
-        .uuid()
-        .optional()
-        .describe("The column that says what should happen."),
-    })
-    .describe("Dataset imports: the columns to read."),
   agent_version_id: zod.string().uuid(),
   source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
   created_at: zod.string().datetime({ offset: true }),
@@ -40514,9 +40486,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             value: zod
               .object({})
               .passthrough()
-              .describe(
-                "As the annotator recorded it: input evidence, not a verdict.",
-              ),
+              .describe("Any valid JSON value."),
             notes: zod.string(),
             target: zod
               .enum(["session", "trace", "span", "row"])
@@ -40643,10 +40613,6 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
       ),
   });
 
-export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsDefault =
-  [];
-export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsMax = 10;
-
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin = 0;
@@ -40675,30 +40641,6 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         .string()
         .uuid()
         .describe("A dataset import's dataset; null otherwise."),
-      dataset_columns: zod
-        .object({
-          conversation: zod
-            .string()
-            .uuid()
-            .describe(
-              'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
-            ),
-          labels: zod
-            .array(zod.string().uuid())
-            .max(
-              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsMax,
-            )
-            .default(
-              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsDefault,
-            )
-            .describe("Columns read as the row's labels."),
-          expected: zod
-            .string()
-            .uuid()
-            .optional()
-            .describe("The column that says what should happen."),
-        })
-        .describe("Dataset imports: the columns to read."),
       agent_version_id: zod.string().uuid(),
       source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
       created_at: zod.string().datetime({ offset: true }),
@@ -40859,9 +40801,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 value: zod
                   .object({})
                   .passthrough()
-                  .describe(
-                    "As the annotator recorded it: input evidence, not a verdict.",
-                  ),
+                  .describe("Any valid JSON value."),
                 notes: zod.string(),
                 target: zod
                   .enum(["session", "trace", "span", "row"])

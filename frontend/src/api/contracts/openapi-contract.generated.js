@@ -63521,7 +63521,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "environment_id",
         "project_id",
         "dataset_id",
-        "dataset_columns",
         "agent_version_id",
         "source_kind",
         "created_at",
@@ -63557,9 +63556,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           "x-nullable": true,
-        },
-        dataset_columns: {
-          $ref: "#/definitions/EvidenceDatasetColumns",
         },
         agent_version_id: {
           title: "Agent version id",
@@ -99593,37 +99589,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    EvidenceDatasetColumns: {
-      description: "Dataset imports: the columns to read.",
-      required: ["conversation"],
-      type: "object",
-      properties: {
-        conversation: {
-          title: "Conversation",
-          description:
-            'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
-          type: "string",
-          format: "uuid",
-        },
-        labels: {
-          description: "Columns read as the row's labels.",
-          type: "array",
-          items: {
-            type: "string",
-            format: "uuid",
-          },
-          default: [],
-          maxItems: 10,
-        },
-        expected: {
-          title: "Expected",
-          description: "The column that says what should happen.",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-      },
-    },
     EvidenceImportCase: {
       required: [
         "id",
@@ -99781,6 +99746,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         suite: {
           $ref: "#/definitions/EvidenceDraftRef",
+        },
+      },
+    },
+    EvidenceDatasetColumns: {
+      description: "Dataset imports: the columns to read.",
+      required: ["conversation"],
+      type: "object",
+      properties: {
+        conversation: {
+          title: "Conversation",
+          description:
+            'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+          type: "string",
+          format: "uuid",
+        },
+        labels: {
+          description: "Columns read as the row's labels.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 10,
+        },
+        expected: {
+          title: "Expected",
+          description: "The column that says what should happen.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -130712,9 +130708,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         value: {
           title: "Value",
-          description:
-            "As the annotator recorded it: input evidence, not a verdict.",
+          description: "Any valid JSON value.",
           type: "object",
+          "x-json-value": true,
         },
         notes: {
           title: "Notes",

@@ -142305,8 +142305,9 @@
                 },
                 "value": {
                     "title": "Value",
-                    "description": "As the annotator recorded it: input evidence, not a verdict.",
-                    "type": "object"
+                    "description": "Any valid JSON value.",
+                    "type": "object",
+                    "x-json-value": true
                 },
                 "notes": {
                     "title": "Notes",
@@ -142620,7 +142621,6 @@
                 "environment_id",
                 "project_id",
                 "dataset_id",
-                "dataset_columns",
                 "agent_version_id",
                 "source_kind",
                 "created_at",
@@ -142655,9 +142655,6 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
-                },
-                "dataset_columns": {
-                    "$ref": "#/definitions/EvidenceDatasetColumns"
                 },
                 "agent_version_id": {
                     "title": "Agent version id",

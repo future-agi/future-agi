@@ -323,13 +323,11 @@ def import_bundle(
         if case.status != EvidenceImportCase.Status.UNAVAILABLE
     }
     transcript = is_transcript(evidence_import)
-    columns = import_columns(evidence_import)
     return {
         "id": evidence_import.id,
         "environment_id": evidence_import.environment_id,
         "project_id": evidence_import.project_id,
         "dataset_id": evidence_import.dataset_id,
-        "dataset_columns": columns.model_dump() if columns is not None else None,
         "agent_version_id": evidence_import.agent_version_id,
         "source_kind": evidence_import.source_kind,
         "created_at": evidence_import.created_at,

@@ -8,6 +8,7 @@ from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.dataset_evidence import MAX_LABEL_COLUMNS
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.utils.transcript_parse import FORMATS
+from tfc.utils.serializer_fields import JsonValueField
 
 # unreadable: recorded, but could not be read; missing: not recorded.
 PART_STATUSES = ("present", "partial", "truncated", "missing", "unreadable")
@@ -188,7 +189,7 @@ class EvidenceToolCallsSerializer(EvidencePartSerializer):
 class EvidenceLabelSerializer(serializers.Serializer):
     name = serializers.CharField()
     kind = serializers.CharField()
-    value = serializers.JSONField(
+    value = JsonValueField(
         help_text="As the annotator recorded it: input evidence, not a verdict."
     )
     notes = serializers.CharField(allow_blank=True)
@@ -298,9 +299,6 @@ class EvidenceImportSerializer(serializers.Serializer):
     )
     dataset_id = serializers.UUIDField(
         allow_null=True, help_text="A dataset import's dataset; null otherwise."
-    )
-    dataset_columns = EvidenceDatasetColumnsSerializer(
-        allow_null=True, help_text="A dataset import's columns; null otherwise."
     )
     agent_version_id = serializers.UUIDField(allow_null=True)
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
