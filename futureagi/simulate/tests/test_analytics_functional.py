@@ -1386,6 +1386,38 @@ class TestRunResultsV3Views:
             "Stopped before it finished: the run was cancelled",
         )
 
+    def test_a_trial_held_for_worker_limits_says_why(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "errored",
+            "hosted_harness_receipt": {
+                "status": "errored",
+                "sub_goals": [],
+                "failure": {
+                    "code": "worker_limits_not_enforced",
+                    "message": "inconclusive: scenario problem, not the agent's: This environment was sealed "
+                    "before worker limits, so its checks were not graded. Rebuild the environment to enforce them.",
+                },
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        row = next(
+            item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+            if item["id"] == str(call.id)
+        )
+        assert row["outcome_reason"] == (
+            "Inconclusive, a problem of the scenario, not the agent: This environment was sealed "
+            "before worker limits, so its checks were not graded. Rebuild the environment to enforce them."
+        )
+
     def test_a_call_where_nothing_it_tests_happened_reads_no_score(
         self, auth_client, test_execution, analytics_call_executions
     ):

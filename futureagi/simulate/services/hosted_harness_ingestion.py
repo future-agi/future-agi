@@ -50,6 +50,9 @@ _EVENT_TYPES = {
     "log",
     "terminal",
 }
+# Failure codes of a trial the harness held as the scenario's problem, not the agent's: its checks were never graded,
+# so no platform evaluation grades it either.
+SCENARIO_FAILURE_CODES = frozenset({"actor_missing", "worker_limits_not_enforced"})
 # Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
 # ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
 # (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
@@ -1106,6 +1109,8 @@ def _apply_receipt_to_call(
                 known = isinstance(run_test_id, (str, UUID))
                 selected = runnable_eval_config_ids(run_test_id) if known else []
                 tool_on = _tool_evaluation_on(run_test_id) if known else False
+            if (body.get("failure") or {}).get("code") in SCENARIO_FAILURE_CODES:
+                selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id

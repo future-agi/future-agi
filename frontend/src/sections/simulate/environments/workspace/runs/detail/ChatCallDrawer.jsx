@@ -33,7 +33,7 @@ import {
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
-import { Meta, Cell, Attr } from "./chatDrawerCells";
+import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -349,6 +349,8 @@ export default function ChatCallDrawer({
             </Stack>
           </Box>
 
+          <OutcomeReason reason={task.outcomeReason} />
+
           {failed.length > 0 && (
             <Stack
               sx={{
@@ -509,6 +511,7 @@ ChatCallDrawer.propTypes = {
     provider: PropTypes.string,
     completedAt: PropTypes.string,
     evalResults: PropTypes.array,
+    outcomeReason: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,

@@ -57,6 +57,28 @@ describe("ChatCallDrawer share", () => {
   });
 });
 
+describe("ChatCallDrawer outcome reason", () => {
+  it("says why a held trial was not graded, and nothing when there is no reason", () => {
+    const reason =
+      "Inconclusive, a problem of the scenario, not the agent: Rebuild the environment to enforce them.";
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error", outcomeReason: reason }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+  });
+});
+
 describe("ChatCallDrawer tabs", () => {
   it("leaves sub-goal checks out of the Evals tab", () => {
     render(
@@ -65,8 +87,20 @@ describe("ChatCallDrawer tabs", () => {
           id: "call-execution-2",
           status: "completed",
           evalResults: [
-            { id: "ev-1", name: "Tone", kind: "evaluation", score: 1, passed: true },
-            { id: "sg-1", name: "pin_verified", kind: "sub_goal", score: 1, passed: true },
+            {
+              id: "ev-1",
+              name: "Tone",
+              kind: "evaluation",
+              score: 1,
+              passed: true,
+            },
+            {
+              id: "sg-1",
+              name: "pin_verified",
+              kind: "sub_goal",
+              score: 1,
+              passed: true,
+            },
           ],
         }}
         onClose={vi.fn()}
@@ -76,7 +110,12 @@ describe("ChatCallDrawer tabs", () => {
   });
 
   it("names a call's outcome instead of printing its raw status", async () => {
-    render(<ChatCallDrawer task={{ id: "call-execution-3", status: "no_score" }} onClose={vi.fn()} />);
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-3", status: "no_score" }}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.getByText(STATUS_META.no_score.label)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Attributes" }));
     expect(screen.getAllByText(STATUS_META.no_score.label)).toHaveLength(2);
@@ -84,9 +123,18 @@ describe("ChatCallDrawer tabs", () => {
   });
 
   it("has no Checklist or Graph tab while they have no data behind them", () => {
-    render(<ChatCallDrawer task={{ id: "call-execution-1", status: "completed" }} onClose={vi.fn()} />);
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Checklist" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Graph" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Checklist" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Graph" }),
+    ).not.toBeInTheDocument();
   });
 });

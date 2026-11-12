@@ -19,6 +19,7 @@ import {
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import CallTracesPanel from "./CallTracesPanel";
 import CallWorkersPanel from "./CallWorkersPanel";
+import { OutcomeReason } from "./chatDrawerCells";
 import {
   CALL_TRACES_COPY,
   CALL_WORKERS_COPY,
@@ -207,39 +208,49 @@ export default function VoiceCallDrawer({
   }
 
   return (
-    <Box sx={{ height: "100%", display: "flex" }}>
-      <VoiceDetailDrawerV2
-        data={voiceData}
-        onClose={onClose}
-        scenarioId={data?.scenario_id}
-        isLoading={isPending}
-        hiddenActionIds={HIDDEN_VOICE_ACTIONS}
-        // Checklist and Graph have no data behind them on an environment run yet.
-        hidePathTabs
-        // Fix with Falcon isn't wired into the environment flow yet.
-        showFixWithFalcon={false}
-        // Annotation isn't either: no Annotations tab, so no "Add Label" to a
-        // dead end.
-        hideAnnotationTab
-        leftPanelTabs={leftPanelTabs}
-        leftPanelTab={chosenTab}
-        onLeftPanelTabChange={(value) => {
-          setOpenStep(null);
-          setChosenTab(value);
-        }}
-        // The product header defaults both arrows to enabled, so always pass
-        // real values.
-        onPrev={onPrev}
-        onNext={onNext}
-        hasPrev={hasPrev && !traceOpen}
-        hasNext={hasNext && !traceOpen}
-      />
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      {task.outcomeReason ? (
+        <Box sx={{ pt: 1.5 }}>
+          <OutcomeReason reason={task.outcomeReason} />
+        </Box>
+      ) : null}
+      <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+        <VoiceDetailDrawerV2
+          data={voiceData}
+          onClose={onClose}
+          scenarioId={data?.scenario_id}
+          isLoading={isPending}
+          hiddenActionIds={HIDDEN_VOICE_ACTIONS}
+          // Checklist and Graph have no data behind them on an environment run yet.
+          hidePathTabs
+          // Fix with Falcon isn't wired into the environment flow yet.
+          showFixWithFalcon={false}
+          // Annotation isn't either: no Annotations tab, so no "Add Label" to a
+          // dead end.
+          hideAnnotationTab
+          leftPanelTabs={leftPanelTabs}
+          leftPanelTab={chosenTab}
+          onLeftPanelTabChange={(value) => {
+            setOpenStep(null);
+            setChosenTab(value);
+          }}
+          // The product header defaults both arrows to enabled, so always pass
+          // real values.
+          onPrev={onPrev}
+          onNext={onNext}
+          hasPrev={hasPrev && !traceOpen}
+          hasNext={hasNext && !traceOpen}
+        />
+      </Box>
     </Box>
   );
 }
 VoiceCallDrawer.propTypes = {
-  task: PropTypes.shape({ id: PropTypes.string, completedAt: PropTypes.string })
-    .isRequired,
+  task: PropTypes.shape({
+    id: PropTypes.string,
+    completedAt: PropTypes.string,
+    outcomeReason: PropTypes.string,
+  }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
