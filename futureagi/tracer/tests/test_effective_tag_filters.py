@@ -14,10 +14,11 @@ from tracer.services.clickhouse.filter_value_reads import (
     read_span_system_filter_values,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline
+from tracer.services.clickhouse.v2 import effective_tags
 from tracer.services.clickhouse.v2.effective_tags import (
     EffectiveTagRelation,
     prepare_effective_tag_params,
-    read_effective_tag_rows,
+    read_tag_overlay,
 )
 from tracer.services.clickhouse.v2.entity_tag_targets import TRACE_ASSIGNMENT_HOUR
 from tracer.services.clickhouse.v2.query_builders.filters import (
@@ -294,7 +295,9 @@ def test_filter_before_pagination_and_count_across_empty_batches(stores):
         assert [row["trace_id"] for row in page.rows] == expected
         assert page.has_more is has_more
         assert page.total_rows_lower_bound == 3
-        assert any(attempt.kind == "tag_source" for attempt in page.attempts)
+        # Preparation reads only PostgreSQL: no telemetry rows are fetched to
+        # build the classifier, which evaluates tag sources in place.
+        assert not any(attempt.kind == "tag_source" for attempt in page.attempts)
 
 
 def test_source_qualified_tag_does_not_dispatch_to_overlay():
@@ -314,15 +317,13 @@ def test_bounded_pg_lookup_and_failures_are_not_empty_results(stores, monkeypatc
         seed(stores, f"t{i}")
         manual(f"t{i}", ["ui"])
     with CaptureQueriesContext(connection) as queries:
-        rows = read_effective_tag_rows(
-            stores.analytics.execute_ch_query,
+        overlay = read_tag_overlay(
             project_ids=(PROJECT,),
             trace_ids=("t1", "t2"),
-            window_start=BEGIN,
-            window_end=END,
+            values=("ui",),
             deadline=ReadDeadline.start(10000),
         )
-    assert len(rows) == 2
+    assert sorted(overlay.trace_names) == [(PROJECT, "t1"), (PROJECT, "t2")]
     assignment_queries = [
         q["sql"]
         for q in queries.captured_queries
@@ -333,15 +334,19 @@ def test_bounded_pg_lookup_and_failures_are_not_empty_results(stores, monkeypatc
         "t1" in assignment_queries[0]
         and "t2" in assignment_queries[0]
         and "t19" not in assignment_queries[0]
+        and "LIMIT" in assignment_queries[0]
     )
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.effective_tags.enrich_entity_tags",
+        effective_tags,
+        "_query_assignments",
         Mock(side_effect=TagReadUnavailable("tag_assignment_unavailable")),
     )
     with pytest.raises(TagReadUnavailable):
         read_span_system_filter_values(
             stores.analytics, project_ids=[PROJECT], metric_name="tag", now=END
         )
+    with pytest.raises(TagReadUnavailable):
+        classify(stores, leaf("tag", "ui"))
 
 
 def test_array_any_membership_and_conjunction(stores):
@@ -357,30 +362,50 @@ def test_array_any_membership_and_conjunction(stores):
     assert classify(stores, leaf("tag", "MANUAL")) == []
 
 
-def test_source_bounds_and_dense_overflow_are_explicit(stores, monkeypatch):
-    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
-
+def test_source_bounds_and_overlay_overflow_are_explicit(stores, monkeypatch):
     seed(stores, "alpha")
     seed(stores, "beta")
+    manual("alpha", ["ui"])
+    manual("beta", ["ui"])
     execute = Mock(wraps=stores.analytics.execute_ch_query)
-    monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.effective_tags.MAX_TAG_READ_ROWS", 1
+    rows = classify(stores, leaf("tag", "ui"))
+    assert sorted(row["trace_id"] for row in rows) == ["alpha", "beta"]
+    params = {
+        "effective_tag_rows_1": EffectiveTagRelation((PROJECT,), ("ui",)),
+        "candidate_trace_ids": ("alpha", "beta"),
+        "start_date": BEGIN,
+        "end_date": END,
+    }
+    prepared = prepare_effective_tag_params(
+        execute, params, deadline=ReadDeadline.start(10000)
     )
-    with pytest.raises(ReadDeadlineExceeded, match="tag_candidate_budget_exceeded"):
-        read_effective_tag_rows(
-            execute,
-            project_ids=(PROJECT,),
-            window_start=BEGIN,
-            window_end=END,
-            deadline=ReadDeadline.start(10000),
+    # Source and curated tags are evaluated in SQL: preparation binds only the
+    # scope and the PostgreSQL overlay, and reads no telemetry.
+    execute.assert_not_called()
+    assert prepared["effective_tag_rows_1_trace_keys"] == (
+        ("", ""),
+        (PROJECT, "alpha"),
+        (PROJECT, "beta"),
+    )
+    assert prepared["effective_tag_rows_1_assigned_keys"] == (
+        ("", ""),
+        (PROJECT, "alpha"),
+        (PROJECT, "beta"),
+    )
+    # Human-scale overlay overflow is unavailable, never a truncated set:
+    # by key count, and by rendered bytes so a statement never approaches
+    # ClickHouse's max_query_size.
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 1)
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        prepare_effective_tag_params(
+            execute, params, deadline=ReadDeadline.start(10000)
         )
-    sql, params = execute.call_args.args
-    assert "PREWHERE project_id IN %(tag_projects)s" in sql
-    assert "start_time >= %(tag_hour_start)s" in sql
-    assert "start_time < %(tag_hour_end)s" in sql
-    assert "max_result_bytes = 8388608" in sql
-    assert params["tag_row_limit"] == 2
-    assert execute.call_args.kwargs["server_execution_cap_ms"] > 0
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 2048)
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_BYTES", 64)
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        prepare_effective_tag_params(
+            execute, params, deadline=ReadDeadline.start(10000)
+        )
 
 
 def test_direct_count_uses_same_effective_relation(stores, monkeypatch):
@@ -417,7 +442,9 @@ def test_direct_count_uses_same_effective_relation(stores, monkeypatch):
         timeout_ms=10000,
     )
     assert result.data == [{"count": 1}]
-    assert len(calls) == 2
+    # One statement: source and curated tags are evaluated in place, and only
+    # the PostgreSQL assignments are bound before it runs.
+    assert len(calls) == 1
     assert all(call[1]["server_execution_cap_ms"] > 0 for call in calls)
 
 
@@ -508,7 +535,8 @@ def test_filter_values_http_returns_effective_names_and_sanitizes_failure(
     assert response.status_code == 200, response.data
     assert [row["value"] for row in response.data["result"]["values"]] == ["sdk", "ui"]
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.effective_tags.enrich_entity_tags",
+        effective_tags,
+        "_query_assignments",
         Mock(side_effect=TagReadUnavailable("private dependency detail")),
     )
     response = dashboard_view.DashboardViewSet.filter_values.__wrapped__(
@@ -554,3 +582,65 @@ def test_native_tags_use_classifier_root_after_datetime_exclusion(stores):
     )
     rows = stores.analytics.execute_ch_query(sql, params).data
     assert [row["root_span_id"] for row in rows] == ["selected"]
+
+
+def _encoded(value, times):
+    import json
+
+    for _ in range(times):
+        value = json.dumps(value)
+    return value
+
+
+@pytest.mark.parametrize(
+    "tags,attr,extra",
+    [
+        ('["sdk","dup"]', "", "{}"),
+        (
+            '[{"name":"column","color":"#112233"},{"name":7},{"color":"#1"},"  ",3,null]',
+            "",
+            "{}",
+        ),
+        ('["\\t"]', '["a1","dup"]', "{}"),
+        ("[]", _encoded(["d1"], 2), "{}"),
+        ("[]", _encoded(["t3"], 3), "{}"),
+        ("[]", _encoded(["q4"], 4), "{}"),
+        ("[]", "", '{"tag.tags":["e1","e2"],"input.value":"big"}'),
+        ("[]", "", _encoded({"tag.tags": _encoded(["es"], 2)}, 1)),
+        ("[]", "", _encoded({"tag.tags": _encoded(["w3"], 3)}, 1)),
+        ("[]", "", _encoded({"tag.tags": _encoded(["w4"], 4)}, 1)),
+        ("[]", "", '{"tag":{"tags":["n1"]},"tag.tags":["f1"]}'),
+        ("not json", "{bad", '{"tag.tags":{"x":1}}'),
+        ('"x"', "5", '{"tag.tags":7}'),
+        ('["a"]', '["a","b"]', '{"tag.tags":["b","c"]}'),
+    ],
+)
+def test_in_place_source_names_match_reader_semantics(
+    physical_engine,  # noqa: F811
+    tags,
+    attr,
+    extra,
+):
+    """Filters/pickers (SQL) and list/detail tags (Python) parse identically."""
+    from tracer.services.clickhouse.v2.effective_tags import source_names_sql
+    from tracer.services.entity_tags import source_tag_names
+
+    execute, _ = physical_engine
+    names = source_names_sql(
+        ("%(tags)s", "%(attr)s"),
+        (
+            "JSONExtractRaw(%(extra)s, 'tag.tags')",
+            "JSONExtractRaw(%(extra)s, 'tag', 'tags')",
+        ),
+    )
+    rows = execute(
+        f"SELECT {names} AS names", {"tags": tags, "attr": attr, "extra": extra}
+    )
+    expected = source_tag_names(
+        {
+            "tags": tags,
+            "attrs_string": {"tag.tags": attr} if attr else {},
+            "attributes_extra": extra,
+        }
+    )
+    assert tuple(rows[0]["names"]) == expected

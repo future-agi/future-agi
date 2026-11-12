@@ -176,3 +176,23 @@ def test_total_tag_payload_budget_fails_without_partial_updates(store, monkeypat
     with pytest.raises(TagReadUnavailable, match="tag_payload_budget_exceeded"):
         reads.enrich_entity_tags(rows, kind="span")
     assert rows == before
+
+
+def test_one_oversized_tag_value_makes_only_that_row_read_only(store):
+    import json
+
+    oversized = winner(
+        id="big",
+        parent_span_id="parent",
+        attrs_string={"tag.tags": json.dumps(["x" * (1024 * 1024)])},
+    )
+    healthy = winner(id="small", parent_span_id="parent")
+    rows = [oversized, healthy]
+    reads.enrich_entity_tags(rows, kind="span")
+    # The response survives: the decodable column tag is still shown, but the
+    # row cannot be edited from an incomplete view.
+    assert oversized["tags"] == [{"name": "sdk"}]
+    assert oversized["source_tag_names"] == ["sdk"]
+    assert oversized["tag_target"] is None
+    assert healthy["tags"] == [{"name": "sdk"}]
+    assert healthy["tag_target"]["span_id"] == "small"

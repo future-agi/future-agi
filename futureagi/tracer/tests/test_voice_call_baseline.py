@@ -528,10 +528,29 @@ def _run_detail(patch: pytest.MonkeyPatch, row: dict, *, start_us: int) -> dict:
         user=SimpleNamespace(pk="baseline-user", organization=organization),
         query_params={},
     )
+    legacy_reads: list[dict] = []
+
+    class _LegacyTraceTags:
+        # The drawer's root must carry the curated tags the trace list shows.
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            assert "FROM traces" in query, query
+            assert "argMax(tuple(tags, is_deleted), _version)" in query, query
+            legacy_reads.append(params)
+            return QueryResult(
+                data=[], row_count=0, backend_used="clickhouse", query_time_ms=0.0
+            )
+
+    patch.setattr(trace_views, "V2AnalyticsQueryService", _LegacyTraceTags)
     response = trace_views.TraceView()._voice_call_detail_clickhouse(
         request, row["trace_id"], detail, []
     )
     assert response.status_code == 200, response.data
+    assert legacy_reads == [
+        {
+            "legacy_projects": (str(row["project_id"]),),
+            "legacy_traces": (row["trace_id"],),
+        }
+    ]
     assert len(lookups) == 1
     assert lookups[0]["organization_id"] == ORGANIZATION_ID
 

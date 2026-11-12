@@ -451,8 +451,11 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             _normalize_json_array_values,
         )
         from tracer.services.clickhouse.v2.effective_tags import (
-            TAG_RELATION_TYPE,
             EffectiveTagRelation,
+            canonical_root_sql,
+            effective_match_sql,
+            live_tag_source_sql,
+            trace_overlay_sql,
         )
 
         operation = normalize_filter_op(operation)
@@ -469,9 +472,11 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             raise ValueError("unsupported tag membership operation")
         negate = operation in {"not_equals", "not_in", "not_contains", "is_null"}
         relation = self._next_param("effective_tag_rows")
-        self._params[relation] = EffectiveTagRelation(tuple(self.project_ids or ()))
+        # ``{names}`` is the Array(String) of one source: the span's own source
+        # names, or a trace's curated names.
         if operation in {"is_null", "is_not_null"}:
-            predicate = "notEmpty(tag_row.8)"
+            names = None
+            predicate = "notEmpty({names})"
         else:
             values = value if isinstance(value, list) else [value]
             if not values or any(
@@ -483,9 +488,20 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             _normalize_json_array_values(
                 {"filter_op": "contains", "filter_value": values}
             )
+            names = tuple(dict.fromkeys(values))
             parameter = self._next_param("effective_tag_names")
             self._params[parameter] = values
-            predicate = f"hasAny(tag_row.8, %({parameter})s)"
+            predicate = "hasAny({names}, %(" + parameter + ")s)"
+        # Source and curated trace tags are evaluated here, in ClickHouse,
+        # over the projected tag columns of the bound candidate/window scope.
+        # Preparation binds only that scope and the human-scale UI overlay.
+        self._params[relation] = EffectiveTagRelation(
+            tuple(self.project_ids or ()), names
+        )
+        live = live_tag_source_sql(relation)
+        source = predicate.format(names="src")
+        match = effective_match_sql(relation, predicate)
+        project = "toString(project_id), " if self._org_scoped else ""
         selected_root = (
             column == "tags"
             and self.query_mode == self.QUERY_MODE_TRACE
@@ -494,39 +510,50 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         if selected_root:
             # The classifier has already selected the physical root after
             # project-version and datetime exclusions. Match THAT row, not a
-            # second independently chosen root in the prepared relation.
-            outer_fields = (
-                "toString(trace_id), toString(root_span_id), "
+            # second independently chosen root.
+            outer = (
+                f"tuple({project}toString(trace_id), toString(root_span_id), "
                 "toInt64(toUnixTimestamp(_root_start_hour)), "
-                "toString(_root_observation_type), toString(_root_service_name)"
+                "toString(_root_observation_type), toString(_root_service_name))"
             )
-            inner_fields = "tag_row.2, tag_row.3, tag_row.4, tag_row.5, tag_row.6"
-            if self._org_scoped:
-                outer_fields = "toString(project_id), " + outer_fields
-                inner_fields = "tag_row.1, " + inner_fields
-            outer, inner = f"tuple({outer_fields})", f"tuple({inner_fields})"
+            inner = (
+                f"SELECT tuple({project}trace_id, id, "
+                "toInt64(toUnixTimestamp(start_hour)), toString(observation_type), "
+                f"toString(service_name)) FROM {live} WHERE {match}"
+            )
         elif self.query_mode == self.QUERY_MODE_TRACE:
-            if column == "tags":
-                predicate += " AND tag_row.7 = 1"
             outer = (
                 "tuple(toString(project_id), toString(trace_id))"
                 if self._org_scoped
                 else "toString(trace_id)"
             )
-            inner = "tuple(tag_row.1, tag_row.2)" if self._org_scoped else "tag_row.2"
+            selected = (
+                "tuple(toString(project_id), trace_id)"
+                if self._org_scoped
+                else "trace_id"
+            )
+            if column == "tags":
+                # The trace's canonical root: its own source names plus the
+                # trace assignment (or unsuppressed legacy curated tags).
+                inner = (
+                    f"SELECT {selected} FROM {canonical_root_sql(relation)} "
+                    f"WHERE {source} OR {trace_overlay_sql(relation, predicate)}"
+                )
+            else:
+                inner = f"SELECT {selected} FROM {live} WHERE {match}"
         else:
             outer = (
                 "tuple(toString(project_id), toString(trace_id), toString(id), "
                 "toInt64(toUnixTimestamp(toStartOfHour(start_time))), "
                 "toString(observation_type), toString(service_name))"
             )
-            inner = "tuple(tag_row.1, tag_row.2, tag_row.3, tag_row.4, tag_row.5, tag_row.6)"
+            inner = (
+                "SELECT tuple(toString(project_id), trace_id, id, "
+                "toInt64(toUnixTimestamp(start_hour)), toString(observation_type), "
+                f"toString(service_name)) FROM {live} WHERE {match}"
+            )
         membership = "NOT IN" if negate else "IN"
-        return (
-            f"{outer} {membership} (SELECT {inner} FROM "
-            f"(SELECT arrayJoin(CAST(%({relation})s, '{TAG_RELATION_TYPE}')) AS tag_row) "
-            f"WHERE {predicate})"
-        )
+        return f"{outer} {membership} ({inner})"
 
     def _score_resolved_span_columns_sql(self) -> str:
         return "project_id, id, trace_id, start_time, observation_type, service_name"

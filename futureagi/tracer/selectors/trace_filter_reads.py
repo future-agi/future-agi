@@ -18,7 +18,11 @@ from tracer.selectors.filter_seed_width import (
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_service import QueryResult
-from tracer.services.clickhouse.read_budget import ReadDeadline, is_read_budget_error
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    is_clickhouse_query_size_error,
+    is_read_budget_error,
+)
 from tracer.services.clickhouse.v2.effective_tags import (
     EffectiveTagRelation,
     prepare_effective_tag_params,
@@ -2255,7 +2259,7 @@ def read_bounded_filter_page(
                         active_end=active_end,
                         result_limit=settings["max_result_rows"],
                         timeout_cap_ms=timeout_ms,
-                        max_bytes_to_read_cap=settings["max_bytes_to_read"],
+                        max_bytes_to_read_cap=settings.get("max_bytes_to_read"),
                     )
 
                 params = prepare_effective_tag_params(
@@ -2278,7 +2282,9 @@ def read_bounded_filter_page(
                 ),
             )
         except Exception as exc:
-            if is_read_budget_error(exc):
+            if is_read_budget_error(exc) or is_clickhouse_query_size_error(exc):
+                # A statement over max_query_size is a bounded-read refusal
+                # (503 at the API), never an unexplained server error.
                 error_code = "read_budget_exceeded"
             elif (
                 kind in {"prefilter", "micro_seed", "zero_probe", "seed_density_probe"}

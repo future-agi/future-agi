@@ -139,6 +139,32 @@ def test_oversized_source_fails_explicitly_instead_of_hiding_names():
         source_tag_names({"tags": json.dumps(["x" * (1024 * 1024)])})
 
 
+@pytest.mark.parametrize("container", ["mapping", "json", "double-json"])
+def test_large_non_tag_attributes_never_exhaust_the_tag_budget(container):
+    # Long-context prompts, retrieval documents and images live beside tag.tags
+    # in the same maps. Only the tag value itself is budgeted.
+    large = "x" * (2 * 1024 * 1024)
+    extra = {"input.value": large, "tag.tags": ["overflow"]}
+    if container != "mapping":
+        extra = json.dumps(extra)
+    if container == "double-json":
+        extra = json.dumps(extra)
+    row = {
+        "tags": "[]",
+        "attrs_string": {"output.value": large, "tag.tags": '["sdk"]'},
+        "attributes_extra": extra,
+        "span_attributes": json.dumps({"llm.prompt": large}),
+    }
+    assert source_tag_names(row) == ("sdk", "overflow")
+
+
+def test_oversized_tag_value_inside_an_attribute_map_stays_unavailable():
+    with pytest.raises(TagReadUnavailable):
+        source_tag_names(
+            {"attrs_string": {"tag.tags": json.dumps(["x" * (1024 * 1024)])}}
+        )
+
+
 def test_manual_payload_byte_cap_is_independent_of_name_and_count_caps():
     with pytest.raises(TagInputError, match="byte limit"):
         normalize_manual_tags(["\U0001f600" * 256] * 100)

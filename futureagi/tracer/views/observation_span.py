@@ -172,7 +172,11 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
-from tracer.services.entity_tag_reads import enrich_entity_tags, tag_fields
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_fields,
+)
 from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import count_column_metadata
@@ -1033,6 +1037,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 raise TraceDetailReadUnavailable("ambiguous_span_identity")
             row = matching_rows[0]
+        attach_legacy_trace_tags(analytics.execute_ch_query, [row])
         enrich_entity_tags([row], kind="span")
         provider = row.get("provider")
 
@@ -2741,6 +2746,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # span resolves to the old curated row, and a missing/orphan id → all-None
         # (faithful to the old FK miss). Returns {id (str): {user_id,
         # user_id_type, user_id_hash}}.
+        attach_legacy_trace_tags(
+            analytics.execute_ch_query, result.data, deadline=read_deadline
+        )
         enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
 
         # Format response matching PG format
@@ -3225,6 +3233,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
+        attach_legacy_trace_tags(
+            analytics.execute_ch_query, result.data, deadline=read_deadline
+        )
         enrich_entity_tags(result.data, kind="span", deadline=read_deadline)
 
         # Format response matching PG format

@@ -3901,6 +3901,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             seen_value_contains=seen_state.contains,
                             seen_value_count=seen_state.seen_count,
                             deadline=filter_value_deadline,
+                            # Workspace-scoped pickers feed dashboard widgets,
+                            # whose compiler matches raw spans.tags. Offering
+                            # effective (manual/SDK-attribute) names there
+                            # would pick values that chart as empty.
+                            effective_tags=False,
                         )
                         appended_digests = (
                             page_read.appended_value_digests
@@ -4248,6 +4253,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         analytics,
                         project_ids=project_ids,
                         metric_name=metric_name,
+                        # Workspace-scoped (dashboard widget) tag pickers list
+                        # the raw spans.tags vocabulary the widget matches.
+                        **(
+                            {"effective_tags": False}
+                            if project_scope.batched and metric_name in {"tag", "tags"}
+                            else {}
+                        ),
                         # The legacy response has no continuation contract, so
                         # it cannot exhaustively walk raw ids and then search
                         # hydrated Project/Session labels. Preserve its bounded

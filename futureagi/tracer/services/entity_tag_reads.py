@@ -104,6 +104,77 @@ def _tag_target(
     }
 
 
+def attach_legacy_trace_tags(
+    execute,
+    rows: list[dict[str, Any]],
+    *,
+    deadline: ReadDeadline | None = None,
+) -> None:
+    """Give root rows the curated ``traces.tags`` the trace list shows.
+
+    Tags saved by the previous editor live only there. Every reader that
+    enriches roots must see them, or a save from that surface (which then
+    suppresses the legacy fallback) silently drops them. Uses the same latest
+    live ``traces`` row as the trace list and the effective-tag filter.
+    """
+    from tracer.services.clickhouse.read_budget import (
+        is_clickhouse_api_read_unavailable_error,
+    )
+
+    roots = [
+        row
+        for row in rows
+        # Exactly the rows tag_assignment_key treats as the trace's root.
+        if "parent_span_id" in row
+        and row["parent_span_id"] in (None, "")
+        # Content merges default this to an empty list; only a populated value
+        # (the trace list's own CH join, trace detail's PG row) is a source.
+        and row.get("trace_tags") in (None, "", "[]", [])
+        and row.get("project_id")
+        and row.get("trace_id")
+    ]
+    if not roots:
+        return
+    if len(roots) > MAX_TAG_READ_ROWS:
+        raise TagReadUnavailable("tag_candidate_budget_exceeded")
+    deadline = deadline or ReadDeadline.start(TAG_READ_WALL_MS, enforce_on_server=True)
+    projects = tuple(sorted({str(row["project_id"]) for row in roots}))
+    traces = tuple(sorted({str(row["trace_id"]) for row in roots}))
+    try:
+        result = execute(
+            """
+            SELECT toString(project_id) AS project_id, toString(id) AS trace_id,
+                legacy.1 AS tags
+            FROM (
+                SELECT project_id, id,
+                    argMax(tuple(tags, is_deleted), _version) AS legacy
+                FROM traces
+                WHERE project_id IN %(legacy_projects)s
+                  AND id IN %(legacy_traces)s
+                GROUP BY project_id, id
+            )
+            WHERE legacy.2 = 0
+            """,
+            {"legacy_projects": projects, "legacy_traces": traces},
+            timeout_ms=deadline.remaining_ms(),
+            settings={"max_result_rows": len(traces) * len(projects) + 1},
+        )
+    except ReadDeadlineExceeded:
+        raise TagReadUnavailable("tag_legacy_unavailable") from None
+    except Exception as exc:
+        if is_clickhouse_api_read_unavailable_error(exc):
+            raise TagReadUnavailable("tag_legacy_unavailable") from None
+        raise
+    legacy = {
+        (str(row["project_id"]), str(row["trace_id"])): row["tags"]
+        for row in result.data or []
+    }
+    for row in roots:
+        row["trace_tags"] = legacy.get(
+            (str(row["project_id"]), str(row["trace_id"])), "[]"
+        )
+
+
 def tag_fields(row: dict[str, Any]) -> dict[str, Any]:
     """The same editable tag contract on detail, drawer and table rows."""
     return {key: row[key] for key in _TAG_FIELDS}
@@ -165,16 +236,33 @@ def enrich_entity_tags(
             deadline.remaining_ms()
             assignment = assignments.get(key)
             manual = assignment["manual_tags"] if assignment is not None else None
+            target = _tag_target(row, kind=kind)
+            try:
+                values = effective_tags(
+                    row, manual_tags=manual, legacy_tags=row.get("trace_tags")
+                )
+            except TagReadUnavailable as exc:
+                if exc.code != "tag_source_budget_exceeded":
+                    raise
+                # One tag value of this row alone is over the source budget.
+                # Keep the response and every other row; this row shows what
+                # can be decoded and is read-only, so no save is ever built
+                # from an incomplete view.
+                values = effective_tags(
+                    row,
+                    manual_tags=manual,
+                    legacy_tags=row.get("trace_tags"),
+                    skip_oversized=True,
+                )
+                target = None
             enriched.append(
                 {
-                    **effective_tags(
-                        row, manual_tags=manual, legacy_tags=row.get("trace_tags")
-                    ),
+                    **values,
                     "manual_tags": manual if manual is not None else [],
                     "tag_revision": assignment["revision"]
                     if assignment is not None
                     else 0,
-                    "tag_target": _tag_target(row, kind=kind),
+                    "tag_target": target,
                 }
             )
             payload_bytes += len(

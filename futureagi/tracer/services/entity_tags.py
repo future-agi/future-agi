@@ -83,7 +83,8 @@ def normalize_manual_tags(value: object) -> list[TagItem]:
 
 def _decode(value: object) -> object:
     # The collector may preserve an already JSON-encoded attribute string.
-    # Bound decoding depth and bytes; over-budget is unavailable, not absence.
+    # Bound decoding depth and bytes of one tag value; over-budget is
+    # unavailable, not absence. Never call this on a whole attribute map.
     try:
         if _encoded_size(value) > MAX_SOURCE_TAG_BYTES:
             raise TagReadUnavailable("tag_source_budget_exceeded")
@@ -99,8 +100,13 @@ def _decode(value: object) -> object:
     return value if not isinstance(value, str) else None
 
 
-def _source_items(value: object) -> list[TagItem]:
-    decoded = _decode(value)
+def _source_items(value: object, *, skip_oversized: bool = False) -> list[TagItem]:
+    try:
+        decoded = _decode(value)
+    except TagReadUnavailable:
+        if not skip_oversized:
+            raise
+        return []
     if not isinstance(decoded, list):
         return []
     result = []
@@ -122,11 +128,31 @@ def _source_items(value: object) -> list[TagItem]:
     return result
 
 
-def _source_tags(row: TagSourceRow) -> list[TagItem]:
+def _attribute_map(value: object) -> Mapping | None:
+    """Decode one attribute container without budgeting its non-tag payload.
+
+    Read surfaces already fetched the whole map (LLM input/output, retrieval
+    documents, images). Its size must never make the read unavailable; only the
+    extracted ``tag.tags`` value is bounded by ``_decode``. A JSON string that
+    cannot spell a tag key, even through an escape, is not parsed at all.
+    """
+    for _ in range(3):
+        if isinstance(value, Mapping):
+            return value
+        if not isinstance(value, str) or ("tag" not in value and "\\u" not in value):
+            return None
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError):
+            return None
+    return value if isinstance(value, Mapping) else None
+
+
+def _source_tags(row: TagSourceRow, *, skip_oversized: bool = False) -> list[TagItem]:
     inputs = [row.get("tags")]
     for key in ("attrs_string", "attributes_extra", "span_attributes"):
-        attributes = _decode(row.get(key))
-        if not isinstance(attributes, Mapping):
+        attributes = _attribute_map(row.get(key))
+        if attributes is None:
             continue
         inputs.append(attributes.get("tag.tags"))
         nested = attributes.get("tag")
@@ -134,7 +160,7 @@ def _source_tags(row: TagSourceRow) -> list[TagItem]:
             inputs.append(nested.get("tags"))
     tags: dict[str, TagItem] = {}
     for value in inputs:
-        for tag in _source_items(value):
+        for tag in _source_items(value, skip_oversized=skip_oversized):
             existing = tags.setdefault(tag["name"], tag)
             if "color" not in existing and "color" in tag:
                 existing["color"] = tag["color"]
@@ -147,13 +173,21 @@ def source_tag_names(row: TagSourceRow) -> tuple[str, ...]:
 
 
 def effective_tags(
-    row: TagSourceRow, *, manual_tags: object, legacy_tags: object = None
+    row: TagSourceRow,
+    *,
+    manual_tags: object,
+    legacy_tags: object = None,
+    skip_oversized: bool = False,
 ) -> EffectiveTags:
-    """Union source and assigned names, suppressing legacy manual tags after a save."""
-    source = _source_tags(row)
+    """Union source and assigned names, suppressing legacy manual tags after a save.
+
+    ``skip_oversized`` omits a single tag value above the source budget instead
+    of failing; callers must then make that row read-only.
+    """
+    source = _source_tags(row, skip_oversized=skip_oversized)
     tags: dict[str, TagItem] = {tag["name"]: tag.copy() for tag in source}
     if manual_tags is None:
-        manual = _source_items(legacy_tags)
+        manual = _source_items(legacy_tags, skip_oversized=skip_oversized)
     else:
         try:
             manual = normalize_manual_tags(manual_tags)

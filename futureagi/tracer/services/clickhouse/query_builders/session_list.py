@@ -663,27 +663,41 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     **leaf_params,
                     "project_id": branch_project_id,
                 }
+                from tracer.services.clickhouse.v2.effective_tags import (
+                    relation_parameter_owner,
+                )
+
                 for placeholder_name in sorted(
                     set(re.findall(r"%\(([A-Za-z_][A-Za-z0-9_]*)\)s", predicate))
                 ):
-                    if placeholder_name in leaf_params or (
-                        org_scope and placeholder_name == "project_id"
+                    # Effective tag leaves reference their scope, which is
+                    # bound only when the statement is prepared.
+                    relation_name = (
+                        None
+                        if placeholder_name in leaf_params
+                        else relation_parameter_owner(placeholder_name, leaf_params)
+                    )
+                    if (
+                        placeholder_name in leaf_params
+                        or relation_name is not None
+                        or (org_scope and placeholder_name == "project_id")
                     ):
                         if org_scope:
-                            namespaced_name = (
-                                f"session_relational_{branch_index}_{leaf_index}_"
-                                f"{placeholder_name}"
-                            )
+                            prefix = f"session_relational_{branch_index}_{leaf_index}_"
                         else:
-                            namespaced_name = (
-                                f"session_relational_{leaf_index}_{placeholder_name}"
-                            )
+                            prefix = f"session_relational_{leaf_index}_"
+                        namespaced_name = f"{prefix}{placeholder_name}"
                         predicate = predicate.replace(
                             f"%({placeholder_name})s", f"%({namespaced_name})s"
                         )
-                        merged_params[namespaced_name] = branch_sources[
-                            placeholder_name
-                        ]
+                        if relation_name is not None:
+                            merged_params[f"{prefix}{relation_name}"] = leaf_params[
+                                relation_name
+                            ]
+                        else:
+                            merged_params[namespaced_name] = branch_sources[
+                                placeholder_name
+                            ]
                     elif placeholder_name not in branch_sources:
                         raise AssertionError(
                             f"unbound session relational parameter {placeholder_name!r}"
@@ -3175,7 +3189,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         identity_names = self._physical_identity_names_sql()
         group_by = self._physical_group_by_sql()
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
-        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP, include_summary=True)
+        coverage = usage_coverage_sql(
+            attrs=self._COST_ATTRIBUTE_MAP, include_summary=True
+        )
         message_length = (
             f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
             if include_messages

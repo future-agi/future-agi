@@ -1091,16 +1091,49 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "session_graph_root_estimate_sql": _SESSION_OR_USER,
     },
     "tracer.services.clickhouse.v2.effective_tags": {
-        "read_effective_tag_rows": filed(
+        "live_tag_source_sql": filed(
             PROJECT_SET,
             CHILDREN_ATTRIBUTE_PICKERS,
             CHILDREN_TRACE_FILTERS,
             why=(
-                "tag picker and exact filter residuals use the view/builder's "
-                "authorized project set and finite time window; singular tag "
-                "includes children, native tags selects the root; the PG overlay "
-                "only enriches those selected physical identities"
+                "latest live span identities with projected tag sources, bound to "
+                "the view/builder's authorized project set, a finite time window "
+                "and, for list classifiers, the candidate traces; singular tag "
+                "includes children, native tags selects the canonical root"
             ),
+        ),
+        "canonical_root_sql": filed(
+            PROJECT_SET,
+            why="the canonical root of each trace in live_tag_source_sql's scope",
+        ),
+        "trace_overlay_sql": filed(
+            PROJECT_SET,
+            CHILDREN_TRACE_FILTERS,
+            why=(
+                "a root's assignment keys or the curated traces.tags of the "
+                "leaf's own authorized project set and candidate traces"
+            ),
+        ),
+        "_assignment_vocabulary": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why=(
+                "liveness of the picker's UI-tagged entities, limited to trace "
+                "ids the authorized project's assignments name"
+            ),
+        ),
+        "_legacy_vocabulary": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why=(
+                "curated trace tag names of traces with a live root in the "
+                "picker's authorized project set and window"
+            ),
+        ),
+        "effective_tag_values": filed(
+            PROJECT_SET,
+            CHILDREN_ATTRIBUTE_PICKERS,
+            why="tag picker vocabulary over the picker's authorized project set",
         ),
     },
     "tracer.services.clickhouse.filter_value_reads": {
@@ -1614,6 +1647,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             NOT_A_USER_READ,
             why="dead code: no file names it",
         ),
+    },
+    "tracer.services.clickhouse.v2.query_builders.filters": {
+        "ClickHouseFilterBuilderV2._effective_tag_condition": _FILTER_LEAF,
     },
     "tracer.services.clickhouse.v2.query_builders.eval_metrics": {
         "EvalMetricsQueryBuilderV2._filter_fragment": filed(

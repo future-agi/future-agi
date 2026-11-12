@@ -27,7 +27,11 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
-from tracer.services.entity_tag_reads import enrich_entity_tags, tag_fields
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_fields,
+)
 from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
@@ -203,6 +207,8 @@ def retrieve_trace_detail_ch(
         for row in span_rows:
             if row.get("parent_span_id") in (None, ""):
                 row["trace_tags"] = trace_data.get("tags")
+    # CH-only traces: the same curated traces row the list and filter read.
+    attach_legacy_trace_tags(analytics.execute_ch_query, span_rows)
     enrich_entity_tags(span_rows, kind="span")
 
     # Build span tree

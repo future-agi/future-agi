@@ -150,6 +150,7 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_clickhouse_api_read_unavailable_error,
     is_clickhouse_query_error,
+    is_clickhouse_query_size_error,
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.query_builders.agent_graph import (
@@ -167,7 +168,11 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
-from tracer.services.entity_tag_reads import enrich_entity_tags, tag_fields
+from tracer.services.entity_tag_reads import (
+    attach_legacy_trace_tags,
+    enrich_entity_tags,
+    tag_fields,
+)
 from tracer.services.entity_tags import TagReadUnavailable
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
@@ -2813,6 +2818,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 isinstance(exc, TagReadUnavailable)
                 or is_read_budget_error(exc)
                 or is_clickhouse_query_error(exc)
+                or is_clickhouse_query_size_error(exc)
             ):
                 logger.warning(
                     "trace_list_query_unavailable",
@@ -3782,9 +3788,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            if isinstance(
-                exc, TagReadUnavailable
-            ) or is_clickhouse_api_read_unavailable_error(exc):
+            if (
+                isinstance(exc, TagReadUnavailable)
+                or is_clickhouse_api_read_unavailable_error(exc)
+                or is_clickhouse_query_size_error(exc)
+            ):
                 logger.warning(
                     "observe_trace_list_query_unavailable",
                     project_id=str(
@@ -4038,8 +4046,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_configs_by_project[str(selected_project_id)] = eval_configs
                 return eval_config_ids
 
+            analytics = V2AnalyticsQueryService()
             detail = read_trace_detail(
-                analytics=V2AnalyticsQueryService(),
+                analytics=analytics,
                 project_ids=project_ids,
                 trace_id=str(trace_id),
                 eval_config_ids_resolver=resolve_eval_config_ids,
@@ -4056,6 +4065,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id,
                 detail,
                 eval_configs,
+                analytics=analytics,
             )
         except TraceDetailNotFound:
             return self._gm.not_found("trace_id not found")
@@ -4081,8 +4091,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
-    def _voice_call_detail_clickhouse(self, request, trace_id, detail, eval_configs):
+    def _voice_call_detail_clickhouse(
+        self, request, trace_id, detail, eval_configs, *, analytics=None
+    ):
         """Return heavy voice-call detail fields from ClickHouse."""
+        # The drawer's root carries the curated trace tags the trace list
+        # shows, so a save from the drawer keeps them.
+        attach_legacy_trace_tags(
+            (analytics or V2AnalyticsQueryService()).execute_ch_query,
+            list(detail.spans),
+        )
         enrich_entity_tags(list(detail.spans), kind="span")
         project_id = detail.project_id
         root_rows = [

@@ -4,6 +4,7 @@ Run only on a disposable cloud worker. Project/config authorization is isolated
 from these storage proofs; no legacy PostgreSQL telemetry tables are installed.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from threading import RLock
 from types import SimpleNamespace
@@ -126,18 +127,20 @@ def stores(request, monkeypatch):
 
     def seed(**changes):
         insert(
-            project_id=PROJECT,
-            trace_id=TRACE,
-            id="0123456789abcdef",
-            observation_type="span",
-            service_name="svc",
-            start_time=START,
-            parent_span_id="",
-            _version=2,
-            project_version_id=PV,
-            tags='["sdk"]',
-            attrs_string={"tag.tags": '["sdk-attribute"]'},
-            **changes,
+            **{
+                "project_id": PROJECT,
+                "trace_id": TRACE,
+                "id": "0123456789abcdef",
+                "observation_type": "span",
+                "service_name": "svc",
+                "start_time": START,
+                "parent_span_id": "",
+                "_version": 2,
+                "project_version_id": PV,
+                "tags": '["sdk"]',
+                "attrs_string": {"tag.tags": '["sdk-attribute"]'},
+                **changes,
+            }
         )
 
     return SimpleNamespace(
@@ -298,6 +301,70 @@ def test_http_save_detail_drawer_and_lists_then_clear_preserves_sdk(stores):
             "SELECT to_regclass('tracer_trace'), to_regclass('tracer_observation_span')"
         )
         assert cursor.fetchone() == (None, None)
+
+
+def test_large_non_tag_attributes_keep_every_read_surface_available(stores):
+    # Collector overflow keeps input.value/output.value beside tag.tags. A
+    # long-context span far above the 1 MiB tag budget must stay readable.
+    large = "x" * (2 * 1024 * 1024)
+    stores.seed(
+        attrs_string={"tag.tags": '["sdk-attribute"]', "output.value": large},
+        attributes_extra=json.dumps({"input.value": large}),
+    )
+    detail = trace_detail()
+    displayed = [
+        detail["trace"],
+        detail["observation_spans"][0]["observation_span"],
+        span_detail(),
+        *trace_list(stores),
+        *span_list(stores),
+        *observe_lists(stores),
+    ]
+    assert len(displayed) == 7
+    for row in displayed:
+        assert row["source_tag_names"] == ["sdk", "sdk-attribute"]
+        assert row["tag_target"]["span_id"] == "0123456789abcdef"
+
+
+def test_legacy_trace_tags_reach_every_root_reader_and_survive_a_save(stores):
+    # A tag saved by the previous editor lives only in the curated traces row.
+    stores.seed()
+    stores.execute(
+        "INSERT INTO traces VALUES (%(project)s, %(trace)s, '[\"reviewed\"]', 1, 0)",
+        {"project": PROJECT, "trace": TRACE},
+    )
+    expected = [{"name": "sdk"}, {"name": "sdk-attribute"}, {"name": "reviewed"}]
+    detail = trace_detail()
+    displayed = [
+        detail["trace"],
+        detail["observation_spans"][0]["observation_span"],
+        span_detail(),
+        *trace_list(stores),
+        *span_list(stores),
+        *observe_lists(stores),
+    ]
+    assert len(displayed) == 7
+    for row in displayed:
+        assert row["tags"] == expected
+        assert row["source_tag_names"] == ["sdk", "sdk-attribute"]
+        assert row["tag_revision"] == 0
+    # Saving from any of those surfaces sends what it displays, plus the edit.
+    saved = invoke(
+        make_request(
+            body=payload(
+                tags=[{"name": "reviewed"}, {"name": "x", "color": "#123456"}],
+                expected_tag_revision=0,
+            )
+        )
+    )
+    assert saved.status_code == 200, saved.data
+    for row in (span_detail(), *span_list(stores), *trace_list(stores)):
+        assert [tag["name"] for tag in row["tags"]] == [
+            "sdk",
+            "sdk-attribute",
+            "reviewed",
+            "x",
+        ]
 
 
 def test_child_assignment_does_not_inherit_trace_assignment(stores):
