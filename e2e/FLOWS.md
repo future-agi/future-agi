@@ -259,7 +259,7 @@
 
 **Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe
 
-**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:31`
 
 **Tags:** —
 
@@ -267,13 +267,15 @@
 
 1. complete first-run checks if required
 2. sign up with a unique email and a user-supplied password
-3. complete role and organization onboarding
-4. see both demo datasets
-5. open the Observe demo project
-6. open its single demo trace and inspect the span tree
+3. wait for the held initial profile read before role and goal controls become interactive
+4. select a role and click one goal once, then save and complete organization onboarding
+5. see both demo datasets
+6. open the Observe demo project
+7. open its single demo trace and inspect the span tree
 
 **Backend state verified:**
 
+- the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
@@ -281,7 +283,7 @@
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:145`
 
 **Tags:** @saml
 
@@ -302,7 +304,7 @@
 
 **Goal:** The browser that initiated SSO can complete after another browser posts first
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:191`
 
 **Tags:** @saml
 
@@ -322,7 +324,7 @@
 
 **Goal:** A real cross-site IdP POST does not leak the browser binding cookie
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:255`
 
 **Tags:** @saml
 
@@ -341,7 +343,7 @@
 
 **Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:276`
 
 **Tags:** @saml
 
@@ -360,7 +362,7 @@
 
 **Goal:** A SAML session lands in the organization that signed the assertion
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:308`
 
 **Tags:** @saml
 
@@ -379,7 +381,7 @@
 
 **Goal:** A SAML callback replaces a live session without using its stale organization scope
 
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:339`
 
 **Tags:** @saml
 
@@ -1102,7 +1104,7 @@
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:305`
 
 **Tags:** —
 
@@ -1118,7 +1120,7 @@
 
 **Browser observations:**
 
-- both Jev rows are enabled and prompt for a TypeSafe API key
+- all three Jev rows are enabled and prompt for a TypeSafe API key
 - choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
 - the drawer takes input (Add enables) and the evaluator model stays unselected
 
@@ -1126,13 +1128,13 @@
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:376`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. keep Pass/fail and describe a pass and a fail
 4. save the evaluation
@@ -1151,13 +1153,13 @@
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:431`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
 4. save the evaluation
@@ -1176,13 +1178,13 @@
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:510`
 
 **Tags:** —
 
 **User steps:**
 
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+1. FAKE: the browser's decision-catalog read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
 2. author an LLM-As-A-Judge evaluator and choose Jev latest
 3. choose Scoring and add four ordered levels
 4. save the evaluation
@@ -1201,7 +1203,7 @@
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
 
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:207`
 
 **Tags:** —
 
@@ -1222,8 +1224,60 @@
 
 **Browser observations:**
 
-- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
+
+**Goal:** Choose a decision model’s direct or OpenRouter connection, run a Pass/Fail evaluation through it, and retain the explicit choice after reload
+
+**Spec:** `flows/evals/decision-model-connections.spec.ts:93`
+
+**Tags:** —
+
+**User steps:**
+
+1. attest the isolated managed mock routing
+2. search one decision model with native OpenAI and OpenRouter connections
+3. add the native synthetic key through the product drawer and publish a Pass/Fail evaluator
+4. run the evaluator through native OpenAI against deterministic synthetic input
+5. choose OpenRouter, add its synthetic key through the drawer and run again
+6. save the new version as default and reload the persisted connection
+
+**Backend state verified:**
+
+- the model-list API exposes one group with the exact native OpenAI and OpenRouter route IDs shown by the UI
+- UI-created provider keys belong only to the isolated actor scope and update that connection’s catalog readiness
+- the template and its version store the explicit route, Pass/Fail criteria and exact organization/workspace scope
+- both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
+- the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
+
+### EVAL-E2E-013 — a Jev choice stays under the pointer while ordinary model search loads
+
+**Goal:** Choose Jev latest with one gesture during model search and reach the TypeSafe keys drawer without selecting a model or saving a key
+
+**Spec:** `flows/evals/evaluator-picker-search.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a real evaluator draft at normal and constrained viewport heights
+2. wait for the initial decision and ordinary-model catalogs, then search Jev
+3. observe the Jev row before and during ordinary-model loading
+4. press the row, release the unmodified search response, and release the pointer at the same position
+5. read the TypeSafe drawer and the still-unselected evaluation model
+
+**Backend state verified:**
+
+- the real provider-status API reports no TypeSafe key before and after each gesture
+- the browser sends no API-key write during either gesture
+
+**Browser observations:**
+
+- Jev latest does not move at loading onset or response completion
+- one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
+- the picker stays within the viewport at both heights
 
 ## gateway
 
@@ -1567,39 +1621,41 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:51`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:116`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
@@ -2170,7 +2226,7 @@
 
 **Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
 
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+**Spec:** `flows/observe/openrouter-usage.spec.ts:45`
 
 **Tags:** —
 
@@ -2337,27 +2393,74 @@
 - trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
 - all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
 
+### OBS-E2E-060 — Error Feed stays error-free without projects and Retry restores existing issues
+
+**Goal:** A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry.
+
+**Spec:** `flows/observe/error-feed-empty-projects.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe in a test-owned empty workspace and click Error Feed
+2. read the no-projects status without an error notification on first visit, reload and revisit
+3. create a project and two uniquely titled issues through the existing test-image issue seeder in the original workspace
+4. open Error Feed in the populated workspace and read exactly the seeded issue titles
+5. inject a browser-only feed-list 500 and read the inline error and Retry, never a success empty state
+6. remove the injected fault and click Retry to recover the same issue set from fresh real feed and project reads
+
+**Backend state verified:**
+
+- The empty workspace has zero live Observe projects in PG; its real project catalog and feed list return successful exact empty results on first visit, reload and revisit.
+- The project retains its organization/workspace binding and the seeded issues retain their exact IDs, titles and project binding in PG tracer_trace_error_group; the real feed response and rendered table agree on the exact issue set. This does not qualify automatic detection or trace membership.
+- After the browser-only injected failure, Retry performs fresh real successful feed and catalog reads and restores exactly the seeded issues while removing the inline error.
+
+### OBS-E2E-061 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.
+
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
 
 **Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI
 
-**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:38`
 
 **Tags:** —
 
 **User steps:**
 
 1. create and name a prompt from scratch and select the local mock model
-2. Run Prompt and wait for real stored output before opening the Evaluation tab
+2. immediately Run Prompt after selecting the model while autosave is held, then release it and open Evaluation after real stored output
 3. Add Evaluation mapped to model_output and inspect its current catalog choices
 4. edit mapping to model_input with the same binding ID and name and wait for completion
 5. delete the binding and reload to verify current discovery excludes it
 
 **Backend state verified:**
 
-- real mock output and the prompt evaluation binding retain exact parent, actor scope and model with terminal stored results
+- no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
 

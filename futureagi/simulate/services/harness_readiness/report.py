@@ -279,6 +279,14 @@ def readiness_report(
     return report
 
 
+def evidence_revision(
+    pairing: Pairing, bundle: HarnessAssembledBundle | None = None
+) -> str:
+    """A token that changes whenever anything the pairing's report is read from
+    does. Database reads only, so it can be checked under a lock."""
+    return _report_key(pairing, bundle or pair_bundle(pairing))
+
+
 def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
     """What a report is read from: the versions and their side row, the bundle and
     its latest check, the agent's stored document, and the agent's newest job of this

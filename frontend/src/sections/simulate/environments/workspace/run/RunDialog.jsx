@@ -179,9 +179,9 @@ export default function RunDialog({
       : null;
   const dialogError = shownError && !pickerError ? shownError : null;
   const errorText = shownError
-    ? COPY.errors[shownError.error] ||
-      shownError.message ||
+    ? shownError.message ||
       shownError.detail ||
+      COPY.errors[shownError.error] ||
       COPY.refused
     : null;
 

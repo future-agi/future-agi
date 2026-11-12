@@ -32,8 +32,16 @@ from simulate.services.harness_readiness.catalogue import (
     Status,
     VersionRef,
 )
-from simulate.services.harness_readiness.evidence import certified, pair_bundle
-from simulate.services.harness_readiness.report import readiness_report
+from simulate.services.harness_readiness.evidence import (
+    certified,
+    pair_bundle,
+    read_evidence,
+)
+from simulate.services.harness_readiness.report import (
+    ReadinessReport,
+    evidence_revision,
+    readiness_report,
+)
 from simulate.services.harness_readiness.rules import answer
 from simulate.services.harness_scenario_needs import TOOL_ROWS, CaseNeeds, case_needs
 from simulate.services.harness_versioning import validation
@@ -239,7 +247,10 @@ def _selected_answer(
     if not unused or found["kind"] != "blocked" or found["reason_code"] is not None:
         return found
     return answer(
-        [{**row, "status": "supported"} if row["id"] in unused else row for row in rows],
+        [
+            {**row, "status": "supported"} if row["id"] in unused else row
+            for row in rows
+        ],
         validating=False,
         failed=False,
         named=False,
@@ -268,6 +279,9 @@ class RunPlan:
 
     view: RunSelection
     held: frozenset[str]
+    # The report the decision was made from, and the evidence revision it read.
+    report: ReadinessReport
+    revision: str
 
 
 def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
@@ -275,10 +289,35 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     them: a case in the blocked bucket is held back and named, never sent.
 
     Raises:
-        HostedHarnessError: as ``selection_report``.
+        HostedHarnessError: as ``selection_report``; 503 ``readiness_unavailable``
+            (retryable) when the pair's certification cannot be read; 422
+            ``scenario_dropped`` when certifying the pair dropped a selected case.
     """
-    report = readiness_report(pairing)
+    bundle = pair_bundle(pairing)
+    revision = evidence_revision(pairing, bundle)
+    if read_evidence(pairing, bundle).unreadable:
+        raise HostedHarnessError(
+            "readiness_unavailable",
+            "Couldn't read this pairing's readiness, so no run was created."
+            " Try again in a moment.",
+            status_code=503,
+            retryable=True,
+        )
+    report = readiness_report(pairing, bundle=bundle)
     placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    dropped = [
+        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
+    ]
+    if dropped:
+        raise HostedHarnessError(
+            "scenario_dropped",
+            ", ".join(dropped)
+            + (" was" if len(dropped) == 1 else " were")
+            + f" {DROPPED_REASON}, so the run cannot play"
+            + (" it" if len(dropped) == 1 else " them"),
+            status_code=422,
+            details={"keys": dropped},
+        )
     placed = placement.placed
     held = [one.case.key for one in placed if one.bucket == "blocked"]
     by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
@@ -296,6 +335,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             "reasons": reasons,
         },
         held=frozenset(held),
+        report=report,
+        revision=revision,
     )
 
 

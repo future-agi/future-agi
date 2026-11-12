@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -47,6 +48,10 @@ _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # again soon.
 _FILES_TTL_SECONDS = 7 * 24 * 3600
 _UNREADABLE_TTL_SECONDS = 300
+# One reader per archive at a time; the others wait for its result before reading.
+_READING_TTL_SECONDS = 60
+_WAIT_STEP_SECONDS = 0.25
+_WAIT_STEPS = 40
 _SANDBOX_SOURCES = frozenset(
     {
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
@@ -72,6 +77,8 @@ class Evidence:
     # Whether a build certificate covered the pairing's suite version; ``None`` when
     # it cannot be told.
     covers_suite: bool | None = None
+    # The certification archive could not be read, so its rows read as unmeasured.
+    unreadable: bool = False
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -94,10 +101,11 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
     )
 
 
-def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
+def _certification_files(object_key: str) -> dict[str, Any]:
     """The per-tool and per-action certification an archive holds, read once per
-    object: archives are content-addressed, so a key never changes what it holds. An
-    archive that cannot be read reads as holding neither, for a few minutes."""
+    object by one reader: archives are content-addressed, so a key never changes what
+    it holds. Only the two files are read, off the stream. An archive that cannot be
+    read reads as holding neither, for a few minutes."""
     cache_key = (
         "harness-readiness-certification:"
         + hashlib.sha256(object_key.encode()).hexdigest()
@@ -105,9 +113,25 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
+    reading = cache_key + ":reading"
+    owner = cache.add(reading, 1, timeout=_READING_TTL_SECONDS)
+    if not owner:
+        for _ in range(_WAIT_STEPS):
+            time.sleep(_WAIT_STEP_SECONDS)
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
     try:
-        found = archives.read_members(
-            archives.get_archive(object_key),
+        return _read_certification_files(object_key, cache_key)
+    finally:
+        if owner:
+            cache.delete(reading)
+
+
+def _read_certification_files(object_key: str, cache_key: str) -> dict[str, Any]:
+    try:
+        found = archives.stream_members(
+            object_key,
             {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
             _MAX_CERTIFICATION_BYTES,
         )
@@ -117,11 +141,12 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: dict[str, list[Mapping[str, Any]]] = {
+        unreadable: dict[str, Any] = {
             "tools": [],
             "actions": [],
             "routed": [],
             "unobserved": [],
+            "unreadable": True,
         }
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
@@ -184,6 +209,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             # Kept on the bundle by the check, else sealed in its archive.
             routed=kept.get("tools") or files.get("routed", []),
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
+            unreadable=bool(files.get("unreadable")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -208,6 +234,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         unobserved=files.get("unobserved", []),
         made_for=None if version.id == pairing.environment_version.id else version,
         covers_suite=_covers_suite(version, pairing.suite_version),
+        unreadable=bool(files.get("unreadable")),
     )
 
 
@@ -421,6 +448,7 @@ def _routed(evidence: Evidence, routed: bool) -> list[str]:
 
 _UNOBSERVED_REASONS = {
     "reaches_outside": "its contract says it leaves the test world, so it was not asked",
+    "has_effects": "its contract says it changes something, so the check did not call it",
     "not_called": "asked, but not called",
     "request_failed": "asked, but the agent did not answer",
     "not_asked": "not asked: the check's time for tool requests ran out",
@@ -511,6 +539,7 @@ def _cancel(pairing: Pairing) -> Reading:
             attempt_number=F("job__current_attempt_number"),
             # A validation job never started the agent; its key is set only on them.
             job__payload__metadata__certify_only__isnull=True,
+            provider_ref__isnull=False,
         )
         .exclude(provider_ref="")
         .exclude(provider_ref__startswith="pending:")
