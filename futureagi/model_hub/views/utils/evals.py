@@ -9,7 +9,10 @@ from django.db import close_old_connections
 
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.run_prompt.litellm_models import MissingProviderKeyError
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    UnavailableModelError,
+)
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
@@ -617,7 +620,15 @@ def run_eval_func(
             logger.exception(f"Error updating api call log row status: {str(exc)}")
             pass
 
-        if isinstance(e, (EvalConfigError, MissingProviderKeyError)):
+        if isinstance(e, UnavailableModelError):
+            # A saved model retired from the catalog is the user's to replace,
+            # not a fault; name it, since nothing else in the log does.
+            logger.warning(
+                "evaluation_configuration_invalid",
+                error_type=type(e).__name__,
+                model=e.model_name,
+            )
+        elif isinstance(e, (EvalConfigError, MissingProviderKeyError)):
             logger.warning(
                 "evaluation_configuration_invalid", error_type=type(e).__name__
             )
