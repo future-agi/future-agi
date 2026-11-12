@@ -106,9 +106,7 @@ def test_c2_disabled_idp_relay_state_posted_to_acs_cannot_log_in(
 ):
     """The pre-rework ACS loaded the row by relay_state alone, ignoring is_enabled."""
 
-    SAMLMetadataModel.no_workspace_objects.filter(id=idp_a.id).update(
-        is_enabled=False
-    )
+    SAMLMetadataModel.no_workspace_objects.filter(id=idp_a.id).update(is_enabled=False)
     response = api_client.post(
         "/saml2_auth/acs/",
         {
