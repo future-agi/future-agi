@@ -121,9 +121,10 @@ describe('frozen r3.2 wire mappings', () => {
   it('preserves full physical trace, repository scope, nullable session and ordered receipt identity', () => {
     expect(traceRefInput(mapContextTraceRef(wire.TraceRef))).toEqual(wire.TraceRef);
     const binding = consumers.mapContextBinding(wire.BindingOut);
-    const { id, context_id: contextId, revision, retired_at: retiredAt, ...input } = wire.BindingOut;
+    // configuration_digest is server-derived output, never sent back as input.
+    const { id, context_id: contextId, revision, retired_at: retiredAt, configuration_digest: configurationDigest, ...input } = wire.BindingOut;
     expect(consumers.contextBindingInput(binding)).toEqual(input);
-    expect(binding).toMatchObject({ id, contextId, revision, retiredAt });
+    expect(binding).toMatchObject({ id, contextId, revision, retiredAt, configurationDigest });
     expect(consumers.contextReceiptInput(consumers.mapContextReceiptInput(wire.ReceiptInput))).toEqual(wire.ReceiptInput);
     expect(consumers.contextSessionInput({ clientSessionKey: 'synthetic-thread', incarnationId: wire.SessionInput.incarnation_id,
       resumeSessionId: null, adapterVersion: '1', runtimeVersion: '1', runtimeConfigDigest: wire.SessionInput.runtime_config_digest })).toEqual(wire.SessionInput);

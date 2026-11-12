@@ -150,6 +150,8 @@ def samples() -> dict:
             "project_scope": "",
         },
         "expected_report_interval_seconds": 3600,
+        # Output-only identity of the reviewed runtime configuration (none here).
+        "configuration_digest": "",
     }
     receipt: dict[str, Any] = {
         "event_id": RESOURCE,

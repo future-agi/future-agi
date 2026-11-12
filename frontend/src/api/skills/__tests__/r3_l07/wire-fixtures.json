@@ -362,6 +362,8 @@
       "project_scope": ""
     },
     "expected_report_interval_seconds": 3600,
+    "configuration": null,
+    "configuration_digest": "",
     "id": "00000000-0000-4000-8000-000000000001",
     "context_id": "00000000-0000-4000-8000-000000000002",
     "revision": 1,
