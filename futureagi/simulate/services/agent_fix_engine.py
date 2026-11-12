@@ -46,7 +46,7 @@ from simulate.selectors.agent_fix import (
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_evals import runnable_eval_configs
-from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -423,18 +423,18 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
     for run in (*base, *final):
         if run.test_execution_id is None:
             continue
-        for config in configs:
-            try:
-                queue_eval_for_finished_calls(run.test_execution, config)
-            except ValueError:
-                # A cancelled run is never graded; its evals read as not finished.
-                logger.warning(
-                    "agent_fix_grading_not_queued",
-                    fix_run=str(fix_run.id),
-                    run=str(run.id),
-                    eval_config=str(config.id),
-                    exc_info=True,
-                )
+        # Every config in one pass: queueing one reopens a call's eval side, so a
+        # call per config would leave all but the first config ungraded.
+        try:
+            queue_evals_for_finished_calls(run.test_execution, configs)
+        except ValueError:
+            # A cancelled run is never graded; its evals read as not finished.
+            logger.warning(
+                "agent_fix_grading_not_queued",
+                fix_run=str(fix_run.id),
+                run=str(run.id),
+                exc_info=True,
+            )
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
