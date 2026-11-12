@@ -25,7 +25,3 @@ def to_snake_case(s: str) -> str:
     if s == s.lower():
         return s
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
-
-
-# TEMPORARY: proves the Mypy (baseline) job fails on a new error; reverted next.
-_MYPY_BASELINE_CANARY: int = "not an int"
