@@ -257,7 +257,6 @@ export default function AgentSourceChange({
                 variant="outlined"
                 color="inherit"
                 disabled={!canEdit || busy}
-                sx={{ textTransform: "none" }}
               >
                 {create.isPending
                   ? COPY.creating
@@ -295,7 +294,6 @@ export default function AgentSourceChange({
                   setCreated(null);
                   setEditing(true);
                 }}
-                sx={{ textTransform: "none" }}
               >
                 {source.kind === "provider"
                   ? COPY.evalInstructions

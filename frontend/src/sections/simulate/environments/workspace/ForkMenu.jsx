@@ -76,15 +76,21 @@ export default function ForkMenu({ onDelete }) {
             <MenuItem
               onClick={del}
               disabled={!canEdit}
-              sx={{ alignItems: "flex-start", gap: 1.25, py: 1, color: DELETE_TONE.main }}
+              sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
             >
               <Iconify
                 icon="solar:trash-bin-trash-linear"
                 width={16}
-                sx={{ mt: "2px", flexShrink: 0 }}
+                sx={{ mt: "2px", flexShrink: 0, color: DELETE_TONE.main }}
               />
               <Box minWidth={0}>
-                <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: "fontWeightSemiBold",
+                    color: DELETE_TONE.main,
+                  }}
+                >
                   {WORKSPACE_COPY.deleteEnv}
                 </Typography>
                 <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>

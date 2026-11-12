@@ -92,7 +92,7 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
             onDeleteRequest?.(active);
             onClose?.();
           }}
-          sx={{ typography: "s2", color: DELETE_TONE.main }}
+          sx={{ typography: "s2" }}
         >
           <ListItemIcon sx={{ ...ICON_SX, color: DELETE_TONE.main }}>
             <Iconify icon="solar:trash-bin-trash-linear" width={16} />
