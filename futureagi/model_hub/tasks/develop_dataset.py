@@ -48,7 +48,9 @@ from model_hub.utils.kb_helpers import is_kb_deleted_or_cancelled
 from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from tfc.temporal import temporal_activity
-from tfc.utils.storage import get_compare_local_root
+from tfc.utils.storage import (
+    get_compare_local_root,
+)
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
