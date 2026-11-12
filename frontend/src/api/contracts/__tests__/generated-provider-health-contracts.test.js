@@ -15,20 +15,34 @@ const health = {
 };
 
 describe("generated provider configuration health", () => {
-  it.each([null, health])("accepts the API health state %j", (configurationHealth) => {
-    const payload = { provider: "retell", configuration_health: configurationHealth };
-    expect(TracerObservabilityProviderReadResponse.parse(payload)).toEqual(payload);
-  });
+  it.each([null, health])(
+    "accepts the API health state %j",
+    (configurationHealth) => {
+      const payload = {
+        provider: "retell",
+        configuration_health: configurationHealth,
+      };
+      expect(TracerObservabilityProviderReadResponse.parse(payload)).toEqual(
+        payload,
+      );
+    },
+  );
 
   it("does not send read-only health in create requests", () => {
-    expect(TracerObservabilityProviderCreateBody.parse({
-      provider: "retell", configuration_health: health,
-    })).toEqual({ provider: "retell" });
+    expect(
+      TracerObservabilityProviderCreateBody.parse({
+        provider: "retell",
+        configuration_health: health,
+      }),
+    ).toEqual({ provider: "retell" });
   });
 
   it("rejects unclassified failure details", () => {
-    expect(TracerObservabilityProviderReadResponse.safeParse({
-      provider: "retell", configuration_health: { ...health, reason_code: "raw_provider_error" },
-    }).success).toBe(false);
+    expect(
+      TracerObservabilityProviderReadResponse.safeParse({
+        provider: "retell",
+        configuration_health: { ...health, reason_code: "raw_provider_error" },
+      }).success,
+    ).toBe(false);
   });
 });
