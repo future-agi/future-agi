@@ -72,9 +72,25 @@ class CapturePolicy:
 UPLOAD_SOURCES = ("Bytes", "Blob", "OwnedRecordingFile")
 # Server-internal kinds written by trusted server paths, never by a client body.
 INTERNAL_SOURCES = ("imported_recording",)
-# Only modalities whose bytes the validation worker can settle are advertised.
-# Accepting a modality nothing can validate would strand uploads in validating.
-SERVER_MODALITIES = {"audio": ("audio/wav",)}
+# Only types whose bytes the validation worker can settle are accepted, and only
+# their modalities are advertised. Accepting a type nothing can validate would
+# strand uploads in validating. ``probe.py`` sniffs each of these; any other
+# declared type (audio/L16, application/octet-stream) is refused at admission.
+SERVER_MODALITIES = {
+    "audio": (
+        "audio/wav",
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/webm",
+        "audio/flac",
+    ),
+    "document": ("application/pdf",),
+    "image": ("image/png", "image/jpeg", "image/webp"),
+    "video": ("video/mp4", "video/webm"),
+}
+# Recording segments feed PCM timeline manifests; they stay PCM WAV.
+SEGMENT_MIME_TYPES = ("audio/wav",)
 
 
 def server_policy(scope):
@@ -112,8 +128,20 @@ def policy_document(scope):
 
 
 def admit_audio(
-    scope, policy, *, direction, source_kind, creates_recording=False, error_body=False
+    scope,
+    policy,
+    *,
+    direction,
+    source_kind,
+    creates_recording=False,
+    error_body=False,
+    modality="audio",
 ):
+    """Deny-wins admission for every modality (the name predates images/video).
+
+    Hide and PII flags apply to all media: screenshots and documents carry text
+    too. Only audio may form a recording; ``record_video`` is never offered.
+    """
     policy.validate()
     if not scope.enabled or not policy.enabled:
         raise AttachmentError("disabled", 403)
@@ -123,7 +151,7 @@ def admit_audio(
         raise AttachmentError("invalid_direction")
     if source_kind not in UPLOAD_SOURCES + INTERNAL_SOURCES:
         raise AttachmentError("source_unavailable", 403)
-    if creates_recording and not policy.record_audio:
+    if creates_recording and (modality != "audio" or not policy.record_audio):
         raise AttachmentError("recording_disabled", 403)
     if (
         (

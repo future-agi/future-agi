@@ -1,7 +1,10 @@
 """Session-bound opaque grants; no storage location leaves this service.
 
-Only bounded validated PCM WAV originals/playable are served. Channel, peaks
-and thumbnail representations resolve to ``not_found`` until server-produced
+Only bounded blobs whose type the validation probe established are served, and
+only under that validated type (``SERVED``), never the client's declaration.
+``original`` resolves for every served type; ``playable`` only for audio and
+video, whose original is already browser-playable. Channel, peaks and
+thumbnail representations resolve to ``not_found`` until server-produced
 derivatives are bound. A grant never substitutes for a current source
 permission: every gateway request re-runs the full occurrence authorization.
 
@@ -13,6 +16,7 @@ is narrowed to the gateway, so resolve never sees the cookie itself.
 import hashlib
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import timedelta
 
 from django.db import transaction
@@ -25,6 +29,7 @@ from tracer.models.attachment import (
     AttachmentState,
 )
 from tracer.services.attachments.accounting import audit
+from tracer.services.attachments.bootstrap import LIMITS
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import (
     Parent,
@@ -39,6 +44,52 @@ COOKIE_NAME = "fi_media_session"
 SESSION_SECONDS = 300
 GRANT_SECONDS = 60
 SERVED_REPRESENTATIONS = ("original", "playable")
+MAX_SERVED_BYTES = LIMITS["max_upload_bytes"]
+
+
+@dataclass(frozen=True)
+class Served:
+    """How the gateway serves one validated type.
+
+    ``inline`` media render in place; everything else downloads under a CSP
+    sandbox. ``media`` (audio/video) is rangeable and has a playable form.
+    """
+
+    filename: str
+    inline: bool = True
+    media: bool = False
+
+
+SERVED = {
+    "audio/wav": Served("recording.wav", media=True),
+    "audio/ogg": Served("audio.ogg", media=True),
+    "audio/mpeg": Served("audio.mp3", media=True),
+    "audio/mp4": Served("audio.m4a", media=True),
+    "audio/webm": Served("audio.webm", media=True),
+    "audio/flac": Served("audio.flac", media=True),
+    "video/mp4": Served("video.mp4", media=True),
+    "video/webm": Served("video.webm", media=True),
+    "image/png": Served("image.png"),
+    "image/jpeg": Served("image.jpg"),
+    "image/webp": Served("image.webp"),
+    "application/pdf": Served("document.pdf", inline=False),
+}
+
+
+def servable(blob, representation):
+    """The blob's serving rule, or None when it may not be served this way."""
+    served = SERVED.get(blob.mime_type) if blob is not None else None
+    if (
+        served is None
+        or representation not in SERVED_REPRESENTATIONS
+        or (representation == "playable" and not served.media)
+        or not blob.storage_version
+        or not 0 < blob.byte_length <= MAX_SERVED_BYTES
+    ):
+        return None
+    return served
+
+
 NOT_READY = {
     AttachmentState.PENDING: "pending",
     AttachmentState.VALIDATING: "pending",
@@ -102,9 +153,8 @@ def issue(viewer, authority, *, media_session, row, scope, expiry, representatio
         or media_session.organization_id != scope.organization_id
     ):
         raise not_found()
-    if not AttachmentBlob.objects.filter(
-        attachment=row.attachment, scope=scope, mime_type="audio/wav"
-    ).exists():
+    blob = AttachmentBlob.objects.filter(attachment=row.attachment, scope=scope).first()
+    if servable(blob, representation) is None:
         raise not_found()
     token = secrets.token_urlsafe(32)
     expiry = min(
@@ -227,13 +277,7 @@ def authorize(cookie, grant_token, occurrence_id, authority):
         or grant.representation not in SERVED_REPRESENTATIONS
     ):
         raise not_found()
-    blob = AttachmentBlob.objects.filter(
-        scope=scope, attachment=row.attachment, mime_type="audio/wav"
-    ).first()
-    if (
-        blob is None
-        or not blob.storage_version
-        or not 0 < blob.byte_length <= 8 * 1024 * 1024
-    ):
+    blob = AttachmentBlob.objects.filter(scope=scope, attachment=row.attachment).first()
+    if servable(blob, grant.representation) is None:
         raise not_found()
     return grant, blob, viewer
