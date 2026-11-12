@@ -82,7 +82,7 @@ def _locked_running(fix_run_id: Any) -> AgentFixRun:
     if locked.source_run_id is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     return locked
@@ -97,7 +97,7 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
         if fix_run.source_run_id is None:
             raise HostedHarnessError(
                 "fix_source_deleted",
-                "the run this fix started from was deleted",
+                "the run this epoch started from was deleted",
                 status_code=409,
             )
         body = agent_kind(fix_run.environment).source_archive(fix_run)
@@ -547,7 +547,7 @@ def _ending_failure(
     )
     return {
         "code": "fix_engine_failed",
-        "message": "the improvement engine hit an error it could not recover from",
+        "message": "the engine hit an error it could not recover from",
     }
 
 

@@ -273,9 +273,7 @@ describe("LaunchFixDialog", () => {
     await user.click(
       await screen.findByRole("checkbox", { name: "Instructions" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
     expect(
       screen.getByText("Pick at least one part it may change."),
     ).toBeInTheDocument();
@@ -293,9 +291,7 @@ describe("LaunchFixDialog", () => {
     expect(
       await screen.findByText("A fix is already running in this environment."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
   });
 
   it("writes variations first for fewer failing cases than a fix needs", async () => {
@@ -308,12 +304,10 @@ describe("LaunchFixDialog", () => {
     renderDialog();
     expect(
       await screen.findByText(
-        "A fix needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
+        "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails. With fewer than 6 failing cases it can only end with Limited validation and opens a draft pull request.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
   });
 
   it("disables Start while the variations could not be written", async () => {
@@ -336,9 +330,7 @@ describe("LaunchFixDialog", () => {
         "Save or discard the environment's unsaved scenario changes first.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
     // The way out: the environment's Scenarios tab, whose draft bar saves or discards.
     await userEvent.click(
       screen.getByRole("button", { name: "Review unsaved changes" }),
@@ -360,7 +352,7 @@ describe("LaunchFixDialog", () => {
       },
     });
     renderDialog();
-    await screen.findByRole("button", { name: "Start improvement" });
+    await screen.findByRole("button", { name: "Run Epoch" });
     expect(
       screen.queryByRole("button", { name: "Review unsaved changes" }),
     ).not.toBeInTheDocument();
@@ -410,9 +402,7 @@ describe("LaunchFixDialog", () => {
   it("starts the fix with the contract's fields only and opens its page", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(
-      await screen.findByRole("button", { name: "Start improvement" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Run Epoch" }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     // The backend refuses unknown fields.
     const [url, body] = axios.post.mock.calls.at(-1);
@@ -464,7 +454,7 @@ describe("LaunchFixDialog", () => {
       await screen.findByText(/This agent's traces name no model/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/This agent is not traced/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect("allowed_models" in axios.post.mock.calls.at(-1)[1]).toBe(false);
   });
@@ -499,7 +489,7 @@ describe("LaunchFixDialog", () => {
       screen.getByLabelText("Agent's cost limit per conversation"),
       "0.02",
     );
-    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     const [, body] = axios.post.mock.calls.at(-1);
@@ -526,7 +516,7 @@ describe("LaunchFixDialog", () => {
 
     await pickOption(user, "Reply time margin", "No increase");
     await pickOption(user, "Agent's cost margin", "No increase");
-    await user.click(screen.getByRole("button", { name: "Start improvement" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     const [, body] = axios.post.mock.calls.at(-1);
@@ -542,7 +532,7 @@ describe("LaunchFixDialog", () => {
     const user = userEvent.setup();
     renderDialog();
     const start = await screen.findByRole("button", {
-      name: "Start improvement",
+      name: "Run Epoch",
     });
 
     await user.click(
@@ -585,7 +575,7 @@ describe("LaunchFixDialog", () => {
     renderDialog();
 
     const start = await screen.findByRole("button", {
-      name: "Start improvement",
+      name: "Run Epoch",
     });
     expect(start).toBeDisabled();
     // The Models row and the footer say it; the form never calls the agent untraced.

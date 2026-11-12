@@ -1365,18 +1365,18 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByRole("button", { name: "Improve" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
     expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
     expect(screen.queryByText("optimizer-form")).toBeNull();
   });
 
-  it("hides Improve when the org does not have Fix my agent", async () => {
+  it("hides Run Epoch when the org does not have Epoch", async () => {
     fixMyAgentAllowed.mockReturnValue(false);
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {
@@ -1394,7 +1394,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Improve" });
+    const cta = screen.getByRole("button", { name: "Run Epoch" });
     expect(cta).toBeEnabled();
     expect(cta).not.toHaveTextContent("Beta");
   });

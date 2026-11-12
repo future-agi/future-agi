@@ -30,7 +30,7 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
     return (
       <EmptyState
         icon="solar:magic-stick-3-linear"
-        title="This improvement could not be found"
+        title="This epoch could not be found"
         body="It may have been removed, or it belongs to another workspace."
       />
     );

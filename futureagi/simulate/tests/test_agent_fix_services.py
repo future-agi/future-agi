@@ -1993,7 +1993,7 @@ class TestReport:
                 ),
                 {
                     "code": "fix_engine_failed",
-                    "message": "the improvement engine hit an error it could not recover from",
+                    "message": "the engine hit an error it could not recover from",
                 },
             ),
         ],

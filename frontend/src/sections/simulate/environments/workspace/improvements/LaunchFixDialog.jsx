@@ -262,10 +262,9 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         paths.dashboard.simulate.environments.improvement(envId, fix.id),
       );
     } catch (e) {
-      enqueueSnackbar(
-        fixErrorOf(e).message || "Could not start the improvement",
-        { variant: "error" },
-      );
+      enqueueSnackbar(fixErrorOf(e).message || "Could not start the epoch", {
+        variant: "error",
+      });
     }
   };
 
@@ -292,7 +291,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         <Box flex={1} minWidth={0} sx={{ pr: 4 }}>
           <Typography
             sx={{ typography: "s1", fontWeight: 600 }}
-          >{`Improve ${agent.name}`}</Typography>
+          >{`Run Epoch on ${agent.name}`}</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {`Searches for a better ${agent.name}, scored by this environment`}
           </Typography>
@@ -548,7 +547,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           onClick={start}
           startIcon={<Iconify icon="solar:play-bold" width={16} />}
         >
-          Start improvement
+          Run Epoch
         </Button>
       </Stack>
     </ClosableDialog>

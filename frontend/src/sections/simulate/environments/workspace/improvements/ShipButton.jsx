@@ -18,8 +18,8 @@ import { gradingNote, isShipped, winnerOf } from "./fixRunView";
 
 const shipHint = (fix, winner) =>
   fix.agent?.kind === "github"
-    ? `Opens a pull request with Trial ${winner.attempt}'s change on the agent's repository`
-    : `Makes Trial ${winner.attempt}'s version the environment's default`;
+    ? `Opens a pull request with Candidate ${winner.attempt}'s change on the agent's repository`
+    : `Makes Candidate ${winner.attempt}'s version the environment's default`;
 
 // Ship: only the fix's winner, only once the fix is ready, and only after the
 // user confirms what it will do. An uploaded agent's winner becomes the

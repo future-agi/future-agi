@@ -108,7 +108,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 2 }}>
           {winner
-            ? `${fixName(fix)} · Trial ${winner.attempt} kept`
+            ? `${fixName(fix)} · Candidate ${winner.attempt} kept`
             : fixName(fix)}
         </Typography>
         <Box sx={{ ...table, p: 1.5, mb: 2 }}>
@@ -184,7 +184,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 >
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600 }}
-                  >{`Trial ${c.attempt}`}</Typography>
+                  >{`Candidate ${c.attempt}`}</Typography>
                   <Typography sx={{ typography: "s3", ...num }}>
                     {c.verdict.target_pass_rate
                       ? `${pct(c.verdict.target_pass_rate[1])}%`
@@ -227,7 +227,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
         )}
         {rejected.length > 0 && (
           <Box>
-            <Typography sx={sectionTitle}>Rejected trials</Typography>
+            <Typography sx={sectionTitle}>Rejected candidates</Typography>
             <Box sx={table}>
               {rejected.map((c, i) => (
                 <Box
@@ -237,7 +237,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 >
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
-                  >{`Trial ${c.attempt}`}</Typography>
+                  >{`Candidate ${c.attempt}`}</Typography>
                   {c.verdict.tiers?.length > 0 ? (
                     rejectionChecks(
                       c.verdict.tiers,

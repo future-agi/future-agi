@@ -20,6 +20,7 @@ import {
   stepRows,
   verdictCards,
   winnerOf,
+  measuredNotice,
 } from "../fixRunView";
 
 const byId = (id) => FIX_RUN_FIXTURES.find((f) => f.id === id);
@@ -32,14 +33,14 @@ describe("labels and identity", () => {
   });
 
   it("names the fix and its agent × environment, dropping unknown parts", () => {
-    expect(fixName(byId("fix-ready-archive"))).toBe("Improvement 10");
+    expect(fixName(byId("fix-ready-archive"))).toBe("Epoch 10");
     expect(identityLine(byId("fix-ready-github"))).toBe(
       "agent v8 · main @ 0487e25 × environment v1 · new env",
     );
     expect(identityLine(byId("fix-ready-archive"))).toBe(
       "agent v8 × environment v1 · new env",
     );
-    expect(fixName(byId("fix-unknown-identity"))).toBe("Improvement");
+    expect(fixName(byId("fix-unknown-identity"))).toBe("Epoch");
     expect(identityLine(byId("fix-unknown-identity"))).toBe(
       "agent v8 · new env",
     );
@@ -66,12 +67,12 @@ describe("headline", () => {
   it("says why every other ending ended and what to do next, never the engine's summary", () => {
     const stopped = byId("fix-stopped");
     expect(headline(stopped)).toBe(
-      `You stopped this fix after ${stopped.candidates.length} ${stopped.candidates.length === 1 ? "trial" : "trials"}. Nothing changed.`,
+      `You stopped this epoch after ${stopped.candidates.length} ${stopped.candidates.length === 1 ? "candidate" : "candidates"}. Nothing changed.`,
     );
     const old = { ...byId("fix-no-improvement"), candidates: [] };
     // A no-safe fix whose trials hold no checks says so, not the engine's summary.
     expect(headline(old)).toBe(
-      "No safe improvement: no trial passed every check. Nothing changed.",
+      "No safe improvement: no candidate passed every check. Nothing changed.",
     );
     const ending = (state, failure) =>
       headline({
@@ -84,10 +85,10 @@ describe("headline", () => {
       /^The chosen scenarios did not fail often enough/,
     );
     expect(ending("out_of_budget")).toMatch(
-      /Start a new fix with a larger budget\.$/,
+      /Run a new epoch with a larger budget\.$/,
     );
     expect(ending("failed", { code: "fix_deadline", message: "x" })).toMatch(
-      /ran out of its time limit .* Start a new fix with a longer time limit\.$/,
+      /ran out of its time limit .* Run a new epoch with a longer time limit\.$/,
     );
     expect(
       ending("failed", {
@@ -95,7 +96,7 @@ describe("headline", () => {
         message: "the engine exited 137",
       }),
     ).toBe(
-      "This fix stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
+      "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
     );
     for (const state of [
       "not_reproduced",
@@ -136,7 +137,7 @@ describe("headline", () => {
         ]),
       ),
     ).toBe(
-      "2 protected cases are flaky on the current version, so this fix wasn't held to them: “Escalate a large order”, “s9”.",
+      "2 protected cases are flaky on the current version, so this epoch wasn't held to them: “Escalate a large order”, “s9”.",
     );
     expect(
       flakyProtectedText(
@@ -151,14 +152,14 @@ describe("headline", () => {
         ]),
       ),
     ).toBe(
-      "1 protected case is flaky on the current version, so this fix wasn't held to it: “Escalate a large order”.",
+      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
     );
   });
 
   it("says in one sentence what stopped the trials of a no-safe fix", () => {
     // Both fixture trials were rejected at the target check.
     expect(headline(byId("fix-no-improvement"))).toBe(
-      "No safe improvement: neither trial improved the target scenarios.",
+      "No safe improvement: neither candidate improved the target scenarios.",
     );
     const atHeldBack = (attempt) => ({
       attempt,
@@ -181,7 +182,7 @@ describe("headline", () => {
     };
     const said = headline(real);
     expect(said).toBe(
-      "No safe improvement: both trials improved the target scenarios but not the held-back scenarios.",
+      "No safe improvement: both candidates improved the target scenarios but not the held-back scenarios.",
     );
     // No numbers, p-values, pipes or case keys in the headline itself.
     expect(said).not.toMatch(/\d|p =|\|/);
@@ -191,12 +192,14 @@ describe("headline", () => {
         {
           attempt: 1,
           label: "Held-back scenarios",
-          detail: "39% → 50% on scenarios the fix never saw, not a clear gain.",
+          detail:
+            "39% → 50% on scenarios the epoch never saw, not a clear gain.",
         },
         {
           attempt: 2,
           label: "Held-back scenarios",
-          detail: "39% → 50% on scenarios the fix never saw, not a clear gain.",
+          detail:
+            "39% → 50% on scenarios the epoch never saw, not a clear gain.",
         },
       ],
     });
@@ -205,7 +208,7 @@ describe("headline", () => {
       candidates: [atHeldBack(1), byId("fix-no-improvement").candidates[1]],
     };
     expect(headline(mixed)).toBe(
-      "No safe improvement: no trial passed every check (Trial 1 stopped at “Held-back scenarios”, Trial 2 at “Target scenarios”).",
+      "No safe improvement: no candidate passed every check (Candidate 1 stopped at “Held-back scenarios”, Candidate 2 at “Target scenarios”).",
     );
   });
 
@@ -219,7 +222,7 @@ describe("headline", () => {
       },
     };
     expect(headline(fix)).toBe(
-      "This fix stopped on something only you can change: The engine stopped: the model provider refused the key.",
+      "This epoch stopped on something only you can change: The engine stopped: the model provider refused the key.",
     );
   });
 });
@@ -347,7 +350,7 @@ describe("verdict", () => {
       [
         "Agent's cost",
         "Cost unknown",
-        "This agent's model calls weren't measured. Fix my agent measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
+        "This agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
       ],
     ]);
     // Traced, but this cost did not come through: why, and what makes it known.
@@ -369,6 +372,29 @@ describe("verdict", () => {
         { meters_agent_cost: true },
       )[0].parts[0].unknown,
     ).toBe("Reply time unknown");
+  });
+
+  it("calls a check after a failed must-pass unknown when it ran, not run only when the engine skipped it", () => {
+    const tiers = [
+      { name: "must-pass", status: "failed", detail: "1 down" },
+      { name: "repeats", status: "passed", detail: "held" },
+      {
+        name: "ceilings",
+        status: "skipped",
+        detail: "median agent cost per conversation unknown: x",
+      },
+      {
+        name: "model-lock",
+        status: "skipped",
+        detail: "not run: an earlier tier failed",
+      },
+    ];
+    const [, , ceilings, lock] = describeChecks(tiers);
+    expect([ceilings.notRun, ceilings.unknown]).toEqual([false, "Unknown"]);
+    expect([lock.notRun, lock.notRunBecause]).toEqual([
+      true,
+      "Must-pass scenarios",
+    ]);
   });
 
   it("puts the check that rejected a trial first and keeps the rest in order", () => {
@@ -408,7 +434,7 @@ describe("step rows", () => {
       "The current version varied by 17 pts between repeats.",
     ]);
     expect(rows[1].lines[0]).toBe(
-      "2 of up to 4 trials · best so far 67% on 6 target scenarios",
+      "2 of up to 4 candidates · best so far 67% on 6 target scenarios",
     );
     expect(rows[2].lines).toEqual([
       "2 held-back scenarios it never saw and 9 must-pass scenarios, including the 1 you protected",
@@ -560,5 +586,19 @@ describe("held to", () => {
     );
     expect(rows.some((r) => r.label === "Model")).toBe(false);
     expect(rows.find((r) => r.label === "Must-pass")).toBeDefined();
+  });
+});
+
+describe("measuredNotice", () => {
+  it("shows only when the platform says it measured the agent's calls", () => {
+    const fix = { request: { measured_automatically: true } };
+    expect(measuredNotice(fix)).toBe(
+      "Measured automatically: model, tokens and timing only. Prompts and replies are never recorded.",
+    );
+    expect(measuredNotice({ request: {} })).toBeNull();
+    expect(
+      measuredNotice({ request: { measured_automatically: false } }),
+    ).toBeNull();
+    expect(measuredNotice({})).toBeNull();
   });
 });

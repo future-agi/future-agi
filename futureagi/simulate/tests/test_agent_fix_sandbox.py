@@ -670,7 +670,7 @@ def test_the_engine_s_last_error_reaches_the_failure_message_unchanged(
     fix_run.refresh_from_db()
     assert fix_run.failure == {
         "code": "fix_engine_died",
-        "message": "the improvement engine stopped 2 times before it finished; "
+        "message": "the engine stopped 2 times before it finished; "
         f"last error: {last_error}",
     }
 
@@ -684,5 +684,5 @@ def test_an_engine_that_stopped_without_an_error_keeps_the_plain_message(
 
     fix_run.refresh_from_db()
     assert fix_run.failure["message"] == (
-        "the improvement engine stopped 2 times before it finished"
+        "the engine stopped 2 times before it finished"
     )

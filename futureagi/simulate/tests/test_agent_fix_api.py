@@ -1643,11 +1643,13 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
+            "Proven by Epoch: held-back cases 0% → 61%, target cases 0% → 63%; "
             "passed every tier" in sent["json"]["body"]
         )
         title = sent["json"]["title"]
-        assert len(title) <= 120 and title.endswith("r asked for…")
+        # Named for Epoch, cut on a word at 120 characters.
+        assert title.startswith("Epoch: Keep the date the caller asked for ")
+        assert len(title) <= 120 and title.endswith(" Keep…")
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
@@ -1878,7 +1880,7 @@ class TestUserApi:
         )
         pull = sent["json"]
         assert pull["draft"] is True
-        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
         assert f"- `{self.REGRESSED}`" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]

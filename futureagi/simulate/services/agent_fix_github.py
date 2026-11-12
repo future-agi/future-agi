@@ -42,7 +42,7 @@ _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
 _TITLE_CHARS = 120
 _LIMITED_NOTE = (
-    "**Limited validation.** Too few failing cases were held back to verify this fix."
+    "**Limited validation.** Too few failing cases were held back to verify this change."
     " Review it closely before you merge."
 )
 
@@ -155,7 +155,7 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
     lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
     if review.warnings:
         lines.append(
-            "**Platform evals this change does worse on.** They do not decide the fix;"
+            "**Platform evals this change does worse on.** They do not pick the winner;"
             " review them before you merge."
         )
         lines += [
@@ -174,7 +174,7 @@ def _override_note(candidate: AgentFixCandidate) -> str:
     checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
     reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
     return (
-        "**Known regression.** Fix my agent did not accept this change: these must-pass"
+        "**Known regression.** Epoch did not accept this change: these must-pass"
         f" checks regressed.\n\n{checks}\n\nIt ships anyway, for this reason:\n\n{reason}"
     )
 
@@ -197,9 +197,9 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
             _override_note(candidate) if overridden else "",
             _LIMITED_NOTE if limited else "",
             summary,
-            f"{proof} by Fix my agent: {reason}" if reason else "",
+            f"{proof} by Epoch: {reason}" if reason else "",
             _evals_note(candidate),
-            "Opened by Future AGI Fix my agent.",
+            "Opened by Future AGI Epoch.",
         )
         if part
     )
@@ -211,7 +211,7 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         )
         if applies
     )
-    name = f"Fix my agent ({marks})" if marks else "Fix my agent"
+    name = f"Epoch ({marks})" if marks else "Epoch"
     return shorten(f"{name}: {first}", width=_TITLE_CHARS, placeholder="…"), body
 
 

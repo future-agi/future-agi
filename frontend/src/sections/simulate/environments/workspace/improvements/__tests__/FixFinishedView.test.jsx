@@ -201,7 +201,7 @@ describe("FixVerdict", () => {
     expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
     expect(
       within(cost).getByText(
-        "This agent's model calls weren't measured. Fix my agent measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
+        "This agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
       ),
     ).toBeInTheDocument();
   });
@@ -326,7 +326,7 @@ describe("FixFinishedView, no safe improvement", () => {
 
     expect(
       screen.getByText(
-        "No safe improvement: neither trial improved the target scenarios.",
+        "No safe improvement: neither candidate improved the target scenarios.",
       ),
     ).toBeInTheDocument();
     // The engine's summary is not the headline any more.
@@ -338,12 +338,14 @@ describe("FixFinishedView, no safe improvement", () => {
 
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Show each trial's result" }));
+      .click(
+        screen.getByRole("button", { name: "Show each candidate's result" }),
+      );
     const numbers = within(screen.getByTestId("no-safe-numbers"));
     // Each trial's result in plain words from its own numbers; the engine's text is never shown.
     expect(
       numbers.getByText(
-        "Trial 1 · Target scenarios: 0% → 0%, not a clear gain.",
+        "Candidate 1 · Target scenarios: 0% → 0%, not a clear gain.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -370,11 +372,11 @@ describe("FixFinishedView, what to try next", () => {
     const next = within(screen.getByTestId("what-to-try-next"));
     expect(
       next.getByText(
-        "Keep the current version. This fix changed nothing: your agent changes only when you ship a fix.",
+        "Keep the current version. This epoch changed nothing: your agent changes only when you ship a candidate.",
       ),
     ).toBeInTheDocument();
 
-    await user.click(next.getByRole("button", { name: "See the trials" }));
+    await user.click(next.getByRole("button", { name: "See the candidates" }));
     expect(onTab).toHaveBeenCalledWith("trials");
     await user.click(next.getByRole("button", { name: "How it was decided" }));
     expect(await screen.findByTestId("fix-decision")).toBeInTheDocument();
@@ -386,7 +388,7 @@ describe("FixFinishedView, what to try next", () => {
 
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Start a new fix" }));
+      .click(screen.getByRole("button", { name: "Run a new epoch" }));
     const dialog = screen.getByTestId("launch-fix-dialog");
     expect(dialog).toHaveAttribute("data-env", "env-1");
     expect(dialog).toHaveAttribute("data-source", "te-source-run-1");
@@ -396,7 +398,7 @@ describe("FixFinishedView, what to try next", () => {
     view(fixOf("fix-no-improvement", { source_run_id: null }));
     expect(screen.getByTestId("what-to-try-next")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Start a new fix" }),
+      screen.queryByRole("button", { name: "Run a new epoch" }),
     ).toBeNull();
   });
 
@@ -438,7 +440,7 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
       />,
     );
     expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
-      "1 protected case is flaky on the current version, so this fix wasn't held to it: “Escalate a large order”.",
+      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
     );
     unmount();
 
@@ -471,10 +473,10 @@ describe("FixDecisionDrawer without a kept trial", () => {
       />,
     );
 
-    expect(screen.getByText("Rejected trials")).toBeInTheDocument();
+    expect(screen.getByText("Rejected candidates")).toBeInTheDocument();
     for (const attempt of [1, 2]) {
       const trial = within(screen.getByTestId(`rejected-${attempt}`));
-      expect(trial.getByText(`Trial ${attempt}`)).toBeInTheDocument();
+      expect(trial.getByText(`Candidate ${attempt}`)).toBeInTheDocument();
       expect(checkNames(trial)).toEqual([
         "Target scenarios",
         "Change is valid",
@@ -515,7 +517,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
       />,
     );
 
-    expect(screen.queryByText("Rejected trials")).toBeNull();
+    expect(screen.queryByText("Rejected candidates")).toBeNull();
     expect(screen.queryByTestId("rejected-1")).toBeNull();
     expect(screen.getByText("Checks · 5 of 5 passed")).toBeInTheDocument();
   });
@@ -554,7 +556,7 @@ describe("FixFinishedView", () => {
     );
     expect(
       screen.getByText(
-        "This fix stopped on something only you can change: The engine stopped: the model provider refused the key.",
+        "This epoch stopped on something only you can change: The engine stopped: the model provider refused the key.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
@@ -591,7 +593,7 @@ describe("Ship, while the evals grade the winner", () => {
     renderPage("fix-ready-github");
     expect(await shipButton()).toBeDisabled();
     expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "Platform evals are still scoring this trial. You can ship it once they finish.",
+      "Platform evals are still scoring this candidate. You can ship it once they finish.",
     );
   });
 
@@ -603,7 +605,7 @@ describe("Ship, while the evals grade the winner", () => {
     renderPage("fix-ready-archive");
     expect(await shipButton()).toBeEnabled();
     expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "Platform evals did not finish on this trial, so their results are missing. You can still ship it.",
+      "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.",
     );
   });
 
@@ -652,7 +654,7 @@ describe("Ship", () => {
     renderPage("fix-ready-archive");
     ({ dialog, confirm } = await confirmShip(user, "Make default"));
     expect(
-      within(dialog).getByText("Make Trial 3's version the default?"),
+      within(dialog).getByText("Make Candidate 3's version the default?"),
     ).toBeInTheDocument();
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);

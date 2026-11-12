@@ -126,7 +126,7 @@ def launch_fix_run(
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
-            "fix_source_not_a_run", "Fix my agent starts from a run", status_code=422
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
     # Usage is checked below, to answer with the usage refusal itself.
     if blocked := launch_blocker(source_run, usage=False):
@@ -135,7 +135,7 @@ def launch_fix_run(
     if refused := sorted(set(surfaces) - kind.surfaces):
         raise HostedHarnessError(
             "fix_surface_not_allowed",
-            f"a fix cannot change this agent's {', '.join(refused)}",
+            f"an epoch cannot change this agent's {', '.join(refused)}",
             status_code=422,
         )
     base_version_id = kind.base_version_id(source_run)
@@ -177,7 +177,7 @@ def launch_fix_run(
     if failing_cases < fewest_failing_cases():
         raise HostedHarnessError(
             "fix_targets_too_few",
-            f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
+            f"an epoch needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
             f"to be proven; these have {failing_cases}, too few to reach it even with "
             f"{VARIATIONS_PER_CASE} variations of each",
             status_code=422,
@@ -206,7 +206,7 @@ def launch_fix_run(
     if left_out := [model for model in seen if model_key(model) not in kept]:
         raise HostedHarnessError(
             "fix_models_exclude_source",
-            "allow every model this run's agent called, or the fix would refuse every"
+            "allow every model this run's agent called, or the epoch would refuse every"
             f" candidate: {', '.join(left_out)}",
             status_code=400,
         )
@@ -280,14 +280,14 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if not is_retryable(failed):
         raise HostedHarnessError(
             "fix_not_retryable",
-            "Only a failed fix can be retried, and only once.",
+            "Only a failed epoch can be retried, and only once.",
             status_code=409,
         )
     source_run = failed.source_run
     if source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     if blocked := launch_blocker(source_run, usage=False):
@@ -341,7 +341,7 @@ def _create_fix_run(
             raise
         raise HostedHarnessError(
             "fix_run_active",
-            "this environment already has a fix in progress",
+            "this environment already has an epoch in progress",
             status_code=409,
         ) from exc
     logger.info(
@@ -366,7 +366,7 @@ def _start_workflow(fix_run_id: Any) -> None:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_dispatch_failed",
-                "message": "the fix could not be scheduled; try again",
+                "message": "the epoch could not be scheduled; try again",
             },
         )
 
@@ -523,21 +523,21 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
         if eval_review(candidate.fix_run).grading == EvalGrading.PENDING:
             raise HostedHarnessError(
                 "fix_grading_pending",
-                "Platform evals are still scoring this trial. You can ship it once they"
-                " finish.",
+                "Platform evals are still scoring this candidate. You can ship it once"
+                " they finish.",
                 status_code=409,
             )
         if override_reason:
             raise HostedHarnessError(
                 "fix_override_not_needed",
-                "the fix's winner ships without a reason",
+                "the epoch's winner ships without a reason",
                 status_code=422,
             )
         return
     if not overridable_regressions(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only the fix's winner can ship; a candidate only the must-pass check"
+            "only the epoch's winner can ship; a candidate only the must-pass check"
             " refused can ship with a reason, unless it regressed a protected case",
             status_code=422,
         )
@@ -576,8 +576,8 @@ def base_moved(base: str, current: str | None) -> HostedHarnessError:
     )
     return HostedHarnessError(
         "fix_base_moved",
-        f"The agent changed since this fix started: the fix was made on {base} and"
-        f" {now}. Run the environment on the current version and fix it again.",
+        f"The agent changed since this epoch started: the epoch was made on {base} and"
+        f" {now}. Run the environment on the current version, then run a new epoch.",
         status_code=409,
     )
 

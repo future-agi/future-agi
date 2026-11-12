@@ -78,14 +78,14 @@ export function formatMinutes(total) {
 // once they finish. The PR body says the same when they could not.
 export function gradingNote(fix) {
   if (fix.eval_grading === "pending")
-    return "Platform evals are still scoring this trial. You can ship it once they finish.";
+    return "Platform evals are still scoring this candidate. You can ship it once they finish.";
   if (fix.eval_grading === "incomplete")
-    return "Platform evals did not finish on this trial, so their results are missing. You can still ship it.";
+    return "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.";
   return null;
 }
 
 export const fixName = (fix) =>
-  fix.number == null ? "Improvement" : `Improvement ${fix.number}`;
+  fix.number == null ? "Epoch" : `Epoch ${fix.number}`;
 
 export function identityLine(fix) {
   const agent = [`agent v${fix.agent.version_number}`, fix.agent.ref]
@@ -110,7 +110,7 @@ const brokeText = (n) =>
 
 const triedText = (fix) => {
   const n = (fix.candidates || []).length;
-  return `${n} ${n === 1 ? "trial" : "trials"}`;
+  return `${n} ${n === 1 ? "candidate" : "candidates"}`;
 };
 
 // Failures that are ours, not the agent's: the user can only retry.
@@ -133,22 +133,22 @@ const sentence = (text) =>
 export function endingText(fix) {
   const code = fix.failure?.code;
   if (fix.state === "not_reproduced")
-    return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then start a new fix.";
+    return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then run a new epoch.";
   if (fix.state === "out_of_budget")
-    return `Stopped at the budget after ${triedText(fix)}. Nothing changed. Start a new fix with a larger budget.`;
+    return `Stopped at the budget after ${triedText(fix)}. Nothing changed. Run a new epoch with a larger budget.`;
   if (fix.state === "stopped")
-    return `You stopped this fix after ${triedText(fix)}. Nothing changed.`;
+    return `You stopped this epoch after ${triedText(fix)}. Nothing changed.`;
   if (fix.state === "too_few_cases")
-    return "The run had too few failing scenarios to fix. Pick more failing scenarios, or let the fix write variations of them.";
+    return "The run had too few failing scenarios to fix. Pick more failing scenarios, or let the epoch write variations of them.";
   if (fix.state !== "failed") return null;
   if (code === "fix_deadline")
-    return `This fix ran out of its time limit after ${triedText(fix)}. Nothing changed. Start a new fix with a longer time limit.`;
+    return `This epoch ran out of its time limit after ${triedText(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
   if (code === "fix_queue_timeout")
-    return "Too many fixes were running, so this one could not start. Nothing changed. Retry it in a few minutes.";
+    return "Too many epochs were running, so this one could not start. Nothing changed. Retry it in a few minutes.";
   if (!code || OUR_FAILURES.has(code))
-    return "This fix stopped because of a problem on our side, not your agent. Nothing changed. Retry it.";
+    return "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.";
   // The engine writes a user-owned failure for the user: what to change, then start again.
-  return `This fix stopped on something only you can change: ${sentence(fix.failure.message)}`;
+  return `This epoch stopped on something only you can change: ${sentence(fix.failure.message)}`;
 }
 
 export function headline(fix) {
@@ -156,7 +156,7 @@ export function headline(fix) {
   if (fix.state === "no_improvement") {
     return (
       noSafeHeadline(fix) ||
-      "No safe improvement: no trial passed every check. Nothing changed."
+      "No safe improvement: no candidate passed every check. Nothing changed."
     );
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
@@ -243,7 +243,7 @@ const UNKNOWN_PARTS = {
   "agent cost": "Cost unknown",
 };
 export const UNTRACED_COST =
-  "this agent's model calls weren't measured. Fix my agent measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.";
+  "this agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.";
 
 // "3 of 12 finalist conversations …" in the engine's reason: the count the line keeps.
 const conversationsOf = (text, cause) => {
@@ -305,7 +305,8 @@ const rateLine = (rate, gain, tail = "") =>
 // (its statistics) is never shown.
 function tierLine(tier, verdict, plan, request) {
   const passed = tier.status === "passed";
-  if (tier.status === "pending") return "Runs only if this trial is picked.";
+  if (tier.status === "pending")
+    return "Runs only if this candidate is picked.";
   switch (tier.name) {
     case "static":
       return passed
@@ -317,7 +318,7 @@ function tierLine(tier, verdict, plan, request) {
       return rateLine(
         verdict?.held_back_pass_rate,
         passed,
-        " on scenarios the fix never saw",
+        " on scenarios the epoch never saw",
       );
     case "must-pass": {
       const broke = (verdict?.must_pass_regressions || []).length;
@@ -370,7 +371,15 @@ export function describeChecks(
 ) {
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
-    const notRun = t.status === "skipped" && failed >= 0 && i > failed;
+    // The engine marks a tier it skipped after a failure; one after a failed must-pass still ran
+    // (a final check runs every tier), so a skip there is unknown, not "not run". A verdict
+    // without the marker falls back to the order.
+    const marked = /^not run/.test(t.detail || "");
+    const notRun =
+      t.status === "skipped" &&
+      failed >= 0 &&
+      i > failed &&
+      (marked || !t.detail);
     return {
       ...t,
       label: checkLabel(t.name, request),
@@ -431,14 +440,14 @@ const whyClause = (name, count, request) => {
   if (why.did) {
     const who =
       count === 1
-        ? "the only trial"
+        ? "the only candidate"
         : count === 2
-          ? "both trials"
-          : `all ${count} trials`;
+          ? "both candidates"
+          : `all ${count} candidates`;
     return `${who} ${why.did}`;
   }
-  if (count === 1) return `the only trial ${why.one}`;
-  return `${count === 2 ? "neither trial" : "no trial"} ${why.missed}`;
+  if (count === 1) return `the only candidate ${why.one}`;
+  return `${count === 2 ? "neither candidate" : "no candidate"} ${why.missed}`;
 };
 
 const rejectedTrials = (fix) =>
@@ -463,10 +472,10 @@ export function noSafeHeadline(fix) {
   const each = trials
     .map(
       (t, i) =>
-        `Trial ${t.attempt}${i === 0 ? " stopped" : ""} at “${checkLabel(t.check.name, fix.request)}”`,
+        `Candidate ${t.attempt}${i === 0 ? " stopped" : ""} at “${checkLabel(t.check.name, fix.request)}”`,
     )
     .join(", ");
-  return `No safe improvement: no trial passed every check (${each}).`;
+  return `No safe improvement: no candidate passed every check (${each}).`;
 }
 
 // The protected cases the fix could not be held to, in words: each scenario once, by its
@@ -479,8 +488,8 @@ export function flakyProtectedText(fix) {
   if (!names.length) return null;
   const quoted = names.map((n) => `“${n}”`).join(", ");
   return names.length === 1
-    ? `1 protected case is flaky on the current version, so this fix wasn't held to it: ${quoted}.`
-    : `${names.length} protected cases are flaky on the current version, so this fix wasn't held to them: ${quoted}.`;
+    ? `1 protected case is flaky on the current version, so this epoch wasn't held to it: ${quoted}.`
+    : `${names.length} protected cases are flaky on the current version, so this epoch wasn't held to them: ${quoted}.`;
 }
 
 // The numbers behind the no-safe headline: each trial's rejecting check in plain words,
@@ -520,7 +529,7 @@ const bestTargetPct = (rated) =>
   Math.max(...rated.map((c) => pct(c.verdict.target_pass_rate[1])));
 
 function searchCount(plan, candidates) {
-  const tried = `${candidates.length} of up to ${plan.max_candidates} trials`;
+  const tried = `${candidates.length} of up to ${plan.max_candidates} candidates`;
   const rated = candidates.filter(hasTargetRate);
   if (!rated.length) return tried;
   return `${tried} · best so far ${bestTargetPct(rated)}% on ${plan.target} target scenarios`;
@@ -580,7 +589,7 @@ function stepLines(id, fix) {
     ];
   }
   return [
-    "The best trial comes back for review. Nothing changes until you ship it.",
+    "The best candidate comes back for review. Nothing changes until you ship it.",
   ];
 }
 
@@ -595,6 +604,14 @@ export function stepRows(fix) {
     return { ...s, state, lines: stepLines(s.id, fix) };
   });
 }
+
+// Shown only when the platform says it measured this agent's model calls on its
+// own; a read without the field shows nothing.
+export const MEASURED_NOTICE =
+  "Measured automatically: model, tokens and timing only. Prompts and replies are never recorded.";
+
+export const measuredNotice = (fix) =>
+  fix.request?.measured_automatically === true ? MEASURED_NOTICE : null;
 
 export function heldToRows(fix) {
   const { request } = fix;
