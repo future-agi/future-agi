@@ -37,13 +37,7 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 				return
 			}
 
-			rawKey := extractRequestAPIKey(r)
-			if rawKey == "" {
-				models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
-				return
-			}
-
-			if keyStore.Authenticate(rawKey) == nil {
+			if !anyKeyAuthenticates(keyStore, extractRequestAPIKeys(r)) {
 				models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
 				return
 			}
@@ -62,29 +56,43 @@ func isPublicOrSeparatelyAuthenticatedPath(path string) bool {
 	}
 }
 
-// extractRequestAPIKey reads the gateway key from every place a supported
-// client sends it. Handlers re-authenticate with their own extraction, so a
-// form accepted here never grants access on a route that does not take it.
-// The "Token " scheme and api_key query parameter are the Deepgram and
-// Cartesia SDK forms the speech relays accept.
-func extractRequestAPIKey(r *http.Request) string {
-	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimPrefix(authHeader, "Bearer ")
-	} else if key, ok := strings.CutPrefix(authHeader, "Token "); ok {
-		return strings.TrimSpace(key)
+// anyKeyAuthenticates reports whether at least one candidate key is valid.
+func anyKeyAuthenticates(keyStore *auth.KeyStore, candidates []string) bool {
+	for _, key := range candidates {
+		if keyStore.Authenticate(key) != nil {
+			return true
+		}
 	}
-	if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
-		return apiKey
+	return false
+}
+
+// extractRequestAPIKeys returns every gateway key the request carries, in
+// each form a supported client sends it: an Authorization Bearer or Token
+// scheme (matched case-insensitively, like the MCP handler), x-api-key,
+// Gemini's x-goog-api-key and ?key=, and the Cartesia SDK's ?api_key=.
+// KeyAuth lets a request through when any of them authenticates, because
+// handlers prefer different forms (GenAIHandler reads ?key= and
+// x-goog-api-key before Authorization). Each handler still authenticates
+// with its own extraction, so passing here never grants access by itself.
+func extractRequestAPIKeys(r *http.Request) []string {
+	var keys []string
+	add := func(key string) {
+		if key != "" {
+			keys = append(keys, key)
+		}
 	}
-	if apiKey := r.Header.Get("x-goog-api-key"); apiKey != "" {
-		return apiKey
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		for _, scheme := range []string{"Bearer ", "Token "} {
+			if len(authHeader) > len(scheme) && strings.EqualFold(authHeader[:len(scheme)], scheme) {
+				add(strings.TrimSpace(authHeader[len(scheme):]))
+				break
+			}
+		}
 	}
+	add(r.Header.Get("x-api-key"))
+	add(r.Header.Get("x-goog-api-key"))
 	query := r.URL.Query()
-	if apiKey := query.Get("key"); apiKey != "" {
-		return apiKey
-	}
-	if apiKey := query.Get("api_key"); apiKey != "" {
-		return apiKey
-	}
-	return ""
+	add(query.Get("key"))
+	add(query.Get("api_key"))
+	return keys
 }
