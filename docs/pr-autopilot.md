@@ -252,16 +252,30 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    images, have the same setting on and are under the same organisation
    ruleset. They have the same exposure and need the same change, plus a
    repository ruleset on their `main` with `require_last_push_approval: true`
-   (step 3).
+   (step 3). On 11 Nov neither had a workflow-token approval (default branch
+   and dev), nor did docs, and their jobs that open PRs use the App token.
+   futureagi-sdk holds a copy of the release-bot key, so step 5's custody
+   needs the setting off there too. Its `release-please.yml` approves the
+   generated version PR with the workflow token (`release_guard.py approve`),
+   so with the setting off that step fails while a version PR is open and the
+   PR is never queued for merge. Leaving the setting on there is not an
+   option. That workflow changes first, in a reviewed PR: it approves with a
+   dedicated approver App whose key sits in a main-only environment, or it
+   accepts a person's approval and drops the workflow-token approval step
+   (`docs/auto-deploy.md`, Administrator setup step 1, in
+   `future-agi/deployment`).
 3. **Require approval of the most recent push** on `main` and `dev`, in a
    repository ruleset rather than by editing organisation ruleset 2289447,
    which covers other repositories. Otherwise a writer can push onto someone
    else's PR and approve it. The autopilot never pushes, so the approver is
    never the last pusher. A branch workflow can still push onto another
-   person's PR as a bot (workflow token or App token), and the writer's own
-   approval then probably counts (inferred, not tested). Test that on a
-   scratch repository; until the test shows that it does not count, this step
-   is not met and step 6 waits.
+   person's PR as a bot, and the writer's own approval then probably counts
+   (inferred, not tested). Test two workflow-token pushes on a scratch
+   repository: a direct push, and a workflow that merges another branch into
+   the PR branch. Until the test shows that the writer's approval does not
+   count after either, this step is not met and step 6 waits. A push with an
+   App token is expected to let the writer's approval count, so for App keys
+   the key custody in step 5 is the control.
 4. **Create the environments, with no key yet.** GitHub creates a missing
    environment with no rules the first time a job names it, so create each one
    with its branch rule first. Neither may have required reviewers or a wait
@@ -295,7 +309,16 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    covers only `future-agi/deployment`. This repository still needs the move,
    because the shared App can approve here. Do it before any approver key is
    added. The same custody is a precondition of that repository's deploy
-   identity. Once
+   identity, and it is not limited to this key. No credential that a branch
+   workflow can read may have Contents, Pull requests, Administration or
+   Actions write on `future-agi/deployment`, or on a branch or tag that a key
+   environment admits, such as `main` here once it holds the key. That covers
+   personal access tokens (classic and fine-grained), OAuth tokens copied from
+   a tool, App keys and deploy keys. The deployment documents name eight
+   unclassified secrets and three checks (fine-grained Active tokens, the
+   organisation's classic-token restriction, and each App installation's
+   repositories), and a one-time baseline that dismisses bot approvals on
+   open PRs here before the deployment apply. Once
    every such job names an environment, delete the organisation secrets,
    generate a new private key for the release-bot App and delete the old one,
    because any branch workflow could read the old key. Step 6 waits for this.
