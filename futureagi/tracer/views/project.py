@@ -5,10 +5,11 @@ import structlog
 from django.conf import settings
 from django.db import models
 from django.db.models import Count
+from django.http import Http404
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -247,6 +248,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
     def _soft_delete_projects(self, projects, project_type):
         soft_delete_projects(projects, project_type)
+
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # Django's default detail names the model; keep the product copy.
+            raise NotFound(get_error_message("PROJECT_NOT_FOUND")) from None
 
     def get_queryset(self):
         # Request scope is authoritative here.  ``Project.objects`` also applies

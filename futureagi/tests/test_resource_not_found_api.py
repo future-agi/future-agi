@@ -90,6 +90,23 @@ def test_invisible_resource_returns_quiet_standard_404(
     assert "Synthetic" not in response.content.decode()
     assert not [entry for entry in logs if entry["log_level"] in {"error", "critical"}]
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    if endpoint in {"retrieve", "destroy", "tags"}:
+        # The product's copy, not Django's "No Project matches the given query."
+        assert body["message"] == "Project Not Found"
+        assert body["code"] == "not_found"
+
+
+@pytest.mark.parametrize("method", ["patch", "put"])
+def test_missing_project_update_uses_product_not_found_copy(auth_client, method):
+    response = getattr(auth_client, method)(
+        f"/tracer/project/{uuid.uuid4()}/", {"tags": ["qa"]}, format="json"
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["type"] == "not_found"
+    assert body["code"] == "not_found"
+    assert body["detail"] == body["message"] == body["result"] == "Project Not Found"
 
 
 @pytest.mark.parametrize("endpoint", ["retrieve", "destroy", "tags"])
