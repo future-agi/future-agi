@@ -400,9 +400,13 @@ as a second database for the backend and workers. Nothing reads from it until
   models whose code has been checked for that.
 
 The models checked and tested this way (TH-3119), with the feature keys, are
-the rollout candidate below. Try it in staging and watch the error tracker
-before production. List and detail pages can show data a few seconds old
-while the replica catches up.
+the rollout candidate below. Try it in staging before production. Watch the
+error tracker, and also check that a new eval task and an Instant eval run
+produce results: a read that misses a fresh write can finish work with
+nothing to do and raise no error. List and detail pages can show data a few
+seconds old while the replica catches up. Reads that must see a fresh write
+(the eval-task logs, the eval-task engine, the span evaluation scan) stay on
+the primary, so they shed no load.
 
 ```yaml
 postgres:
