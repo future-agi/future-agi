@@ -1,18 +1,29 @@
-"""Missing dataset reasons stay actionable after ORM collection filters blanks."""
+"""Missing dataset reasons stay actionable after ORM collection filters blanks.
 
+Only graded samples that should carry reasons count towards the ERROR: the
+placeholders of a running evaluation and evaluations without a reason column
+did not lose anything and stay INFO.
+"""
+
+import json
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import structlog
 from structlog.testing import capture_logs
 
 from model_hub.models.choices import (
+    CellStatus,
     DataTypeChoices,
     EvalExplanationSummaryStatus,
+    OwnerChoices,
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.utils import eval_reasons
+from model_hub.views.eval_runner import bulk_update_or_create_cells
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_ee]
 
@@ -28,6 +39,9 @@ def isolated_models(monkeypatch):
     monkeypatch.setattr(exp_agent, "LLM", MagicMock(return_value=llm))
     monkeypatch.setattr(exp_agent, "EmbeddingManager", MagicMock(return_value=manager))
     monkeypatch.setattr(exp_agent, "logger", structlog.get_logger(exp_agent.__name__))
+    monkeypatch.setattr(
+        eval_reasons, "logger", structlog.get_logger(eval_reasons.__name__)
+    )
     assert eval_reasons.ExplanationAgent is exp_agent.ExplanationAgent
     return llm, embed
 
@@ -184,3 +198,280 @@ def test_five_valid_reasons_reach_clustering(isolated_models, monkeypatch):
     assert summaries[0]["size"] == 5
     assert summaries[0]["member_ids"] == [str(i) for i in range(5)]
     assert not [r for r in records if r.get("log_level") in ("error", "critical")]
+
+
+# --------------------------------------------------------------------------
+# Graded samples, not stored cells, decide whether reasons went missing.
+# --------------------------------------------------------------------------
+
+GATE_ROWS = eval_reasons.MIN_ROWS_FOR_CRITICAL_ISSUES
+
+
+@pytest.fixture
+def stub_clustering(isolated_models, monkeypatch):
+    """Let five or more real reasons reach clustering without embeddings or LLM."""
+    from ee.agenthub.explanation_agent import exp_agent
+
+    agent_cls = exp_agent.ExplanationAgent
+    monkeypatch.setattr(agent_cls, "_embed", lambda self, texts: np.eye(len(texts)))
+    monkeypatch.setattr(
+        agent_cls,
+        "simple_hdbscan",
+        lambda self, X, *a, **kw: (
+            np.zeros(len(X), dtype=int),
+            None,
+            {"min_cluster_size": 5, "min_samples": 2},
+        ),
+    )
+    monkeypatch.setattr(
+        agent_cls,
+        "representative_indices",
+        lambda self, X, labels, *a, **kw: {0: [0, 1, 2]},
+    )
+    monkeypatch.setattr(
+        agent_cls,
+        "summarize_cluster",
+        lambda self, *a, **kw: {
+            "kind": "failure",
+            "theme": "Synthetic theme",
+            "status": "accepted",
+        },
+    )
+
+
+def _error_records(records):
+    return [
+        r
+        for r in records
+        if r.get("log_level") in ("error", "critical", "exception")
+        or r.get("event") == "explanation_summary_missing_reasons"
+    ]
+
+
+def _dataset_with_rows(user, workspace):
+    dataset = Dataset.objects.create(
+        name="Synthetic evaluated dataset",
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+    )
+    rows = [Row.objects.create(dataset=dataset, order=i) for i in range(GATE_ROWS)]
+    return dataset, rows
+
+
+def _dataset_eval(user, workspace, dataset, *, name, reason_column):
+    """Store an evaluation the way the dataset add-eval path does: an
+    EVALUATION column keyed by the metric id and, only when
+    config.reason_column is set, a `<name>-reason` EVALUATION_REASON column
+    whose source_id is `<eval column id>-sourceid-<metric id>`."""
+    template = EvalTemplate.no_workspace_objects.create(
+        name=f"synthetic-template-{name}",
+        organization=user.organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score"},
+        criteria="Synthetic criteria",
+    )
+    metric = UserEvalMetric.objects.create(
+        name=name,
+        organization=user.organization,
+        workspace=workspace,
+        dataset=dataset,
+        template=template,
+        config={"mapping": {}, "reason_column": reason_column},
+        user=user,
+    )
+    eval_col = Column.objects.create(
+        name=name,
+        data_type=DataTypeChoices.FLOAT.value,
+        source=SourceChoices.EVALUATION.value,
+        source_id=str(metric.id),
+        dataset=dataset,
+    )
+    reason_col = None
+    if reason_column:
+        reason_col = Column.objects.create(
+            name=f"{name}-reason",
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric.id}",
+            dataset=dataset,
+        )
+    return metric, eval_col, reason_col
+
+
+def _grade(dataset, row, eval_col, reason_col=None, reason="Synthetic reason"):
+    Cell.objects.update_or_create(
+        dataset=dataset,
+        row=row,
+        column=eval_col,
+        defaults={"value": "1.0", "status": CellStatus.PASS.value},
+    )
+    if reason_col is not None:
+        Cell.objects.create(
+            dataset=dataset,
+            row=row,
+            column=reason_col,
+            value=reason,
+            status=CellStatus.PASS.value,
+        )
+
+
+def _run_summary(dataset):
+    with capture_logs() as records:
+        eval_reasons.get_explanation_summary._original_func(str(dataset.pk))
+    dataset.refresh_from_db()
+    return records
+
+
+@pytest.mark.parametrize("finished_rows", [0, 3])
+@pytest.mark.parametrize("placeholder", ["", None], ids=["run-start", "re-run"])
+def test_running_evaluation_placeholders_are_not_missing_reasons(
+    placeholder, finished_rows, user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    _, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-running", reason_column=True
+    )
+    # Run start writes a RUNNING placeholder for every row with the runner's
+    # own helper ("" at run start, None when a re-run resets the column).
+    bulk_update_or_create_cells(
+        [row.id for row in rows],
+        eval_col.id,
+        dataset.id,
+        {
+            "value_infos": json.dumps({}),
+            "value": placeholder,
+            "status": CellStatus.RUNNING.value,
+        },
+    )
+    for row in rows[:finished_rows]:
+        _grade(dataset, row, eval_col, reason_col, f"Synthetic reason {row.order}")
+
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))[
+        "synthetic-running"
+    ]
+    assert len(collected["eval_values"]) == GATE_ROWS
+    assert len(collected["eval_reasons"]) == finished_rows
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert dataset.eval_reasons == {}
+    assert not _error_records(records), records
+    skips = [r for r in records if r.get("reason") == "insufficient_samples"]
+    assert len(skips) == 1, records
+    assert skips[0]["log_level"] == "info"
+    assert skips[0]["input_count"] == finished_rows
+    assert skips[0]["usable_count"] == finished_rows
+
+
+def test_evaluation_without_reason_column_is_skipped_at_info(
+    user, workspace, isolated_models, monkeypatch
+):
+    from ee.agenthub.explanation_agent import exp_agent
+
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-no-reasons", reason_column=False
+    )
+    assert reason_col is None
+    for row in rows:
+        _grade(dataset, row, eval_col)
+
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))[
+        "synthetic-no-reasons"
+    ]
+    assert "eval_reasons" not in collected
+    assert len(collected["eval_values"]) == GATE_ROWS
+
+    evaluate = MagicMock(side_effect=AssertionError("Nothing to summarise"))
+    monkeypatch.setattr(exp_agent.ExplanationAgent, "evaluate", evaluate)
+    records = _run_summary(dataset)
+
+    evaluate.assert_not_called()
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert dataset.eval_reasons == {}
+    assert not _error_records(records), records
+    skips = [r for r in records if r.get("reason") == "no_reason_column"]
+    assert len(skips) == 1, records
+    assert skips[0]["log_level"] == "info"
+    assert skips[0]["user_eval_metric_id"] == str(metric.id)
+
+
+def test_reason_column_pairs_with_evaluation_whose_name_contains_reason(
+    user, workspace, stub_clustering
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="answer-reasoning", reason_column=True
+    )
+    for row in rows:
+        _grade(dataset, row, eval_col, reason_col, f"Synthetic reason {row.order}")
+
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))
+    assert list(collected) == ["answer-reasoning"]
+    entry = collected["answer-reasoning"]
+    assert len(entry["eval_reasons"]) == GATE_ROWS
+    assert len(entry["eval_values"]) == GATE_ROWS
+    assert entry["user_eval_metric_id"] == str(metric.id)
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert list(dataset.eval_reasons) == ["answer-reasoning"]
+    clusters = dataset.eval_reasons["answer-reasoning"]
+    assert clusters and clusters[0]["eval_config_id"] == str(metric.id)
+    assert not _error_records(records), records
+
+
+def test_source_paired_graded_run_with_blank_reasons_remains_error(
+    user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    _, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-blank-reasons", reason_column=True
+    )
+    for row in rows:
+        _grade(dataset, row, eval_col, reason_col, reason="")
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    errors = [
+        r for r in records if r.get("event") == "explanation_summary_missing_reasons"
+    ]
+    assert len(errors) == 1, records
+    assert errors[0]["log_level"] == "error"
+    assert errors[0]["input_count"] == GATE_ROWS
+    assert errors[0]["usable_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("eval_values", "graded"),
+    [
+        ([""] * 12 + ["1.0"] * 3, 3),
+        ([None] * 15, 0),
+        ([0, False, 0.0, "0", "  "], 4),
+    ],
+    ids=["placeholders", "reset", "falsy-graded-values"],
+)
+def test_agent_counts_only_graded_values(eval_values, graded, isolated_models):
+    agent = eval_reasons.ExplanationAgent()
+    with capture_logs() as records:
+        assert agent.evaluate(explanation=[], eval_values=eval_values) == []
+    assert not _error_records(records), records
+    skips = [r for r in records if r.get("reason") == "insufficient_samples"]
+    assert len(skips) == 1, records
+    assert skips[0]["input_count"] == graded
+    isolated_models[1].assert_not_called()
+
+
+def test_agent_keeps_error_for_falsy_graded_values(isolated_models):
+    agent = eval_reasons.ExplanationAgent()
+    with capture_logs() as records:
+        assert agent.evaluate(explanation=[], eval_values=[0, False] * 3) == []
+    errors = _error_records(records)
+    assert len(errors) == 1, records
+    assert errors[0]["log_level"] == "error"
+    assert errors[0]["input_count"] == 6
