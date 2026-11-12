@@ -33,6 +33,9 @@ type Provider struct {
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
 	openAIAPI bool
+	// configType is the provider config's type ("deepinfra", "openrouter", …),
+	// "" when the config sets none.
+	configType string
 }
 
 // officialAPIHost is the host of the official OpenAI API. Other upstreams speak
@@ -100,6 +103,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		decisionHTTPClient: decisionClient,
 		semaphore:          make(chan struct{}, maxConcurrent),
 		openAIAPI:          isOfficialAPI(cfg.BaseURL),
+		configType:         cfg.Type,
 	}, nil
 }
 
@@ -132,6 +136,9 @@ func (p *Provider) endpoint(path string) string {
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// ConfiguredType is the type the provider's config records, or "".
+func (p *Provider) ConfiguredType() string { return p.configType }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any

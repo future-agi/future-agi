@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -55,6 +56,10 @@ type Plugin struct {
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 	priceTables      func(orgID, providerID string) string
+	// now is the costing clock: time.Now unless a test sets it.
+	now func() time.Time
+	// providerTypes gives the type a provider's config records, "" for none.
+	providerTypes func(orgID, providerID string) string
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -74,6 +79,28 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 // models under, as the provider that served the request states it.
 func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
 	p.priceTables = f
+}
+
+// clock is when the plugin costs a request; dated prices are chosen by it.
+func (p *Plugin) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+// SetProviderTypes gives the plugin the type each provider's config records,
+// so a reseller configured under another ID is still known by its type.
+func (p *Plugin) SetProviderTypes(f func(orgID, providerID string) string) {
+	p.providerTypes = f
+}
+
+// providerType is the type rc's provider's config records, or "".
+func (p *Plugin) providerType(rc *models.RequestContext) string {
+	if p.providerTypes == nil || rc.Provider == "" {
+		return ""
+	}
+	return p.providerTypes(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
 }
 
 func (p *Plugin) Name() string               { return "cost" }
@@ -137,6 +164,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	opts := modeldb.CostOptions{
 		Cached: rc.Metadata["cache_status"] == "hit",
+		At:     p.clock(),
 	}
 
 	var cost float64
@@ -220,9 +248,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
+		providerType := p.providerType(rc)
+		opts.TablePrice = keepsTablePrice(db, model, rc.Provider, table, providerType)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
-			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
+			fallback := priceKey(db, rc.Model, rc.Provider, table)
+			opts.TablePrice = keepsTablePrice(db, fallback, rc.Provider, table, providerType)
+			cost, ok = db.CalculateCost(fallback, usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -302,6 +334,40 @@ func (p *Plugin) tableName(rc *models.RequestContext) string {
 func listsExactly(db *modeldb.ModelDB, id string) bool {
 	m, ok := db.Get(id)
 	return ok && m.ID == id
+}
+
+// googleTables are the names Google's own providers key the table under.
+var googleTables = map[string]bool{"vertex_ai": true, "gemini": true}
+
+// keepsTablePrice says whether a request is priced at the table's own rate
+// rather than a dated one. A reseller with its own entry for the model keeps
+// its price; Google's own providers, and resellers with no entry of their
+// own (which already take Google's price), follow the date. A provider is
+// known by its ID, the table name it states, and the type its config records.
+func keepsTablePrice(db *modeldb.ModelDB, model, provider, table, configuredType string) bool {
+	if provider == "" {
+		return false
+	}
+	m, ok := db.Get(model)
+	if !ok {
+		return false
+	}
+	names := []string{provider, table, tableProviderNames[provider], configuredType}
+	for _, name := range names {
+		if googleTables[name] {
+			return false
+		}
+	}
+	base := m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if listsExactly(db, name+"/"+base) || listsExactly(db, name+"/google/"+base) {
+			return true
+		}
+	}
+	return false
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

@@ -1,7 +1,12 @@
+from datetime import datetime
 from typing import Any, Optional
 
 import tiktoken
 import structlog
+
+# Loaded with this module so a missing dated price file fails this import,
+# not a later one inside a caller that turns errors into a zero cost.
+import agentic_eval.core_evals.run_prompt.price_schedule  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
@@ -181,7 +186,11 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
 def calculate_total_cost(
-    model_name: str, token_usage: dict, fallback_pricing: Optional[dict] = None
+    model_name: str,
+    token_usage: dict,
+    fallback_pricing: Optional[dict] = None,
+    *,
+    at: Optional[datetime] = None,
 ) -> dict:
     """
     Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
@@ -198,6 +207,8 @@ def calculate_total_cost(
             For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
             For STT: {"audio_seconds": float}
         fallback_pricing: Optional custom fallback pricing dict
+        at: When the usage happened, timezone-aware; None means now. Picks the
+            dated price where a model has one.
 
     Returns:
         Dict with keys:
@@ -215,7 +226,7 @@ def calculate_total_cost(
         return calculate_decision_cost(model_name, token_usage)
 
     # Try to get pricing from available_models.py
-    pricing = get_model_pricing(model_name)
+    pricing = get_model_pricing(model_name, at=at)
     pricing_source = "available_models"
 
     # Fallback chain

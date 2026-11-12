@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -168,19 +169,33 @@ func TestChatCostUnderTheTablesProviderName(t *testing.T) {
 func TestChatCostUnderTheResellersPrice(t *testing.T) {
 	for _, tc := range []struct {
 		model, provider string
+		at              time.Time // zero: the plugin's own clock
 		want            float64
 	}{
-		{"google/gemini-3.6-flash", "perplexity", 1000*1.5e-6 + 100*7.5e-6},
-		{"perplexity/sonar", "perplexity", 1000*2.5e-7 + 100*2.5e-6},
+		{"google/gemini-3.6-flash", "perplexity", time.Time{}, 1000*1.5e-6 + 100*7.5e-6},
+		{"perplexity/sonar", "perplexity", time.Time{}, 1000*2.5e-7 + 100*2.5e-6},
 		// The legacy Sonar API names the model bare.
-		{"sonar", "perplexity", 1000*1e-6 + 100*1e-6},
-		// The vendor's own provider keeps the vendor's price.
-		{"google/gemini-3.6-flash", "gemini", 1000*7.5e-7 + 100*3.75e-6},
+		{"sonar", "perplexity", time.Time{}, 1000*1e-6 + 100*1e-6},
+		// The vendor's own provider keeps the vendor's price, which follows
+		// Google's dated price change.
+		{"google/gemini-3.6-flash", "gemini", t26, 1000*7.5e-7 + 100*3.75e-6},
+		{"google/gemini-3.6-flash", "gemini", t27, 1000*1.5e-6 + 100*7.5e-6},
 	} {
 		rc := endpointRC("chat", tc.model)
 		rc.Provider = tc.provider
 		rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
-		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) { priced(t, rc, tc.want) })
+		name := tc.provider + "/" + tc.model
+		if !tc.at.IsZero() {
+			name += " at " + tc.at.Format(time.RFC3339Nano)
+		}
+		t.Run(name, func(t *testing.T) {
+			db := endpointDB()
+			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+			if !tc.at.IsZero() {
+				p.now = clockAt(tc.at)
+			}
+			pricedBy(t, p, rc, tc.want)
+		})
 	}
 }
 
