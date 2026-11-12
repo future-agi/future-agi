@@ -82392,11 +82392,11 @@ export type tracerSavedSqlQueryListResponseDefault = {
 
 export type tracerSavedSqlQueryListResponseSuccess =
   tracerSavedSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryListResponseError =
   tracerSavedSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryListResponse =
@@ -82450,11 +82450,11 @@ export type tracerSavedSqlQueryCreateResponseDefault = {
 
 export type tracerSavedSqlQueryCreateResponseSuccess =
   tracerSavedSqlQueryCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryCreateResponseError =
   tracerSavedSqlQueryCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryCreateResponse =
@@ -82492,11 +82492,11 @@ export type tracerSavedSqlQueryReadResponseDefault = {
 
 export type tracerSavedSqlQueryReadResponseSuccess =
   tracerSavedSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryReadResponseError =
   tracerSavedSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryReadResponse =
@@ -82552,11 +82552,11 @@ export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
 
 export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
   tracerSavedSqlQueryPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryPartialUpdateResponseError =
   tracerSavedSqlQueryPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryPartialUpdateResponse =
@@ -82595,11 +82595,11 @@ export type tracerSavedSqlQueryDeleteResponseDefault = {
 
 export type tracerSavedSqlQueryDeleteResponseSuccess =
   tracerSavedSqlQueryDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryDeleteResponseError =
   tracerSavedSqlQueryDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryDeleteResponse =
@@ -82655,11 +82655,11 @@ export type tracerSavedSqlQueryAddWidgetResponseDefault = {
 
 export type tracerSavedSqlQueryAddWidgetResponseSuccess =
   tracerSavedSqlQueryAddWidgetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryAddWidgetResponseError =
   tracerSavedSqlQueryAddWidgetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryAddWidgetResponse =
@@ -83655,11 +83655,11 @@ export type tracerSqlQueryListResponseDefault = {
 
 export type tracerSqlQueryListResponseSuccess =
   tracerSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryListResponseError =
   tracerSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryListResponse =
@@ -83714,11 +83714,11 @@ export type tracerSqlQueryCatalogResponseDefault = {
 
 export type tracerSqlQueryCatalogResponseSuccess =
   tracerSqlQueryCatalogResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCatalogResponseError =
   tracerSqlQueryCatalogResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCatalogResponse =
@@ -83775,11 +83775,11 @@ export type tracerSqlQueryEstimateResponseDefault = {
 
 export type tracerSqlQueryEstimateResponseSuccess =
   tracerSqlQueryEstimateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryEstimateResponseError =
   tracerSqlQueryEstimateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryEstimateResponse =
@@ -83820,11 +83820,11 @@ export type tracerSqlQueryRunSavedResponseDefault = {
 
 export type tracerSqlQueryRunSavedResponseSuccess =
   tracerSqlQueryRunSavedResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryRunSavedResponseError =
   tracerSqlQueryRunSavedResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunSavedResponse =
@@ -83864,11 +83864,11 @@ export type tracerSqlQueryRunResponseDefault = {
 };
 
 export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerSqlQueryRunResponseError =
   tracerSqlQueryRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunResponse =
@@ -83906,11 +83906,11 @@ export type tracerSqlQueryReadResponseDefault = {
 
 export type tracerSqlQueryReadResponseSuccess =
   tracerSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryReadResponseError =
   tracerSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryReadResponse =
@@ -83969,11 +83969,11 @@ export type tracerSqlQueryCancelResponseDefault = {
 
 export type tracerSqlQueryCancelResponseSuccess =
   tracerSqlQueryCancelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCancelResponseError =
   tracerSqlQueryCancelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCancelResponse =
@@ -84030,7 +84030,7 @@ export type tracerSqlQueryDownloadResponseDefault = {
 
 export type tracerSqlQueryDownloadResponseSuccess =
   tracerSqlQueryDownloadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse409
@@ -84038,7 +84038,7 @@ export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse503
   | tracerSqlQueryDownloadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSqlQueryDownloadResponse =
