@@ -215,6 +215,8 @@ class TestEngineAuthentication:
                 "models",
                 "spans_seen",
                 "agent_cost_usd",
+                "unpriced_models",
+                "instrumentation_partial",
                 "reply_latency_ms",
             }
         ]
@@ -309,6 +311,7 @@ class TestEngineCalls:
             "parallelism": None,
             # The unsealed check run's one conversation, held at the worst case.
             "committed_usd": 0.05,
+            "usage_unreadable": False,
         }
 
         ended = _engine(
