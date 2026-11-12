@@ -11,6 +11,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   );
   return {
     ...actual,
+    useSaveDrafts: () => ({ mutate: vi.fn(), isPending: false, error: null }),
     useEnvironmentVersions: vi.fn((envId, { enabled } = {}) => ({
       data:
         enabled && state.versions
@@ -42,6 +43,19 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 });
 
 // Ready to run has its own tests (RunPlanReadiness.test.jsx).
+vi.mock("src/api/simulate-environments/readiness", () => ({
+  useReadiness: () => ({ data: undefined }),
+}));
+vi.mock("src/api/simulate-environments/readinessFix", () => ({
+  useFixRun: () => ({ data: null }),
+  FIX_ACTIVE_STATES: new Set([
+    "queued",
+    "fixing",
+    "waiting_on_you",
+    "saving",
+    "checking",
+  ]),
+}));
 vi.mock("../readiness/ReadyToRunSection", () => ({ default: () => null }));
 
 const { default: RunDialog } = await import("../RunDialog");

@@ -139,10 +139,89 @@ describe("readinessView", () => {
       {
         area: "tool_binding",
         status: "blocked",
+        rowId: "tool_routing",
         reason: "issue_refund still reaches production",
         affected: 4,
         fix,
+        group: "needs_you",
+        progress: null,
+        waitingOnArea: null,
       },
     ]);
+  });
+
+  it("groups lines by who fixes them, from the server or by fix type", () => {
+    const areas = [
+      { id: "start_and_message", status: "blocked", rows: ["start"] },
+      { id: "tool_binding", status: "blocked", rows: ["tool_routing"] },
+      { id: "reset", status: "stale", rows: ["reset"] },
+    ];
+    const rows = [
+      row("start", "blocked", { fix: { type: "preflight" } }),
+      row("tool_routing", "blocked", { fix: { type: "tool_routing" } }),
+      row("reset", "stale", {
+        fix: { type: "recheck", recheck: { scope: "pair" } },
+      }),
+    ];
+    const areasOf = (view) =>
+      Object.fromEntries(
+        Object.entries(view.groups).map(([group, lines]) => [
+          group,
+          lines.map((line) => line.area),
+        ]),
+      );
+
+    const grouped = readinessView({
+      ...report({ areas }),
+      rows: rows.map((one, at) => ({
+        ...one,
+        fix_group: ["needs_you", "builder", "recheck"][at],
+      })),
+      fix_groups: { builder: { message: "Fix it", rows: ["tool_routing"] } },
+    });
+    expect(grouped.grouped).toBe(true);
+    expect(grouped.fixMessage).toBe("Fix it");
+    expect(areasOf(grouped)).toEqual({
+      needs_you: ["start_and_message"],
+      builder: ["tool_binding"],
+      recheck: ["reset"],
+    });
+
+    const flat = readinessView(report({ areas, rows }));
+    expect(flat.grouped).toBe(false);
+    expect(areasOf(flat)).toEqual({
+      needs_you: ["start_and_message", "tool_binding"],
+      builder: [],
+      recheck: ["reset"],
+    });
+  });
+
+  it("keeps a fixed area as a Fixed builder line, and names what a line waits on", () => {
+    const fixed = { state: "fixed", reason: null, waiting_on: null };
+    const view = readinessView({
+      ...report({
+        areas: [
+          { id: "start_and_message", status: "blocked", rows: ["start"] },
+          { id: "tool_binding", status: "supported", rows: ["tool_routing"] },
+          { id: "reset", status: "blocked", rows: ["reset"] },
+        ],
+        rows: [
+          row("start", "blocked", { area: "start_and_message" }),
+          row("tool_routing", "supported", {
+            fix_group: "builder",
+            fix_progress: fixed,
+          }),
+          row("reset", "blocked", {
+            fix_group: "builder",
+            fix_progress: { state: "waiting_on_other", waiting_on: "start" },
+          }),
+        ],
+      }),
+      fix_groups: {},
+    });
+    const [waiting, done] = view.groups.builder;
+    expect(done).toMatchObject({ area: "tool_binding", progress: fixed });
+    expect(view.ready).not.toContain("tool_binding");
+    expect(waiting.waitingOnArea).toBe("start_and_message");
   });
 });

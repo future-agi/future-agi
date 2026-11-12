@@ -47,8 +47,7 @@ export const READY_TO_RUN_COPY = {
       `The check couldn't start${reason ? `: ${reason}` : ""}.`,
   },
   affected: (n) => `${n} affected`,
-  fix: "Fix",
-  hideFix: "Hide",
+  details: (label) => `Details for ${label}`,
   after: (would) => `After the fix: ${would}`,
   recheckPair: "Re-check this pair",
   retryAgent: "Retry the agent's start",
@@ -59,6 +58,48 @@ export const READY_TO_RUN_COPY = {
   notGradable: (n) =>
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
+  groups: {
+    needs_you: "Needs you",
+    builder: "Builder chat can fix",
+    recheck: "Re-check to confirm",
+  },
+  groupHints: {
+    needs_you: "Only you can change these",
+    builder: "The builder chat can make these changes",
+    recheck: "Checking again settles these",
+  },
+  selectAll: "Select every line the builder chat can fix",
+  selectLine: (label) => `Fix ${label.toLowerCase()} with the builder chat`,
+  sendSelected: (count) => `Fix ${count} with builder chat`,
+  addSelected: (count) => `Add ${count} to this fix`,
+  fixOne: "Fix just this one",
+  addOne: "Add just this one to the fix",
+  fixesUnsaved:
+    "Save or discard the unsaved changes first, then send fixes to the chat.",
+  fixRefused: {
+    unsaved_changes: "Save or discard the unsaved changes first, then Fix all.",
+    fix_running: "A fix is already running for this environment.",
+    chat_unavailable: "The builder chat isn't available for this environment.",
+    nothing_to_fix:
+      "Nothing left for the chat to fix here. Re-check to see the latest.",
+    default: "Couldn't start the fix. Try again in a moment.",
+  },
+  sendsToChat: "Sends this to the builder chat:",
+  chatQueued: "Queued",
+  chatFixing: (labels) => `Fixing: ${labels.join(", ")}`,
+  chatLabel: "Builder chat",
+  chatReply: "Reply to the builder",
+  chatSend: "Send",
+  chatWorking: "Working",
+  progress: {
+    queued: "Queued",
+    fixing: "Fixing…",
+    waiting_on_you: "Waiting on you",
+    waiting_on_other: (label) =>
+      `Waiting on ${(label || "another line").toLowerCase()}`,
+    fixed: "Fixed",
+    could_not_fix: "Couldn't fix",
+  },
 };
 
 export const RUN_PLAN_COPY = {

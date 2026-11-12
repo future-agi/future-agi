@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useWorkspaceChat } from "../workspaceChat";
-import { clearScenarioSelection, publishScenarioSelection } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import { clearScenarioSelection, getScenarioSelection, publishScenarioSelection } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
@@ -50,11 +50,11 @@ function wrapper() {
   return { client, Wrapper };
 }
 
-const renderChat = (conversation, opts = {}) => {
+const renderChat = (conversation, opts = {}, hookOpts = {}) => {
   getHarnessJob.mockResolvedValue(jobWith(conversation));
   const { client, Wrapper } = wrapper();
   client.setQueryData(["harness-job", "job-1"], jobWith(conversation));
-  const view = renderHook(() => useWorkspaceChat(ENV, { source: "harness" }), { wrapper: Wrapper });
+  const view = renderHook(() => useWorkspaceChat(ENV, { source: "harness", ...hookOpts }), { wrapper: Wrapper });
   return { ...view, client, ...opts };
 };
 
@@ -190,6 +190,19 @@ describe("useWorkspaceChat (real)", () => {
     });
 
     expect(sendHarnessConversationMessage.mock.calls[0][1].payload.scenario_ids).toEqual(["s1", "s2"]);
+  });
+
+  it("ignores the row selection when unscoped", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    publishScenarioSelection({ ids: ["s1"], rows: [{ name: "a" }] });
+    const { result } = renderChat(conversationWith(), {}, { scoped: false });
+
+    await act(async () => {
+      result.current.send("fix the tool");
+    });
+
+    expect(sendHarnessConversationMessage.mock.calls[0][1].payload).not.toHaveProperty("scenario_ids");
+    expect(getScenarioSelection()?.ids).toEqual(["s1"]);
   });
 
   it("answers a confirmation with kind:approval", async () => {

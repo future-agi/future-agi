@@ -13,6 +13,11 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useReadiness } from "src/api/simulate-environments/readiness";
+import {
+  FIX_ACTIVE_STATES,
+  useFixRun,
+} from "src/api/simulate-environments/readinessFix";
 import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -22,11 +27,14 @@ import {
   useDrafts,
   useEnvironmentVersions,
   useRunPlan,
+  useSaveDrafts,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal } from "./runErrors";
 import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import { readinessView } from "./readiness/readinessView";
+import { RUN_PLAN_PROMPTS_COPY as PROMPTS } from "./runPlanPrompts.constants";
 import {
   READY_TO_RUN_COPY,
   RUN_PLAN_COPY,
@@ -57,6 +65,57 @@ const NOTE_SX = {
 const named = (version) => version?.label || COPY.unlabelled;
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
+
+// Offers the version a fix run saved, with how many scenarios run on it.
+function SwitchPrompt({
+  envId,
+  piece,
+  picks,
+  saved,
+  keys,
+  trials,
+  onSwitch,
+  onKeep,
+}) {
+  const { data } = useReadiness(
+    envId,
+    { ...picks, [piece]: saved.id },
+    { keys, trials },
+  );
+  const summary = data ? readinessView(data).summary : null;
+  return (
+    <Alert
+      severity="info"
+      sx={NOTE_SX}
+      data-testid={`run-switch-${piece}`}
+      action={
+        <>
+          <Button size="small" onClick={onSwitch}>
+            {PROMPTS.switch(named(saved))}
+          </Button>
+          <Button size="small" color="inherit" onClick={onKeep}>
+            {PROMPTS.keep}
+          </Button>
+        </>
+      }
+    >
+      {PROMPTS.switchTo(DRAFTS_COPY.pieces[piece], named(saved))}
+      {summary &&
+        ` ${PROMPTS.switchReady(summary.eligible, summary.requested)}`}
+    </Alert>
+  );
+}
+
+SwitchPrompt.propTypes = {
+  envId: PropTypes.string.isRequired,
+  piece: PropTypes.string.isRequired,
+  picks: PropTypes.object.isRequired,
+  saved: PropTypes.shape({ id: PropTypes.string }).isRequired,
+  keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
+  onSwitch: PropTypes.func.isRequired,
+  onKeep: PropTypes.func.isRequired,
+};
 
 /**
  * Pick the agent, environment and scenario versions a run uses, see what to
@@ -93,6 +152,12 @@ export default function RunDialog({
   const [dismissedError, setDismissedError] = useState(null);
   // What Ready to run read for these picks: counts and whether Run is allowed.
   const [readiness, setReadiness] = useState(null);
+  // Per piece, the saved version whose switch prompt was kept away.
+  const [dismissed, setDismissed] = useState({});
+  const fixRun =
+    useFixRun(env?.id, { enabled: open && Boolean(readiness?.grouped) }).data ??
+    null;
+  const saveDrafts = useSaveDrafts(env?.id);
 
   const options = useMemo(
     () =>
@@ -243,7 +308,10 @@ export default function RunDialog({
   const readinessKeys = runAll ? null : runIds;
 
   const pick = (piece, id) => {
-    setOverrides((current) => ({ ...current, [piece]: id }));
+    // A pick on the default follows it when the default moves.
+    setOverrides(({ [piece]: _, ...rest }) =>
+      id === defaultId(piece) ? rest : { ...rest, [piece]: id },
+    );
     setDismissedError(error);
     setRerun("done");
   };
@@ -254,6 +322,37 @@ export default function RunDialog({
     if (!canSubmit) return;
     onSubmit?.(picks, runIds, selected);
   };
+
+  const fixActive = FIX_ACTIVE_STATES.has(fixRun?.state);
+  // The picked version is older than the one the fix saved.
+  const switchTargets = !readiness?.grouped
+    ? []
+    : ["environment", "suite"].flatMap((piece) => {
+        const savedVersion = fixRun?.saved?.[piece];
+        const picked = options[piece].find((one) => one.id === picks[piece]);
+        const saved = options[piece].find((one) => one.id === savedVersion?.id);
+        const older =
+          picked &&
+          saved &&
+          new Date(picked.createdAt) < new Date(saved.createdAt);
+        return older && dismissed[piece] !== saved.id ? [{ piece, saved }] : [];
+      });
+  // A draft the run itself left is the fix; a later edit is someone else's.
+  const draftsFromRun =
+    fixRun?.state === "done" &&
+    fixRun.draft &&
+    drafts?.pieces?.every(
+      (piece) =>
+        new Date(drafts[piece].updatedAt || 0) <= new Date(fixRun.finished_at),
+    );
+  const saveDraftsNow = () =>
+    saveDrafts.mutate(
+      drafts.pieces.map((piece) => ({
+        piece,
+        parentId: drafts[piece].parentId,
+        revision: drafts[piece].revision,
+      })),
+    );
 
   const pickerField = (piece) => (
     <Stack key={piece} direction="row" spacing={2} alignItems="flex-start">
@@ -352,11 +451,25 @@ export default function RunDialog({
             keys={readinessKeys}
             trials={trials}
             onView={setReadiness}
+            env={env}
           />
         )}
         {/* The run line and its notes read as one group, tighter than the
             sections above. */}
         <Stack spacing={1} sx={{ "&:empty": { display: "none" } }}>
+          {switchTargets.map(({ piece, saved }) => (
+            <SwitchPrompt
+              key={piece}
+              envId={env.id}
+              piece={piece}
+              picks={picks}
+              saved={saved}
+              keys={readinessKeys}
+              trials={trials}
+              onSwitch={() => pick(piece, saved.id)}
+              onKeep={() => setDismissed((d) => ({ ...d, [piece]: saved.id }))}
+            />
+          ))}
           {rerun === "fellBack" && (
             <Alert severity="info" sx={NOTE_SX} data-testid="rerun-fallback">
               {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
@@ -392,9 +505,39 @@ export default function RunDialog({
               {RUN_PLAN_COPY.allHeld(blockingLabel)}
             </Alert>
           )}
-          {drafts?.any && (
+          {drafts?.any && !readiness?.grouped && (
             <Alert severity="info" sx={NOTE_SX} data-testid="run-drafts-note">
               {DRAFTS_COPY.notInRun}
+            </Alert>
+          )}
+          {drafts?.any && readiness?.grouped && !fixActive && (
+            <Alert
+              severity="info"
+              sx={NOTE_SX}
+              data-testid="run-drafts-note"
+              action={
+                <Button
+                  size="small"
+                  onClick={saveDraftsNow}
+                  disabled={saveDrafts.isPending || drafts.stale}
+                >
+                  {saveDrafts.isPending
+                    ? DRAFTS_COPY.saving
+                    : DRAFTS_COPY.saveToRun}
+                </Button>
+              }
+            >
+              {drafts.stale
+                ? PROMPTS.draftStale
+                : draftsFromRun
+                  ? PROMPTS.draftFix
+                  : DRAFTS_COPY.notInRun}
+              {saveDrafts.error && (
+                <Box component="span" sx={{ display: "block" }}>
+                  {DRAFTS_COPY.errors[saveDrafts.error.error] ??
+                    DRAFTS_COPY.saveError}
+                </Box>
+              )}
             </Alert>
           )}
           {blocked && (

@@ -48,7 +48,8 @@ const NOT_A_HARNESS_ENV = "Chat connects once this environment is built.";
 const jobIdFor = (env, source) =>
   source === "harness" || env?.origin === "harness" ? env?.id : null;
 
-export function useWorkspaceChat(env, { source } = {}) {
+// `scoped: false` ignores the Scenarios tab's row selection (for chats opened elsewhere).
+export function useWorkspaceChat(env, { source, scoped = true } = {}) {
   const jobId = jobIdFor(env, source);
   const queryClient = useQueryClient();
 
@@ -132,7 +133,7 @@ export function useWorkspaceChat(env, { source } = {}) {
 
       // A message sent with scenario rows selected is a bulk edit against exactly
       // those rows; snapshot and clear so the "Editing N scenarios" chip drops.
-      const selection = getScenarioSelection();
+      const selection = scoped ? getScenarioSelection() : null;
       const scenarioIds = selection?.ids?.length ? selection.ids : undefined;
       if (scenarioIds) clearScenarioSelection();
 
@@ -161,7 +162,7 @@ export function useWorkspaceChat(env, { source } = {}) {
       ]);
       mutate(variables);
     },
-    [mutate],
+    [mutate, scoped],
   );
 
   const interrupt = useCallback(() => {

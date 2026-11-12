@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { VERSION_PIECES, versionPickFields } from "./versions";
+import { augmentReport, dummyOn } from "./readinessFix.dummy"; // dummy:
 
 /**
  * Run readiness for an agent version, environment version and scenario
@@ -52,16 +54,14 @@ export const getReadiness = async (
   { keys = null, trials = 1 } = {},
 ) => {
   const fields = versionPickFields(picks);
-  if (!keys) {
-    return (await axios.get(capabilitiesPath(envId), { params: fields })).data;
-  }
-  return (
-    await axios.post(capabilitiesPath(envId), {
-      scenario_ids: keys,
-      trials,
-      ...fields,
-    })
-  ).data;
+  const { data } = keys
+    ? await axios.post(capabilitiesPath(envId), {
+        scenario_ids: keys,
+        trials,
+        ...fields,
+      })
+    : await axios.get(capabilitiesPath(envId), { params: fields });
+  return dummyOn() ? augmentReport(envId, picks, data) : data; // dummy:
 };
 
 export function useReadiness(
@@ -122,4 +122,30 @@ export function useReadinessCases(
     retry: retryServerFailures,
     meta: { errorHandled: true },
   });
+}
+
+// Once a check the popup waits on has landed, the report may have changed.
+export function useRereadWhenDone(envId, waiting) {
+  const queryClient = useQueryClient();
+  const was = useRef(waiting);
+  useEffect(() => {
+    if (was.current && !waiting) {
+      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
+    }
+    was.current = waiting;
+  }, [waiting, envId, queryClient]);
+}
+
+// Ready to run's key holds only hand-made picks, so a moved default must re-read it.
+export function useRereadWhenDefaultsMove(envId, defaults) {
+  const queryClient = useQueryClient();
+  const signature = VERSION_PIECES.map((p) => defaults?.[p]?.id || "").join();
+  const was = useRef("");
+  useEffect(() => {
+    if (!signature.replace(/,/g, "")) return;
+    if (was.current && was.current !== signature) {
+      queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
+    }
+    was.current = signature;
+  }, [signature, envId, queryClient]);
 }

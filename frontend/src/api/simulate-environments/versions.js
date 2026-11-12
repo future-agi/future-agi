@@ -272,7 +272,7 @@ export const checkRunning = (version) =>
   !isStuck(version);
 // A check this environment waits on: one still running, or one that passed
 // and whose move of the default is not recorded yet.
-const awaitedCheck = (version) =>
+export const awaitedCheck = (version) =>
   checkRunning(version) ||
   (version.preflightStatus === "passed" &&
     version.requestedHere &&
