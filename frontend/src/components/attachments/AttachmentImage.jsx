@@ -3,14 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   ButtonBase,
-  Dialog,
   DialogContent,
-  IconButton,
   Skeleton,
   Stack,
   Typography,
 } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { ClosableDialog } from "src/components/custom-dialog";
 import useAttachmentGrants from "./useAttachmentGrants";
 import { unavailableLabels } from "./attachmentPlacement";
 
@@ -69,9 +67,10 @@ export function ImageZoomDialog({ open, onClose, projectId, request, label }) {
   const result = results[0];
   const ready = status === "ready" && result?.status === "ready" && !failed;
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
+      closeLabel="Close image"
       maxWidth="lg"
       aria-label={`${label} (full size)`}
       TransitionProps={{ onExited: () => setFailed(false) }}
@@ -79,15 +78,17 @@ export function ImageZoomDialog({ open, onClose, projectId, request, label }) {
       <Stack
         direction="row"
         alignItems="center"
-        justifyContent="space-between"
-        sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+        sx={{
+          pl: 2,
+          pr: 6,
+          py: 1.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <Typography variant="body2" fontWeight="fontWeightMedium">
           {label}
         </Typography>
-        <IconButton size="small" onClick={onClose} aria-label="Close image">
-          <Iconify icon="solar:close-circle-linear" width={16} />
-        </IconButton>
       </Stack>
       <DialogContent sx={{ p: 2, display: "flex", justifyContent: "center" }}>
         {ready ? (
@@ -125,7 +126,7 @@ export function ImageZoomDialog({ open, onClose, projectId, request, label }) {
           </Box>
         )}
       </DialogContent>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 ImageZoomDialog.propTypes = {
