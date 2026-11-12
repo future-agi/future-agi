@@ -4,12 +4,16 @@ Exercise real PostgreSQL/ClickHouse reads, run_entry's result fence and localiza
 writes. Only the external evaluator, billing and clustering dispatch are stubbed.
 """
 
+import io
 import uuid
 from datetime import timedelta
+from urllib.parse import urlparse
 
 import pytest
+import requests
 from django.db import OperationalError, connection
 from django.utils import timezone
+from psycopg import pq
 from structlog.testing import capture_logs
 
 import model_hub.tasks  # noqa: F401 - initialize the tasks/eval import cycle
@@ -47,6 +51,10 @@ OUT_OF_SCOPE = "error_localizer_span_existing_task_out_of_scope"
 TRIGGER_RETRYING = "error_localizer_span_trigger_retrying"
 TRIGGER_FAILED = "error_localizer_span_trigger_failed"
 DB_UNAVAILABLE = "error_localizer_span_trigger_db_unavailable"
+MEDIA_HOST = "media.example.test"
+RECORDING_URL = f"https://{MEDIA_HOST}/recordings/call-0001.wav"
+# Enough of a RIFF/WAVE header for ``filetype`` to sniff audio.
+WAV_HEADER = b"RIFF" + (36).to_bytes(4, "little") + b"WAVEfmt " + bytes(24)
 
 
 def _events(records, event):
@@ -75,7 +83,9 @@ def scenario_factory(observe_project, eval_template, workspace, ch_seed, monkeyp
     }
     eval_template.save(update_fields=["config"])
 
-    def create(*, borrowed=False, pg_span=True, fallback_workspace=False):
+    def create(
+        *, borrowed=False, pg_span=True, fallback_workspace=False, span_input=NEW_INPUT
+    ):
         target = observe_project
         if fallback_workspace:
             Project.no_workspace_objects.filter(pk=target.pk).update(workspace=None)
@@ -122,7 +132,7 @@ def scenario_factory(observe_project, eval_template, workspace, ch_seed, monkeyp
             name="Response",
             observation_type="llm",
             status="OK",
-            input=NEW_INPUT,
+            input=span_input,
             output=NEW_OUTPUT,
             start_time=now,
             end_time=now + timedelta(seconds=1),
@@ -288,13 +298,13 @@ def test_borrowed_config_resolves_legacy_default_workspace(
     assert task.organization_id == owner.project.organization_id
 
 
-def _trigger(entry, span, config):
+def _trigger(entry, span, config, span_input=NEW_INPUT):
     trigger_error_localization_for_span(
         eval_template=config.eval_template,
         eval_logger=entry,
         observation_span=span,
         value=False,
-        mapping={"input": NEW_INPUT, "output": NEW_OUTPUT},
+        mapping={"input": span_input, "output": NEW_OUTPUT},
         eval_explanation=NEW_REASON,
     )
 
@@ -606,3 +616,139 @@ def test_authenticated_sibling_config_patch_preserves_localization(
     if existing:
         assert localization.id == old.id
         _assert_refreshed(old, entry, workspace)
+
+
+class _MediaHost:
+    """A synthetic media host behind ``requests.get``.
+
+    Input-type detection sniffs every URL-shaped mapping value with a streamed
+    GET. Each fetch records whether the trigger's database connection was
+    inside a transaction at that moment, then runs ``during_fetch`` if set.
+    """
+
+    def __init__(self):
+        self.fetches = []
+        self.during_fetch = None
+
+    def get(self, url, *args, **kwargs):
+        pg = connection.connection
+        status = None if pg is None else pg.info.transaction_status
+        self.fetches.append(
+            {
+                "url": url,
+                "in_atomic_block": connection.in_atomic_block,
+                "pg_transaction_status": status,
+            }
+        )
+        if self.during_fetch:
+            self.during_fetch()
+        response = requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "audio/wav"
+        response.raw = io.BytesIO(WAV_HEADER)
+        response.url = url
+        return response
+
+
+@pytest.fixture
+def media_host(monkeypatch):
+    host = _MediaHost()
+    real_get = requests.get
+
+    def get(url, *args, **kwargs):
+        if urlparse(str(url)).hostname == MEDIA_HOST:
+            return host.get(url, *args, **kwargs)
+        # Plain text values also pass through requests.get and fail fast.
+        return real_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(requests, "get", get)
+    return host
+
+
+FETCHED_OUTSIDE_TRANSACTION = {
+    "url": RECORDING_URL,
+    "in_atomic_block": False,
+    "pg_transaction_status": pq.TransactionStatus.IDLE,
+}
+
+
+# Committed transactions, like the worker: the test's own transaction would
+# otherwise make every statement look like it ran inside one.
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "transient",
+    [None, "tracer_eval_task", "error_localizer_task"],
+    ids=["first-attempt", "owning-task-read-retried", "localization-read-retried"],
+)
+def test_media_fetch_runs_outside_any_transaction(
+    scenario_factory,
+    workspace,
+    stub_run_eval,
+    stub_cost_log,
+    media_host,
+    monkeypatch,
+    transient,
+):
+    # A transaction open across the fetch would pin a pooled server connection
+    # and hold table locks for as long as the media host takes to answer.
+    entry, _, _, owner = scenario_factory(borrowed=True, span_input=RECORDING_URL)
+    failed = []
+    if transient:
+        failed = _fail_trigger_statements(monkeypatch, transient, failures=1)
+    clear_workspace_context()
+    with capture_logs() as records:
+        _run_and_require_accepted(entry, stub_run_eval)
+    assert len(failed) == int(bool(transient))
+    # Fetched once, from autocommit; a retried read or write reuses the types.
+    assert media_host.fetches == [FETCHED_OUTSIDE_TRANSACTION]
+    task = ErrorLocalizerTask.no_workspace_objects.get(source_id=entry.id)
+    assert task.status == ErrorLocalizerStatus.PENDING
+    assert task.organization_id == owner.project.organization_id
+    assert task.workspace_id == workspace.id
+    assert task.input_data == {"input": RECORDING_URL, "output": NEW_OUTPUT}
+    assert task.input_types == {"input": "audio", "output": "text"}
+    _assert_no_trigger_errors(records)
+    assert len(_events(records, TRIGGER_RETRYING)) == len(failed)
+
+
+@pytest.mark.parametrize("refusal", ["owning-task-missing", "workspace-mismatch"])
+def test_refused_span_never_fetches_media(
+    scenario_factory, workspace, media_host, refusal
+):
+    entry, span, config, owner = scenario_factory(borrowed=True)
+    if refusal == "owning-task-missing":
+        owner.delete()
+    else:
+        author = config.project
+        author.workspace = _other_workspace(workspace)
+        author.save(update_fields=["workspace"])
+    clear_workspace_context()
+    with capture_logs() as records:
+        _trigger(entry, span, config, span_input=RECORDING_URL)
+    assert media_host.fetches == []
+    assert not ErrorLocalizerTask.no_workspace_objects.filter(
+        source_id=entry.id
+    ).exists()
+    _assert_no_trigger_errors(records)
+
+
+def test_owning_project_deleted_during_media_fetch_is_refused(
+    scenario_factory, media_host
+):
+    entry, span, config, owner = scenario_factory(borrowed=True)
+    media_host.during_fetch = lambda: soft_delete_projects(
+        Project.objects.filter(pk=owner.project_id), "observe"
+    )
+    clear_workspace_context()
+    with capture_logs() as records:
+        _trigger(entry, span, config, span_input=RECORDING_URL)
+    assert len(media_host.fetches) == 1
+    assert EvalTask.all_objects.get(pk=owner.pk).deleted
+    # The write re-reads the owning task instead of trusting the pre-fetch read.
+    assert not ErrorLocalizerTask.no_workspace_objects.filter(
+        source_id=entry.id
+    ).exists()
+    _assert_no_trigger_errors(records)
+    (refusal,) = _events(records, CONTEXT_MISMATCH)
+    assert refusal["log_level"] == "warning"
+    assert refusal["reason"] == "owning_task_missing"
