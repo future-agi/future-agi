@@ -53,13 +53,10 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       'the first Esc closes only the drawer and the second closes the run panel'],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  // Sequential named budgets: SPAN_VISIBLE (15 s) + EVAL_RESULT (90 s)
-  // + CDC_VISIBLE (180 s) + 9 * UI_READY (540 s): Usage response, run click,
-  // run-panel position, drawer count, trace label, selected span, eval name,
-  // drawer close, run-panel close. Add 30 s headroom for seeding/navigation;
-  // this is a per-flow ceiling, not a sum of every default-budget operation.
-  // Usage reads PG; the trace drawer reads the CDC mirror.
-  test.setTimeout(855_000);
+  // SPAN_VISIBLE (15 s) + EVAL_RESULT (90 s) + CDC_VISIBLE (180 s)
+  // + 6 * UI_READY (360 s: navigation, Usage request, run panel, drawer, two closes)
+  // + 30 s for seeding. Usage reads PG; the trace drawer reads the CDC mirror.
+  test.setTimeout(675_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-usage-drawer-${suffix}`;
