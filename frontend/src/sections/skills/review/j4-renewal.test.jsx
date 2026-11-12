@@ -111,3 +111,35 @@ it('clears a refusal from the previous revision when the renewed revision is app
   expect(screen.queryByText(/Request rejected/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();
 });
+
+it('lets the same mounted dialog renew a later revision after an earlier renewal', async () => {
+  useRenewalPreview.mockReturnValue({ data: preview, isLoading: false, isError: false });
+  const onClose = vi.fn();
+  const onApproved = vi.fn();
+  const { rerender } = render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create renewed revision' }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  rerender(<ReleaseRenewalDialog open={false} requestId="request" onClose={onClose} onApproved={onApproved} />);
+  // A later race: revision 3 now needs renewal to revision 4.
+  useRenewalPreview.mockReturnValue({ data: { ...preview, revision: 3, fingerprint: 'renewed-again' }, isLoading: false, isError: false });
+  mutateAsync.mockResolvedValue({ id: 'request', revision: 4, status: 'pending' });
+  decideAsync.mockResolvedValue({ id: 'request', revision: 4, status: 'approved' });
+  rerender(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
+  const approve = screen.getByRole('button', { name: 'Approve renewed revision' });
+  expect(approve).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  expect(approve).toBeEnabled();
+  fireEvent.click(approve);
+  await waitFor(() => expect(onApproved).toHaveBeenCalledWith({ revision: 4, fingerprint: 'renewed-again' }));
+});
+
+it('blocks a second submit for the revision it already renewed', async () => {
+  useRenewalPreview.mockReturnValue({ data: preview, isLoading: false, isError: false });
+  render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create renewed revision' }));
+  await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create renewed revision' })).toBeDisabled());
+  expect(screen.getByRole('button', { name: 'Approve renewed revision' })).toBeDisabled();
+});

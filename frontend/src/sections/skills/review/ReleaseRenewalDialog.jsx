@@ -54,6 +54,12 @@ export default function ReleaseRenewalDialog({
   const current =
     preview.isError && preview.error?.code === "review_current";
   const acknowledged = Boolean(value) && inspected === value.fingerprint;
+  // The dialog stays mounted across renewals (one stable parent), so an
+  // earlier session's result must not block renewing a later revision. A
+  // result blocks only the revision it renewed, preventing a double submit.
+  const renewedThis = (result) =>
+    Boolean(result) && Boolean(value) && result.revision === value.revision + 1;
+  const done = renewedThis(operation.result) || renewedThis(renewOnly.result);
   const busy = operation.busy || renewOnly.busy;
   const uncertain = operation.uncertain || renewOnly.uncertain;
   const close = () => {
@@ -73,7 +79,7 @@ export default function ReleaseRenewalDialog({
       title="Renew release review"
       subTitle="Inspect every change since the reviewed revision. The previous approval does not carry forward."
       actionBtnTitle="Approve renewed revision"
-      isValid={acknowledged && !busy && !uncertain && !renewOnly.result}
+      isValid={acknowledged && !busy && !uncertain && !done}
       isLoading={operation.busy}
       onSubmit={async () => {
         // The approval key is fixed at click time so a retry of an unknown
@@ -191,9 +197,7 @@ export default function ReleaseRenewalDialog({
             <Button
               variant="outlined"
               size="small"
-              disabled={
-                !acknowledged || busy || uncertain || Boolean(operation.result)
-              }
+              disabled={!acknowledged || busy || uncertain || done}
               onClick={async () => {
                 const result = await renewOnly.run(
                   (input) => renew.mutateAsync(input),
