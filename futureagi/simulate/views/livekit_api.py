@@ -31,7 +31,11 @@ from simulate.repositories import (
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
-from simulate.services.agent_definition import is_masked
+from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    is_masked,
+    refuse_moved_secrets,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -582,16 +586,26 @@ class ValidateLiveKitCredentialsView(APIView):
                 deleted=False,
             ).first()
             version = (agent.active_version or agent.latest_version) if agent else None
-            if version:
+            try:
+                creds = version.credentials if version else None
+            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                creds = None
+            if creds is not None:
+                stored_url = (creds.server_url or "").strip()
                 try:
-                    creds = version.credentials
-                    if is_masked(api_key):
-                        api_key = creds.get_api_key()
-                    if is_masked(api_secret):
-                        api_secret = creds.get_api_secret()
-                    livekit_url = (creds.server_url or "").strip()
-                except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                    pass
+                    refuse_moved_secrets(
+                        stored_url=stored_url,
+                        new_url=livekit_url,
+                        api_key=api_key,
+                        api_secret=api_secret,
+                    )
+                except CredentialsNeedReentry as error:
+                    return self.gm.bad_request(error.message)
+                if is_masked(api_key):
+                    api_key = creds.get_api_key()
+                if is_masked(api_secret):
+                    api_secret = creds.get_api_secret()
+                livekit_url = stored_url
 
         if not all([livekit_url, api_key, api_secret]):
             return self.gm.bad_request("All credential fields are required.")

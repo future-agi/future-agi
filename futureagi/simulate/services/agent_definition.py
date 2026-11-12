@@ -8,6 +8,9 @@ from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
 MASKED_VALUE = "********"
+SERVER_URL_CHANGE_NEEDS_SECRETS = (
+    "Enter the API key and secret again to change the server URL."
+)
 
 
 def is_masked(value: str) -> bool:
@@ -135,6 +138,16 @@ def _typed(value: str) -> bool:
     return bool(value) and not is_masked(value)
 
 
+def refuse_moved_secrets(
+    *, stored_url: str, new_url: str, api_key: str, api_secret: str
+) -> None:
+    if not (stored_url and new_url) or new_url == stored_url:
+        return
+    if _typed(api_key) and _typed(api_secret):
+        return
+    raise CredentialsNeedReentry(SERVER_URL_CHANGE_NEEDS_SECRETS)
+
+
 def _apply_secrets(creds, *, api_key: str, api_secret: str, provider_changed: bool):
     if api_key and not is_masked(api_key):
         creds.api_key = api_key
@@ -244,16 +257,12 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
                 provider_type=provider_type,
             )
     provider_changed = creds.provider_type != provider_type
-    if (
-        not provider_changed
-        and server_url
-        and creds.server_url
-        and server_url != creds.server_url
-        and (creds.api_key or creds.api_secret)
-        and not (_typed(api_key) and _typed(api_secret))
-    ):
-        raise CredentialsNeedReentry(
-            "Enter the API key and secret again to change the server URL."
+    if not provider_changed and (creds.api_key or creds.api_secret):
+        refuse_moved_secrets(
+            stored_url=creds.server_url,
+            new_url=server_url,
+            api_key=api_key,
+            api_secret=api_secret,
         )
     creds.provider_type = provider_type
 
@@ -326,6 +335,23 @@ def resolve_api_secret_for_version(version):
     except ProviderCredentials.DoesNotExist:
         pass
     return None
+
+
+def resolve_server_url_for_version(version) -> str:
+    if version is None:
+        return ""
+    try:
+        if version.credentials.server_url:
+            return version.credentials.server_url
+    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+        pass
+    try:
+        legacy = version.agent_definition.credentials_legacy
+        if legacy and legacy.server_url:
+            return legacy.server_url
+    except ProviderCredentials.DoesNotExist:
+        pass
+    return ""
 
 
 def resolve_stored_api_key(
