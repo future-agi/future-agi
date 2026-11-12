@@ -299,7 +299,7 @@
 
 - both seeded organizations have completed setup in PG with their minted names
 - A's Error Feed list request carries A's organization and A's search value
-- every API request B's session sends carries exactly B's organization, and no Error Feed list request carries a search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
 - the access token left in the tab after B signs in resolves to B's user and organization
 - no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
 

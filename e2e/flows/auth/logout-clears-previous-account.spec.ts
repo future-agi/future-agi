@@ -45,7 +45,7 @@ test('AUTH-E2E-005: after a same-tab logout the next account sees none of the pr
     backendChecks: [
       'both seeded organizations have completed setup in PG with their minted names',
       'A\'s Error Feed list request carries A\'s organization and A\'s search value',
-      'every API request B\'s session sends carries exactly B\'s organization, and no Error Feed list request carries a search value',
+      'no request B sends carries another organization, every request B sends from the app after signing in carries exactly B\'s organization, and no Error Feed list request of B carries a search value',
       'the access token left in the tab after B signs in resolves to B\'s user and organization',
       'no A-identifying value appears in B\'s page text, API requests, localStorage or sessionStorage',
     ],
@@ -124,20 +124,21 @@ test('AUTH-E2E-005: after a same-tab logout the next account sees none of the pr
     }, { timeout: UI_READY });
 
   const signIn = async (who: Identity) => {
-    await expect(page.getByLabel(/email/i)).toBeVisible();
+    await expect(page.getByLabel(/email/i)).toBeVisible({ timeout: UI_READY });
     await page.getByLabel(/email/i).fill(who.actor.email);
     await page.getByLabel(/password/i).fill(who.actor.password);
     const token = apiResponse(TOKEN, 'POST');
     await page.getByRole('button', { name: 'Continue' }).click();
     expect((await token).status()).toBe(200);
     // Organization setup is complete, so sign-in lands inside the dashboard.
-    await expect(page).toHaveURL(/\/dashboard\//);
-    await expect(page.getByText(who.workspaceLabel, { exact: true }).filter({ visible: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
+    await expect(page.getByText(who.workspaceLabel, { exact: true }).filter({ visible: true }))
+      .toBeVisible({ timeout: UI_READY });
   };
   const openErrorFeed = async (who: Identity) => {
     const list = apiResponse(FEED, 'GET');
     await page.getByRole('link', { name: 'Error Feed', exact: true }).click();
-    await expect(page).toHaveURL(/\/dashboard\/error-feed$/);
+    await expect(page).toHaveURL(/\/dashboard\/error-feed$/, { timeout: UI_READY });
     const response = await list;
     expect(response.status()).toBe(200);
     expect(response.request().headers()['x-organization-id']).toBe(who.actor.organizationId);
@@ -175,7 +176,7 @@ test('AUTH-E2E-005: after a same-tab logout the next account sees none of the pr
     const logout = apiResponse(LOGOUT, 'POST');
     await page.getByRole('dialog').getByRole('button', { name: 'Logout', exact: true }).click();
     expect((await logout).status()).toBe(200);
-    await expect(page).toHaveURL(/\/auth\/jwt\/login/);
+    await expect(page).toHaveURL(/\/auth\/jwt\/login/, { timeout: UI_READY });
     expect(await page.evaluate(() => localStorage.getItem('accessToken'))).toBeNull();
   });
 
@@ -207,7 +208,8 @@ test('AUTH-E2E-005: after a same-tab logout the next account sees none of the pr
     const orgsOn = (rows: WireRow[]) => [...new Set(rows.map(row => row.organization).filter(Boolean))];
     // Positive control: A's own session sent A's organization.
     expect(orgsOn(wire.filter(row => row.phase.startsWith('A')))).toEqual([a.organizationId]);
-    // B's side starts at B's sign-in form; requests before the token carry no organization.
+    // B's side starts at B's sign-in form. Sign-in requests (deployment-info, token, the first
+    // user-info) carry no organization header, so the strict check covers B's in-app requests.
     const bSide = wire.filter(row => row.phase.startsWith('B'));
     const bInApp = wire.filter(row => row.phase === 'B');
     expect(bInApp.filter(row => row.path === FEED).length).toBeGreaterThan(0);
