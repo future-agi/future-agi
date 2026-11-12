@@ -51,6 +51,7 @@ TASK_QUEUES = {
     "trace_ingestion": "trace_ingestion",
     "tasks_xl": "tasks_xl",
     "exact_aggregation": "exact_aggregation",
+    "sql_workbench": "sql_workbench",
     "tasks_l": "tasks_l",
     "tasks_s": "tasks_s",
     "agent_compass": "agent_compass",
