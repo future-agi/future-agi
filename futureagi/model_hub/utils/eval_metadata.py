@@ -17,6 +17,54 @@ from model_hub.models.develop_dataset import Column, Row
 _T = TypeVar("_T")
 _RETRY_DELAYS = (0.25, 0.5)
 
+# Server SQLSTATEs (besides class 08) meaning "unavailable now": admin/crash
+# shutdown, cannot_connect_now and too_many_connections.
+_RETRYABLE_SQLSTATES = frozenset({"57P01", "57P02", "57P03", "53300"})
+
+# Configuration or statement faults. Retrying cannot help, so they escape even
+# when another marker below also appears in the message.
+_DETERMINISTIC_MARKERS = (
+    "authentication failed",
+    "no password supplied",
+    "pg_hba.conf",
+    "does not exist",
+    "certificate verify failed",
+    "invalid connection option",
+    "statement timeout",
+)
+
+# libpq reports a login rejection without the server's SQLSTATE, so match the
+# texts of PostgreSQL's 57P03/53300 rejections and PgBouncer's pool limits and
+# server-down responses. Per-role and per-database connection limits count as
+# capacity too; the retry budget stays bounded either way.
+_LOGIN_UNAVAILABLE_MARKERS = (
+    "the database system is starting up",
+    "the database system is shutting down",
+    "the database system is in recovery mode",
+    "the database system is not yet accepting connections",
+    "the database system is not accepting connections",
+    "sorry, too many clients already",
+    "remaining connection slots are reserved",
+    "too many connections for role",
+    "too many connections for database",
+    "no more connections allowed",
+    "server login has been failing",
+    "pgbouncer cannot connect to server",
+    "client_login_timeout (server down)",
+    "query_wait_timeout",
+)
+
+_TRANSPORT_MARKERS = (
+    "connection refused",
+    "server closed the connection unexpectedly",
+    "ssl connection has been closed unexpectedly",
+    "ssl syscall error: eof detected",
+    "connection reset by peer",
+    "could not send data to server: broken pipe",
+    "the connection is closed",
+    "the connection is lost",
+)
+
 
 class EvaluationMetadataUnavailable(RuntimeError):
     """No evaluator or billing call started; metadata could not be loaded."""
@@ -38,7 +86,7 @@ def _is_connection_failure(error: Exception, connection: BaseDatabaseWrapper) ->
         return True
     sqlstate = getattr(cause, "sqlstate", None)
     if sqlstate:
-        return sqlstate.startswith("08") or sqlstate in {"57P01", "57P02", "57P03"}
+        return sqlstate.startswith("08") or sqlstate in _RETRYABLE_SQLSTATES
     if not isinstance(cause, (psycopg.OperationalError, psycopg.InterfaceError)):
         return False
 
@@ -46,35 +94,18 @@ def _is_connection_failure(error: Exception, connection: BaseDatabaseWrapper) ->
     # In particular a refused connection has no installed driver connection to
     # inspect. Keep these signatures narrow; unknown OperationalErrors escape.
     message = str(cause).lower()
-    if any(
-        marker in message
-        for marker in (
-            "fatal:",
-            "authentication failed",
-            "no password supplied",
-            "pg_hba.conf",
-            "certificate verify failed",
-            "invalid connection option",
-            "statement timeout",
-        )
-    ):
+    if any(marker in message for marker in _DETERMINISTIC_MARKERS):
+        return False
+    if any(marker in message for marker in _LOGIN_UNAVAILABLE_MARKERS):
+        return True
+    # Any other login rejection (role may not log in, database closed to new
+    # connections, ...) is configuration, not an outage.
+    if "fatal:" in message:
         return False
     driver_connection = connection.connection
     if driver_connection is not None and driver_connection.broken:
         return True
-    return any(
-        marker in message
-        for marker in (
-            "connection refused",
-            "server closed the connection unexpectedly",
-            "ssl connection has been closed unexpectedly",
-            "ssl syscall error: eof detected",
-            "connection reset by peer",
-            "could not send data to server: broken pipe",
-            "the connection is closed",
-            "the connection is lost",
-        )
-    )
+    return any(marker in message for marker in _TRANSPORT_MARKERS)
 
 
 def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:
