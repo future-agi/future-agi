@@ -678,8 +678,8 @@ const CompareData = ({
               }
 
               if (
-                params.event.target.closest(
-                  ".ag-cell[col-id=APP_CONSTANTS.AG_GRID_SELECTION_COLUMN]",
+                target?.closest(
+                  `.ag-cell[col-id="${APP_CONSTANTS.AG_GRID_SELECTION_COLUMN}"]`,
                 )
               ) {
                 const selected = params.node.isSelected();
