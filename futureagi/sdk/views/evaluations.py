@@ -2,7 +2,7 @@ import uuid
 
 import structlog
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Count, Q
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -202,7 +202,27 @@ class StandaloneEvalView(APIView):
                     return self._gm.bad_request(
                         f"Invalid eval_id: {key}. Must be a numeric value."
                     )
+                if any(eval_id == seen for seen, _ in requested_evals):
+                    return self._gm.bad_request(f"Duplicate eval_id: {key}.")
                 requested_evals.append((eval_id, value))
+
+            # Resolve every template before running any eval, so an unknown or
+            # ambiguous eval_id fails the request before earlier evals have run
+            # and been billed.
+            requested_ids = [eval_id for eval_id, _ in requested_evals]
+            template_counts = dict(
+                EvalTemplate.no_workspace_objects.filter(eval_id__in=requested_ids)
+                .values("eval_id")
+                .annotate(n=Count("id"))
+                .values_list("eval_id", "n")
+            )
+            unresolved = [i for i in requested_ids if template_counts.get(i) != 1]
+            if unresolved:
+                return self._gm.bad_request(
+                    "Unknown or ambiguous eval_id: "
+                    + ", ".join(str(i) for i in unresolved)
+                    + "."
+                )
 
             output_entries = [{"evaluations": []}]
             # Any eval that raises fails the whole request (500, no partial

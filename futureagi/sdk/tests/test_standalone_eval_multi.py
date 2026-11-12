@@ -229,21 +229,48 @@ class TestStandaloneEvalSeveralEvalIds:
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response.json()["status"] is False
 
-    def test_unknown_eval_id_among_several_fails_the_request(
+    @pytest.mark.parametrize("unknown_position", ["first", "last"])
+    def test_unknown_eval_id_rejected_before_any_eval_runs(
+        self, sdk_client, guardrail_templates, unknown_position
+    ):
+        """An unknown id fails the request before any eval has run or been billed."""
+        fake = _FakeRunEval(
+            {"synthetic_guardrail_a": "Passed", "synthetic_guardrail_b": "Passed"}
+        )
+        known = [(str(EVAL_ID_A), {}), (str(EVAL_ID_B), {})]
+        unknown = [("990199", {})]
+        items = unknown + known if unknown_position == "first" else known + unknown
+        with patch("evaluations.engine.run_eval", side_effect=fake):
+            response = _post(sdk_client, dict(items))
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["status"] is False
+        assert "990199" in response.json()["result"]
+        assert fake.calls == []
+
+    def test_ambiguous_eval_id_rejected_before_any_eval_runs(
         self, sdk_client, guardrail_templates
     ):
-        fake = _FakeRunEval({"synthetic_guardrail_b": "Passed"})
+        """Two templates sharing an eval_id cannot be resolved; nothing runs."""
+        _make_template("synthetic_guardrail_b_twin", EVAL_ID_B)
+        fake = _FakeRunEval({"synthetic_guardrail_a": "Passed"})
         with patch("evaluations.engine.run_eval", side_effect=fake):
-            response = _post(
-                sdk_client,
-                {
-                    "990199": {"call_type": "protect"},
-                    str(EVAL_ID_B): {"call_type": "protect"},
-                },
-            )
+            response = _post(sdk_client, {str(EVAL_ID_A): {}, str(EVAL_ID_B): {}})
 
-        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert response.json()["status"] is False
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert str(EVAL_ID_B) in response.json()["result"]
+        assert fake.calls == []
+
+    def test_duplicate_eval_id_rejected_before_any_eval_runs(
+        self, sdk_client, guardrail_templates
+    ):
+        """ "990101" and "0990101" name the same eval; it must not run twice."""
+        fake = _FakeRunEval({"synthetic_guardrail_a": "Passed"})
+        with patch("evaluations.engine.run_eval", side_effect=fake):
+            response = _post(sdk_client, {str(EVAL_ID_A): {}, "0" + str(EVAL_ID_A): {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert fake.calls == []
 
     def test_non_numeric_eval_id_rejected_before_any_eval_runs(
         self, sdk_client, guardrail_templates
