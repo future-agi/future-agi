@@ -39,6 +39,9 @@ const { seedFromTemplate } = await import("../helpers/seedEnvState");
 const { PIPELINE_CHECKS_COPY } = await import(
   "../../buildEnvironment/build.constants"
 );
+const { INFRASTRUCTURE_LINE } = await import(
+  "../../buildEnvironment/failureWords"
+);
 const { SAVE_GRACE_MS } = await import(
   "src/api/simulate-environments/environment"
 );
@@ -744,11 +747,11 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The header pill reads Failed (not Building) — but the build layout (chat +
     // pipeline) stays, with the pipeline showing the failure rather than a
-    // dead-end error page.
+    // dead-end error page. An infrastructure failure reads as ours, not the agent's.
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText("Sandbox launch failed")).toBeInTheDocument();
+    expect(screen.getByText(INFRASTRUCTURE_LINE)).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
