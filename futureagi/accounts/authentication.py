@@ -125,21 +125,57 @@ class ViewerReadOnly(PermissionDenied):
 WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
 _VIEWER_REASON_PREFIX = "/simulate/"
 
+# These paths are excluded from workspace write checks because they:
+# - Don't modify workspace data (switch operations, profile updates)
+# - Or need to be accessible regardless of workspace role
+WORKSPACE_WRITE_EXEMPT_PATHS = (
+    "/accounts/workspace/switch/",
+    "/accounts/organizations/switch/",
+    "/accounts/update-user-full-name/",  # Users can always update their own profile
+    "/accounts/onboarding/",  # Users can always update their own onboarding profile
+    "/accounts/logout/",  # Users can always invalidate their own access token
+    "/accounts/2fa/",  # Users can always manage their own second factor state
+    "/accounts/passkey/",  # Users can always manage their own passkey challenges
+    "/accounts/passkeys/",  # Users can always manage their own passkey records
+)
+_WRITE_METHODS = ("post", "put", "patch", "delete")
+NO_ORGANIZATION_WRITE_DENIED = "You're not a member of any organization."
+
+
+def _is_workspace_write(request) -> bool:
+    if (getattr(request, "method", "") or "").lower() not in _WRITE_METHODS:
+        return False
+    return not (
+        _is_workspace_write_exempt_view(request)
+        or request.path.startswith(WORKSPACE_WRITE_EXEMPT_PATHS)
+        or _is_annotation_queue_role_scoped_write_path(request.path)
+    )
+
+
+def _with_viewer_refusal(schema):
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    return {
+        **schema,
+        "responses": {
+            403: ViewerReadOnlyErrorSerializer,
+            **schema.get("responses", {}),
+        },
+    }
+
 
 def viewer_denied(action):
     def mark(handler):
         handler._viewer_denied_action = action
-        schema = getattr(handler, "_swagger_auto_schema", None)
-        if isinstance(schema, dict) and "responses" in schema:
-            from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
-
+        schema = getattr(handler, "_swagger_auto_schema", None) or {}
+        methods = [method for method in _WRITE_METHODS if method in schema]
+        if methods:
             handler._swagger_auto_schema = {
                 **schema,
-                "responses": {
-                    403: ViewerReadOnlyErrorSerializer,
-                    **schema["responses"],
-                },
+                **{method: _with_viewer_refusal(schema[method]) for method in methods},
             }
+        else:
+            handler._swagger_auto_schema = _with_viewer_refusal(schema)
         return handler
 
     return mark
@@ -382,31 +418,7 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
-        # - Don't modify workspace data (switch operations, profile updates)
-        # - Or need to be accessible regardless of workspace role
-        excluded_paths = (
-            "/accounts/workspace/switch/",
-            "/accounts/organizations/switch/",
-            "/accounts/update-user-full-name/",  # Users can always update their own profile
-            "/accounts/onboarding/",  # Users can always update their own onboarding profile
-            "/accounts/logout/",  # Users can always invalidate their own access token
-            "/accounts/2fa/",  # Users can always manage their own second factor state
-            "/accounts/passkey/",  # Users can always manage their own passkey challenges
-            "/accounts/passkeys/",  # Users can always manage their own passkey records
-        )
-
-        should_skip_write_check = (
-            _is_workspace_write_exempt_view(request)
-            or request.path.startswith(excluded_paths)
-            or _is_annotation_queue_role_scoped_write_path(request.path)
-        )
-
-        if (
-            request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and not should_skip_write_check
-        ):
+        if _is_workspace_write(request):
             if workspace is None:
                 can_write = org_level >= Level.ADMIN
             else:
