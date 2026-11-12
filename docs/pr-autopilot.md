@@ -408,7 +408,17 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    are not `dev`'s copy and never produce review evidence. `main`'s copy runs
    `dev`'s controller (its checkout names `ref: dev`). Privileged jobs sparsely
    check out only `dev`'s controller and policy, with checkout credentials not
-   persisted. A
+   persisted. Every Python call in a job that holds a write token, a secret
+   or the approver App's environment runs as `python3 -I`. In isolated mode
+   Python puts neither the script's directory nor the current directory on
+   `sys.path` and ignores `PYTHON*` variables, so a module in the checkout
+   cannot replace a standard one. The controller imports only the standard
+   library. A test plants `pip`, `uuid`, `typing`, `json` and `argparse`
+   modules (and a `pip` package) in a copy of the checkout and runs the
+   workflow's own commands: none is imported, and the same runs without
+   `-I` import them. The unprivileged `policy-tests` job runs the PR's own
+   test code by design, with a read-only token and no secret, so it keeps
+   plain `python3`. A
    dispatch run stops and waits for a fresh run if `dev` moved after it was
    dispatched (the checkout is not `GITHUB_SHA`, the run's `head_sha`) or after
    checkout (the checkout is not the live `dev` tip). The PR must already contain that tip:
@@ -1182,8 +1192,9 @@ a refused approval, the sweep's order, caps, rotation, pause, throttling stop,
 re-tier of moved heads and hourly dispatch of PRs that wait on a person,
 recovery of a merge whose answer was lost or unconfirmed (record before
 dispatch, no repeat, only the bot's own merges, the CDN switch),
-concurrent label creation, and post-merge coverage
-checked against every workflow file. No cloud/cluster or production
+concurrent label creation, post-merge coverage
+checked against every workflow file, and `python3 -I` in every
+credential-holding job (with modules planted in a copy of the checkout). No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
 changes to an autopilot file or to any workflow file; privileged jobs never
 execute the proposed controller.

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -4220,6 +4221,64 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn("github.event_name == 'workflow_dispatch'", condition)
             self.assertIn("github.ref == 'refs/heads/dev'", condition)
 
+    @staticmethod
+    def python_calls(workflow):
+        """(job, holds credentials, command) for every python call in a run
+        step. A job holds credentials when it has any write permission, names
+        an environment or reads a secret."""
+        calls = []
+        for name, job in workflow["jobs"].items():
+            credentials = (
+                "write" in (job.get("permissions") or {}).values()
+                or "environment" in job
+                or "secrets." in json.dumps(job)
+            )
+            for step in job.get("steps", []):
+                for line in str(step.get("run", "")).splitlines():
+                    if re.search(r"(?:^|[\s;&|(])python3?(?:\s|$)", line):
+                        calls.append((name, credentials, line.strip()))
+        return calls
+
+    @classmethod
+    def unisolated(cls, workflow):
+        """Python calls in credential-holding jobs that run without -I, which
+        would put the script's directory or the current directory first on
+        sys.path and honour PYTHON* variables."""
+        return [command for _, credentials, command in cls.python_calls(workflow)
+                if credentials and not re.search(r"(?:^|\s)python3? -I(?:\s|$)", command)]
+
+    def test_every_python_call_in_a_credential_job_is_isolated(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        workflow = yaml.safe_load(WORKFLOW_TEXT)
+        calls = self.python_calls(workflow)
+        self.assertEqual([c for c in calls if c[1]], [
+            ("prepare", True, "python3 -I scripts/pr_risk.py prepare"),
+            ("review-gate-and-merge", True, "python3 -I scripts/pr_risk.py publish"),
+            ("approve-and-merge", True, "python3 -I scripts/pr_risk.py merge"),
+        ])
+        self.assertEqual(self.unisolated(workflow), [])
+        # Left as they are: this job has a read-only token and no secret, and
+        # it runs the PR's own test code by design.
+        self.assertEqual([c for c in calls if not c[1]], [
+            ("policy-tests", False, "python3 -m pip install --disable-pip-version-check -q PyYAML==6.0.3"),
+            ("policy-tests", False, "python3 scripts/test_pr_risk.py"),
+        ])
+        # A call without -I, or a new credential-holding job's pip call, is found.
+        changed = yaml.safe_load(WORKFLOW_TEXT.replace(
+            "python3 -I scripts/pr_risk.py merge", "python3 scripts/pr_risk.py merge"))
+        policy = next(s for s in changed["jobs"]["prepare"]["steps"] if s.get("id") == "policy")
+        policy["run"] += "python3 -m pip install x\n"
+        changed["jobs"]["policy-tests"]["permissions"]["pull-requests"] = "write"
+        self.assertEqual(self.unisolated(changed), [
+            "python3 -m pip install --disable-pip-version-check -q PyYAML==6.0.3",
+            "python3 scripts/test_pr_risk.py",
+            "python3 -m pip install x",
+            "python3 scripts/pr_risk.py merge",
+        ])
+
     def test_multiline_output_has_collision_safe_delimiter(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "out"
@@ -4229,6 +4288,123 @@ class WorkflowContractTests(unittest.TestCase):
             delimiter = lines[0].split("<<")[1]
             self.assertEqual(lines[-1], delimiter)
             self.assertNotIn(delimiter, lines[1:-1])
+
+
+class IsolationTests(unittest.TestCase):
+    """The credential-holding jobs run `python3 -I`. In isolated mode Python
+    puts neither the script's directory nor the current directory on
+    sys.path and ignores PYTHON* variables, so a module planted in the
+    checkout cannot replace a standard one."""
+
+    # Names the controller imports, names a credential job could import
+    # (pip for "python3 -I -m pip"), and stdlib names often shadowed.
+    PLANTED = ("pip", "uuid", "typing", "json", "argparse")
+
+    def checkout(self, root, pip_package):
+        """A checkout like the jobs' sparse one, plus planted modules. Each
+        planted module records its name and exits 97 when imported."""
+        repository = Path(__file__).resolve().parents[1]
+        for path in ("scripts/pr_risk.py", ".github/pr-autopilot.yml"):
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text((repository / path).read_text())
+
+        def plant(path, name):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "import os as _os\n"
+                "with open(_os.environ['PLANTED_LOG'], 'a') as _log:\n"
+                f"    _log.write({name!r} + '\\n')\n"
+                "raise SystemExit(97)\n"
+            )
+
+        for name in self.PLANTED:
+            if name == "pip" and pip_package:
+                plant(root / "pip" / "__init__.py", "pip")
+                plant(root / "pip" / "__main__.py", "pip")
+            else:
+                plant(root / f"{name}.py", name)
+            # Beside the script too, the directory a plain `python3 script` uses.
+            if name != "pip":
+                plant(root / "scripts" / f"{name}.py", name)
+        plant(root / "scripts" / "pip" / "__init__.py", "pip")
+
+    def run_in(self, root, argv, log):
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "PLANTED_LOG": str(log),
+            # Ignored under -I; honoured by the plain runs below.
+            "PYTHONPATH": os.pathsep.join([str(root), str(root / "scripts")]),
+        }
+        if log.exists():
+            log.unlink()
+        result = subprocess.run(argv, cwd=root, env=environment, capture_output=True,
+                                text=True, timeout=60, check=False)
+        planted = log.read_text().split() if log.exists() else []
+        return result, planted
+
+    def credential_commands(self):
+        """The python commands the workflow runs in credential-holding jobs."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        calls = WorkflowContractTests.python_calls(yaml.safe_load(WORKFLOW_TEXT))
+        commands = [shlex.split(command) for _, credentials, command in calls if credentials]
+        self.assertEqual([argv[:2] for argv in commands], [["python3", "-I"]] * 3)
+        return [[sys.executable, *argv[1:]] for argv in commands]
+
+    def test_planted_modules_are_not_imported_by_the_credential_commands(self):
+        commands = self.credential_commands()
+        for pip_package in (False, True):
+            with self.subTest(pip_package=pip_package), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "checkout"
+                log = Path(directory) / "planted.log"
+                self.checkout(root, pip_package)
+                # Every credential command still runs (switched off, as with
+                # PR_AUTOPILOT unset) and imports nothing planted.
+                for argv in commands:
+                    result, planted = self.run_in(root, argv, log)
+                    self.assertEqual((result.returncode, planted), (0, []), result.stderr)
+                    self.assertIn("PR autopilot is off", result.stdout)
+                # The controller's own logic runs too: classify a synthetic diff.
+                files = Path(directory) / "files.json"
+                files.write_text(json.dumps([file()]))
+                result, planted = self.run_in(
+                    root, [sys.executable, "-I", "scripts/pr_risk.py", "classify", "--files", str(files)], log)
+                self.assertEqual((result.returncode, planted), (0, []), result.stderr)
+                self.assertEqual(json.loads(result.stdout)["tier"], "low")
+                # From the checkout root, -I -c and -I -m do not see the plants.
+                result, planted = self.run_in(root, [
+                    sys.executable, "-I", "-c",
+                    "import argparse, json, typing, uuid, importlib.util\n"
+                    "spec = importlib.util.find_spec('pip')\n"
+                    "print(spec.origin if spec else '')",
+                ], log)
+                self.assertEqual((result.returncode, planted), (0, []), result.stderr)
+                self.assertFalse(result.stdout.strip().startswith(str(root)), result.stdout)
+                result, planted = self.run_in(root, [sys.executable, "-I", "-m", "pip", "--version"], log)
+                self.assertEqual(planted, [])
+                self.assertNotEqual(result.returncode, 97)
+
+    def test_without_isolation_the_planted_modules_are_imported(self):
+        # The same checkout and environment without -I: the script's own
+        # directory, the current directory and PYTHONPATH come first.
+        commands = self.credential_commands()
+        for pip_package in (False, True):
+            with self.subTest(pip_package=pip_package), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "checkout"
+                log = Path(directory) / "planted.log"
+                self.checkout(root, pip_package)
+                for argv in commands:
+                    result, planted = self.run_in(root, [argv[0], *argv[2:]], log)
+                    self.assertEqual((result.returncode, planted), (97, ["argparse"]), result.stderr)
+                result, planted = self.run_in(root, [sys.executable, "-c", "import uuid"], log)
+                self.assertEqual((result.returncode, planted), (97, ["uuid"]))
+                result, planted = self.run_in(root, [sys.executable, "-m", "pip", "--version"], log)
+                self.assertEqual((result.returncode, planted), (97, ["pip"]))
+                # -I alone, with the same environment, imports none of them.
+                result, planted = self.run_in(root, [sys.executable, "-I", "-c", "import uuid"], log)
+                self.assertEqual((result.returncode, planted), (0, []))
 
 
 if __name__ == "__main__":
