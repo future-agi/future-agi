@@ -352,7 +352,10 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    exactly as the workflow does (pull-requests: write only). Then
    `gh pr view <n> --json reviewDecision,mergeStateStatus` must show `APPROVED`,
    and a merge state that no other rule holds. Use the API fields, not the
-   merge button: organisation admins bypass the ruleset. Then dismiss the
+   merge button: organisation admins bypass the ruleset. Use a trusted
+   author's PR that carries agent co-authored commits: organisation ruleset
+   2289447 has `require_extra_approval_for_unattributed_changes` on (a GitHub
+   preview setting), and one App approval must still give `APPROVED`. Then dismiss the
    approval with the same token. If `reviewDecision` stays `REVIEW_REQUIRED`,
    grant the installation "Contents: Read and write" if it lacks it, and read
    the same PR again. If the approval still does not count, the mint step in
@@ -563,11 +566,46 @@ Variables are an Actions run snapshot, not a live external kill-switch service.
 
 ## AI review contract and bounded retries
 
-The action is pinned to the commit of `anthropics/claude-code-action` v1.0.120
-(`dde2242db6af13460b916652159b6ba19a598f30`), because this job holds the API key
-and a tag can be moved. Its `anthropic_api_key`, `github_token`, `prompt`,
-`claude_args` and `structured_output` inputs were checked against the published
-documentation for that version.
+The action is pinned to the commit of `anthropics/claude-code-action` v1.0.271
+(`4fa93a88de49bbef68b10eb15aabedf28ca0e1ed`, tagged 10 Nov 2026), because this
+job holds the API key and a tag can be moved. The tag-to-commit mapping was
+read from the action repository's git API. That commit installs Claude Code
+2.1.322 and bundles Agent SDK 0.3.322. The earlier pin, v1.0.120, installed
+Claude Code 2.1.139, which predates `claude-opus-5-5` (Claude Code added it in
+2.1.280) and two `--json-schema` fixes (2.1.187 and 2.1.205).
+
+Checked in the action's source at that commit, without running it:
+
+- `action.yml` still declares every input the workflow sets
+  (`anthropic_api_key`, `github_token`, `allowed_bots`, `track_progress`,
+  `include_fix_links`, `display_report`, `show_full_output`, `prompt`,
+  `claude_args`) and the `structured_output` output.
+- An explicit `prompt` on a `workflow_dispatch` run selects agent mode
+  (`src/modes/detector.ts`). Agent mode writes the prompt to a file and adds
+  no MCP server unless `--allowedTools` names one; it does not check out the
+  PR or load its context (`src/modes/agent/index.ts`). A run started by
+  `github-actions[bot]` passes the actor check through `allowed_bots`.
+- The steps that run in this job are the same as at v1.0.120: install Bun
+  (pinned `oven-sh/setup-bun`, now Bun 1.4.4 without its cache), install the
+  action's locked dependencies, then install Claude Code with
+  `https://claude.ai/install.sh` and run it. The step that apt-installs
+  bubblewrap and socat runs only when `allowed_non_write_users` is set, which
+  this job does not do, at either pin.
+- `--model` and `--max-turns` now become Agent SDK options rather than CLI
+  arguments; the other flags still pass to the CLI. The runner now also fails
+  the step when a run reports success after more turns than `--max-turns`.
+  It still fails the step when `--json-schema` was given and no structured
+  output came back, and now also when a successful result has `is_error` set.
+
+One flag did not reach the CLI as written, at either pin. The action drops an
+empty quoted value, so `--tools ""` became a bare `--tools`, and the CLI's
+argument parser then took the next flag, `--disable-slash-commands`, as the
+tool list. The workflow now passes `--tools=`, the form the Agent SDK itself
+writes for an empty tool list, which the CLI reads as no built-in tools. A
+contract test applies the action's rule to `claude_args` and fails on an
+empty value or a flag left without one. None of this has run against the
+API: rollout step 2 confirms it in a disposable repository first.
+
 It uses `claude-opus-5-5`, at most three turns per invocation, and no fallback
 that could convert an unavailable review into a pass. The model must return:
 
@@ -587,7 +625,8 @@ reasons. There is no string-to-boolean coercion. Binary, missing, inconsistent
 or oversized patches require a person; the model never certifies a truncated
 diff. The bot posts one escalation for them and the run stays green; a later
 reviewable diff marks it as no longer applying. Review findings and the
-decision are recorded, without logging raw diffs.
+decision are recorded. The controller does not log raw diffs, but the action prints
+the prompt, which contains the patches, in the AI job's log.
 
 Each attempt is reserved **before** the AI call, three times, in this order:
 a bot-authored PR comment carrying the record (PR, head, base, run ID, round,
@@ -728,9 +767,12 @@ that pass without republishing it.
 References checked while implementing the adapter:
 
 - [Action README](https://github.com/anthropics/claude-code-action/blob/main/README.md)
-- [Pinned action inputs/outputs](https://github.com/anthropics/claude-code-action/blob/v1.0.120/action.yml)
-- [Pinned usage and structured output](https://github.com/anthropics/claude-code-action/blob/v1.0.120/docs/usage.md)
-- [Pinned agent-mode behavior](https://github.com/anthropics/claude-code-action/blob/v1.0.120/src/modes/agent/index.ts)
+- [Pinned action inputs/outputs](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/action.yml)
+- [Pinned usage and structured output](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/docs/usage.md)
+- [Pinned mode selection](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/src/modes/detector.ts)
+- [Pinned agent-mode behavior](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/src/modes/agent/index.ts)
+- [Pinned claude_args parsing](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/base-action/src/parse-sdk-options.ts)
+- [Pinned structured-output check](https://github.com/anthropics/claude-code-action/blob/4fa93a88de49bbef68b10eb15aabedf28ca0e1ed/base-action/src/run-claude-sdk.ts)
 - [CLI tool restrictions](https://code.claude.com/docs/en/cli-reference)
 - [GitHub Ref and RefUpdateRule fields](https://docs.github.com/en/graphql/reference/git)
 - [GitHub Actions token permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions)
@@ -877,6 +919,11 @@ Suggested rollout:
    without the stale-approval rule is rejected, and a partial AI-job rerun
    makes no new model call.
    Also confirm these GitHub behaviors, which development could not observe:
+   - first, one billable review with the pinned action (v1.0.271) and a test
+     API key: the execution file's init message lists no tools and no slash
+     commands (the `--tools=` form), a `structured_output` verdict comes back
+     within three turns, and a forced failure (for example a model name the
+     API rejects) ends as **retryable**;
    - `actions/runs/{id}/attempts/1/jobs` lists the `Review reserved` step and
      the outcome marker step with their rendered names; the run object of a
      dispatch run has `head_branch` `dev` and `head_sha` equal to the

@@ -165,13 +165,19 @@ jobs:
             /.github/pr-autopilot.yml
             /scripts/pr_risk.py
       # Explicit prompt selects agent mode, which does not check out the PR or
-      # load its context. Confirmed in this tag's README, usage and mode source.
+      # load its context. Re-read at this commit: src/modes/detector.ts and
+      # src/modes/agent/index.ts. It installs Claude Code 2.1.322, which knows
+      # claude-opus-5-5. Its apt step runs only with allowed_non_write_users,
+      # which this job does not set.
       - name: Review the supplied diff as data and return a structured verdict
         id: claude
         # Below the job limit, so a slow review fails this step (a retryable
         # outcome) instead of timing out the whole job.
         timeout-minutes: 12
-        uses: anthropics/claude-code-action@dde2242db6af13460b916652159b6ba19a598f30 # v1.0.120
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        # --tools= (not --tools ""): the action drops an empty quoted value and
+        # passes a bare --tools, which the CLI then fills with the next flag.
+        # The SDK itself writes --tools= for an empty tool list.
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
@@ -184,7 +190,7 @@ jobs:
           claude_args: >-
             --model claude-opus-5-5
             --max-turns 3
-            --tools ""
+            --tools=
             --disallowedTools "mcp__*"
             --disable-slash-commands
             --strict-mcp-config

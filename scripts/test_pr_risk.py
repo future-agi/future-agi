@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 import textwrap
@@ -3473,13 +3474,76 @@ class WorkflowContractTests(unittest.TestCase):
             0
         ]
         self.assertNotIn(": write", review)
-        self.assertIn("anthropics/claude-code-action@dde2242db6af13460b916652159b6ba19a598f30 # v1.0.120", review)
-        self.assertIn('--tools ""', review)
+        # v1.0.271 (tag object 9008224d, tagged 10 Nov 2026) bundles Claude
+        # Code 2.1.322 and Agent SDK 0.3.322; claude-opus-5-5 needs 2.1.280.
+        self.assertIn("anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271", review)
+        self.assertIn("--tools=", review)
         self.assertIn('--disallowedTools "mcp__*"', review)
         self.assertNotIn("pull_request.head.sha", text)
         self.assertIn("AI_VERDICT: ${{ needs.ai-review.outputs.verdict }}", text)
         self.assertIn("PR Autopilot review", text)
         self.assertIn("persist-credentials: false", text)
+
+    # claude_args flags that take a value, and those passed with none.
+    CLAUDE_VALUE_FLAGS = {"model", "max-turns", "disallowedTools", "mcp-config", "json-schema"}
+    CLAUDE_BARE_FLAGS = {"tools=", "disable-slash-commands", "strict-mcp-config"}
+
+    @classmethod
+    def claude_args_defects(cls, claude_args):
+        """Flags that do not reach the CLI as written. The pinned action's
+        parser (base-action/src/parse-sdk-options.ts) gives a flag the next
+        token as its value only when that token is not empty and is not
+        another flag; otherwise the flag is passed bare, and the CLI's parser
+        then takes the next argument, whatever it is, as the missing value.
+        shlex splits these quotes as the action's shell-quote does."""
+        tokens = shlex.split(claude_args)
+        flags, defects, index = {}, [], 0
+        while index < len(tokens):
+            token = tokens[index]
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            if not token.startswith("--"):
+                defects.append(f"dropped token {token!r}")
+            elif following and not following.startswith("--"):
+                flags[token[2:]] = following
+                index += 1
+            else:
+                flags[token[2:]] = None
+            index += 1
+        for name, value in flags.items():
+            if name in cls.CLAUDE_VALUE_FLAGS and value is None:
+                defects.append(f"--{name} has no value")
+            elif name in cls.CLAUDE_BARE_FLAGS and value is not None:
+                defects.append(f"--{name} takes {value!r} as a value")
+            elif name not in cls.CLAUDE_VALUE_FLAGS | cls.CLAUDE_BARE_FLAGS:
+                defects.append(f"--{name} is not a known flag here")
+        return flags, defects
+
+    def test_claude_args_reach_the_cli_as_written(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        steps = yaml.safe_load(WORKFLOW_TEXT)["jobs"]["ai-review"]["steps"]
+        args = next(step for step in steps if step.get("id") == "claude")["with"]["claude_args"]
+        flags, defects = self.claude_args_defects(args)
+        self.assertEqual(defects, [])
+        self.assertEqual(flags["model"], "claude-opus-5-5")
+        self.assertEqual(flags["max-turns"], "3")
+        self.assertEqual(flags["disallowedTools"], "mcp__*")
+        self.assertEqual(json.loads(flags["mcp-config"]), {"mcpServers": {}})
+        schema = json.loads(flags["json-schema"])
+        self.assertEqual(set(schema["required"]), set(schema["properties"]))
+        # The empty tool list goes as --tools=, the form the Agent SDK itself
+        # writes for tools: []; the CLI reads it as "" (no built-in tools).
+        self.assertIn("tools=", flags)
+        # The form used up to v1.0.120: the action drops the empty value and
+        # passes a bare --tools, and the CLI takes --disable-slash-commands as
+        # the tool list, so slash commands stay enabled.
+        _, defects = self.claude_args_defects(args.replace("--tools=", '--tools ""'))
+        self.assertIn("dropped token ''", defects)
+        self.assertIn("--tools is not a known flag here", defects)
+        _, defects = self.claude_args_defects(args.replace("--model claude-opus-5-5", "--model"))
+        self.assertIn("--model has no value", defects)
 
     def test_policy_tests_run_for_every_file_they_read(self):
         # The post-merge coverage test reads every workflow file, so a PR that
