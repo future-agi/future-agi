@@ -84,7 +84,9 @@ const span = (id, name, type, o = {}) => ({
  * spans: the span tree (Call → Turn → coordinator → workers → tools).
  * graph: buildTraceGraph(spans) with the three additions applied.
  */
-export const participantsGraphOf = (p) => {
+/* callerName: the actor on the call (glossary: an Actor is the simulated
+   person; a Persona is how they behave) — in place of "Simulated user". */
+export const participantsGraphOf = (p, { callerName = null } = {}) => {
   if (!p) return null;
   const coord = p.coordinator;
   const undeclaredIds = new Set((p.undeclared || []).map((w) => w.id));
@@ -182,7 +184,11 @@ export const participantsGraphOf = (p) => {
   const turns = p.turns.map((t) => {
     const ws = everyTurnWorker(t);
     const start = t.at ?? ws[0]?.delegatedAt ?? 0;
-    const end = t.replyAt ?? Math.max(start, ...ws.map((w) => w.endedAt || 0));
+    /* A turn lasts until its reply ends, or its last worker does. */
+    const end = Math.max(
+      t.endAt ?? t.replyAt ?? start,
+      ...ws.map((w) => w.endedAt || 0),
+    );
     if (t.request) add(start, USER_NODE, coord.id, "turn");
     if (t.reply) addReturn(coord.id, USER_NODE);
     const coordId = `t${t.n}:coord`;
@@ -210,7 +216,7 @@ export const participantsGraphOf = (p) => {
       "chain",
       {
         node: USER_NODE,
-        nodeName: "Simulated user",
+        nodeName: callerName || "Simulated user",
         start,
         end,
         input: t.request,
@@ -353,7 +359,59 @@ export const participantsGraphOf = (p) => {
     })),
   }));
 
-  return { spans, graph, nodeOfSpan, path: pathStops };
+  /* Read for people, not traces (12 Nov): no Start/End — the caller's node
+     is where the call begins and ends — full names, each node's role in
+     place of a span count, and the caller's repeat reads as turns. */
+  const isSentinel = (id) => id === "__start__" || id === "__end__";
+  const roleOf = (nd) => {
+    const n = nd.span_count || 0;
+    /* Its turns are on the arrow down to the coordinator. */
+    if (nd.id === USER_NODE) return "Caller";
+    if (nd._state?.ghost) return "Declared worker";
+    /* The coordinator answers every turn; the caller's node counts them. */
+    if (nd.id === coord.id) return "Coordinator";
+    const base = nd.type === "tool" ? "Tool" : "Worker";
+    const verb = nd.type === "tool" ? "called" : "asked";
+    return n > 1 ? `${base} · ${verb} ${n}×` : base;
+  };
+  graph.nodes = graph.nodes
+    .filter((nd) => !isSentinel(nd.id))
+    .map((nd) => ({ ...nd, _wide: true, _sub: roleOf(nd) }));
+  graph.edges = graph.edges
+    .filter((e) => !isSentinel(e.source) && !isSentinel(e.target))
+    .map((e) =>
+      e.transition_count <= 1
+        ? e
+        : e.source === USER_NODE && !e._return
+          ? { ...e, _countLabel: `${e.transition_count} turns` }
+          : e.target === USER_NODE && e._return
+            ? { ...e, _countLabel: `${e.transition_count} replies` }
+            : e,
+    );
+
+  /* The same two stops back to back (a turn the coordinator answered alone,
+     again and again) fold into one pair with a count: 1 → 2 ×5. */
+  const keyOf = (st) => st.who.map((w) => w.id).join("+");
+  const folded = [];
+  for (let i = 0; i < pathStops.length; ) {
+    const a = pathStops[i];
+    const b = pathStops[i + 1];
+    const n = folded.length;
+    if (
+      b &&
+      n >= 2 &&
+      keyOf(folded[n - 2]) === keyOf(a) &&
+      keyOf(folded[n - 1]) === keyOf(b)
+    ) {
+      folded[n - 1].repeat = (folded[n - 1].repeat || 1) + 1;
+      i += 2;
+    } else {
+      folded.push({ ...a });
+      i += 1;
+    }
+  }
+
+  return { spans, graph, nodeOfSpan, path: folded };
 };
 
 /** The span tree cut to one participant: its turns, the path to it, and

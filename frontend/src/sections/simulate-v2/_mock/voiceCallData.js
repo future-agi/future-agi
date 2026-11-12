@@ -3,6 +3,12 @@ import { endedReasonFor } from "./endedReason";
 import { voiceFlowOf } from "./voiceFlow";
 import { callerCastOf, subActorsInTrial } from "./subActors";
 import { actorEventsOf } from "./actorEvents";
+import { participantsOf } from "./participants";
+import {
+  alignParticipantsToCall,
+  evalDisplayName,
+  participantCallsOf,
+} from "./callRecord";
 
 /**
  * Shape a revamped-flow run task into the `data` object the real
@@ -126,11 +132,11 @@ function inferToolCall(assistantText, ctx, allowedTools, key) {
  * accent, so this reads as a visually distinct card attached to the previous
  * turn rather than a footer stuffed inside its bubble.
  */
-function formatToolTurnContent({ name, args, result, latencyMs }) {
+function formatToolTurnContent({ name, args, result, latencyMs, worker }) {
   const argsLine = JSON.stringify(args);
   const resultLine = JSON.stringify(result);
   return [
-    `🛠 **Function call** · \`${name}\` · ${latencyMs}ms`,
+    `🛠 **Function call** · \`${name}\`${worker ? ` · by ${worker}` : ""} · ${latencyMs}ms`,
     "```json",
     `→ args: ${argsLine}`,
     `← result: ${resultLine}`,
@@ -184,7 +190,7 @@ function buildTranscriptWithTools(
   env,
   task,
   subLines = [],
-  { events = [], callerIds = new Set() } = {},
+  { events = [], callerIds = new Set(), noTools = false } = {},
 ) {
   const allowedTools = (env?.tools || [])
     .map((t) => t.id || t.name)
@@ -273,7 +279,8 @@ function buildTranscriptWithTools(
        bordered container (its "own box"), not stuffed into the
        assistant bubble as a footer. Amber accent (the drawer's `tool`
        role color) keeps them visually attached to the turn above. */
-    if (role === "assistant") {
+    /* A multi-agent app's tool calls come from its participants instead. */
+    if (role === "assistant" && !noTools) {
       const tool = inferToolCall(
         s.text,
         ctx,
@@ -418,9 +425,12 @@ export function taskToVoiceData(
      are synthesised at a steady cadence so the analytics view has
      something to plot; a simulated call has no real per-word timing. */
   const sub = subActorsInTrial({ task, env, envState });
-  const transcript = buildTranscriptWithTools(steps, env, task, sub.lines, {
+  /* A multi-agent app: who handled each turn (null for a single agent). */
+  const multi = participantsOf({ agent: envState?.agent, task });
+  let transcript = buildTranscriptWithTools(steps, env, task, sub.lines, {
     events: actorEventsOf({ env, envState, task }),
     callerIds: new Set(callerCastOf(env, envState).map((a) => a.id)),
+    noTools: !!multi,
   });
   /* The transcript, recording and analytics run at the call's real length —
      the one billed and shown everywhere else. */
@@ -435,6 +445,39 @@ export function taskToVoiceData(
       t.duration_seconds = Math.round(t.duration_seconds * k * 10) / 10;
     });
   }
+  /* One record for every tab: the participants happen in this call's turns,
+     and their tool calls are the transcript's tool rows. */
+  const participants = multi
+    ? alignParticipantsToCall(multi, transcript, durationSec || lastEnd)
+    : null;
+  if (participants) {
+    const rows = participantCallsOf(participants).map((c, i) => {
+      const tool = {
+        name: c.name,
+        args: c.input ?? {},
+        result: c.output ?? {
+          status: "no result — the call ended first",
+        },
+        latencyMs: 80 + (hash(`${task?.id}·${c.id || i}`) % 240),
+        worker: c.worker,
+      };
+      const dur = Math.max(0.2, tool.latencyMs / 1000);
+      return {
+        id: `${task?.id || "t"}-call-${c.id || i}`,
+        speaker_role: "tool",
+        role: "tool",
+        message: formatToolTurnContent(tool),
+        content: formatToolTurnContent(tool),
+        start_time_seconds: c.at,
+        end_time_seconds: Math.round((c.at + dur) * 10) / 10,
+        duration_seconds: dur,
+        tool_meta: tool,
+      };
+    });
+    transcript = [...transcript, ...rows].sort(
+      (a, b) => a.start_time_seconds - b.start_time_seconds,
+    );
+  }
 
   /* Per-eval map keyed by id — the drawer accepts either an array or an
      `{ id: { name, score, reason } }` map and normalises a 0..1 score to a
@@ -443,7 +486,7 @@ export function taskToVoiceData(
   (task?.evalResults || []).forEach((r) => {
     eval_metrics[r.id] = {
       id: r.id,
-      name: r.name,
+      name: evalDisplayName(r.name),
       score: r.score,
       value: r.passed ? "pass" : "fail",
       passed: !!r.passed,
@@ -498,9 +541,11 @@ export function taskToVoiceData(
 
     id: task?.id,
     call_execution_id: task?.id,
-    provider_call_id: task?.id,
+    /* A trial's own ID — every attempt at a scenario has one. */
+    provider_call_id: task?.trialId || task?.id,
 
-    provider: "future-agi-sandbox",
+    /* The platform that placed the call — the same name its events carry. */
+    provider: provider || "future-agi-sandbox",
     call_type: direction,
     call_metadata: {
       provider: provider || "future-agi-sandbox",
@@ -529,7 +574,11 @@ export function taskToVoiceData(
     })(),
 
     /* Call Analytics inputs. */
-    call_summary: summary,
+    /* No "AI summary": the line this used to show is the scenario's own
+       description, not an analysis — and analysis runs only on request
+       (concept audit, 12 Nov). Falcon's read is behind "Analyse this trial". */
+    call_summary: undefined,
+    scenario_summary: summary,
     agent_talk_percentage: talkAgent,
     talk_ratio: `${talkAgent}/${100 - talkAgent}`,
     avg_agent_latency_ms: voice && !textRehearsal ? 500 : undefined,
@@ -552,8 +601,10 @@ export function taskToVoiceData(
     /* Attributes tab. */
     attributes: {
       scenario: task?.title,
-      persona: personaStr,
-      traits: (task?.persona?.traits || []).join(", ") || undefined,
+      /* Glossary: the actor is the simulated person; the persona is how
+         they behave. */
+      actor: personaStr,
+      persona: (task?.persona?.traits || []).join(", ") || undefined,
       expected: task?.expected,
       critical: String(!!task?.critical),
       ended_reason_raw: ended.raw,
@@ -564,6 +615,9 @@ export function taskToVoiceData(
     },
 
     scenario: summary,
+    /* The same participants every tab reads (Participants, the transcript's
+       tool rows, Evidence, Provider events). */
+    participants,
     ...(flow && {
       scenario_graph: flow.scenario_graph,
       flow_analysis: flow.flow_analysis,

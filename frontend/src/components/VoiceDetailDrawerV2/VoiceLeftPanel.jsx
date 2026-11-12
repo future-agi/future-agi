@@ -19,11 +19,6 @@ const TABS = {
   EVENTS: "events",
 };
 
-const PATH_VIEW_MODE = {
-  [TABS.CHECKLIST]: "checklist",
-  [TABS.GRAPH]: "graph",
-};
-
 /**
  * Voice drawer left panel. Top-level tabs:
  *
@@ -41,6 +36,8 @@ const PATH_VIEW_MODE = {
 const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
+  /* The Expected steps tab: its list or its graph. */
+  const [pathView, setPathView] = useState("checklist");
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
@@ -68,14 +65,11 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
     ];
     if (showPathTabs) {
       t.push({
-        label: "Checklist",
+        /* Checklist and Graph are one view of the expected steps — one tab,
+           with a List / Graph switch inside (drawer audit, 12 Nov). */
+        label: "Expected steps",
         value: TABS.CHECKLIST,
         icon: "solar:list-check-linear",
-      });
-      t.push({
-        label: "Graph",
-        value: TABS.GRAPH,
-        icon: "solar:graph-linear",
       });
     }
     /* A multi-agent app in a simulation: its coordinator's participants, when
@@ -238,7 +232,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
                 openedExecutionId={callExecutionId}
                 testExecutionId={data?.test_execution_id}
                 enabled={isPathTab}
-                viewMode={PATH_VIEW_MODE[currentTab]}
+                viewMode={pathView}
+                onViewModeChange={setPathView}
+                analysisOnRequest={isSimulate}
                 onRequestTranscript={() => setCurrentTab(TABS.TRANSCRIPT)}
               />
             </ShowComponent>

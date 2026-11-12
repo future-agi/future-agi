@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { evalDisplayName } from "../_mock/callRecord";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -48,6 +49,7 @@ import {
   defaultTraceColumns,
   GROUPINGS,
   humanize,
+  variantLabel,
   deriveUseCaseLabel,
   ruleOf,
 } from "./traceTableHelpers";
@@ -141,7 +143,7 @@ export function TraceColumnsPicker({ value, onChange, evals = [] }) {
       name: "Evaluations",
       items: evals.map((e) => ({
         key: `eval:${e.id}`,
-        label: e.name || e.id,
+        label: evalDisplayName(e.name) || e.id,
         checked: !value.has(HIDDEN_EVAL(e.id)),
         onToggle: () => toggleEval(e.id),
       })),
@@ -1352,7 +1354,9 @@ export default function TraceTable({
                 <TableCell key={e.id} sx={{ ...headCell, width: 150 }}>
                   <EvalHeadCell
                     name={
-                      e.adhoc && e.version ? `${e.name} ${e.version}` : e.name
+                      e.adhoc && e.version
+                        ? `${evalDisplayName(e.name)} ${e.version}`
+                        : evalDisplayName(e.name)
                     }
                     /* A column scoped to only the N scenarios the user
                        picked. Marked in the header so a row of "—"s reads
@@ -2050,25 +2054,6 @@ EvalHeadCell.propTypes = {
   onHide: PropTypes.func,
   rescoring: PropTypes.bool,
 };
-
-/* The useful half of a task id is the trailing variant — everything after the
-   last numeric segment ("…-core-0-routine" → "Routine", "…-0-off-topic" →
-   "Off Topic"). That's the one thing that differs row-to-row inside a group,
-   so it becomes the run's title instead of the repeated raw id. */
-function variantLabel(id) {
-  const parts = String(id || "")
-    .split("-")
-    .filter(Boolean);
-  let lastNum = -1;
-  parts.forEach((p, i) => {
-    if (/^\d+$/.test(p)) lastNum = i;
-  });
-  const tail = lastNum >= 0 ? parts.slice(lastNum + 1) : [];
-  if (tail.length) return humanize(tail.join(" "));
-  /* No trailing variant — fall back to the test-kind token before the number. */
-  if (lastNum > 0) return humanize(parts[lastNum - 1]);
-  return humanize(parts.slice(-1)[0] || "Run");
-}
 
 /*
   Column bounds. The table sizes columns to their content, which is right for

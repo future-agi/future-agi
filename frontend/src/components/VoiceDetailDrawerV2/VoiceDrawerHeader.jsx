@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
-import { IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 
@@ -71,6 +71,9 @@ const VoiceDrawerHeader = ({
   idLabel = "Call ID",
   copyTooltip = "Copy Call ID",
   copyToastMessage = "Call ID copied",
+  title = null,
+  subtitle = null,
+  navNoun = "call",
 }) => {
   // Keyboard: ArrowUp = previous call, ArrowDown = next call.
   // Arrows (not j/k) because TranscriptView owns j/k for turn-level nav inside a call.
@@ -132,6 +135,43 @@ const VoiceDrawerHeader = ({
         spacing={1.5}
         sx={{ minWidth: 0, flex: 1 }}
       >
+        {/* Optional title (simulate: which trial this is) ahead of the ID —
+            text, or a node such as a trial switcher with the title beside it. */}
+        {title &&
+          (typeof title === "string" ? (
+            <Typography
+              noWrap
+              sx={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "text.primary",
+                minWidth: 0,
+                flexShrink: 1,
+              }}
+            >
+              {title}
+            </Typography>
+          ) : (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                minWidth: 0,
+                flexShrink: 1,
+              }}
+            >
+              {title}
+            </Box>
+          ))}
+        {subtitle && (
+          <Typography
+            noWrap
+            sx={{ fontSize: 12, color: "text.tertiary", flexShrink: 0 }}
+          >
+            {subtitle}
+          </Typography>
+        )}
         <Stack
           direction="row"
           alignItems="center"
@@ -142,7 +182,7 @@ const VoiceDrawerHeader = ({
             sx={{
               fontSize: 12,
               fontWeight: 500,
-              color: "text.primary",
+              color: title ? "text.tertiary" : "text.primary",
               whiteSpace: "nowrap",
             }}
           >
@@ -152,7 +192,7 @@ const VoiceDrawerHeader = ({
             noWrap
             sx={{
               fontSize: 12,
-              color: "text.primary",
+              color: title ? "text.tertiary" : "text.primary",
               whiteSpace: "nowrap",
               minWidth: 0,
             }}
@@ -177,13 +217,13 @@ const VoiceDrawerHeader = ({
         <Stack direction="row" spacing={0.5}>
           <NavButton
             icon="solar:alt-arrow-up-linear"
-            tooltip="Previous call (↑)"
+            tooltip={`Previous ${navNoun} (↑)`}
             onClick={onPrev}
             disabled={!hasPrev}
           />
           <NavButton
             icon="solar:alt-arrow-down-linear"
-            tooltip="Next call (↓)"
+            tooltip={`Next ${navNoun} (↓)`}
             onClick={onNext}
             disabled={!hasNext}
           />
@@ -256,6 +296,11 @@ VoiceDrawerHeader.propTypes = {
   idLabel: PropTypes.string,
   copyTooltip: PropTypes.string,
   copyToastMessage: PropTypes.string,
+  title: PropTypes.node,
+  /* Quiet text after the title (simulate: the versions the trial ran on). */
+  subtitle: PropTypes.node,
+  /* What the up/down arrows move between ("call", or "scenario"). */
+  navNoun: PropTypes.string,
 };
 
 export default React.memo(VoiceDrawerHeader);

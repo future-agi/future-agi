@@ -1,8 +1,9 @@
 import PropTypes from "prop-types";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
+  Button,
   Stack,
   Typography,
   IconButton,
@@ -31,8 +32,18 @@ import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
 import { clickable, focusRing } from "../components/clickable";
-import { toolCallsOf } from "../_mock/participants";
+import { participantsOf, toolCallsOf } from "../_mock/participants";
+import { traceOf } from "../_mock/runTrace";
+import {
+  alignParticipantsToTrace,
+  evalDisplayName,
+  trialTaskOf,
+  trialTitleOf,
+  versionLineOf,
+} from "../_mock/callRecord";
+import TrialSwitcher from "./TrialSwitcher";
 import HandoffTimeline from "./HandoffTimeline";
+import { ExtraEvalsHeading, VerdictHeading } from "./ScoreHeadings";
 import SharedState from "./SharedState";
 import ApprovalTimeline from "./ApprovalTimeline";
 import ActorEventRow from "./ActorEventRow";
@@ -113,7 +124,7 @@ const SURFACE_COPY = {
 };
 
 export default function CallDrawer({
-  task,
+  task: scenarioTask,
   env,
   envState,
   /* Opened from the Cost tab: the trace leads with what the calls cost. */
@@ -128,14 +139,32 @@ export default function CallDrawer({
   patch = null,
   runId = null,
 }) {
+  /* The trial on show (concept audit, 12 Nov): each scenario opens on its
+     first trial, and every tab reads that one attempt. */
+  const [trialIdx, setTrialIdx] = useState(0);
+  useEffect(() => setTrialIdx(0), [scenarioTask.id]);
+  const task = useMemo(
+    () => trialTaskOf(scenarioTask, trialIdx),
+    [scenarioTask, trialIdx],
+  );
+  const run = (envState?.runs || []).find((r) => r.id === runId) || null;
+  /* Falcon's read of this trial, once asked for; each trial starts unasked. */
+  const [analysisAsked, setAnalysisAsked] = useState(false);
+  useEffect(() => setAnalysisAsked(false), [scenarioTask.id, trialIdx]);
   /* Opened from a diagnosis that named a step, so open on the trajectory with
      that step lit rather than on the transcript with the reader hunting.
      Opened from Insights evidence, it lands on the trace, pinned to the span
      where the scenario went wrong. */
+  /* The sub-goals now sit with the evals on the right, so a link to the old
+     "checklist" pane opens the transcript with the Evals tab beside it. */
   const [pane, setPane] = useState(
-    initialPane || (focus ? "graph" : "transcript"),
+    initialPane === "checklist"
+      ? "transcript"
+      : initialPane || (focus ? "graph" : "transcript"),
   );
-  const [side, setSide] = useState(focusEvalName ? "evals" : "analytics");
+  const [side, setSide] = useState(
+    focusEvalName || initialPane === "checklist" ? "evals" : "analytics",
+  );
   /* Same row shape the voice drawer feeds EvalsTabView, so both drawers show
      the explanation + error localization identically. */
   const evalRows = useMemo(
@@ -144,7 +173,7 @@ export default function CallDrawer({
         const loc = localizeEval(task, r);
         return {
           id: r.id,
-          eval_name: r.name,
+          eval_name: evalDisplayName(r.name),
           score: Math.round((r.score ?? 0) * 100),
           passed: !!r.passed,
           explanation: r.reason,
@@ -164,6 +193,12 @@ export default function CallDrawer({
       }),
     [task],
   );
+  /* A multi-agent app's participants, on this call's own turns, times and
+     tool calls (its trace) — so Participants agrees with the other tabs. */
+  const participants = useMemo(() => {
+    const p = participantsOf({ agent: envState?.agent, task });
+    return p ? alignParticipantsToTrace(p, traceOf(task, env, envState)) : null;
+  }, [envState, env, task]);
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -262,16 +297,30 @@ export default function CallDrawer({
           flexShrink: 0,
         }}
       >
-        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-          {copy.id} :{" "}
-          <Box component="span" sx={{ color: "text.primary" }}>
-            {task.id}
-          </Box>
+        {/* One header for the trial: which one this is, then its ID. */}
+        <TrialSwitcher
+          samples={scenarioTask.samples}
+          index={trialIdx}
+          onPick={setTrialIdx}
+        />
+        <Typography
+          noWrap
+          sx={{ typography: "s1", fontWeight: 600, flexShrink: 1, minWidth: 0 }}
+        >
+          {trialTitleOf(task, { verdict: false, trial: false })}
+        </Typography>
+        {/* The pair this trial ran on, then its own ID. */}
+        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+          {[versionLineOf(run), `${copy.id} : ${task.trialId || task.id}`]
+            .filter(Boolean)
+            .join(" · ")}
         </Typography>
         <Tooltip arrow title={`Copy ${copy.id.toLowerCase()}`}>
           <IconButton
             size="small"
-            onClick={() => navigator.clipboard?.writeText(task.id)}
+            onClick={() =>
+              navigator.clipboard?.writeText(task.trialId || task.id)
+            }
           >
             <Iconify
               icon="solar:copy-linear"
@@ -280,22 +329,37 @@ export default function CallDrawer({
             />
           </IconButton>
         </Tooltip>
-        <VerdictCauseChip verdict={verdict || task.verdictCause} task={task} />
+        {/* This trial's own verdict: a later trial that passed has no cause. */}
+        <VerdictCauseChip
+          verdict={
+            task.status === "passed" ? null : verdict || task.verdictCause
+          }
+          task={task}
+        />
         <Box flex={1} />
-        <IconButton size="small" onClick={onPrev} disabled={!onPrev}>
-          <Iconify
-            icon="solar:alt-arrow-up-linear"
-            width={16}
-            sx={{ color: "text.tertiary" }}
-          />
-        </IconButton>
-        <IconButton size="small" onClick={onNext} disabled={!onNext}>
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={16}
-            sx={{ color: "text.tertiary" }}
-          />
-        </IconButton>
+        {/* The arrows move between scenarios; the trial switcher between trials. */}
+        <Tooltip arrow title="Previous scenario">
+          <span>
+            <IconButton size="small" onClick={onPrev} disabled={!onPrev}>
+              <Iconify
+                icon="solar:alt-arrow-up-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip arrow title="Next scenario">
+          <span>
+            <IconButton size="small" onClick={onNext} disabled={!onNext}>
+              <Iconify
+                icon="solar:alt-arrow-down-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
+            </IconButton>
+          </span>
+        </Tooltip>
         <IconButton size="small" onClick={onClose}>
           <Iconify
             icon="solar:close-linear"
@@ -334,8 +398,9 @@ export default function CallDrawer({
                 value="transcript"
                 label={conversational ? "Transcript" : "Actions"}
               />
-              <Tab value="checklist" label="Checklist" />
-              <Tab value="graph" label="Graph" />
+              {/* The steps the scenario expected; the judged sub-goals sit
+                  with the evals on the right (drawer audit, 12 Nov). */}
+              <Tab value="graph" label="Expected steps" />
               <Tab value="trace" label="Trace" />
               {membersOf(envState?.agent).length > 1 && (
                 <Tab value="handoffs" label="Participants" />
@@ -344,7 +409,7 @@ export default function CallDrawer({
                 <Tab value="approvals" label="Approvals" />
               )}
               <Tab value="twin" label="World state" />
-              <Tab value="artifacts" label="Artifacts" />
+              <Tab value="artifacts" label="Evidence" />
               <Tab value="cost" label="Cost" />
               {envState?.twinBacking && (
                 <Tab value="requests" label="Raw requests" />
@@ -354,7 +419,11 @@ export default function CallDrawer({
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {pane === "handoffs" && (
-              <HandoffTimeline agent={envState?.agent} task={task} />
+              <HandoffTimeline
+                agent={envState?.agent}
+                task={task}
+                participants={participants}
+              />
             )}
             {pane === "approvals" && env && (
               <ApprovalTimeline env={env} task={task} />
@@ -516,38 +585,136 @@ export default function CallDrawer({
                 draws — one run rather than three, but nothing less detailed:
                 a drawer that reports "3 checks" while the compare view shows
                 which step was skipped is two products. */}
-            {pane === "checklist" && (
-              <Stack sx={{ p: 2 }} spacing={1}>
-                {/* The scenario's sub-goals first — each critical or
-                    supporting, and the verdict they roll up to — then the
-                    reference path step by step. */}
-                <SubGoalRollup task={task} env={env} envState={envState} />
-                {/* A failed check: where it comes from, and a place to
-                    dispute it without rewriting the score. */}
-                {["failed", "flaky", "unmeasured"].includes(task.status) && (
-                  <>
-                    <CheckSource
-                      task={task}
-                      env={env}
-                      envState={envState}
-                      run={
-                        (envState?.runs || []).find((r) => r.id === runId) ||
-                        null
+
+            {/* Session → turns → LLM, tool and guard spans on one time axis. */}
+            {pane === "trace" && (
+              <TraceWaterfall
+                task={task}
+                env={env}
+                envState={envState}
+                showCost={showCost}
+              />
+            )}
+
+            {pane === "twin" && (
+              <SourcesUsed
+                env={env}
+                envState={envState}
+                task={task}
+                runId={runId}
+              />
+            )}
+            {pane === "twin" && <ResetRow reset={resetCheckOf(task)} />}
+            {pane === "twin" && envState?.twinBacking && (
+              <TwinStateTimeline envState={envState} task={task} />
+            )}
+            {/* Without a cloned service the diff is read off the write calls. */}
+            {pane === "twin" && !envState?.twinBacking && (
+              <WorldChanges changes={worldChangesOf(task, env, envState)} />
+            )}
+            {pane === "twin" && (
+              <SharedState
+                agent={envState?.agent}
+                task={task}
+                sx={{ px: 2, pb: 2 }}
+              />
+            )}
+            {pane === "artifacts" && (
+              <TrialArtifacts
+                items={trialArtifactsOf({
+                  task,
+                  env,
+                  envState,
+                  stage,
+                  conversational,
+                  voice,
+                })}
+                onOpen={setPane}
+              />
+            )}
+            {pane === "cost" && (
+              <TraceWaterfall
+                task={task}
+                env={env}
+                envState={envState}
+                showCost
+              />
+            )}
+
+            {pane === "requests" && envState?.twinBacking && (
+              <TwinRequestStream envState={envState} task={task} />
+            )}
+
+            {pane === "graph" && (
+              <Box sx={{ p: 2 }}>
+                <CallGraph
+                  spine={detail.graph.spine}
+                  branches={detail.graph.branches}
+                  focus={focus}
+                />
+                {/* Analysis runs only when asked (concept audit, 12 Nov). */}
+                {!analysisAsked ? (
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{ mt: 1.5 }}
+                  >
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="inherit"
+                      startIcon={
+                        <Iconify
+                          icon="solar:stars-minimalistic-linear"
+                          width={14}
+                        />
                       }
-                    />
-                    <DisputeNotes
-                      envState={envState}
-                      patch={patch}
-                      runId={runId}
-                      task={task}
-                      score={
-                        task.repeats > 1
-                          ? `${task.passes}/${task.repeats}`
-                          : task.status
-                      }
-                    />
-                  </>
+                      onClick={() => setAnalysisAsked(true)}
+                    >
+                      Analyse this trial
+                    </Button>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      Falcon reads this conversation and says where it left the
+                      expected steps.
+                    </Typography>
+                  </Stack>
+                ) : (
+                  <Box
+                    sx={{
+                      mt: 1.5,
+                      p: 1.5,
+                      borderRadius: 1,
+                      border: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "text.tertiary",
+                        textTransform: "none",
+                        letterSpacing: 0.4,
+                        mb: 0.5,
+                      }}
+                    >
+                      Falcon analysis
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      {detail.analysis}
+                    </Typography>
+                  </Box>
                 )}
+              </Box>
+            )}
+            {/* The scenario's steps, as a list under its graph. */}
+            {pane === "graph" && (
+              <Stack sx={{ px: 2, pb: 2 }} spacing={1}>
                 <Typography
                   sx={{
                     typography: "s3",
@@ -558,7 +725,7 @@ export default function CallDrawer({
                     pt: 1,
                   }}
                 >
-                  Reference path
+                  Step by step
                 </Typography>
                 <Stack
                   direction="row"
@@ -566,10 +733,17 @@ export default function CallDrawer({
                   spacing={1.5}
                   sx={{ pb: 0.5 }}
                 >
+                  {/* Where the call left the expected steps — not a score;
+                      the verdict is the sub-goal checks' (concept audit). */}
                   <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    {detail.checklist.pct}% ·{" "}
-                    {detail.checklist.pass + detail.checklist.partial}/
-                    {detail.checklist.steps.length} steps
+                    {(() => {
+                      const off = detail.checklist.steps.find(
+                        (c) => c.status !== "addressed",
+                      );
+                      return off
+                        ? `Left the expected steps at ${off.name}`
+                        : "Followed every expected step";
+                    })()}
                   </Typography>
                   <Typography
                     sx={{ typography: "s3", color: "status.success.fg" }}
@@ -665,102 +839,6 @@ export default function CallDrawer({
                   );
                 })}
               </Stack>
-            )}
-
-            {/* Session → turns → LLM, tool and guard spans on one time axis. */}
-            {pane === "trace" && (
-              <TraceWaterfall
-                task={task}
-                env={env}
-                envState={envState}
-                showCost={showCost}
-              />
-            )}
-
-            {pane === "twin" && (
-              <SourcesUsed
-                env={env}
-                envState={envState}
-                task={task}
-                runId={runId}
-              />
-            )}
-            {pane === "twin" && <ResetRow reset={resetCheckOf(task)} />}
-            {pane === "twin" && envState?.twinBacking && (
-              <TwinStateTimeline envState={envState} task={task} />
-            )}
-            {/* Without a cloned service the diff is read off the write calls. */}
-            {pane === "twin" && !envState?.twinBacking && (
-              <WorldChanges changes={worldChangesOf(task, env, envState)} />
-            )}
-            {pane === "twin" && (
-              <SharedState
-                agent={envState?.agent}
-                task={task}
-                sx={{ px: 2, pb: 2 }}
-              />
-            )}
-            {pane === "artifacts" && (
-              <TrialArtifacts
-                items={trialArtifactsOf({
-                  task,
-                  env,
-                  envState,
-                  stage,
-                  conversational,
-                  voice,
-                })}
-                onOpen={setPane}
-              />
-            )}
-            {pane === "cost" && (
-              <TraceWaterfall
-                task={task}
-                env={env}
-                envState={envState}
-                showCost
-              />
-            )}
-
-            {pane === "requests" && envState?.twinBacking && (
-              <TwinRequestStream envState={envState} task={task} />
-            )}
-
-            {pane === "graph" && (
-              <Box sx={{ p: 2 }}>
-                <CallGraph
-                  spine={detail.graph.spine}
-                  branches={detail.graph.branches}
-                  focus={focus}
-                />
-                <Box
-                  sx={{
-                    mt: 1.5,
-                    p: 1.5,
-                    borderRadius: 1,
-                    border: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      fontWeight: 600,
-                      color: "text.tertiary",
-                      textTransform: "none",
-                      letterSpacing: 0.4,
-                      mb: 0.5,
-                    }}
-                  >
-                    Falcon analysis
-                  </Typography>
-                  <Typography
-                    sx={{ typography: "s2", color: "text.secondary" }}
-                  >
-                    {detail.analysis}
-                  </Typography>
-                </Box>
-              </Box>
             )}
           </Box>
         </Stack>
@@ -892,7 +970,6 @@ export default function CallDrawer({
                 value="evals"
                 label={`Evals (${(task.evalResults || []).length})`}
               />
-              <Tab value="messages" label="Messages" />
               <Tab value="attributes" label="Attributes" />
             </CustomTabs>
           </Box>
@@ -1133,38 +1210,66 @@ export default function CallDrawer({
                 showSpanColumn={false}
                 focusEvalName={focusEvalName}
                 hideRowFix
+                hideAddEvals
+                lead={
+                  /* Every score in one place (drawer audit, 12 Nov): the
+                     trial's sub-goals and their source, then the evals. */
+                  <Stack
+                    sx={{
+                      p: 1.5,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
+                    spacing={1}
+                  >
+                    {/* The sub-goals decide the trial; the evals below only
+                        score it (concept audit, 12 Nov). */}
+                    <VerdictHeading />
+                    <SubGoalRollup task={task} env={env} envState={envState} />
+                    {/* A failed check: where it comes from, and a place to
+                    dispute it without rewriting the score. */}
+                    {["failed", "flaky", "unmeasured"].includes(
+                      task.status,
+                    ) && (
+                      <>
+                        <CheckSource
+                          task={task}
+                          env={env}
+                          envState={envState}
+                          run={
+                            (envState?.runs || []).find(
+                              (r) => r.id === runId,
+                            ) || null
+                          }
+                        />
+                        <DisputeNotes
+                          envState={envState}
+                          patch={patch}
+                          runId={runId}
+                          task={task}
+                          score={
+                            task.repeats > 1
+                              ? `${task.passes}/${task.repeats}`
+                              : task.status
+                          }
+                        />
+                      </>
+                    )}
+                    <ExtraEvalsHeading />
+                  </Stack>
+                }
               />
-            )}
-
-            {side === "messages" && (
-              <Box
-                component="pre"
-                sx={{
-                  m: 0,
-                  p: 2,
-                  typography: "s3",
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                  color: "text.secondary",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {JSON.stringify(
-                  turns.map((s) => ({ role: s.role, content: s.text })),
-                  null,
-                  2,
-                )}
-              </Box>
             )}
 
             {side === "attributes" && (
               <Stack>
                 <Attr label="scenario" value={task.title} />
                 <Attr
-                  label="persona"
+                  label="actor"
                   value={`${task.persona?.name} · ${task.persona?.age} · ${task.persona?.voice}`}
                 />
                 <Attr
-                  label="traits"
+                  label="persona"
                   value={(task.persona?.traits || []).join(", ")}
                 />
                 <Attr label="expected" value={task.expected} />
@@ -1956,7 +2061,8 @@ const SUBGOAL_STATUS = {
   },
 };
 
-function SubGoalRollup({ task, env, envState }) {
+/* Also the voice drawer's Evals tab lead (RunResults). */
+export function SubGoalRollup({ task, env, envState }) {
   const {
     items: graded,
     rollup,

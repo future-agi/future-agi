@@ -10,8 +10,8 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
  * arrived and how it was matched — a redelivered webhook is shown, marked
  * duplicate, and never became a second trial.
  */
-export default function ProviderEvents({ task, provider }) {
-  const { callId, events } = providerEventsOf(task, provider);
+export default function ProviderEvents({ task, provider, call }) {
+  const { callId, events } = providerEventsOf(task, provider, call);
   const dupes = events.filter((e) => e.duplicate).length;
   return (
     <Stack spacing={1} sx={{ p: 2 }}>
@@ -78,4 +78,6 @@ export default function ProviderEvents({ task, provider }) {
 ProviderEvents.propTypes = {
   task: PropTypes.object.isRequired,
   provider: PropTypes.string,
+  /* The call record (taskToVoiceData), so the events follow that call. */
+  call: PropTypes.object,
 };

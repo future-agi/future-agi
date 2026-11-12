@@ -420,6 +420,8 @@ const EvalsTabView = ({
   onFixWithFalcon,
   focusEvalName,
   hideRowFix = false,
+  hideAddEvals = false,
+  lead = null,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -458,21 +460,29 @@ const EvalsTabView = ({
 
   if (list.length === 0) {
     return (
-      <Box sx={{ textAlign: "center", py: 4, px: 2, color: "text.secondary" }}>
-        <Iconify
-          icon="solar:chart-2-linear"
-          width={32}
-          sx={{ mb: 1, opacity: 0.4 }}
-        />
-        <Typography variant="body2" fontSize={12}>
-          {emptyMessage || "No evaluations available"}
-        </Typography>
-      </Box>
+      <>
+        {lead}
+        <Box
+          sx={{ textAlign: "center", py: 4, px: 2, color: "text.secondary" }}
+        >
+          <Iconify
+            icon="solar:chart-2-linear"
+            width={32}
+            sx={{ mb: 1, opacity: 0.4 }}
+          />
+          <Typography variant="body2" fontSize={12}>
+            {emptyMessage || "No evaluations available"}
+          </Typography>
+        </Box>
+      </>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Optional block above the evals — simulate puts the trial's
+          sub-goals here, so every score sits in one tab. */}
+      {lead}
       {/* Summary bar */}
       <Box
         sx={{
@@ -617,48 +627,50 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        <Box
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            px: 1,
-            py: 0.35,
-            border: "1px dashed",
-            borderColor: "divider",
-            borderRadius: "4px",
-            bgcolor: "background.paper",
-            flexShrink: 0,
-            opacity: 0.7,
-          }}
-        >
-          <Iconify
-            icon="solar:add-circle-linear"
-            width={14}
-            color="text.disabled"
-          />
-          <Typography
-            sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
-          >
-            Add Evals
-          </Typography>
+        {!hideAddEvals && (
           <Box
             sx={{
-              px: 0.6,
-              py: 0.1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              py: 0.35,
+              border: "1px dashed",
+              borderColor: "divider",
               borderRadius: "4px",
-              bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
-              color: "success.dark",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: 0.2,
-              lineHeight: 1.5,
-              whiteSpace: "nowrap",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+              opacity: 0.7,
             }}
           >
-            Coming soon
+            <Iconify
+              icon="solar:add-circle-linear"
+              width={14}
+              color="text.disabled"
+            />
+            <Typography
+              sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
+            >
+              Add Evals
+            </Typography>
+            <Box
+              sx={{
+                px: 0.6,
+                py: 0.1,
+                borderRadius: "4px",
+                bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
+                color: "success.dark",
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                lineHeight: 1.5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Coming soon
+            </Box>
           </Box>
-        </Box>
+        )}
       </Box>
 
       {/* Table */}
@@ -743,6 +755,10 @@ EvalsTabView.propTypes = {
   /* Drops the per-eval "Fix with Falcon" under an expanded row; the
      summary-bar one stays. */
   hideRowFix: PropTypes.bool,
+  /* Drops the "Add Evals · Coming soon" placeholder from the toolbar. */
+  hideAddEvals: PropTypes.bool,
+  /* Rendered above the summary bar (simulate: the trial's sub-goals). */
+  lead: PropTypes.node,
 };
 
 export default EvalsTabView;

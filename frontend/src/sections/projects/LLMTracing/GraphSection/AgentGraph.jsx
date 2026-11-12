@@ -523,6 +523,7 @@ const AgentNode = ({ data }) => {
               return halo;
             },
             minWidth: isSentinel ? 44 : 80,
+            ...(data._wide && { width: 150, minHeight: 50 }),
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
             // Ghosts read as semi-transparent without losing the badge.
@@ -544,8 +545,9 @@ const AgentNode = ({ data }) => {
             <Box
               sx={{
                 position: "absolute",
-                top: -8,
-                right: -6,
+                // An end state (Participants) sits above the box so it never
+                // covers the name; diff badges keep their corner.
+                ...(endState ? { top: -19, left: 4 } : { top: -8, right: -6 }),
                 minWidth: 16,
                 height: 16,
                 px: diffBadgeLabel ? 0.65 : 0.5,
@@ -577,24 +579,44 @@ const AgentNode = ({ data }) => {
           />
           <Box sx={{ overflow: "hidden" }}>
             <Typography
-              noWrap
+              noWrap={!data._wide}
               sx={{
                 fontWeight: 600,
                 fontSize: isSentinel ? 10 : 12,
                 color: color.text,
                 lineHeight: 1.2,
-                maxWidth: 100,
+                maxWidth: data._wide ? 112 : 100,
+                // _wide (Participants): the full name on up to two lines,
+                // breaking after underscores in tool names.
+                ...(data._wide && {
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflowWrap: "anywhere",
+                }),
               }}
             >
-              {data.name}
+              {data._wide ? data.name.replace(/_/g, "_\u200b") : data.name}
             </Typography>
-            {/* Show span count directly on the node for non-sentinel */}
-            {!isSentinel && data.span_count > 0 && (
+            {/* Optional caption in place of the span count (simulate's
+                Participants view: the node's role). */}
+            {data._sub ? (
               <Typography
+                noWrap
                 sx={{ fontSize: 12, color: "text.disabled", lineHeight: 1 }}
               >
-                {data.span_count.toLocaleString()} spans
+                {data._sub}
               </Typography>
+            ) : (
+              /* Show span count directly on the node for non-sentinel */
+              !isSentinel &&
+              data.span_count > 0 && (
+                <Typography
+                  sx={{ fontSize: 12, color: "text.disabled", lineHeight: 1 }}
+                >
+                  {data.span_count.toLocaleString()} spans
+                </Typography>
+              )
             )}
           </Box>
         </Box>
@@ -621,8 +643,8 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
   nodes.forEach((node) => {
     const isSentinel = node.data?.type === "start" || node.data?.type === "end";
     g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
+      width: isSentinel ? 50 : node.data?._wide ? 150 : 140,
+      height: isSentinel ? 32 : node.data?._wide ? 58 : 44,
     });
   });
   edges.forEach((edge) => {
@@ -633,7 +655,13 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 
   return nodes.map((node) => {
     const pos = g.node(node.id);
-    return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
+    return {
+      ...node,
+      position: {
+        x: pos.x - (node.data?._wide ? 75 : 70),
+        y: pos.y - (node.data?._wide ? 29 : 22),
+      },
+    };
   });
 };
 
@@ -820,7 +848,7 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         },
         style: { stroke: edgeColor, strokeWidth: 1, strokeDasharray: "1 3" },
         ...(count > 1 && {
-          label: `×${count}`,
+          label: edge._countLabel || `×${count}`,
           labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
           labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
           labelBgPadding: [3, 2],
@@ -867,7 +895,7 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
       // Show transition count on edges with > 1 transition
       ...(!stepLabel &&
         count > 1 && {
-          label: `×${count}`,
+          label: edge._countLabel || `×${count}`,
           labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
           labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
           labelBgPadding: [3, 2],

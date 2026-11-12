@@ -94,7 +94,7 @@ describe("PathAnalysisView", () => {
 
     expect(await screen.findByText("Greeting")).toBeInTheDocument();
     expect(screen.getByText("Confirm order")).toBeInTheDocument();
-    expect(screen.getByText("1/2 steps")).toBeInTheDocument();
+    expect(screen.getByText(/Left the expected steps at/)).toBeInTheDocument();
     expect(screen.getByText("1 missed")).toBeInTheDocument();
     expect(
       screen.getByText("Greeting was completed; confirmation was missed."),
@@ -127,6 +127,6 @@ describe("PathAnalysisView", () => {
         "This call does not have enough data to analyze its flow.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText("2/2 steps")).not.toBeInTheDocument();
+    expect(screen.queryByText("Followed every expected step")).not.toBeInTheDocument();
   });
 });

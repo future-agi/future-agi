@@ -1726,6 +1726,7 @@ const SpanDetailPane = ({
   onSelectSpan,
   drawerOpen = true,
   previewOnly = false,
+  breadcrumb = null,
 }) => {
   const [tab, setActiveTab] = useState("preview");
   // previewOnly: the host already shows the trace and its evals (simulation's
@@ -1836,99 +1837,135 @@ const SpanDetailPane = ({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* ── Span Header ────────────────────────────── */}
-      <Box
-        sx={{
-          px: 2,
-          pt: 1.5,
-          pb: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="flex-start"
+      {previewOnly ? (
+        /* previewOnly: a step inside a call the host already heads, so the
+           step reads as where it sits plus one plain line — no chips, which
+           would look like a second call header. */
+        <Box
+          sx={{
+            px: 2,
+            pt: 1.25,
+            pb: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
         >
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Typography
-                variant="body1"
-                noWrap
-                sx={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  fontFamily: "'IBM Plex Sans', sans-serif",
-                }}
-              >
-                {span.name || "unnamed"}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() => copyText(span.name || "")}
-              >
-                <Iconify
-                  icon="solar:copy-linear"
-                  width={12}
-                  color="text.disabled"
-                />
-              </IconButton>
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={0.25}>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontFamily: "monospace",
-                  color: "text.secondary",
-                  fontSize: 12,
-                }}
-              >
-                {span.id}
-              </Typography>
-              <IconButton size="small" onClick={() => copyText(span.id || "")}>
-                <Iconify
-                  icon="solar:copy-linear"
-                  width={12}
-                  color="text.disabled"
-                />
-              </IconButton>
-            </Stack>
-          </Box>
-
-          {/* Actions button */}
-          {onAction && (
-            <Button
-              size="small"
-              variant="outlined"
-              endIcon={
-                <Iconify icon="solar:alt-arrow-down-linear" width={14} />
-              }
-              onClick={(e) => onAction("_open", e.currentTarget)}
-              sx={{
-                borderColor: "divider",
-                color: "text.primary",
-                "&:hover": { borderColor: "border.hover" },
-              }}
+          <Typography noWrap sx={{ typography: "s2", color: "text.tertiary" }}>
+            {(breadcrumb || []).map((b) => `${b} › `).join("")}
+            <Box
+              component="span"
+              sx={{ color: "text.primary", fontWeight: 600 }}
             >
-              Actions
-            </Button>
-          )}
-        </Stack>
+              {span.name || "unnamed"}
+            </Box>
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+          >
+            {chips.map((c) => `${c.label} ${c.value}`).join(" · ")}
+          </Typography>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            px: 2,
+            pt: 1.5,
+            pb: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+          >
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Typography
+                  variant="body1"
+                  noWrap
+                  sx={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    fontFamily: "'IBM Plex Sans', sans-serif",
+                  }}
+                >
+                  {span.name || "unnamed"}
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={() => copyText(span.name || "")}
+                >
+                  <Iconify
+                    icon="solar:copy-linear"
+                    width={12}
+                    color="text.disabled"
+                  />
+                </IconButton>
+              </Stack>
+              <Stack direction="row" alignItems="center" spacing={0.25}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontFamily: "monospace",
+                    color: "text.secondary",
+                    fontSize: 12,
+                  }}
+                >
+                  {span.id}
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={() => copyText(span.id || "")}
+                >
+                  <Iconify
+                    icon="solar:copy-linear"
+                    width={12}
+                    color="text.disabled"
+                  />
+                </IconButton>
+              </Stack>
+            </Box>
 
-        {/* Metric chips */}
-        <Stack direction="row" sx={{ mt: 1, flexWrap: "wrap", gap: "4px 8px" }}>
-          {chips.map((c) => (
-            <MetricChip key={c.label} label={c.label} value={c.value} />
-          ))}
-        </Stack>
+            {/* Actions button */}
+            {onAction && (
+              <Button
+                size="small"
+                variant="outlined"
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                }
+                onClick={(e) => onAction("_open", e.currentTarget)}
+                sx={{
+                  borderColor: "divider",
+                  color: "text.primary",
+                  "&:hover": { borderColor: "border.hover" },
+                }}
+              >
+                Actions
+              </Button>
+            )}
+          </Stack>
 
-        {/* Tags — span-level, inline add/remove */}
-        <InlineTagsRow
-          tags={span?.tags || []}
-          traceId={span?.trace}
-          spanId={span?.id}
-        />
-      </Box>
+          {/* Metric chips */}
+          <Stack
+            direction="row"
+            sx={{ mt: 1, flexWrap: "wrap", gap: "4px 8px" }}
+          >
+            {chips.map((c) => (
+              <MetricChip key={c.label} label={c.label} value={c.value} />
+            ))}
+          </Stack>
+
+          {/* Tags — span-level, inline add/remove */}
+          <InlineTagsRow
+            tags={span?.tags || []}
+            traceId={span?.trace}
+            spanId={span?.id}
+          />
+        </Box>
+      )}
 
       {/* ── Tab Bar ────────────────────────────────── */}
       {!previewOnly && (
@@ -2763,6 +2800,8 @@ SpanDetailPane.propTypes = {
   onSelectSpan: PropTypes.func,
   drawerOpen: PropTypes.bool,
   previewOnly: PropTypes.bool,
+  /* previewOnly: the names above this span, shown as "Call › Turn 1 › …". */
+  breadcrumb: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default React.memo(SpanDetailPane);

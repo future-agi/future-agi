@@ -13,6 +13,7 @@ import { traceOf } from "./runTrace";
 import { hashSeed } from "./runStream";
 import { sideEffectOf } from "./toolEnv";
 import { toolChangeOf, toolTablesOf } from "./toolArgSpec";
+import { callToolsOf } from "./callRecord";
 
 /** [{ id, label, recorded, note, pane }] — `pane` is the drawer tab that shows it. */
 export const trialArtifactsOf = ({
@@ -22,11 +23,15 @@ export const trialArtifactsOf = ({
   stage,
   conversational,
   voice,
+  /* The call record (taskToVoiceData) — when given, its tool calls are the
+     ones counted, so Evidence agrees with the transcript. */
+  call = null,
 }) => {
   const steps = (task?.steps || []).length;
-  const tools = traceOf(task, env, envState).spans.filter(
-    (s) => s.kind === "tool",
-  ).length;
+  const tools = call
+    ? callToolsOf(call.transcript).length
+    : traceOf(task, env, envState).spans.filter((s) => s.kind === "tool")
+        .length;
   const agentName = envState?.agent?.name || "This agent";
   return [
     voice && {

@@ -14,15 +14,12 @@ const TABS = {
   GRAPH: "graph",
 };
 
-const PATH_VIEW_MODE = {
-  [TABS.CHECKLIST]: "checklist",
-  [TABS.GRAPH]: "graph",
-};
-
 // Chat drawer left panel — Transcript / Checklist / Graph (mirrors VoiceLeftPanel).
 const ChatLeftPanel = ({ data, scenarioId }) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
+  /* The Expected steps tab: its list or its graph. */
+  const [pathView, setPathView] = useState("checklist");
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
@@ -42,14 +39,11 @@ const ChatLeftPanel = ({ data, scenarioId }) => {
     ];
     if (showPathTabs) {
       t.push({
-        label: "Checklist",
+        /* Checklist and Graph are one view of the expected steps — one tab,
+           with a List / Graph switch inside (drawer audit, 12 Nov). */
+        label: "Expected steps",
         value: TABS.CHECKLIST,
         icon: "solar:list-check-linear",
-      });
-      t.push({
-        label: "Graph",
-        value: TABS.GRAPH,
-        icon: "solar:graph-linear",
       });
     }
     return t;
@@ -102,7 +96,9 @@ const ChatLeftPanel = ({ data, scenarioId }) => {
                 scenarioId={scenarioId}
                 openedExecutionId={data?.id}
                 enabled={isPathTab}
-                viewMode={PATH_VIEW_MODE[currentTab]}
+                viewMode={pathView}
+                onViewModeChange={setPathView}
+                analysisOnRequest={isSimulate}
                 onRequestTranscript={() => setCurrentTab(TABS.TRANSCRIPT)}
               />
             </ShowComponent>

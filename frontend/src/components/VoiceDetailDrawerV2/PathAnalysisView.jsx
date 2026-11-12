@@ -9,11 +9,13 @@ import {
   IconButton,
   Modal,
   Stack,
+  Tab,
   Tooltip,
   Typography,
   alpha,
   useTheme,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useQuery } from "@tanstack/react-query";
 import {
   Handle,
@@ -213,7 +215,9 @@ const PathAnalysisView = ({
   testExecutionId,
   enabled,
   viewMode = "checklist",
+  onViewModeChange,
   onRequestTranscript,
+  analysisOnRequest = false,
 }) => {
   const { executionId } = useParams();
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
@@ -227,6 +231,9 @@ const PathAnalysisView = ({
   // remains local so it only matters while the user is on one of the
   // path views.
   const [fullscreen, setFullscreen] = useState(false);
+  /* Asked per call: another trial or call starts unasked. */
+  const [analysisAsked, setAnalysisAsked] = useState(false);
+  useEffect(() => setAnalysisAsked(false), [data?.provider_call_id, data?.id]);
   const [expanded, setExpanded] = useState(() => new Set());
   const [statusFilter, setStatusFilter] = useState("all");
   // Selected step survives tab switches via the URL-less state here —
@@ -408,7 +415,11 @@ const PathAnalysisView = ({
       else if (r.status === "unmeasured") unmeasured += 1;
       else miss += 1;
     });
-    return { pass, partial, miss, total: stepRows.length, unmeasured };
+    /* The first expected step the call didn't follow — where it left them. */
+    const leftAt =
+      stepRows.find((r) => r.status === "miss" || r.status === "partial")?.step
+        ?.name || null;
+    return { pass, partial, miss, total: stepRows.length, unmeasured, leftAt };
   }, [stepRows]);
 
   const filteredRows = useMemo(() => {
@@ -649,6 +660,18 @@ const PathAnalysisView = ({
           activeFilter={statusFilter}
           onFilter={(f) => setStatusFilter((cur) => (cur === f ? "all" : f))}
         />
+        {/* One "Expected steps" tab: the parent may let the list and the
+            graph be switched here instead of being two tabs. */}
+        {onViewModeChange && (
+          <SegmentedTabs
+            value={viewMode}
+            onChange={(_, mode) => onViewModeChange(mode)}
+            sx={{ flexShrink: 0, ml: "auto" }}
+          >
+            <Tab value="checklist" label="List" />
+            <Tab value="graph" label="Graph" />
+          </SegmentedTabs>
+        )}
         {viewMode === "graph" && (
           <Tooltip title="Open fullscreen" arrow placement="top">
             <IconButton
@@ -786,8 +809,28 @@ const PathAnalysisView = ({
         </Box>
       </Modal>
 
+      {/* Analysis on request (simulate): Falcon's read of the call shows only
+          after the user asks for it — analysis never runs on its own. */}
+      {analysisSummary && analysisOnRequest && !analysisAsked && (
+        <Stack direction="row" alignItems="center" gap={1}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+            }
+            onClick={() => setAnalysisAsked(true)}
+          >
+            Analyse this trial
+          </Button>
+          <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+            Falcon reads this call and says where it left the expected steps.
+          </Typography>
+        </Stack>
+      )}
       {/* Analysis summary — always visible, small */}
-      {analysisSummary && (
+      {analysisSummary && (!analysisOnRequest || analysisAsked) && (
         <Box
           sx={{
             border: "1px solid",
@@ -843,6 +886,9 @@ PathAnalysisView.propTypes = {
   testExecutionId: PropTypes.string,
   enabled: PropTypes.bool,
   viewMode: PropTypes.oneOf(["checklist", "graph"]),
+  /* Show Falcon's analysis only after "Analyse this trial" is pressed. */
+  analysisOnRequest: PropTypes.bool,
+  onViewModeChange: PropTypes.func,
   onRequestTranscript: PropTypes.func,
 };
 
@@ -852,7 +898,6 @@ PathAnalysisView.propTypes = {
 
 const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
   const { pass, partial, miss, total, unmeasured = 0 } = coverage;
-  const pct = total > 0 ? Math.round((pass / total) * 100) : 0;
   /* No verdict: not a 0% — nothing was scored. */
   const noVerdict = total > 0 && unmeasured === total;
   return (
@@ -862,30 +907,15 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
       gap={0.75}
       sx={{ flexWrap: "wrap" }}
     >
-      <Stack direction="row" alignItems="center" gap={0.75}>
-        <StatusBadge
-          label={noVerdict ? "Unmeasured" : `${pct}%`}
-          role={
-            noVerdict
-              ? "neutral"
-              : pct >= 80
-                ? "success"
-                : pct >= 50
-                  ? "warning"
-                  : "danger"
-          }
-          dot={false}
-        />
-        <Typography
-          sx={{
-            fontSize: 12,
-            color: "text.secondary",
-            fontFamily: "monospace",
-          }}
-        >
-          {pass}/{total} steps
-        </Typography>
-      </Stack>
+      {/* Where the call left the expected steps — not a score: the trial's
+          verdict comes from its sub-goal checks (concept audit, 12 Nov). */}
+      <Typography sx={{ fontSize: 12, fontWeight: 500, color: "text.primary" }}>
+        {noVerdict
+          ? "Couldn't be compared — nothing in the call was measured"
+          : coverage.leftAt
+            ? `Left the expected steps at ${coverage.leftAt}`
+            : "Followed every expected step"}
+      </Typography>
       <FilterPill
         label={`${pass} pass`}
         role="success"

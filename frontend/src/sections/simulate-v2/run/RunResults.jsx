@@ -62,10 +62,13 @@ import {
   EmptyState,
 } from "../components/primitives";
 import RunAnalytics from "./RunAnalyticsV2";
-import CallDrawer from "./CallDrawer";
+import CallDrawer, { SubGoalRollup } from "./CallDrawer";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import { effectiveModality } from "../_mock/rlContract";
 import { taskToVoiceData } from "../_mock/voiceCallData";
+import { trialTaskOf, trialTitleOf, versionLineOf } from "../_mock/callRecord";
+import TrialSwitcher from "./TrialSwitcher";
+import { ExtraEvalsHeading, VerdictHeading } from "./ScoreHeadings";
 import { subGoalResultsOf } from "../_mock/scenarioSubGoals";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import EditEvalDrawer from "../workspace/evals/EditEvalDrawer";
@@ -402,6 +405,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       : t;
   });
   const [openTask, setOpenTask] = useState(null);
+  /* Which of the open scenario's trials the drawer shows; each scenario opens
+     on its first trial. */
+  const [trialIdx, setTrialIdx] = useState(0);
+  useEffect(() => setTrialIdx(0), [openTask?.id]);
   /* Which left pane the call drawer opens on — "trace" from Insights. */
   const [openPane, setOpenPane] = useState(null);
   /* A voice run's call drawer is Observe's; its trace opens on its own. */
@@ -1628,7 +1635,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               /* runs §2: agent, environment and suite versions together —
                  the environment and agent in the line, the rest on hover. */
               const pins = runPinsOf(identity || sourceRun, env, envState);
-              const envV = pins.env ? envLabelOf(env, envState, pins.env) : null;
+              const envV = pins.env
+                ? envLabelOf(env, envState, pins.env)
+                : null;
               const skills = runSkillsLineOf(
                 simState?.workspaceSettings,
                 envState.agent,
@@ -1712,9 +1721,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                             ? "Last check unavailable on our side — it held nothing."
                             : v === "timed_out"
                               ? "Last check didn't finish within 45 minutes."
-                            : v === "stale"
-                              ? `Stale: ${c.staleWhy}.`
-                              : null,
+                              : v === "stale"
+                                ? `Stale: ${c.staleWhy}.`
+                                : null,
                           ...open.map(
                             (r) =>
                               `${r.label} — ${COMPAT_STATUS[r.status]?.label || r.status}${r.affected ? ` · ${r.affected} affected` : ""}`,
@@ -3640,98 +3649,15 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       key={`${openTask.id}-${evalFocus || ""}`}
                       /* The verdict and its cause (§4.10.10) ride in the real
                      drawer's Status chip — "Failed · agent". */
-                      data={{
-                        /* A multi-agent app: its handoffs, as their own tab. */
-                        simApprovals: approvalOf({
-                          env,
-                          envState,
-                          task: openTask,
-                        }) ? (
-                          <ApprovalTimeline env={env} task={openTask} />
-                        ) : null,
-                        /* Artifacts recorded or not, a failed check's source
-                           and dispute notes. */
-                        /* A platform agent: the events its platform sent for this call. */
-                        simEvents: envState?.agent?.values?.provider ? (
-                          <ProviderEvents
-                            task={openTask}
-                            provider={envState.agent.values.provider}
-                          />
-                        ) : null,
-                        simEvidence: (
-                          <Stack spacing={1.5} sx={{ pb: 2 }}>
-                            <DuplicateWriteNote
-                              task={openTask}
-                              sx={{ mx: 2, mt: 1.5 }}
-                            />
-                            <SharedState
-                              agent={envState?.agent}
-                              task={openTask}
-                              sx={{ mx: 2 }}
-                            />
-                            <TrialArtifacts
-                              items={trialArtifactsOf({
-                                task: openTask,
-                                env,
-                                envState,
-                                stage: "voice",
-                                conversational: true,
-                                voice: true,
-                              })}
-                              onOpen={() => {}}
-                              hideOpen
-                            />
-                            {["failed", "flaky", "unmeasured"].includes(
-                              openTask.status,
-                            ) && (
-                              <Stack spacing={1} sx={{ px: 2 }}>
-                                <CheckSource
-                                  task={openTask}
-                                  env={env}
-                                  envState={envState}
-                                  run={
-                                    (envState.runs || []).find(
-                                      (r) => r.id === runId,
-                                    ) || null
-                                  }
-                                />
-                                <DisputeNotes
-                                  envState={envState}
-                                  patch={patch}
-                                  runId={runId}
-                                  task={openTask}
-                                  score={
-                                    openTask.repeats > 1
-                                      ? `${openTask.passes}/${openTask.repeats}`
-                                      : openTask.status
-                                  }
-                                />
-                              </Stack>
-                            )}
-                          </Stack>
-                        ),
-                        simTranscriptNote: (() => {
-                          const sub = subActorsInTrial({
-                            task: openTask,
-                            env,
-                            envState,
-                          });
-                          return sub.joined.length || sub.missed.length ? (
-                            <OnTheCall
-                              joined={sub.joined}
-                              missed={sub.missed}
-                              sx={{ px: 0, pt: 0, pb: 1 }}
-                            />
-                          ) : null;
-                        })(),
-                        simHandoffs:
-                          membersOf(envState?.agent).length > 1 ? (
-                            <HandoffTimeline
-                              agent={envState?.agent}
-                              task={openTask}
-                            />
-                          ) : null,
-                        ...taskToVoiceData(openTask, {
+                      data={(() => {
+                        /* The trial on show (concept audit, 12 Nov): every tab
+                           reads this one attempt, not the scenario's summary. */
+                        const trial = trialTaskOf(openTask, trialIdx);
+                        const run =
+                          (envState.runs || []).find((r) => r.id === runId) ||
+                          null;
+                        /* One call record that every tab reads (drawer audit, 12 Nov). */
+                        const call = taskToVoiceData(trial, {
                           env,
                           envState,
                           voice: true,
@@ -3740,22 +3666,161 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           /* The Graph tab draws the scenario's path and where the call left it. */
                           scenario:
                             (envState.scenarios || []).find(
-                              (sc) => sc.id === openTask.id,
+                              (sc) => sc.id === trial.id,
                             ) || null,
                           failedGoal:
-                            subGoalResultsOf(
-                              openTask,
-                              env,
-                              envState,
-                            ).items.find(
+                            subGoalResultsOf(trial, env, envState).items.find(
                               (g) =>
                                 g.status === "failed" && g.mark === "critical",
                             )?.text || null,
-                        }),
-                        ...(verdicts?.get(openTask.id) && {
-                          status: verdicts.get(openTask.id).label,
-                        }),
-                      }}
+                        });
+                        return {
+                          /* Which trial this call is, as the drawer's header. */
+                          simTitle: (
+                            <>
+                              <TrialSwitcher
+                                samples={openTask.samples}
+                                index={trialIdx}
+                                onPick={setTrialIdx}
+                              />
+                              <Typography
+                                noWrap
+                                sx={{ typography: "s1", fontWeight: 600 }}
+                              >
+                                {trialTitleOf(trial, { trial: false })}
+                              </Typography>
+                            </>
+                          ),
+                          /* The pair this trial ran on. */
+                          simSubtitle: versionLineOf(run),
+                          /* The arrows move between scenarios, not trials. */
+                          simNavNoun: "scenario",
+                          /* A multi-agent app: its handoffs, as their own tab. */
+                          simApprovals: approvalOf({
+                            env,
+                            envState,
+                            task: trial,
+                          }) ? (
+                            <ApprovalTimeline env={env} task={trial} />
+                          ) : null,
+                          /* Every score in one place (drawer audit, 12 Nov):
+                             the trial's sub-goals, and a failed check's source
+                             and dispute notes, lead the Evals tab. */
+                          simSubGoals: (
+                            <Stack
+                              spacing={1}
+                              sx={{
+                                p: 1.5,
+                                borderBottom: "1px solid",
+                                borderColor: "divider",
+                              }}
+                            >
+                              <VerdictHeading />
+                              <SubGoalRollup
+                                task={trial}
+                                env={env}
+                                envState={envState}
+                              />
+                              {["failed", "flaky", "unmeasured"].includes(
+                                trial.status,
+                              ) && (
+                                <Stack spacing={1}>
+                                  <CheckSource
+                                    task={trial}
+                                    env={env}
+                                    envState={envState}
+                                    run={
+                                      (envState.runs || []).find(
+                                        (r) => r.id === runId,
+                                      ) || null
+                                    }
+                                  />
+                                  <DisputeNotes
+                                    envState={envState}
+                                    patch={patch}
+                                    runId={runId}
+                                    task={trial}
+                                    score={
+                                      trial.repeats > 1
+                                        ? `${trial.passes}/${trial.repeats}`
+                                        : trial.status
+                                    }
+                                  />
+                                </Stack>
+                              )}
+                              <ExtraEvalsHeading />
+                            </Stack>
+                          ),
+                          /* What the call recorded and didn't — with a platform
+                             agent's own events for this call — in one tab. */
+                          simEvidence: (
+                            <Stack spacing={1.5} sx={{ pb: 2 }}>
+                              {envState?.agent?.values?.provider && (
+                                <ProviderEvents
+                                  task={trial}
+                                  provider={envState.agent.values.provider}
+                                  call={call}
+                                />
+                              )}
+                              <DuplicateWriteNote
+                                task={trial}
+                                sx={{ mx: 2, mt: 1.5 }}
+                              />
+                              <SharedState
+                                agent={envState?.agent}
+                                task={trial}
+                                sx={{ mx: 2 }}
+                              />
+                              <TrialArtifacts
+                                items={trialArtifactsOf({
+                                  task: trial,
+                                  env,
+                                  envState,
+                                  stage: "voice",
+                                  conversational: true,
+                                  voice: true,
+                                  call,
+                                })}
+                                onOpen={() => {}}
+                                hideOpen
+                              />
+                            </Stack>
+                          ),
+                          simTranscriptNote: (() => {
+                            const sub = subActorsInTrial({
+                              task: trial,
+                              env,
+                              envState,
+                            });
+                            return sub.joined.length || sub.missed.length ? (
+                              <OnTheCall
+                                joined={sub.joined}
+                                missed={sub.missed}
+                                sx={{ px: 0, pt: 0, pb: 1 }}
+                              />
+                            ) : null;
+                          })(),
+                          simHandoffs:
+                            membersOf(envState?.agent).length > 1 ? (
+                              <HandoffTimeline
+                                agent={envState?.agent}
+                                task={trial}
+                                participants={call.participants}
+                              />
+                            ) : null,
+                          ...call,
+                          ...(verdicts?.get(trial.id) && {
+                            /* This trial's own verdict: a later trial that
+                               passed reads Passed, not the scenario's cause. */
+                            status:
+                              trial.status === "passed"
+                                ? "Passed"
+                                : /^Failed/.test(verdicts.get(trial.id).label)
+                                  ? verdicts.get(trial.id).label
+                                  : "Failed",
+                          }),
+                        };
+                      })()}
                       initialTab={evalFocus ? "evaluations" : undefined}
                       focusEvalName={evalFocus || undefined}
                       hideEvalRowFix

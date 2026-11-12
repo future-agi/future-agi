@@ -335,6 +335,9 @@ const VoiceDetailDrawerV2 = ({
       {!embedded && (
         <VoiceDrawerHeader
           callId={data?.provider_call_id || data?.id || data?.trace_id}
+          title={data?.simTitle}
+          subtitle={data?.simSubtitle}
+          navNoun={data?.simNavNoun}
           onClose={onClose}
           onPrev={onPrev}
           onNext={onNext}

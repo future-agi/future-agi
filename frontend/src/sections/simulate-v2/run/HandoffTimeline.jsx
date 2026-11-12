@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -160,7 +160,10 @@ Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
 /* The path the work took, as numbers in order (1 → 2 → 3 → 1 is a
    loop); the same numbers name the graph's nodes. Who each is, on hover. */
-function PathLine({ path }) {
+/* The order the work moved ("Hand-off order", not "path": the Expected
+   steps tab's path is the scenario's). Hovering a stop lights up its box and the arrow
+   into it on the graph; clicking a number filters the tree, as a box does. */
+function PathLine({ path, onHover, onPick }) {
   return (
     <Stack
       direction="row"
@@ -168,9 +171,10 @@ function PathLine({ path }) {
       useFlexGap
       flexWrap="wrap"
       sx={{ px: 2, pt: 1.25, columnGap: 0.75, rowGap: 0.5 }}
+      onMouseLeave={() => onHover(null)}
     >
       <Typography sx={{ typography: "s3", color: "text.tertiary", mr: 0.5 }}>
-        Path
+        Hand-off order
       </Typography>
       {path.map((stop, i) => (
         <Fragment key={i}>
@@ -185,25 +189,98 @@ function PathLine({ path }) {
           >
             <Box
               component="span"
+              onMouseEnter={() => onHover(i)}
               sx={{
+                display: "inline-flex",
+                alignItems: "center",
                 typography: "s2",
                 fontWeight: 600,
                 fontVariantNumeric: "tabular-nums",
-                px: 0.75,
                 borderRadius: "4px",
                 bgcolor: "background.neutral",
-                cursor: "default",
+                "&:hover": { bgcolor: "action.selected" },
               }}
             >
-              {stop.who.map((w) => w.n).join(" + ")}
+              {stop.who.map((w, k) => (
+                <Fragment key={w.id}>
+                  {k > 0 && <Box component="span">{"+"}</Box>}
+                  <Box
+                    component="span"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Show ${w.name} only`}
+                    onClick={() => onPick(w.id)}
+                    onKeyDown={(e) => e.key === "Enter" && onPick(w.id)}
+                    sx={{ px: 0.75, cursor: "pointer" }}
+                  >
+                    {w.n}
+                  </Box>
+                </Fragment>
+              ))}
             </Box>
           </Tooltip>
+          {stop.repeat > 1 && (
+            <Tooltip
+              arrow
+              title={`This back-and-forth happened ${stop.repeat} times in a row`}
+            >
+              <Typography
+                component="span"
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                {`×${stop.repeat}`}
+              </Typography>
+            </Tooltip>
+          )}
         </Fragment>
       ))}
     </Stack>
   );
 }
-PathLine.propTypes = { path: PropTypes.array.isRequired };
+PathLine.propTypes = {
+  path: PropTypes.array.isRequired,
+  onHover: PropTypes.func.isRequired,
+  onPick: PropTypes.func.isRequired,
+};
+
+/* CSS that lights up one path stop on the graph: its boxes, and the arrows
+   into them from the stop before. Edge ids follow AgentGraph's own naming. */
+const stopHighlightSx = (path, edges, i) => {
+  if (i == null || !path[i]) return {};
+  const ids = path[i].who.map((w) => w.id);
+  const prev = i > 0 ? path[i - 1].who.map((w) => w.id) : [];
+  const edgeIds = edges
+    .map((e, idx) =>
+      prev.includes(e.source) && ids.includes(e.target)
+        ? e._return
+          ? `e-ret-${idx}`
+          : `e-${idx}`
+        : null,
+    )
+    .filter(Boolean);
+  const nodeSel = ids.map((id) => `[data-id="${CSS.escape(id)}"]`);
+  const edgeSel = edgeIds.map((id) => `[data-id="${id}"]`);
+  return {
+    "& .react-flow__node": { opacity: 0.3, transition: "opacity 120ms" },
+    "& .react-flow__edge": { opacity: 0.25 },
+    ...Object.fromEntries(
+      nodeSel.map((sel) => [`& .react-flow__node${sel}`, { opacity: 1 }]),
+    ),
+    ...Object.fromEntries(
+      edgeSel.map((sel) => [
+        `& .react-flow__edge${sel}`,
+        {
+          opacity: 1,
+          "& .react-flow__edge-path": {
+            // The edge's own inline stroke wins otherwise.
+            stroke: (t) => `${t.palette.primary.main} !important`,
+            strokeWidth: "2px !important",
+          },
+        },
+      ]),
+    ),
+  };
+};
 
 const dashedKey = (edges) => {
   const control = edges.some((e) => e._control);
@@ -232,6 +309,20 @@ function EdgeKey({ edges }) {
 }
 EdgeKey.propTypes = { edges: PropTypes.array.isRequired };
 
+/* The names above a span in the tree, short: "Call", "Turn 1", "Front desk". */
+const crumbsTo = (entries, id, trail = []) => {
+  for (const e of entries || []) {
+    const sp = e.observation_span || e.observationSpan || {};
+    if (sp.id === id) return trail;
+    const name = String(sp.name || "")
+      .replace(/^Call \(whole session\)$/, "Call")
+      .replace(/^(Turn \d+).*/, "$1");
+    const found = crumbsTo(e.children, id, [...trail, name]);
+    if (found) return found;
+  }
+  return null;
+};
+
 const findEntry = (entries, id) => {
   for (const e of entries || []) {
     if (e.observation_span?.id === id) return e;
@@ -249,21 +340,38 @@ const findEntry = (entries, id) => {
  * Clicking a graph node filters the tree to that worker; clicking a row opens
  * the existing span detail.
  */
-export default function HandoffTimeline({ agent, task }) {
+export default function HandoffTimeline({ agent, task, participants }) {
   const sample = contractSample();
   const partial = knob("participants") === "partial";
   const p = useMemo(() => {
     const rec = sample
       ? participantsFromTimeline(CONTRACT_SAMPLES[sample])
-      : participantsOf({ agent, task });
+      : participants || participantsOf({ agent, task });
     return rec && partial ? { ...rec, partial: PARTIAL_NOTE } : rec;
-  }, [agent, task, sample, partial]);
-  const g = useMemo(() => participantsGraphOf(p), [p]);
+  }, [agent, task, participants, sample, partial]);
+  /* The actor on the call names the caller's node (concept audit, 12 Nov). */
+  const g = useMemo(
+    () => participantsGraphOf(p, { callerName: task?.persona?.name || null }),
+    [p, task?.persona?.name],
+  );
   const [focusNode, setFocusNode] = useState(null);
   const [spanId, setSpanId] = useState(null);
-  // Tree height: null = fit the tree up to 560px; a drag on the bar below sets it.
+  // Tree height: set once so the bar below it starts in the middle of the
+  // visible tab; a drag on the bar changes it.
   const [treeH, setTreeH] = useState(null);
+  const [hoverStop, setHoverStop] = useState(null);
   const treeRef = useRef(null);
+  useLayoutEffect(() => {
+    const tree = treeRef.current;
+    if (treeH != null || !tree) return;
+    let pane = tree.parentElement;
+    while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY))
+      pane = pane.parentElement;
+    if (!pane) return;
+    const top =
+      tree.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    setTreeH(Math.max(120, Math.round(pane.clientHeight / 2 - top)));
+  }, [treeH, spanId]);
   if (!p || !g) return null;
 
   // Same bar as Observe's trace view (tree above, Agent Graph below).
@@ -335,6 +443,7 @@ export default function HandoffTimeline({ agent, task }) {
             onClose={() => setSpanId(null)}
             onSelectSpan={setSpanId}
             previewOnly
+            breadcrumb={crumbsTo(g.spans, spanId)}
           />
         </Box>
       </Stack>
@@ -414,9 +523,17 @@ export default function HandoffTimeline({ agent, task }) {
           color="text.disabled"
         />
       </Box>
-      {g.path?.length > 1 && <PathLine path={g.path} />}
+      {g.path?.length > 1 && (
+        <PathLine
+          path={g.path}
+          onHover={setHoverStop}
+          onPick={(id) => setFocusNode((cur) => (cur === id ? null : id))}
+        />
+      )}
       <EdgeKey edges={graph.edges} />
-      <Box sx={{ height: 520 }}>
+      <Box
+        sx={{ height: 520, ...stopHighlightSx(g.path, graph.edges, hoverStop) }}
+      >
         <AgentGraph
           data={graph}
           isLoading={false}
@@ -439,4 +556,7 @@ export default function HandoffTimeline({ agent, task }) {
 HandoffTimeline.propTypes = {
   agent: PropTypes.object,
   task: PropTypes.object.isRequired,
+  /* The call record's participants (taskToVoiceData), lined up with the
+     transcript; without it the record is built here on its own. */
+  participants: PropTypes.object,
 };

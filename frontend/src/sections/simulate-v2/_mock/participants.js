@@ -828,6 +828,8 @@ export const participantsOf = ({ agent, task }) => {
     untied,
     undeclared: undeclared ? [undeclared] : [],
     notRun,
+    /* The app's declared members, with their tools (who may own a call). */
+    members: h.members,
     /* Open in Traces, model and tokens need the app's own traces. */
     traces: observed && agent?.values?.sendsTraces !== false,
     topology: TOPOLOGY,

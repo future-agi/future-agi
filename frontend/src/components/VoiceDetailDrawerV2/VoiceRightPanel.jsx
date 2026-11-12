@@ -94,7 +94,10 @@ const VoiceRightPanel = ({
 
   const vapiId = getSpanAttributes(observationSpan)?.rawLog?.id;
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
-  const hasLogs = !!vapiId || !!callLogs || !!data?.id;
+  /* A simulated call has a Logs tab only when it recorded some. */
+  const hasLogs = isSimulate
+    ? !!callLogs?.length
+    : !!vapiId || !!callLogs || !!data?.id;
 
   const hasScenarioData =
     isSimulate &&
@@ -116,11 +119,16 @@ const VoiceRightPanel = ({
         value: TABS.EVALUATIONS,
         icon: "solar:check-circle-linear",
       },
-      {
-        label: "Messages",
-        value: TABS.MESSAGES,
-        icon: "solar:chat-round-line-linear",
-      },
+      /* A simulated call's conversation is the Transcript on the left. */
+      ...(isSimulate
+        ? []
+        : [
+            {
+              label: "Messages",
+              value: TABS.MESSAGES,
+              icon: "solar:chat-round-line-linear",
+            },
+          ]),
     ];
     if (hasLogs) {
       t.push({
@@ -150,7 +158,7 @@ const VoiceRightPanel = ({
       });
     }
     return t;
-  }, [hasLogs, hasScenarioData, hideAnnotationTab]);
+  }, [hasLogs, hasScenarioData, hideAnnotationTab, isSimulate]);
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
@@ -418,6 +426,8 @@ const VoiceRightPanel = ({
               showSpanColumn={false}
               focusEvalName={focusEvalName}
               hideRowFix={hideEvalRowFix}
+              hideAddEvals={isSimulate}
+              lead={data?.simSubGoals}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
