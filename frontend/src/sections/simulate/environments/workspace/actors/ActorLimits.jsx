@@ -67,7 +67,7 @@ export default function ActorLimits({
   const changed = Object.keys(fields).length > 0;
   return (
     <SectionCard title={L.title} subtitle={L.subtitle}>
-      <Stack spacing={1.5} sx={{ maxWidth: 520 }}>
+      <Stack spacing={1.5} sx={{ maxWidth: 520, px: 1.5, py: 1.25 }}>
         {NUMBERS.map((key) => (
           <TextField
             key={key}

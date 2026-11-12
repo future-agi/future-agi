@@ -71,6 +71,13 @@ export default function TrialChangesPanel({ trialState }) {
     if (one.play === "waiting") return C.waited(one, name);
     if (one.play === "problem") return C.problems[one.problem] || one.why;
     if (one.play !== "timeout") return null;
+    const fallbackResult = C.actionOutcomes[one.action_outcome];
+    if (
+      one.outcome === "fallback_action" &&
+      one.action_outcome !== "committed" &&
+      fallbackResult
+    )
+      return C.outcomes.fallbackNotCommitted(fallbackResult);
     const said = C.outcomes[one.outcome];
     return typeof said === "function" ? said(name(one.fallback)) : said;
   };
@@ -92,6 +99,11 @@ export default function TrialChangesPanel({ trialState }) {
           {one.committed_actions?.length > 0 && (
             <Typography sx={quiet}>
               {C.committed(one.committed_actions)}
+            </Typography>
+          )}
+          {one.answer_lost_actions?.length > 0 && (
+            <Typography sx={quiet}>
+              {C.answerLost(one.answer_lost_actions)}
             </Typography>
           )}
           {one.no_change && !one.committed_actions?.length && (

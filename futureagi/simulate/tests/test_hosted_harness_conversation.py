@@ -1487,9 +1487,9 @@ def test_chat_on_run_whose_saved_files_are_gone_fails_at_once(
 
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="gone")
     job.state = HostedHarnessJob.State.COMPLETED
-    job.payload["metadata"][
-        "authoring_object_key"
-    ] = "harness-authoring/org/gone.tar.gz"
+    job.payload["metadata"]["authoring_object_key"] = (
+        "harness-authoring/org/gone.tar.gz"
+    )
     job.save()
     conversation, message, _ = enqueue_message(
         job, content="whats up?", client_request_id="gone"
@@ -1568,9 +1568,9 @@ def test_send_message_rejected_after_conversation_retired(organization):
 
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="retired-409")
     job.state = HostedHarnessJob.State.COMPLETED
-    job.payload["metadata"][
-        "authoring_object_key"
-    ] = "harness-authoring/org/gone.tar.gz"
+    job.payload["metadata"]["authoring_object_key"] = (
+        "harness-authoring/org/gone.tar.gz"
+    )
     job.save()
     conversation, _, _ = enqueue_message(
         job, content="hi", client_request_id="retired-409"

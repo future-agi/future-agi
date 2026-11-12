@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from simulate.services.harness_versioning.hashing import ACTOR_LIMITS_KEY
+
 # Contract fields compared item by item below, or never part of a diff.
 _CONTRACT_ITEM_FIELDS = frozenset(
     {"tools", "hard_constraints", "real_use_cases", "use_cases"}
@@ -198,6 +200,26 @@ def _count(noun: str, nouns: str, verb: str, values: object) -> str | None:
     return f"{size} {noun if size == 1 else nouns} {verb}"
 
 
+def _cast(entries: Any) -> list[Any]:
+    """The actors among a diff's entries, without the actor limits listed beside them."""
+    return [
+        one
+        for one in entries or []
+        if (one.get("id") if isinstance(one, dict) else one) != ACTOR_LIMITS_KEY
+    ]
+
+
+def _limits_changed(actors: Mapping[str, Any]) -> bool:
+    return any(
+        len(_cast(entries)) != len(entries or [])
+        for entries in (
+            actors.get("added"),
+            actors.get("removed"),
+            actors.get("changed"),
+        )
+    )
+
+
 def summarize_environment(diff: Mapping[str, Any] | None) -> str:
     if not diff:
         return "First version"
@@ -223,9 +245,10 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
         _count("world file", "world files", "added", files.get("added")),
         _count("world file", "world files", "removed", files.get("removed")),
         _count("world file", "world files", "changed", files.get("changed")),
-        _count("actor", "actors", "added", actors.get("added")),
-        _count("actor", "actors", "removed", actors.get("removed")),
-        _count("actor", "actors", "changed", actors.get("changed")),
+        _count("actor", "actors", "added", _cast(actors.get("added"))),
+        _count("actor", "actors", "removed", _cast(actors.get("removed"))),
+        _count("actor", "actors", "changed", _cast(actors.get("changed"))),
+        "actor limits changed" if _limits_changed(actors) else "",
     ]
     if "modality" in contract:
         modality = contract["modality"]

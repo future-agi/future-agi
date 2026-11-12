@@ -465,6 +465,32 @@ describe("VersionsPanel", () => {
     );
   });
 
+  it("names each actor the server sends by id and name, never as an object", async () => {
+    const user = userEvent.setup();
+    state.diffs["e2:e1"] = {
+      summary: "1 actor added, 1 actor changed",
+      diff: {
+        contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
+        sub_goals: {},
+        files: {},
+        actors: {
+          added: [{ id: "lead", name: "Sam Rivera" }],
+          removed: [],
+          changed: [{ id: "manager", name: "" }],
+        },
+      },
+    };
+    render(<VersionsPanel env={ENV} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
+    await user.click(screen.getByRole("option", { name: "v1" }));
+
+    const group = screen.getByTestId("diff-group-Actors");
+    expect(group).toHaveTextContent("Added: Sam Rivera");
+    expect(group).toHaveTextContent("Changed: manager");
+    expect(group).not.toHaveTextContent("[object Object]");
+  });
+
   it("says the actor changes are unknown when a version's cast cannot be read, not that nothing changed", async () => {
     const user = userEvent.setup();
     state.diffs["e2:e1"] = {

@@ -2,7 +2,6 @@ import traceback
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from simulate.models import (
     CallExecution,
     Scenarios,
@@ -11,6 +10,8 @@ from simulate.models import (
 )
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.utils.eval_summary import UNSCORED_OUTPUTS
+
+logger = structlog.get_logger(__name__)
 
 
 def calculate_aggregate_metrics(call_executions):
@@ -35,9 +36,6 @@ def calculate_aggregate_metrics(call_executions):
         ).count()
         failed_calls = call_executions.filter(
             status=CallExecution.CallStatus.FAILED
-        ).count()
-        cancelled_calls = call_executions.filter(
-            status=CallExecution.CallStatus.CANCELLED
         ).count()
         calls_attempted = total_calls - pending_calls - queued_calls
         connected_calls = call_executions.filter(duration_seconds__gt=0).count()
