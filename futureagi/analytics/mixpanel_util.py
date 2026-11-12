@@ -3,7 +3,13 @@ import os
 import structlog
 from mixpanel import Consumer, Mixpanel, MixpanelException
 from opentelemetry import metrics
-from requests.exceptions import ConnectionError, ProxyError, SSLError, Timeout
+from requests.exceptions import (
+    ConnectionError,
+    ProxyError,
+    RetryError,
+    SSLError,
+    Timeout,
+)
 
 from accounts.models import User
 from tfc.middleware.workspace_context import get_current_organization
@@ -29,24 +35,37 @@ _delivery_failures = metrics.get_meter(__name__).create_counter(
 )
 
 
-def _log_delivery_failure(error, operation, failure_event):
-    # The SDK wraps requests errors, including programming errors. Only a
-    # transport disconnect/timeout is expected for this best-effort integration.
-    cause = error.__cause__ if isinstance(error, MixpanelException) else error
+def _expected_delivery_failure(cause):
+    """Name an expected best-effort delivery failure, or None for a fault."""
+    if isinstance(cause, RetryError):
+        # The SDK's retry adapter retries only HTTP 5xx responses and raises
+        # RetryError once they are exhausted: Mixpanel itself is unavailable.
+        return "server_unavailable"
     if isinstance(cause, (ConnectionError, Timeout)) and not isinstance(
         cause, (SSLError, ProxyError)
     ):
-        _delivery_failures.add(1, {"operation": operation})
-        logger.warning(
-            "mixpanel_delivery_unavailable",
-            reason="transport_unavailable",
-            outcome="handled",
-            operation=operation,
-            error_type=type(cause).__name__,
-            exc_info=True,
-        )
-    else:
+        return "transport_unavailable"
+    return None
+
+
+def _log_delivery_failure(error, operation, failure_event):
+    # The SDK wraps requests errors, including programming errors. Only a
+    # transport disconnect/timeout or a Mixpanel server error is expected for
+    # this best-effort integration.
+    cause = error.__cause__ if isinstance(error, MixpanelException) else error
+    reason = _expected_delivery_failure(cause)
+    if reason is None:
         logger.exception(failure_event)
+        return
+    _delivery_failures.add(1, {"operation": operation})
+    logger.warning(
+        "mixpanel_delivery_unavailable",
+        reason=reason,
+        outcome="handled",
+        operation=operation,
+        error_type=type(cause).__name__,
+        exc_info=True,
+    )
 
 
 class MixpanelTracker:
