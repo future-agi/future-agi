@@ -298,7 +298,7 @@ export default function ImagineTab({
           }}
         >
           <Iconify icon="solar:stars-minimalistic-linear" width={14} />
-          AI
+          Chat
         </ButtonBase>
       </Box>
 

@@ -15,7 +15,7 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
  * Server-side pagination, sorting, selection. No virtualization white flash.
  */
-// First-load skeleton: one bar per visible column, at that column's real
+// First-load skeleton (no rows yet): one bar per visible column, at that column's real
 // width, under the real headers (the checkbox column gets none).
 const SKELETON_ROW_COUNT = 8;
 function SkeletonRowsOverlay({ rowHeight }) {
@@ -247,7 +247,19 @@ export default function DataTable({
           noRowsOverlay: () => (
             <EmptyContent title={emptyMessage} sx={{ height: 1 }} />
           ),
-          loadingOverlay: () => <SkeletonRowsOverlay rowHeight={rowHeight} />,
+          // A refetch over rows already shown only dims them, so paging,
+          // search and refocus never wipe the table back to skeleton.
+          loadingOverlay: () =>
+            data?.length ? (
+              <Box
+                role="progressbar"
+                aria-label="Loading"
+                aria-busy="true"
+                sx={{ height: 1, bgcolor: "background.paper", opacity: 0.5 }}
+              />
+            ) : (
+              <SkeletonRowsOverlay rowHeight={rowHeight} />
+            ),
         }}
         sx={{
           border: "none",

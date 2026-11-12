@@ -13,7 +13,6 @@ import {
   ListItemIcon,
   ListItemText,
   IconButton,
-  CircularProgress,
   Container,
   useTheme,
   stepConnectorClasses,

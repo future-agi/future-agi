@@ -9,7 +9,6 @@ import EvalsCustomCellRenderer from "./CustomRenderer/EvalsCustomCellRenderer";
 import EvalCustomHeaderCellRenderer from "./CustomRenderer/EvalCustomHeaderCellRenderer";
 import ViewDetailsModal from "./dialogue-boxes/view-details";
 import AddFeedbackForm from "./dialogue-boxes/add-feedback-form";
-import { LoadingScreen } from "src/components/loading-screen";
 
 const SkeletonCellRenderer = () => {
   return (
@@ -130,8 +129,6 @@ const BottomEvalsTab = ({
       setSelectedViewDetail,
     },
   };
-
-  // if (isLoading) return <LoadingScreen compact />;
 
   return (
     <Paper

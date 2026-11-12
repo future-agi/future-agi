@@ -2,6 +2,7 @@ import React, { Suspense } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useMatch, useNavigate } from "react-router-dom";
 import { Box, Tab, Tabs } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import PageHeader from "src/components/page-header";
 import CreateAgentsButton from "./components/CreateAgentsButton";
 import useCanEditAgent from "./hooks/useCanEditAgent";
@@ -65,9 +66,9 @@ export default function AgentsLanding() {
             px: 3,
           }}
         >
-          {/* No fallback: the tab's code is preloaded on link hover, and its
-              table shows the one loader while data loads. */}
-          <Suspense fallback={null}>
+          {/* Hover preload usually has the tab's code ready; a refresh, deep
+              link or tab switch shows the one loader until it arrives. */}
+          <Suspense fallback={<LoadingScreen compact />}>
             <Outlet />
           </Suspense>
         </Box>

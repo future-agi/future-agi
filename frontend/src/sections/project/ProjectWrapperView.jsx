@@ -297,6 +297,7 @@ const ProjectWrapperView = () => {
                 setSelectedRowsData={setSelectedRowsData}
                 filters={observeFilters}
                 onFirstRunChange={setObserveFirstRun}
+                countPending={isLoading}
               />
               <TraceFilterPanel
                 anchorEl={filterAnchorEl}

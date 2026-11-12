@@ -1,16 +1,16 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, MenuItem, Tooltip, Typography } from "@mui/material";
+import { Box, MenuItem, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 
-// ---------------------------------------------------------------------------
 // Shared pieces of the evaluation model picker, so every section (Future AGI,
 // Decision models, Your models) reads as one menu:
 //   section label  11/500 in fg.tertiary, sentence case, optional count
-//   row            16px icon · 12px name (500 when chosen) · one 11px meta
-//                  line in fg.tertiary · trailing check / lock / key / arrow
-// ---------------------------------------------------------------------------
+//   row            16px icon · 12px name (500 when chosen) · an 11px meta
+//                  line in fg.tertiary · an optional 11px status line (key or
+//                  plan state, kept whole) · trailing check / lock / key / arrow
 
 export function PickerSectionLabel({ children, count, adornment }) {
   return (
@@ -76,6 +76,7 @@ export function PickerRow({
   label,
   badge,
   meta,
+  status,
   selected = false,
   disabled = false,
   trailing,
@@ -95,7 +96,13 @@ export function PickerRow({
     );
 
   return (
-    <Tooltip title={tooltip} placement="right" arrow>
+    <CustomTooltip
+      show={Boolean(tooltip)}
+      title={tooltip}
+      placement="right"
+      size="small"
+      arrow
+    >
       <span>
         <MenuItem
           selected={selected}
@@ -108,7 +115,7 @@ export function PickerRow({
             py: 0.5,
             gap: 1,
             borderRadius: "6px",
-            alignItems: meta ? "flex-start" : "center",
+            alignItems: meta || status ? "flex-start" : "center",
             "&.Mui-selected, &.Mui-selected:hover": {
               bgcolor: "action.selected",
             },
@@ -167,6 +174,17 @@ export function PickerRow({
                 {meta}
               </Typography>
             ) : null}
+            {status ? (
+              <Typography
+                sx={{
+                  fontSize: 11,
+                  lineHeight: "16px",
+                  color: "text.disabled",
+                }}
+              >
+                {status}
+              </Typography>
+            ) : null}
           </Box>
           {trailing ? (
             <Box sx={{ display: "flex", alignItems: "center", height: 18 }}>
@@ -183,7 +201,7 @@ export function PickerRow({
           ) : null}
         </MenuItem>
       </span>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 
@@ -192,6 +210,7 @@ PickerRow.propTypes = {
   label: PropTypes.node.isRequired,
   badge: PropTypes.node,
   meta: PropTypes.node,
+  status: PropTypes.node,
   selected: PropTypes.bool,
   disabled: PropTypes.bool,
   trailing: PropTypes.oneOf(["check", "lock", "key", "arrow"]),

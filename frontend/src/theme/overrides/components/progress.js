@@ -36,17 +36,17 @@ export function progress(theme) {
         root: ({ ownerState }) => rootStyles(ownerState),
       },
     },
-    // Design system: a spinner is grey (fg.secondary), the same as the shared
-    // Loader, so a page handing over from the route loader to its own spinner
-    // reads as one loader. Only spinning (indeterminate) rings in the default
-    // colour change: score/progress rings (determinate), color="inherit"
-    // spinners inside buttons and status colours keep theirs.
+    // Design system: a spinner is grey (palette.loader, fg.secondary), the
+    // same as the shared Loader, so a page handing over from the route loader
+    // to its own spinner reads as one loader. Only the default colour changes:
+    // an explicit color="primary", "inherit" or a status colour keeps its own,
+    // and score/progress rings (determinate) keep the brand colour.
     MuiCircularProgress: {
+      defaultProps: { color: "loader" },
       styleOverrides: {
         root: ({ ownerState }) =>
-          ownerState.variant === "indeterminate" &&
-          ownerState.color === "primary"
-            ? { color: theme.palette.text.secondary }
+          ownerState.color === "loader" && ownerState.variant === "determinate"
+            ? { color: theme.palette.primary.main }
             : {},
       },
     },

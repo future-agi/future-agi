@@ -3,14 +3,12 @@ import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
 
-// ----------------------------------------------------------------------
 // Simple loader: one small spinner centred in the space the content will
 // fill. Used wherever a skeleton could not copy the real layout — a generic
 // skeleton reads as broken content, a spinner just reads as "loading".
 //
 // It fades in after a moment, so a fast load never flashes it, and holds
 // still when the person prefers reduced motion.
-// ----------------------------------------------------------------------
 
 export default function Loader({
   label = "Loading",

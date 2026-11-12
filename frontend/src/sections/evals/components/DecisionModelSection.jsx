@@ -38,8 +38,9 @@ export default function DecisionModelSection({
     selectedGroup && !visible.includes(selectedGroup)
       ? [...visible, selectedGroup]
       : visible;
-  // While searching, a section with no matches disappears with its notices.
-  if (!groups.length && (search || (!loading && !error))) return null;
+  // A section with no matches disappears, but a catalog error stays visible
+  // (with Retry) even while searching.
+  if (!groups.length && !error && (search || !loading)) return null;
 
   return (
     <Box>
@@ -112,15 +113,18 @@ export default function DecisionModelSection({
                 group.question_types
                   .map((type) => DECISION_OUTPUT_NAMES[type])
                   .join(" / "),
-                disabledReason ||
-                  (!connection.is_available
-                    ? `Add your ${connection.label} API key`
-                    : connection.label === group.author
-                      ? "Key configured"
-                      : `via ${connection.label} · Key configured`),
               ]
                 .filter(Boolean)
                 .join(" · ")}
+              // Key and plan state get their own line so they never truncate.
+              status={
+                disabledReason ||
+                (!connection.is_available
+                  ? `Add your ${connection.label} API key`
+                  : connection.label === group.author
+                    ? "Key configured"
+                    : `via ${connection.label} · Key configured`)
+              }
               selected={selected}
               disabled={Boolean(disabledReason)}
               tooltip={disabledReason || group.notice || ""}

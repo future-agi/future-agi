@@ -35,7 +35,8 @@ ModuleRegistry.registerModules([
 
 // AG Grid's built-in pager says "Rows per page:", same as DataTablePagination.
 // Loading is the product's table skeleton, not AG Grid's "Loading..." popup;
-// a grid that sets its own loadingOverlayComponent keeps it.
+// a grid that sets its own loadingOverlayComponent keeps it. Server-side rows still being fetched keep AG Grid's own loading cell: grids
+// such as Users and Tracing put status text in it through getLocaleText.
 provideGlobalGridOptions(
   {
     localeText: { pageSizeSelectorLabel: "Rows per page:" },

@@ -115,6 +115,9 @@
     <!-- Handle Vite dynamic import errors (e.g. after a new deployment when old chunks are removed) -->
     <script>
       window.addEventListener('vite:preloadError', (event) => {
+        // A hover preload failing (routes/preload.js) must not reload the
+        // page; the real import on click retries and recovers on its own.
+        if (window.__fagiHoverPreloads > 0) return;
         event.preventDefault();
         // Allow reload to proceed without beforeunload confirmation (e.g. from ReplayDrawer)
         window.__RELOADING_FOR_VITE_PRELOAD_ERROR = true;

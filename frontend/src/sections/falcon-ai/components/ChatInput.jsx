@@ -25,6 +25,7 @@ import { uploadFile } from "../hooks/useFalconAPI";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
+import { paths } from "src/routes/paths";
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -549,7 +550,7 @@ export default function ChatInput({ onSend, onStop }) {
               <MenuItem
                 onClick={() => {
                   handlePlusClose();
-                  router.push("/dashboard/settings/connectors");
+                  router.push(paths.dashboard.settings.falconAIConnectors);
                 }}
                 sx={{ gap: 1.5, py: 1 }}
               >

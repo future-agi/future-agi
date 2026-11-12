@@ -56,6 +56,7 @@ import {
   legacyDecisionGroups,
   NATIVE_JEV_LABELS,
 } from "../utils/decisionModels";
+import { paths } from "src/routes/paths";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -220,7 +221,7 @@ const EvaluatorModelRow = ({
   onSelect,
 }) => (
   <PickerRow
-    icon={m.icon || <FagiMark />}
+    icon={<FagiMark />}
     label={m.label}
     meta={secondaryText}
     selected={selected}
@@ -1391,7 +1392,7 @@ const ModelSelector = ({
             }
           }}
         >
-          {/* Section 1: FutureAGI Models */}
+          {/* Section 1: Future AGI */}
           {filteredFagiModels.length > 0 && (
             <>
               <PickerSectionLabel>Future AGI</PickerSectionLabel>
@@ -1742,7 +1743,7 @@ const ModelSelector = ({
                   onClick={() => {
                     setPlusAnchor(null);
                     setPlusSubmenu(null);
-                    navigate("/dashboard/settings/connectors");
+                    navigate(paths.dashboard.settings.falconAIConnectors);
                   }}
                   sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
                 >

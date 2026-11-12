@@ -204,7 +204,7 @@ function NavigationPanel({ selectedTab, onTabChange }) {
             lineHeight: 1.4,
           }}
         >
-          Give Falcon role-level expertise
+          Give Chat role-level expertise
         </Typography>
       </Box>
     </Box>
@@ -816,8 +816,8 @@ function SkillDetailPanel({
             maxWidth: 320,
           }}
         >
-          Teach Falcon your processes, team norms, and expertise. Skills guide
-          how the agent responds.
+          Teach Chat your processes, team norms, and expertise. Skills guide how
+          the agent responds.
         </Typography>
       </Box>
     );
@@ -1398,7 +1398,7 @@ function ConnectorDetailPanel({
             maxWidth: 320,
           }}
         >
-          Add MCP connectors to give Falcon access to external services like
+          Add MCP connectors to give Chat access to external services like
           GitHub, Slack, databases, and more.
         </Typography>
       </Box>
@@ -1449,7 +1449,7 @@ function ConnectorDetailPanel({
           )}
         </Box>
         <Typography sx={{ fontSize: 12, color: "text.secondary", mb: 3 }}>
-          Connect Falcon to your data and tools.
+          Connect Chat to your data and tools.
         </Typography>
 
         {error && (

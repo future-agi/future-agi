@@ -86,7 +86,7 @@ function CustomTabPanel(props) {
       role="tabpanel"
       {...other}
     >
-      {loading ? <LoadingScreen /> : null}
+      {loading ? <LoadingScreen compact /> : null}
       {value === panelValue && !loading && children}
     </div>
   );

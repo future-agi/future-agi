@@ -14,7 +14,7 @@ import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
 function defaultFixNotice() {
-  enqueueSnackbar("Fix with AI — not available in this view", {
+  enqueueSnackbar("Fix with AI isn’t available in this view", {
     variant: "info",
   });
 }

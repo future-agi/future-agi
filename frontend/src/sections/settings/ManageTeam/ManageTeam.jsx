@@ -43,7 +43,7 @@ const ManageTeam = () => {
             Invite User
           </Button>
         </Box>
-        {isPending ? <LoadingScreen /> : null}
+        {isPending ? <LoadingScreen compact /> : null}
         {!isPending && !data?.length && <NoMember />}
         {!isPending && Boolean(data?.length) && <MemberListTable data={data} />}
       </Section>

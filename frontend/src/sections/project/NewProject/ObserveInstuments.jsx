@@ -49,7 +49,7 @@ const ObserveInstruments = ({
   };
 
   if (isLoading) {
-    return <LoadingScreen />;
+    return <LoadingScreen compact />;
   }
   if (error) {
     return <Box>Error fetching Tools</Box>;
