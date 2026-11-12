@@ -147,7 +147,9 @@ describe("Error Feed alert draft after Slack connection (unit)", () => {
 
     expect(screen.queryByText("Create Error Feed alert")).not.toBeInTheDocument();
     expectBlankForm();
-    expect(JSON.parse(sessionStorage.getItem(DRAFT_KEY))).toEqual(draft);
+    const pending = sessionStorage.getItem(DRAFT_KEY);
+    expect(pending).not.toBeNull();
+    expect(JSON.parse(pending as string)).toEqual(draft);
   });
 
   it("discards a malformed draft after commit instead of opening the drawer", () => {
