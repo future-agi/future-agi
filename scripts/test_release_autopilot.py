@@ -2101,9 +2101,20 @@ class PythonIsolationTests(unittest.TestCase):
     WORKFLOWS = (".github/workflows/release-images.yml", ".github/workflows/release-autopilot.yml",
                  ".github/workflows/sdk-sync.yml")
     # A call in command position: line start or after a shell operator, past
-    # any VAR=value prefixes. `git diff -- python typescript` is not a call.
+    # any VAR=value prefixes and the command wrappers named here, of python,
+    # python3 or a versioned name such as python3.12.
     CALL = re.compile(r"(?:^|&&|\|\||[;|(`!]|\$\(|\b(?:then|do|else)\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
-                      r"(?P<python>python3?)(?=\s|$)")
+                      r"(?:(?:timeout\s+\S+|env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*|exec|sudo|time|nice|command|nohup)\s+)*"
+                      r"(?P<python>python(?:[23](?:\.\d+)?)?)(?=\s|$)")
+    # Every word that starts with "python" in a run line must be a call CALL
+    # reads, or be on one of these lines, which name Python without running it.
+    # Anything else, such as `xargs python3` or `/usr/bin/python3`, fails the
+    # test, so a call the scan cannot read is never skipped silently.
+    WORD = re.compile(r"\bpython\w*")
+    NOT_CALLS = {
+        # sdk-sync compares the generated SDK directories.
+        ("sdk-sync.yml", "if git diff --quiet -- python typescript; then"),
+    }
     # Every call, by workflow, job and what it runs. A new call must be added
     # here, and run below when it is this repository's script.
     INVENTORY = sorted([
@@ -2126,15 +2137,28 @@ class PythonIsolationTests(unittest.TestCase):
     # generate.py, its own package, which it adds to sys.path itself.
     OTHER_REPOSITORIES = {"tests/test-release-digest-bump.py", "sdkgen/sync_contract.py", "sdkgen/generate.py"}
 
+    @staticmethod
+    def lines(script):
+        """A shell script's lines, continuations joined, whole-line comments left out."""
+        return [line for line in script.replace("\\\n", " ").splitlines() if not line.lstrip().startswith("#")]
+
     @classmethod
     def calls(cls, script):
         """(interpreter, the arguments after it) for each Python call in a shell script."""
         found = []
-        for line in script.replace("\\\n", " ").splitlines():
-            if line.lstrip().startswith("#"):
-                continue
+        for line in cls.lines(script):
             for match in cls.CALL.finditer(line):
                 found.append((match["python"], line[match.end("python"):].split()))
+        return found
+
+    @classmethod
+    def unread(cls, script):
+        """Lines that name Python somewhere CALL does not read as a call."""
+        found = []
+        for line in cls.lines(script):
+            calls = {match.start("python") for match in cls.CALL.finditer(line)}
+            if any(word.start() not in calls for word in cls.WORD.finditer(line)):
+                found.append(line.strip())
         return found
 
     @staticmethod
@@ -2142,27 +2166,50 @@ class PythonIsolationTests(unittest.TestCase):
         rest = arguments[1:] if arguments[:1] == ["-I"] else arguments
         return " ".join(rest[:2]) if rest[:1] in (["-m"], ["-c"]) else rest[0]
 
-    def workflow_calls(self):
+    def workflows(self):
         import yaml
 
-        for path in self.WORKFLOWS:
-            for job_name, job in yaml.safe_load((self.ROOT / path).read_text())["jobs"].items():
+        return {Path(path).name: yaml.safe_load((self.ROOT / path).read_text()) for path in self.WORKFLOWS}
+
+    @staticmethod
+    def runs(workflows):
+        """(workflow, job, shell, run text) for each run step."""
+        for name, workflow in workflows.items():
+            default = workflow.get("defaults", {}).get("run", {}).get("shell", "bash")
+            for job_name, job in workflow["jobs"].items():
+                shell = job.get("defaults", {}).get("run", {}).get("shell", default)
                 for step in job.get("steps", []):
-                    for python, arguments in self.calls(step.get("run", "")):
-                        yield Path(path).name, job_name, python, arguments
+                    if "run" in step:
+                        yield name, job_name, step.get("shell", shell), step["run"]
+
+    @classmethod
+    def problems(cls, workflows):
+        """Calls without -I, lines that name Python outside a call CALL reads, and
+        steps not run by bash (a `shell: python` step names no interpreter)."""
+        found = []
+        for name, job, shell, run in cls.runs(workflows):
+            if shell != "bash":
+                found.append((name, job, f"shell: {shell}"))
+            found += [(name, job, " ".join([python, *arguments]))
+                      for python, arguments in cls.calls(run) if arguments[:1] != ["-I"]]
+            found += [(name, job, line) for line in cls.unread(run) if (name, line) not in cls.NOT_CALLS]
+        return found
 
     def test_every_python_call_in_the_release_workflows_runs_isolated(self):
-        calls = list(self.workflow_calls())
-        self.assertEqual(sorted((name, job, self.target(arguments)) for name, job, _, arguments in calls),
+        workflows = self.workflows()
+        calls = [(name, job, arguments) for name, job, _, run in self.runs(workflows)
+                 for _, arguments in self.calls(run)]
+        self.assertEqual(sorted((name, job, self.target(arguments)) for name, job, arguments in calls),
                          self.INVENTORY)
-        for name, job, python, arguments in calls:
-            with self.subTest(workflow=name, job=job, call=" ".join([python, *arguments])):
-                self.assertEqual(arguments[:1], ["-I"])
+        self.assertEqual(self.problems(workflows), [])
+        # Each allowed line is still there, so the list cannot hide a later line.
+        self.assertEqual({(name, line) for name, _, _, run in self.runs(workflows) for line in self.unread(run)},
+                         self.NOT_CALLS)
         # This repository's scripts are all run by the planted-checkout test below.
         ours = {target for _, _, target in self.INVENTORY if not target.startswith("-")} - self.OTHER_REPOSITORIES
         self.assertEqual({Path(target).name for target in ours}, set(self.SCRIPT_CALLS))
 
-    def test_the_scan_finds_calls_without_isolation_and_ignores_other_words(self):
+    def test_the_scan_finds_calls_without_isolation_and_reports_words_it_cannot_read(self):
         script = "\n".join([
             "python3 -m pip install x",
             'count=$(cd platform && python3 scripts/a.py --to "$V") || count=unknown',
@@ -2180,6 +2227,41 @@ class PythonIsolationTests(unittest.TestCase):
                           ("python3", "scripts/b.py", False), ("python3", "scripts/c.py", False),
                           ("python3", "scripts/d.py", True)])
         self.assertEqual(self.calls("git diff --quiet -- python typescript"), [])
+        self.assertEqual(self.unread(script), ["if git diff --quiet -- python typescript; then"])
+        # Wrapped and versioned calls are read as calls and held to -I.
+        wrapped = "\n".join(["timeout 60 python3 x.py", "env FOO=1 python3 x.py", "exec python3 x.py",
+                             "sudo python3 -m pip install z", "python3.12 x.py", "nohup python3 -I x.py"])
+        self.assertEqual([(python, self.target(arguments), arguments[:1] == ["-I"])
+                          for python, arguments in self.calls(wrapped)],
+                         [("python3", "x.py", False), ("python3", "x.py", False), ("python3", "x.py", False),
+                          ("python3", "-m pip", False), ("python3.12", "x.py", False), ("python3", "x.py", True)])
+        self.assertEqual(self.unread(wrapped), [])
+        # Forms CALL does not read are reported, not skipped.
+        other = ["xargs python3 x.py", "/usr/bin/python3 -I x.py", "nice -n 5 python3 x.py",
+                 "uv run python x.py", "echo ok && python3-config --prefix"]
+        self.assertEqual(self.unread("\n".join(other)), other)
+
+    def test_the_real_workflows_fail_when_a_call_is_unisolated_unread_or_not_bash(self):
+        real = self.workflows()
+        step = next(step for step in real["sdk-sync.yml"]["jobs"]["sync"]["steps"]
+                    if "python -I sdkgen/generate.py" in step.get("run", ""))
+        # The interpreter and its arguments name a call without -I; an unread line is named whole.
+        for call, problem in [("timeout 60 python sdkgen/generate.py", "python sdkgen/generate.py"),
+                              ("/usr/bin/python3 sdkgen/generate.py", "/usr/bin/python3 sdkgen/generate.py"),
+                              ("python3.12 -I sdkgen/generate.py", None)]:
+            with self.subTest(call=call):
+                workflows = deepcopy(real)
+                changed = next(item for item in workflows["sdk-sync.yml"]["jobs"]["sync"]["steps"]
+                               if item.get("run") == step["run"])
+                changed["run"] = step["run"].replace("python -I sdkgen/generate.py", call)
+                self.assertNotEqual(changed["run"], step["run"])
+                self.assertEqual(self.problems(workflows), [("sdk-sync.yml", "sync", problem)] if problem else [])
+        workflows = deepcopy(real)
+        workflows["release-autopilot.yml"]["jobs"]["check"]["steps"].append({"shell": "python", "run": "print(1)"})
+        self.assertEqual(self.problems(workflows), [("release-autopilot.yml", "check", "shell: python")])
+        workflows = deepcopy(real)
+        workflows["sdk-sync.yml"]["jobs"]["sync"]["defaults"] = {"run": {"shell": "python {0}"}}
+        self.assertIn(("sdk-sync.yml", "sync", "shell: python {0}"), self.problems(workflows))
 
     # Each of this repository's scripts, called as its workflow calls it, with
     # arguments that stay offline. {I} is "-I " or nothing.

@@ -833,7 +833,14 @@ The `sdk-sync.yml` tests run its two checkout checks on scratch repositories
 refused) and evaluate its job condition on the shapes of real runs.
 The Python isolation tests scan every `run` step of the three key-holding
 workflows and require `-I` on each Python call, against a fixed list of
-calls. They plant `pip.py`, a `pip/` package, `uuid.py`, `typing.py` and the
+calls. The scan reads calls after `VAR=value`, `env`, `timeout`, `exec`,
+`sudo`, `time`, `nice`, `command` and `nohup`, and versioned names such as
+`python3.12`. Any other word that starts with `python` fails the test, unless
+it is on a listed line that names Python without running it. Only one line is
+listed: sdk-sync's `git diff --quiet -- python typescript`. A form the scan
+cannot read, such as `xargs python3` or `/usr/bin/python3`, therefore fails
+instead of being skipped. Every `run` step must also use bash, because a
+`shell: python` step names no interpreter. They plant `pip.py`, a `pip/` package, `uuid.py`, `typing.py` and the
 modules the scripts import in the job's working directory, at the top of a
 checkout and beside its scripts. Each of this repository's scripts then runs
 as its workflow calls it, with `-I`, and imports none of them; without `-I`,
