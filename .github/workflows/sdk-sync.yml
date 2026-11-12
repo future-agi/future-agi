@@ -27,8 +27,12 @@ name: sdk-sync
 # actions/checkout take a branch of that name before the tag, so any writer's
 # branch could supply the contract. The contract comes only from
 # refs/tags/<version>, checked before any token is minted, and the SDK only
-# from refs/heads/dev. Every Python call runs with -I (isolated mode), so it
-# imports nothing from the current directory or the script's directory.
+# from refs/heads/dev. Every Python call runs with -I (isolated mode), so
+# Python itself puts neither the current directory nor the script's directory
+# on sys.path. sdkgen/generate.py still adds the SDK checkout's root itself, so
+# for that call a top-level module on futureagi-sdk dev can still shadow the
+# standard library; closing that needs a futureagi-sdk change
+# (docs/release-autopilot.md, "Python calls in key-holding jobs").
 
 on:
   workflow_run:
