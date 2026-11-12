@@ -82029,7 +82029,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "",
+                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
                 "parameters": [
                     {
                         "name": "data",
@@ -181069,6 +181069,22 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
+                },
+                "autoreload_maxcharge": {
+                    "title": "Autoreload maxcharge",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "autoreload_consent": {
+                    "title": "Autoreload consent",
+                    "type": "boolean",
+                    "default": false
+                },
+                "autoreload_charge_now": {
+                    "title": "Autoreload charge now",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
