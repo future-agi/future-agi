@@ -1,0 +1,96 @@
+"""J2 guest channel: malformed bodies are refused with the service's own codes, before any write."""
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from rest_framework.test import APIRequestFactory, force_authenticate
+
+from model_hub.views.skills_native_runs import (
+    NativeGuestFailureView,
+    NativeGuestHealthView,
+    NativeGuestObservationView,
+)
+
+GUEST = SimpleNamespace(is_authenticated=True, is_harness_attempt=True)
+HEALTH = {
+    "protocol": "p",
+    "adapter_module": "m",
+    "configuration_digest": "c",
+    "execution_fingerprint": "f",
+    "code_digest": "d",
+    "image_digest": "i",
+    "packages": [],
+    "checkpoint_digest": "k",
+    "read_only_source": True,
+    "read_only_context": True,
+    "separate_writable_state": True,
+    "controlled_paid_egress": True,
+}
+OBSERVATION = {
+    "schema": 1,
+    "protocol": "p",
+    "execution_fingerprint": "f",
+    "case_id": "case",
+    "variant": "candidate",
+    "repeat_index": 0,
+    "application": {},
+    "business": {},
+    "observation_digest": "x",
+}
+
+
+def post(view, body, monkeypatch, service):
+    calls = []
+    monkeypatch.setattr(
+        f"model_hub.services.skills_hub.r3.native_runs.{service}",
+        lambda **kwargs: calls.append(kwargs) or {"accepted": True},
+    )
+    attempt_id = uuid4()
+    request = APIRequestFactory().post(
+        f"/model-hub/skills/native/attempts/{attempt_id}/", body, format="json"
+    )
+    force_authenticate(request, user=GUEST, token=SimpleNamespace(pk=attempt_id))
+    return view.as_view()(request, attempt_id=attempt_id), calls
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{**HEALTH, "extra": True}, {k: v for k, v in HEALTH.items() if k != "protocol"}],
+)
+def test_malformed_health_is_runtime_incompatible_without_a_write(body, monkeypatch):
+    response, calls = post(NativeGuestHealthView, body, monkeypatch, "record_guest_health")
+    assert response.status_code == 422
+    assert response.data["error"]["code"] == "runtime_incompatible"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**OBSERVATION, "transcript": "raw"},
+        {k: v for k, v in OBSERVATION.items() if k != "observation_digest"},
+        {**OBSERVATION, "application": "not an object"},
+    ],
+)
+def test_malformed_observation_is_an_invalid_receipt_without_a_write(body, monkeypatch):
+    response, calls = post(NativeGuestObservationView, body, monkeypatch, "ingest_observation")
+    assert response.status_code == 400
+    assert response.data["error"]["code"] == "invalid_receipt"
+    assert calls == []
+
+
+def test_well_formed_bodies_reach_the_service_unchanged(monkeypatch):
+    response, calls = post(NativeGuestHealthView, HEALTH, monkeypatch, "record_guest_health")
+    assert response.status_code == 200 and calls[0]["health"] == HEALTH
+    response, calls = post(
+        NativeGuestObservationView, OBSERVATION, monkeypatch, "ingest_observation"
+    )
+    assert response.status_code == 200 and calls[0]["body"] == OBSERVATION
+
+
+@pytest.mark.parametrize("body", [{"reason": "provider_timeout"}, {"reason": 7}, {}])
+def test_any_failure_reason_is_recorded(body, monkeypatch):
+    response, calls = post(NativeGuestFailureView, body, monkeypatch, "report_guest_failure")
+    assert response.status_code == 200
+    assert calls == [{"attempt": calls[0]["attempt"], "reason": body.get("reason")}]

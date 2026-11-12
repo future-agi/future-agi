@@ -2,7 +2,6 @@
 
 from uuid import UUID
 
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -17,6 +16,7 @@ from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, hea
 from model_hub.views.skills_hub import SkillsView
 from simulate.authentication import HarnessAttemptAuthentication
 from simulate.services.hosted_harness import HostedHarnessError
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 
@@ -205,8 +205,28 @@ class NativeGuestView(APIView):
         return GeneralMethods(request).success_response(value, status=200)
 
 
+def _guest_refusal(code: str, message: str, status: int):
+    """A malformed guest body is refused with the same code the service uses."""
+
+    def respond(_errors) -> Response:
+        return Response(
+            {"status": False, "error": {"code": code, "message": message}},
+            status=status,
+        )
+
+    return respond
+
+
 class NativeGuestHealthView(NativeGuestView):
-    @swagger_auto_schema(request_body=s.GuestHealthInput)
+    @validated_request(
+        request_serializer=s.GuestHealthInput,
+        reject_unknown_fields=True,
+        validation_error_response=_guest_refusal(
+            "runtime_incompatible",
+            "Guest identity, restored state or isolation did not match the reviewed adapter.",
+            422,
+        ),
+    )
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
@@ -215,7 +235,13 @@ class NativeGuestHealthView(NativeGuestView):
 
 
 class NativeGuestObservationView(NativeGuestView):
-    @swagger_auto_schema(request_body=s.GuestObservationInput)
+    @validated_request(
+        request_serializer=s.GuestObservationInput,
+        reject_unknown_fields=True,
+        validation_error_response=_guest_refusal(
+            "invalid_receipt", "Use the exact native observation.", 400
+        ),
+    )
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
@@ -224,7 +250,10 @@ class NativeGuestObservationView(NativeGuestView):
 
 
 class NativeGuestFailureView(NativeGuestView):
-    @swagger_auto_schema(request_body=s.GuestFailureInput)
+    # Any reason is accepted; the service records an unrecognized one as guest_failed.
+    @validated_request(
+        request_serializer=s.GuestFailureInput, strict_request_validation=False
+    )
     def post(self, request: Request, attempt_id: UUID) -> Response:
         reason = request.data.get("reason") if isinstance(request.data, dict) else None
         return self.reply(
