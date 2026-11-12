@@ -27,6 +27,9 @@ SQL_ADDITIONS = (
     ('tracer','0122_sql_payload_expiry_index'),
     ('tracer','0130_merge_20261104_0940'),
     ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
+    # RunSQL trigger fences: opaque, so the reviewed UPDATE_SAFETY declaration
+    # (human reviewer + review link) is what scopes it, like the rows above.
+    ('tracer','0133_attachment_fences'),
 )
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
@@ -49,7 +52,6 @@ LATEST = (
     ('tracer','0129_project_analysis_source_generation_db_default'),
     ('tracer','0130_observationspan_internal_type'),
     ('tracer','0132_attachment_control_records'),
-    ('tracer','0133_attachment_fences'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
 ) + SQL_ADDITIONS

@@ -63,6 +63,11 @@ def consume_settlement(event_id):
         upload=upload, scope=event.scope
     ).first()
     if existing:
+        # A replayed event: the receipt is already written. Mark it consumed so
+        # the drain does not select it again.
+        if event.processed_at is None:
+            event.processed_at = timezone.now()
+            event.save(update_fields=["processed_at"])
         return existing
     # A delayed consumer can observe a deleted upload. The immutable verified blob
     # proves storage occurred even if deletion ran before accounting caught up.
@@ -98,6 +103,33 @@ def consume_settlement(event_id):
     event.processed_at = timezone.now()
     event.save(update_fields=["processed_at"])
     return receipt
+
+
+@transaction.atomic
+def consume_admission(event_id):
+    """Record the admission audit row for one ``admitted`` event, exactly once.
+
+    The audit ``event_id`` is the outbox row id, so a replay after a crash finds
+    the same audit row instead of writing a second one.
+    """
+    event = (
+        AttachmentOutbox.objects.select_for_update()
+        .filter(pk=event_id, event="admitted")
+        .first()
+    )
+    if event is None or event.processed_at:
+        return False
+    audit(
+        scope=event.scope,
+        actor_id=None,
+        entity_id=event.upload_id,
+        event="admission",
+        reason="accepted",
+        event_id=event.id,
+    )
+    event.processed_at = timezone.now()
+    event.save(update_fields=["processed_at"])
+    return True
 
 
 def expire_reservations(*, limit=100):

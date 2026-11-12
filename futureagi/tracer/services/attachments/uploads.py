@@ -50,6 +50,7 @@ from tracer.services.attachments.bootstrap import (
     session_policy,
 )
 from tracer.services.attachments.contract import (
+    PLACEMENT_FIELDS,
     SEGMENT_MIME_TYPES,
     SERVER_MODALITIES,
     AttachmentError,
@@ -159,6 +160,11 @@ def _renew(upload, session):
         raise AttachmentError("expired", 409)
     expires_at = min(_capability_expiry(session), upload.expires_at)
     return upload, capability(session, upload, expires_at=expires_at), expires_at
+
+
+def placement(body):
+    """The placement fields present in ``body``; absent ones stay NULL."""
+    return {name: body[name] for name in PLACEMENT_FIELDS if body.get(name) is not None}
 
 
 def initialize(writer, *, scope_id, body, key):
@@ -275,6 +281,7 @@ def initialize(writer, *, scope_id, body, key):
                     purpose=body.get("purpose", ""),
                     recording=recording,
                     expires_at=occurrence_expiry,
+                    **placement(body),
                 )
                 upload = AttachmentUpload.objects.create(
                     **common,
@@ -309,6 +316,7 @@ def initialize(writer, *, scope_id, body, key):
         AttachmentOutbox.objects.create(
             scope=scope,
             upload=upload,
+            attachment=attachment,
             event="admitted",
             generation=scope.deletion_generation,
             available_at=timezone.now(),
@@ -516,7 +524,7 @@ def complete(token, *, scope_id, upload_id, body=None):
         upload=upload,
         event="validate",
         generation=scope.deletion_generation,
-        defaults={"available_at": timezone.now()},
+        defaults={"available_at": timezone.now(), "attachment_id": upload.attachment_id},
     )
     return upload
 
@@ -563,7 +571,7 @@ def settle(upload_id, *, scope_id, outcome):
         upload=upload,
         event="settled",
         generation=upload.deletion_generation,
-        defaults={"available_at": timezone.now()},
+        defaults={"available_at": timezone.now(), "attachment_id": upload.attachment_id},
     )
     if outcome != AttachmentState.READY:
         AttachmentOutbox.objects.get_or_create(
@@ -572,7 +580,8 @@ def settle(upload_id, *, scope_id, outcome):
             event="erase",
             generation=upload.deletion_generation,
             defaults={
-                "available_at": timezone.now() + timedelta(seconds=TRANSFER_SECONDS)
+                "available_at": timezone.now() + timedelta(seconds=TRANSFER_SECONDS),
+                "attachment_id": upload.attachment_id,
             },
         )
     return True

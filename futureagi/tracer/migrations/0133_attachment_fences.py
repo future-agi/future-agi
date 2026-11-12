@@ -14,9 +14,15 @@ monotonic policy/deletion generations, the allowed state transitions) or reads
 another table (project/workspace scope, parent-record scope, a verified blob
 before ``ready``). CheckConstraint, UniqueConstraint and Index see one row
 version of one table, so none of them can express these rules, and Django has
-no trigger operation. The tables are new and empty when this runs. The
-update-safety gate therefore needs a human UPDATE_SAFETY review for this file;
-none is declared here, because only a real reviewer can supply one.
+no trigger operation. The tables are new and empty when this runs.
+
+Frozen-SQL rule: the scope-fence policy tuple (enabled, require_media_redaction,
+allow_unredacted_media_with_text_pii, record_audio, allow_import), the record
+fence identity array and the state-transition table are literal SQL. A new
+AttachmentScope policy column, a new immutable identity/placement column or a
+new state needs a follow-up RunSQL migration that redefines the function (with
+its own update-safety declaration); a model change alone is NOT fenced. See
+DEPLOY.md "Attachments: database fences".
 """
 
 from django.db import migrations
@@ -38,10 +44,10 @@ BEGIN
       RAISE EXCEPTION 'attachment scope immutable' USING ERRCODE = '23514';
     END IF;
     IF (NEW.enabled, NEW.require_media_redaction, NEW.allow_unredacted_media_with_text_pii,
-        NEW.record_audio)
+        NEW.record_audio, NEW.allow_import)
        IS DISTINCT FROM
        (OLD.enabled, OLD.require_media_redaction, OLD.allow_unredacted_media_with_text_pii,
-        OLD.record_audio)
+        OLD.record_audio, OLD.allow_import)
        AND NEW.policy_version <= OLD.policy_version THEN
       RAISE EXCEPTION 'attachment policy version required' USING ERRCODE = '23514';
     END IF;
@@ -64,7 +70,9 @@ BEGIN
     FOREACH fk IN ARRAY ARRAY['scope_id', 'client_id', 'attachment_id', 'occurrence_id',
       'capture_session_id', 'writer_id', 'writer_kind', 'trace_id', 'span_id',
       'correlation_nonce', 'capture_policy', 'request_fingerprint', 'policy_version',
-      'deletion_generation', 'expected_bytes', 'mime_type', 'direction', 'source_kind'] LOOP
+      'deletion_generation', 'expected_bytes', 'mime_type', 'direction', 'source_kind',
+      'message_index', 'part_index', 'role', 'channel', 'conversation_id', 'turn_id',
+      'tool_call_id'] LOOP
       IF n->fk IS DISTINCT FROM o->fk THEN
         RAISE EXCEPTION 'attachment identity immutable' USING ERRCODE = '23514';
       END IF;
