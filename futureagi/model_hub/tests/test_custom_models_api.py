@@ -705,7 +705,7 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    @patch("model_hub.utils.utils.requests.post")
+    @patch("model_hub.utils.utils.post_custom_endpoint")
     def test_create_custom_provider_base_url_404_asks_for_full_endpoint(
         self, mock_post
     ):
@@ -739,16 +739,17 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(mock_post.call_args.args[0], api_base)
+        self.assertEqual(mock_post.call_args.kwargs["url"], api_base)
         message = response.data["message"]
-        self.assertIn(api_base, message)
+        self.assertNotIn(api_base, message)
+        self.assertIn("Custom model endpoint answered 404 Not Found.", message)
         self.assertIn("full chat-completions URL", message)
         self.assertIn("/v1/chat/completions", message)
         self.assertFalse(
             CustomAIModel.objects.filter(user_model_id="my-custom-model").exists()
         )
 
-    @patch("model_hub.utils.utils.requests.post")
+    @patch("model_hub.utils.utils.post_custom_endpoint")
     def test_create_custom_provider_full_url_404_names_the_model(self, mock_post):
         """A 404 from the full URL also points at the model name.
 
