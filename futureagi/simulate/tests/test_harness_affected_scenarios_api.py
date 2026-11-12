@@ -323,3 +323,66 @@ class TestRunHoldBackApi:
         body = response.json()
         assert body["error"] == "all_cases_blocked"
         assert body["selection"]["held_back"]["by"] == {"tool_routing": 4}
+
+    def test_a_case_certifying_dropped_is_held_back_and_the_rest_run(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        """Run all names every key of the suite, so one dropped case must not refuse
+        the whole run."""
+        monkeypatch.setattr(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "hb-api-dropped",
+            warnings=[{"code": "scenario_dropped", "keys": [LOOKUP_KEYS[0]]}],
+        )
+        _built(environment)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": REFUND_KEYS + LOOKUP_KEYS, "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="hb-api-dropped",
+        )
+
+        assert response.status_code == 202, response.content
+        body = response.json()
+        assert body["selection"]["held_back"]["keys"] == [LOOKUP_KEYS[0]]
+        assert body["selection"]["held_back"]["by"] == {"scenario_dropped": 1}
+        assert (body["selection"]["running"], body["total_calls"]) == (9, 9)
+
+    def test_only_dropped_cases_answer_409_naming_certification(
+        self, user, workspace, storage, auth_client, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "simulate.services.harness_usage.require_harness_call_usage",
+            lambda *args, **kwargs: None,
+        )
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "hb-api-dropped-all",
+            warnings=[{"code": "scenario_dropped", "keys": [LOOKUP_KEYS[0]]}],
+        )
+        _built(environment)
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": [LOOKUP_KEYS[0]], "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="hb-api-dropped-all",
+        )
+
+        assert response.status_code == 409, response.content
+        body = response.json()
+        assert body["error"] == "all_cases_blocked"
+        assert "Certification: dropped when the pair was certified" in body["message"]
