@@ -330,8 +330,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    because the shared App can approve here. Do it before any approver key is
    added. The same custody is a precondition of that repository's deploy
    identity, and it is not limited to this key. No credential that a branch
-   workflow can read may have Contents, Pull requests, Administration or
-   Actions write on `future-agi/deployment`, or on a branch or tag that a key
+   workflow can read may have Contents, Pull requests, Administration,
+   Actions or Environments write on `future-agi/deployment`, or on a branch or
+   tag that a key
    environment admits, such as `main` here once it holds the key. That covers
    personal access tokens (classic and fine-grained), OAuth tokens copied from
    a tool, App keys and deploy keys. The deployment documents name eight
