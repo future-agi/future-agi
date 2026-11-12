@@ -992,6 +992,64 @@ class TestWhatACodingAgentReads:
             coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
         )
 
+    @pytest.mark.parametrize(
+        "stored,read",
+        [
+            ("agent_exited_before_ready", "agent_exited_before_ready"),
+            ("chat_target_timeout", "chat_target_timeout"),
+            ("unknown", "unknown"),
+            # A guest that wrote free text in the cause: the key reads none of it.
+            ("RuntimeError: {hidden} said hi", "unknown"),
+        ],
+    )
+    def test_a_failed_run_names_its_cause_only_from_the_closed_set(
+        self, api_client, environment, keys, stored, read
+    ):
+        chosen = ensure_held_back(environment)
+        hidden = chosen.scenario_keys[0]
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        created = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 1},
+            HTTP_IDEMPOTENCY_KEY=f"coder-cause-{len(stored)}",
+        )
+        assert created.status_code == 202, created.content
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": f"{RUNTIME_VALIDATION_FAILED}: RuntimeError: {hidden} said hi",
+            "cause": stored.format(hidden=hidden),
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+        project_terminal_job_onto_run(run, timezone.now())
+        execution = created.json()["test_execution_id"]
+        call = CallExecution.objects.filter(test_execution_id=execution).first()
+        job_path = f"/simulate/api/harness-jobs/{run.id}/"
+        call_path = f"/simulate/v3/call-executions/{call.id}/"
+
+        job = _as(api_client, keys.coder, "get", job_path)
+        call_read = _as(api_client, keys.coder, "get", call_path)
+
+        message = f"{RUNTIME_VALIDATION_FAILED} (cause: {read})"
+        assert job.json()["status"]["failure"] == {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "cause": read,
+            "message": message,
+        }
+        assert message in json.dumps(call_read.json())
+        for response in (job, call_read):
+            assert hidden not in json.dumps(response.json())
+
     def test_its_result_rows_name_each_failure_s_domain_and_code(
         self, api_client, environment, keys
     ):

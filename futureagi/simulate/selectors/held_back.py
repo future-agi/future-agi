@@ -24,6 +24,7 @@ from simulate.selectors.agent_fix import FINISHED_RUN_STATES
 from simulate.services.hosted_harness_gateway import (
     AUTHORING_FAILED,
     RUNTIME_VALIDATION_FAILED,
+    closed_failure_cause,
 )
 from simulate.services.run_compare import trial_passed, wilson_interval
 
@@ -130,7 +131,8 @@ _RUN_METADATA_FIELDS = (
     "version_pins",
 )
 # A failure's details hold the guest's logs, and a certify on a cache miss runs every
-# case of the suite there, held-back ones included; only these fields stay.
+# case of the suite there, held-back ones included; only these fields stay, and a cause
+# only as a value from the closed set.
 _RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
 # The message a coding agent reads instead of the stored one, which can end with what
 # the guest printed: the label of its code.
@@ -141,9 +143,13 @@ _FAILURE_LABELS = {
 
 
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
-    """A failure's message as a coding agent reads it: fixed text for its code."""
+    """A failure's message as a coding agent reads it: fixed text for its code, and the
+    cause when the failure has one."""
     code = str(failure.get("code") or "failed")
-    return _FAILURE_LABELS.get(code, f"The run failed ({code})")
+    label = _FAILURE_LABELS.get(code, f"The run failed ({code})")
+    if "cause" not in failure:
+        return label
+    return f"{label} (cause: {closed_failure_cause(failure['cause'])})"
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
@@ -161,6 +167,11 @@ def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
                     for name in _RUN_FAILURE_FIELDS
                     if name in failure
                 },
+                **(
+                    {"cause": closed_failure_cause(failure["cause"])}
+                    if "cause" in failure
+                    else {}
+                ),
                 "message": coding_agent_failure_message(failure),
             },
         }
