@@ -323,7 +323,12 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    branches and tags", make each admitted branch need a person's review
    (steps 2 and 3), and add a tag ruleset on `v*` that lets only
    administrators and the release App create, move or delete release tags,
-   before an environment that admits tags gets the key. Any writer's branch
+   before an environment that admits tags gets the key. A ruleset does not
+   remove tags that exist already, so once it is active, and before any key
+   copy, each `v*` tag whose commit is not on `main` is deleted or cut again
+   under a name that no key environment admits (four on 12 Nov;
+   `docs/release-autopilot.md` names them). From then on, `v*` tags, beta
+   and rc included, are cut only at a commit on `main`. Any writer's branch
    workflow can read an organisation secret, and that App can approve PRs
    too, so until this step a writer can still get a PR approved without
    another person. Every job that reads the key must then name such an
@@ -357,7 +362,12 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    gets a key copy. Once
    every such job names an environment, delete the organisation secrets,
    generate a new private key for the release-bot App and delete the old one,
-   because any branch workflow could read the old key. Step 6 waits for this.
+   because any branch workflow could read the old key. Before the new key
+   reaches any environment, a person who authored, pushed or approved none of
+   the commits that touched them reads the key jobs' workflow files and
+   scripts once, in full, at each branch they run from and at each `v*` tag
+   that stays; the `deploy_github.tf` header in `future-agi/deployment` lists
+   them. Step 6 waits for this.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
@@ -413,7 +423,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    `dev`'s controller (its checkout names `ref: dev`). Privileged jobs sparsely
    check out only `dev`'s controller and policy, with checkout credentials not
    persisted. Every Python call in a job that holds a write token, a secret
-   or the approver App's environment runs as `python3 -I`. In isolated mode
+   or the approver App's environment runs as `python3 -I`. That is wider
+   than the rule in the `deploy_github.tf` header in `future-agi/deployment`,
+   which requires it wherever the approver App's token is held. In isolated mode
    Python puts neither the script's directory nor the current directory on
    `sys.path` and ignores `PYTHON*` variables, so a module in the checkout
    cannot replace a standard one. The controller imports only the standard
