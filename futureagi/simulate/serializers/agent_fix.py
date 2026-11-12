@@ -11,6 +11,7 @@ from simulate.pydantic_schemas.agent_fix import (
     SCENARIOS_MAX,
     CandidateOutcome,
     Ending,
+    EvalGrading,
     FailureOwner,
     FixStep,
     Surface,
@@ -18,7 +19,7 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     agent_identity,
     base_check_runs,
-    eval_warnings,
+    eval_review,
     is_retryable,
     limited_validation,
     overridable_regressions,
@@ -395,20 +396,33 @@ class AgentFixEvalWarningSerializer(serializers.Serializer):
 
 
 class AgentFixRunDetailSerializer(AgentFixRunSerializer):
-    """One fix's read. The warnings read every call of its check runs, so a list leaves
-    them out."""
+    """One fix's read. The warnings read every call of its graded check runs, so a list
+    leaves them out."""
 
     eval_warnings = serializers.SerializerMethodField()
+    eval_grading = serializers.SerializerMethodField()
+
+    def to_representation(self, instance: AgentFixRun) -> dict:
+        self._review = eval_review(instance)
+        return super().to_representation(instance)
 
     @swagger_serializer_method(
         serializer_or_field=AgentFixEvalWarningSerializer(many=True)
     )
     def get_eval_warnings(self, fix_run: AgentFixRun) -> list[dict]:
-        warnings = [one.model_dump() for one in eval_warnings(fix_run)]
+        warnings = [one.model_dump() for one in self._review.warnings]
         return AgentFixEvalWarningSerializer(warnings, many=True).data
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ChoiceField(
+            choices=[one.value for one in EvalGrading]
+        )
+    )
+    def get_eval_grading(self, fix_run: AgentFixRun) -> str:
+        return self._review.grading.value
+
     class Meta(AgentFixRunSerializer.Meta):
-        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings"]
+        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings", "eval_grading"]
 
 
 class AgentFixRunListSerializer(serializers.Serializer):

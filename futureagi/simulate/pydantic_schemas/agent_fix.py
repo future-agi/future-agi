@@ -126,6 +126,8 @@ class EngineBrief(BaseModel):
     # an earlier launch sent, and its budget starts from what the fix has committed.
     last_attempt: int
     committed_usd: float
+    # What a check run reserves of the fix's budget for each execution, its evals included.
+    worst_case_usd_per_execution: float
     deadline_at: str
     # The source run's trials that failed a sub-goal on the targets the engine searches:
     # Diagnose reads them while Reproduce runs. Never a held-back target.
@@ -198,6 +200,9 @@ class CheckRunStatus(BaseModel):
     records: list[CheckRecord]
     # The parallelism the run really had, once it has finished.
     parallelism: int | None = None
+    # What the fix's limit is held against now, check runs included, so the engine's own
+    # budget follows what the platform counts.
+    committed_usd: float | None = None
 
 
 class VerdictTierPart(BaseModel):
@@ -240,6 +245,25 @@ class EvalWarning(BaseModel):
     base_pass_rate: float
     trials: int
     base_trials: int
+
+
+class EvalGrading(StrEnum):
+    """How far the platform's evals of a fix's winner are. A fix grades only once it has a
+    winner, and its winner ships only once grading is no longer pending."""
+
+    NONE = "none"  # No winner, so nothing is graded.
+    PENDING = "pending"
+    DONE = "done"
+    # A grading job ended without a verdict: the winner can ship, but the evals did not
+    # check all of it.
+    INCOMPLETE = "incomplete"
+
+
+class EvalReview(BaseModel):
+    grading: EvalGrading
+    warnings: list[EvalWarning] = Field(default_factory=list)
+    # The platform evals compared, so "none did worse" is said only when some ran.
+    compared: int = 0
 
 
 class CandidateUpdate(BaseModel):

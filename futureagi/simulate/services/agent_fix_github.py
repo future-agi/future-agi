@@ -15,7 +15,12 @@ import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.selectors.agent_fix import limited_validation, overridable_regressions
+from simulate.pydantic_schemas.agent_fix import EvalGrading
+from simulate.selectors.agent_fix import (
+    eval_review,
+    limited_validation,
+    overridable_regressions,
+)
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import (
     base_moved,
@@ -134,6 +139,36 @@ def _evidence(verdict: dict) -> str:
     )
 
 
+# The FE says the same where the user ships.
+_EVALS_INCOMPLETE = (
+    "The evals could not finish grading this trial; it was not checked by them."
+)
+
+
+def _evals_note(candidate: AgentFixCandidate) -> str:
+    """The platform evals the winner does worse on than the current version. They do not
+    decide a fix, so the reviewer reads them here, or that none did, or that they did not
+    finish. Only a winner is graded."""
+    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
+        return ""
+    review = eval_review(candidate.fix_run)
+    lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
+    if review.warnings:
+        lines.append(
+            "**Platform evals this change does worse on.** They do not decide the fix;"
+            " review them before you merge."
+        )
+        lines += [
+            f"- {one.name}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
+            f" {_percent(one.base_pass_rate)} on the current version"
+            f" ({one.base_trials} trials)"
+            for one in review.warnings
+        ]
+    elif review.grading == EvalGrading.DONE and review.compared:
+        lines.append("Platform evals: none did worse than the current version.")
+    return "\n".join(lines)
+
+
 def _override_note(candidate: AgentFixCandidate) -> str:
     """What a candidate the must-pass check refused ships with, and the user's reason."""
     checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
@@ -163,6 +198,7 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
             _LIMITED_NOTE if limited else "",
             summary,
             f"{proof} by Fix my agent: {reason}" if reason else "",
+            _evals_note(candidate),
             "Opened by Future AGI Fix my agent.",
         )
         if part

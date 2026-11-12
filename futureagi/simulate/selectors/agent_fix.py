@@ -28,7 +28,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from simulate.models import (
@@ -43,6 +43,8 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessScenario,
+    SimulateEvalConfig,
+    TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
@@ -59,6 +61,8 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    EvalGrading,
+    EvalReview,
     EvalWarning,
     FailureOwner,
     FixRequest,
@@ -94,6 +98,7 @@ from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
 logger = structlog.get_logger(__name__)
@@ -255,6 +260,7 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
+        worst_case_usd_per_execution=float(worst_case_usd_per_execution(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
         source_failures=source_failures(
             fix_run.source_run, request, variations_run(fix_run)
@@ -361,6 +367,7 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         ),
         records=records,
         parallelism=ran_at(run, len(executions)) if finished else None,
+        committed_usd=float(committed_usd(run.fix_run)),
     )
 
 
@@ -708,30 +715,82 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
     return list(results.values())
 
 
+# A check run whose TestExecution ended: its evals are not grading, and a winner's grading
+# moves it back to evaluating until they are.
+_SETTLED_RUN_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
+
+
+def _billed_evals(run_test_id: Any) -> QuerySet[SimulateEvalConfig]:
+    """The run test's evals the platform runs itself, so bills: a config with no mapping is a
+    result column the harness fills (``runnable_eval_config_ids``)."""
+    return (
+        SimulateEvalConfig.objects.filter(run_test_id=run_test_id, deleted=False)
+        .exclude(mapping={})
+        .exclude(mapping__isnull=True)
+    )
+
+
+def _worst_case(evals: Any) -> Any:
+    """What one execution of a check run may cost: its simulation, and each billed eval a
+    winner's grading may run on it. ``evals`` is a count or an expression of one."""
+    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION) + evals * Decimal(
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL
+    )
+
+
+def worst_case_usd_per_execution(fix_run: AgentFixRun) -> Decimal:
+    """What a check run reserves of the fix's budget for each execution."""
+    return _worst_case(_billed_evals(fix_run.environment.run_test_id).count())
+
+
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
-    plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
-    each check run still unsealed; it is what the fix's limit is held against."""
+    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
+    every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
+    fix's limit is held against: a check run not settled yet (usage not sealed, or evals
+    still grading) holds at least a worst case for each execution."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
-    sealed = Coalesce(
-        Sum("check_runs__fix_cost_usd", filter=live),
-        Value(Decimal(0)),
+    actual = ExpressionWrapper(
+        Coalesce(F("check_runs__fix_cost_usd"), Value(Decimal(0)))
+        + F("check_runs__fix_eval_cost_usd"),
         output_field=money,
     )
-    unsealed = Coalesce(
-        Sum(
-            "check_runs__scenario_count",
-            filter=live & Q(check_runs__fix_cost_usd__isnull=True),
+    evals = Coalesce(
+        Subquery(
+            _billed_evals(OuterRef("environment__run_test_id"))
+            .values("run_test_id")
+            .annotate(total=Count("id"))
+            .values("total")
         ),
         0,
     )
-    worst_case = Value(Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION))
-    return runs.annotate(
-        fix_spent_usd=ExpressionWrapper(F("spent_usd") + sealed, output_field=money),
-        committed_usd=ExpressionWrapper(
-            F("spent_usd") + sealed + unsealed * worst_case, output_field=money
+    held = Greatest(
+        actual,
+        ExpressionWrapper(
+            F("check_runs__scenario_count") * _worst_case(evals), output_field=money
         ),
+        output_field=money,
+    )
+    settled = Q(
+        check_runs__fix_cost_usd__isnull=False,
+        check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES,
+    )
+    spent = Coalesce(Sum(actual, filter=live), Value(Decimal(0)), output_field=money)
+    committed = Coalesce(
+        Sum(
+            Case(When(settled, then=actual), default=held, output_field=money),
+            filter=live,
+        ),
+        Value(Decimal(0)),
+        output_field=money,
+    )
+    return runs.annotate(
+        fix_spent_usd=ExpressionWrapper(F("spent_usd") + spent, output_field=money),
+        committed_usd=ExpressionWrapper(F("spent_usd") + committed, output_field=money),
     )
 
 
@@ -986,11 +1045,13 @@ def _pooled(
     return sum(one[0] for one in rows), sum(one[1] for one in rows)
 
 
-def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
-    """The platform evals the winner does worse on than the base version, on the scenarios
-    both ran. They do not decide a fix's verdict, so the person who reviews it reads them
-    here. Evals land after their call ends, so this reads them rather than a snapshot."""
-    winner = next(
+# The base version's repeats and a candidate's final check, the runs a winner's evals compare.
+_BASELINE_LABEL = re.compile(r"^baseline-r\d+$")
+_FINALIST_LABEL = re.compile(r"^c\d+-finalist-r\d+$")
+
+
+def fix_winner(fix_run: AgentFixRun) -> AgentFixCandidate | None:
+    return next(
         (
             one
             for one in fix_run.candidates.all()
@@ -998,23 +1059,63 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
         ),
         None,
     )
+
+
+def graded_check_runs(
+    fix_run: AgentFixRun, winner: AgentFixCandidate
+) -> tuple[list[HostedHarnessJob], list[HostedHarnessJob]]:
+    """The base version's baseline repeats and the winner's final check: the runs a fix's
+    evals grade once it has a winner, and all they compare."""
+    if not hasattr(fix_run, "check_run_list"):
+        fix_run.check_run_list = list(
+            HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run)
+        )
+    base = [
+        run for run in base_check_runs(fix_run) if _BASELINE_LABEL.match(run.fix_label)
+    ]
+    final = [
+        run
+        for run in fix_run.check_run_list
+        if run.agent_version_id == winner.agent_version_id
+        and _FINALIST_LABEL.match(run.fix_label)
+    ]
+    return base, final
+
+
+def eval_review(fix_run: AgentFixRun) -> EvalReview:
+    """The platform evals the winner does worse on than the base version, on the scenarios
+    both ran, and how far their grading is. A fix grades only its winner's final check and
+    the baseline, so these are all it compares. They do not decide its verdict; the person
+    who ships it reads them, once no grading is pending."""
+    winner = fix_winner(fix_run)
     if winner is None:
-        return []
-    evals = live_eval_specs(fix_run.environment.run_test_id)
-    mine = _eval_trials(
-        [
-            run.id
-            for run in fix_run.check_run_list
-            if run.agent_version_id == winner.agent_version_id
-        ],
-        evals,
-    )
-    base = _eval_trials([run.id for run in base_check_runs(fix_run)], evals)
+        return EvalReview(grading=EvalGrading.NONE)
+    run_test_id = fix_run.environment.run_test_id
+    base, final = graded_check_runs(fix_run, winner)
+    billed = {
+        str(one) for one in _billed_evals(run_test_id).values_list("id", flat=True)
+    }
+    graded = HostedHarnessExecution.no_workspace_objects.filter(
+        job_id__in=[run.id for run in (*base, *final)],
+        call_execution__status=CallExecution.CallStatus.COMPLETED,
+    ).values_list("call_execution__eval_outputs", flat=True)
+    rows = [
+        (outputs or {}).get(config_id) for outputs in graded for config_id in billed
+    ]
+    scoring = TestExecution.objects.filter(
+        id__in=[run.test_execution_id for run in (*base, *final)],
+        status=TestExecution.ExecutionStatus.EVALUATING,
+    ).exists()
+    if scoring or any(is_pending_placeholder(row) for row in rows):
+        return EvalReview(grading=EvalGrading.PENDING)
+    evals = live_eval_specs(run_test_id)
+    mine = _eval_trials([run.id for run in final], evals)
+    theirs = _eval_trials([run.id for run in base], evals)
     warnings = []
     for config_id, live in evals.items():
-        shared = mine[config_id].keys() & base[config_id].keys()
+        shared = mine[config_id].keys() & theirs[config_id].keys()
         passed, trials = _pooled(mine[config_id], shared)
-        base_passed, base_trials = _pooled(base[config_id], shared)
+        base_passed, base_trials = _pooled(theirs[config_id], shared)
         if verdict(passed, trials, base_passed, base_trials)[0] == REGRESSED:
             warnings.append(
                 EvalWarning(
@@ -1025,7 +1126,15 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
                     base_trials=base_trials,
                 )
             )
-    return warnings
+    return EvalReview(
+        grading=(
+            EvalGrading.DONE
+            if all(is_sealed_verdict(row) for row in rows)
+            else EvalGrading.INCOMPLETE
+        ),
+        warnings=warnings,
+        compared=len(evals),
+    )
 
 
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:

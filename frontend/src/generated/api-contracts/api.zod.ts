@@ -37098,6 +37098,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       }),
     )
     .optional(),
+  eval_grading: zod.enum(["none", "pending", "done", "incomplete"]).optional(),
 });
 
 /**

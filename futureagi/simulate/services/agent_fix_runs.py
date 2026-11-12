@@ -24,12 +24,14 @@ from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_VERIFIED_MIN,
     MARGIN_PCT_DEFAULT,
     VARIATIONS_PER_CASE,
+    EvalGrading,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    eval_review,
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
@@ -517,6 +519,13 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
         )
     # Only the winner went through the final check; a finalist passed its screens only.
     if candidate.outcome == AgentFixCandidate.Outcome.WINNER:
+        # Its evals read the winner's final check; it ships once they have.
+        if eval_review(candidate.fix_run).grading == EvalGrading.PENDING:
+            raise HostedHarnessError(
+                "fix_grading_pending",
+                "the evals are still grading this trial; ship it once they finish",
+                status_code=409,
+            )
         if override_reason:
             raise HostedHarnessError(
                 "fix_override_not_needed",

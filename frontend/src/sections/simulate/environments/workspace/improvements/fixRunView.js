@@ -66,6 +66,16 @@ export function formatMinutes(total) {
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 
+// A fix's winner is graded by the platform's evals after the fix ends, and ships only
+// once they finish. The PR body says the same when they could not.
+export function gradingNote(fix) {
+  if (fix.eval_grading === "pending")
+    return "The evals are still grading this trial. Ship it once they finish.";
+  if (fix.eval_grading === "incomplete")
+    return "The evals could not finish grading this trial; it was not checked by them.";
+  return null;
+}
+
 export const fixName = (fix) =>
   fix.number == null ? "Improvement" : `Improvement ${fix.number}`;
 

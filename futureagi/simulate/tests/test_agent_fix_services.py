@@ -26,6 +26,9 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
 )
+from simulate.models import (
+    TestExecution as SimTestExecution,
+)
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
@@ -35,6 +38,9 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRunRequest,
     Ending,
     EngineReport,
+    EvalGrading,
+    EvalReview,
+    EvalWarning,
     FailureOwner,
     FixRequest,
     Surface,
@@ -46,6 +52,7 @@ from simulate.selectors.agent_fix import (
     check_run_status,
     committed_usd,
     engine_brief,
+    eval_review,
     is_retryable,
     launch_options,
     limited_validation,
@@ -58,6 +65,7 @@ from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
     request_stop,
+    require_shippable,
     retry_fix_run,
     split_held_back,
 )
@@ -72,6 +80,7 @@ from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
+from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_versioning_backfill import (
     _agent_version,
 )
@@ -79,7 +88,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
-from simulate.utils.test_execution_utils import eval_source
+from simulate.utils.test_execution_utils import accrue_check_run_eval_cost, eval_source
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
 from tracer.services.clickhouse.client import CHError
@@ -1004,7 +1013,7 @@ class TestCheckRuns:
                 fix_run=fix_run
             ).exists()
 
-    def test_a_check_run_is_held_at_its_worst_case_until_its_usage_is_sealed(
+    def test_a_check_run_is_held_at_its_worst_case_until_it_is_sealed_and_graded(
         self, source_run, settings
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
@@ -1017,8 +1026,18 @@ class TestCheckRuns:
         HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
             fix_cost_usd=Decimal("0.09")
         )
-        # The sealed run at what it billed; the other still at 2 x $0.50.
+        # Sealed, but its run still scoring: its evals may bill yet.
+        assert committed_usd(fix_run) == Decimal("2.25")
+        SimTestExecution.objects.filter(id=first.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.COMPLETED
+        )
+        # The settled run at what it billed; the other still at 2 x $0.50.
         assert committed_usd(fix_run) == Decimal("1.34")
+        # A winner's grading opens it again: held until its evals are done.
+        SimTestExecution.objects.filter(id=first.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+        assert committed_usd(fix_run) == Decimal("2.25")
 
     def test_a_sealed_check_run_is_priced_from_its_billed_usage(
         self, source_run, monkeypatch
@@ -1533,7 +1552,8 @@ class TestCheckRunStatus:
         )
         run.refresh_from_db()
 
-        with django_assert_num_queries(4):
+        # One more: what the fix has committed, which the engine's budget follows.
+        with django_assert_num_queries(5):
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10
@@ -1730,9 +1750,9 @@ class TestChatTranscripts:
                 call, ("user", [{"content": "hi"}]), ("assistant", [{"content": "ok"}])
             )
 
-        # The executions, the last attempt, the call transcripts, the chat rows and the
-        # fix's request.
-        with django_assert_num_queries(5):
+        # The executions, the last attempt, the call transcripts, the chat rows, the
+        # fix's request and what the fix has committed.
+        with django_assert_num_queries(6):
             status = check_run_status(run)
 
         assert {one.transcript for one in status.records} == {"user: hi\nassistant: ok"}
@@ -2634,3 +2654,203 @@ class TestLaunchConstraints:
 
         assert refused == ("fix_models_empty", 400)
         assert not AgentFixRun.no_workspace_objects.exists()
+
+
+def _finished_and_sealed(run):
+    """A check run whose calls finished with their own evals done, sealed and settled."""
+    for execution in _executions(run):
+        call = execution.call_execution
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            **(call.call_metadata or {}),
+            "eval_started": True,
+            "eval_completed": True,
+        }
+        call.save(update_fields=["status", "call_metadata"])
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+        fix_cost_usd=Decimal("0.01")
+    )
+    SimTestExecution.objects.filter(id=run.test_execution_id).update(
+        status=SimTestExecution.ExecutionStatus.COMPLETED
+    )
+
+
+class TestWinnerGrading:
+    """A fix's check runs are graded only once it has a winner, and then only the runs its
+    warnings compare: the baseline and the winner's final check."""
+
+    def _fix(self, source_run):
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        runs = {
+            "base": _check(fix_run, label="baseline-r1"),
+            "screen": _check(
+                fix_run, label="c1-target-r1", version_id=candidate.agent_version_id
+            ),
+            "final": _check(
+                fix_run, label="c1-finalist-r1", version_id=candidate.agent_version_id
+            ),
+        }
+        for run in runs.values():
+            _finished_and_sealed(run)
+        return fix_run, candidate, runs, _mapped_eval(source_run)
+
+    def _won(self, fix_run, candidate):
+        with (
+            patch("simulate.services.harness_run_evals._dispatch_one") as dispatched,
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            engine.apply_report(
+                fix_run,
+                EngineReport(stage="Select", winner_candidate_id=str(candidate.id)),
+            )
+        return dispatched
+
+    def test_a_winner_grades_the_baseline_and_its_final_check_and_holds_them(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, config = self._fix(source_run)
+        assert committed_usd(fix_run) == Decimal("0.03")
+
+        dispatched = self._won(fix_run, candidate)
+
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        assert {call.args[0] for call in dispatched.call_args_list} == graded
+        assert {call.args[1] for call in dispatched.call_args_list} == {str(config.id)}
+        # The graded runs are held at their worst case, an eval included, until their
+        # evals are done; the screen stays at what it billed.
+        assert committed_usd(fix_run) == Decimal("0.01") + 2 * Decimal("0.75")
+        assert eval_review(fix_run).grading == EvalGrading.PENDING
+
+    def test_a_fix_with_no_winner_pays_for_no_evals(self, source_run):
+        fix_run, candidate, _, _ = self._fix(source_run)
+
+        with patch(
+            "simulate.services.agent_fix_engine.queue_eval_for_finished_calls"
+        ) as queue:
+            engine.apply_report(
+                fix_run,
+                EngineReport(
+                    stage="Select",
+                    candidates=[
+                        CandidateUpdate(
+                            candidate_id=str(candidate.id), outcome="rejected"
+                        )
+                    ],
+                ),
+            )
+
+        queue.assert_not_called()
+        assert eval_review(fix_run).grading == EvalGrading.NONE
+
+    def test_the_winner_ships_only_once_grading_is_no_longer_pending(self, source_run):
+        fix_run, candidate, runs, config = self._fix(source_run)
+        self._won(fix_run, candidate)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(state=State.READY)
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+
+        assert _refusal(require_shippable, winner, override_reason="") == (
+            "fix_grading_pending",
+            409,
+        )
+
+        # One job was lost: the evals did not check all of it, and it ships anyway.
+        for key in ("base", "final"):
+            CallExecution.objects.filter(
+                id__in=[one.call_execution_id for one in _executions(runs[key])]
+            ).update(eval_outputs={str(config.id): {"status": "timed_out"}})
+            SimTestExecution.objects.filter(id=runs[key].test_execution_id).update(
+                status=SimTestExecution.ExecutionStatus.COMPLETED
+            )
+        assert eval_review(fix_run).grading == EvalGrading.INCOMPLETE
+        require_shippable(
+            AgentFixCandidate.no_workspace_objects.get(id=candidate.id),
+            override_reason="",
+        )
+
+
+class TestCheckRunEvalCost:
+    def test_an_eval_s_bill_is_counted_on_its_check_run_only(self, source_run):
+        fix_run = _fix_run(source_run)
+        run = _check(fix_run)
+
+        accrue_check_run_eval_cost(run.test_execution_id, 250)
+        accrue_check_run_eval_cost(run.test_execution_id, Decimal("12.5"))
+        accrue_check_run_eval_cost(source_run.test_execution_id, 999)
+
+        run.refresh_from_db()
+        source_run.refresh_from_db()
+        assert run.fix_eval_cost_usd == Decimal("2.6250")
+        assert source_run.fix_eval_cost_usd == 0
+
+    def test_a_check_run_s_reserve_covers_each_eval_a_winner_s_grading_may_run(
+        self, source_run, settings, temporal
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "1"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run = _fix_run(source_run, budget_usd=1.5, spent_usd=Decimal("0.5"))
+        _mapped_eval(source_run)
+
+        # $0.50 spent and $1.25 for the check: past the $1.50 limit with its eval in.
+        assert _refusal(_check, fix_run) == ("fix_budget_exhausted", 402)
+        assert engine_brief(fix_run).worst_case_usd_per_execution == 1.25
+
+
+class TestPullRequestEvals:
+    def _body(self, source_run, review, outcome=Outcome.WINNER):
+        from simulate.services import agent_fix_github
+
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        # A pull request comes from a finished fix.
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(state=State.READY)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome
+        )
+        candidate.refresh_from_db()
+        with patch.object(agent_fix_github, "eval_review", return_value=review):
+            return agent_fix_github._description(candidate)[1]
+
+    def test_the_body_names_each_eval_the_winner_does_worse_on(self, source_run):
+        warning = EvalWarning(
+            name="Politeness",
+            pass_rate=0.25,
+            base_pass_rate=1.0,
+            trials=12,
+            base_trials=12,
+        )
+        body = self._body(
+            source_run,
+            EvalReview(grading=EvalGrading.DONE, warnings=[warning], compared=1),
+        )
+        assert "**Platform evals this change does worse on.**" in body
+        assert (
+            "- Politeness: 25% passed (12 trials), 100% on the current version (12 trials)"
+            in body
+        )
+
+    def test_the_body_says_when_no_eval_did_worse_or_grading_did_not_finish(
+        self, source_run
+    ):
+        assert "Platform evals: none did worse than the current version." in self._body(
+            source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
+        )
+        assert (
+            "The evals could not finish grading this trial; it was not checked by them."
+            in self._body(
+                source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
+            )
+        )
+
+    def test_the_body_says_nothing_about_evals_none_ran_or_graded(self, source_run):
+        for review, outcome in (
+            (EvalReview(grading=EvalGrading.DONE, compared=0), Outcome.WINNER),
+            (EvalReview(grading=EvalGrading.NONE), Outcome.FINALIST),
+        ):
+            assert "Platform evals" not in self._body(source_run, review, outcome)

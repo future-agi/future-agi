@@ -25,6 +25,7 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     HostedHarnessJob,
+    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.pydantic_schemas.agent_fix import (
@@ -38,10 +39,14 @@ from simulate.selectors.agent_fix import (
     check_run_parallelism,
     committed_usd,
     fix_lineage,
+    graded_check_runs,
     ran_at,
+    worst_case_usd_per_execution,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_run_evals import queue_eval_for_finished_calls
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -394,19 +399,45 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
             )
 
 
-def _worst_case_per_execution() -> Decimal:
-    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION)
-
-
 def _require_budget(fix_run: AgentFixRun, executions: int) -> None:
     budget = Decimal(str(fix_run.request["budget_usd"]))
-    needed = committed_usd(fix_run) + executions * _worst_case_per_execution()
+    needed = committed_usd(fix_run) + executions * worst_case_usd_per_execution(fix_run)
     if needed > budget:
         raise HostedHarnessError(
             "fix_budget_exhausted",
             f"this check would bring the fix to ${needed:.2f} of its ${budget:.2f} budget",
             status_code=402,
         )
+
+
+def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
+    """Queue the platform's evals of the baseline and the winner's final check, the runs its
+    warnings compare. A fix's check runs are graded only now, so a fix with no winner pays
+    for none. Called inside the report's transaction: the jobs start once it commits."""
+    configs = list(
+        SimulateEvalConfig.objects.filter(
+            id__in=runnable_eval_config_ids(fix_run.environment.run_test_id)
+        )
+    )
+    if not configs:
+        return
+    winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
+    base, final = graded_check_runs(fix_run, winner)
+    for run in (*base, *final):
+        if run.test_execution_id is None:
+            continue
+        for config in configs:
+            try:
+                queue_eval_for_finished_calls(run.test_execution, config)
+            except ValueError:
+                # A cancelled run is never graded; its evals read as not finished.
+                logger.warning(
+                    "agent_fix_grading_not_queued",
+                    fix_run=str(fix_run.id),
+                    run=str(run.id),
+                    eval_config=str(config.id),
+                    exc_info=True,
+                )
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
@@ -462,6 +493,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=report.winner_candidate_id
             ).update(outcome=CandidateOutcome.WINNER, updated_at=timezone.now())
+            _grade_winner(locked, report.winner_candidate_id)
         if report.ending is not None:
             # A launch that died left candidates no later report names: none of them won.
             AgentFixCandidate.no_workspace_objects.filter(

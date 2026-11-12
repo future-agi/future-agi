@@ -18439,6 +18439,16 @@ export const AgentFixRunDetailApiStep = {
   done: "done",
 } as const;
 
+export type AgentFixRunDetailApiEvalGrading =
+  (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
+
+export const AgentFixRunDetailApiEvalGrading = {
+  none: "none",
+  pending: "pending",
+  done: "done",
+  incomplete: "incomplete",
+} as const;
+
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
   name: string;
@@ -18479,6 +18489,7 @@ export interface AgentFixRunDetailApi {
   finished_at?: string;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+  readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
 }
 
 export interface AgentFixShipApi {

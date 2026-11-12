@@ -51291,6 +51291,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        eval_grading: {
+          title: "Eval grading",
+          type: "string",
+          enum: ["none", "pending", "done", "incomplete"],
+          readOnly: true,
+        },
       },
     },
     AgentFixRunList: {

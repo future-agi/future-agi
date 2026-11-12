@@ -22,6 +22,7 @@ from accounts.models import Organization, Workspace
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
@@ -306,6 +307,8 @@ class TestEngineCalls:
             "failure": None,
             "records": [],
             "parallelism": None,
+            # The unsealed check run's one conversation, held at the worst case.
+            "committed_usd": 0.05,
         }
 
         ended = _engine(
@@ -1197,16 +1200,21 @@ class TestUserApi:
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
             read.pop("eval_warnings")
+            read.pop("eval_grading")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
         # The engine's $0.25, and two unsealed check conversations held at $0.50 each.
         assert shown() == (25.0, 125.0)
-        # Sealed, the check run counts at what it billed and its hold goes.
+        # Sealed and settled, the check run counts at what it and its evals billed, and
+        # its hold goes.
         HostedHarnessJob.no_workspace_objects.filter(id=check.id).update(
-            fix_cost_usd=Decimal("0.094")
+            fix_cost_usd=Decimal("0.094"), fix_eval_cost_usd=Decimal("0.01")
         )
-        assert shown() == (34.4, 34.4)
+        Execution.objects.filter(id=check.test_execution_id).update(
+            status=Execution.ExecutionStatus.COMPLETED
+        )
+        assert shown() == (35.4, 35.4)
         read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
         assert read["request"]["budget_credits"] == 500.0
 
@@ -2271,20 +2279,90 @@ class TestEvalWarnings:
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             outcome=outcome
         )
-        base = _check(fix_run, label="base", keys=keys, trials=self.TRIALS)
+        # The base version's baseline and the winner's final check: the runs compared.
+        base = _check(fix_run, label="baseline-r1", keys=keys, trials=self.TRIALS)
         mine = _check(
             fix_run,
-            label="c1",
+            label="c1-finalist-r1",
             version_id=candidate.agent_version_id,
             keys=(KEYS[0],),
             trials=self.TRIALS,
         )
         return fix_run, base, mine, _mapped_eval(source_run)
 
-    def _warnings(self, auth_client, fix_run):
+    def _read(self, auth_client, fix_run):
         read = auth_client.get(f"{BASE}/{fix_run.id}/")
         assert read.status_code == 200, read.content
-        return read.json()["eval_warnings"]
+        return read.json()
+
+    def _warnings(self, auth_client, fix_run):
+        return self._read(auth_client, fix_run)["eval_warnings"]
+
+    @staticmethod
+    def _finished(*runs):
+        """The runs' calls finished, as grading needs them."""
+        CallExecution.objects.filter(
+            id__in=[one.call_execution_id for run in runs for one in _executions(run)]
+        ).update(status=CallExecution.CallStatus.COMPLETED)
+
+    def test_the_winner_s_screens_are_not_compared(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        screen = _check(
+            fix_run,
+            label="c1-target-r1",
+            version_id=mine.agent_version_id,
+            trials=self.TRIALS,
+        )
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        _judged(screen, config, passes=0)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_grading_is_pending_while_a_job_holds_a_call_open(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "pending"}}
+        call.save(update_fields=["eval_outputs"])
+
+        read = self._read(auth_client, fix_run)
+
+        # Pending is not clean: nothing is said about the evals until they finish.
+        assert (read["eval_grading"], read["eval_warnings"]) == ("pending", [])
+
+    def test_grading_is_done_once_every_graded_call_holds_a_verdict(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+        self._finished(base, mine)
+
+        read = self._read(auth_client, fix_run)
+
+        assert read["eval_grading"] == "done"
+        assert [one["name"] for one in read["eval_warnings"]] == [config.name]
+
+    def test_a_verdict_grading_lost_reads_incomplete(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+        self._finished(base, mine)
+        call = _executions(mine)[0].call_execution
+        call.eval_outputs = {str(config.id): {"status": "timed_out"}}
+        call.save(update_fields=["eval_outputs"])
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "incomplete"
+
+    def test_a_fix_with_no_winner_grades_nothing(self, auth_client, source_run):
+        fix_run, *_ = self._arms(source_run, outcome="rejected")
+
+        assert self._read(auth_client, fix_run)["eval_grading"] == "none"
 
     def test_the_read_warns_when_the_winner_does_worse_on_a_platform_eval(
         self, auth_client, source_run

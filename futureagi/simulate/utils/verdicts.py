@@ -38,9 +38,20 @@ def has_stored_verdict(call_execution, eval_config_id) -> bool:
     exact ``"Completed"`` match would treat a real verdict as unsealed and
     let ``skip_existing=True`` silently overwrite it.
     """
-    row = (call_execution.eval_outputs or {}).get(str(eval_config_id))
+    return is_sealed_verdict(
+        (call_execution.eval_outputs or {}).get(str(eval_config_id))
+    )
+
+
+def is_sealed_verdict(row) -> bool:
+    """``has_stored_verdict`` for one stored row, when the call itself is not at hand."""
     if not row:
         return False
     if isinstance(row, dict) and row.get("status") in _NON_SEALING_STATUSES:
         return False
     return True
+
+
+def is_pending_placeholder(row) -> bool:
+    """A row a grading job holds open until its verdict lands."""
+    return isinstance(row, dict) and row.get("status") == _PENDING_STATUS

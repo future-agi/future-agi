@@ -148,6 +148,9 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
+    # What the platform's evals of a fix's check run billed, in US dollars, added as each
+    # one bills. They run after the run's usage is sealed, so they are kept apart.
+    fix_eval_cost_usd = models.DecimalField(max_digits=10, decimal_places=4, default=0)
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

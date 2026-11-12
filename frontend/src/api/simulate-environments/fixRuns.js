@@ -20,14 +20,22 @@ export const FIX_RUNS_PAGE_SIZE = 25;
 // The page and size sit after the env id, so invalidating fixRunsKey(envId)
 // refreshes every page of that environment.
 export const fixRunsKey = (envId, page, pageSize) =>
-  page == null ? ["agent-fix-runs", envId] : ["agent-fix-runs", envId, page, pageSize];
+  page == null
+    ? ["agent-fix-runs", envId]
+    : ["agent-fix-runs", envId, page, pageSize];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
+// A finished fix is read again while its winner's evals grade: it ships once they have.
 export const fixPollInterval = (fix) =>
-  fix && FIX_LIVE_STATES.has(fix.state) ? FIX_POLL_MS : false;
+  fix && (FIX_LIVE_STATES.has(fix.state) || fix.eval_grading === "pending")
+    ? FIX_POLL_MS
+    : false;
 
 // One server page, 1-based, as { results, count }.
-export async function listFixRuns(envId, { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {}) {
+export async function listFixRuns(
+  envId,
+  { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
+) {
   const res = await axios.get(endpoints.agentFixRuns.list(), {
     params: { environment_id: envId, page, limit },
   });

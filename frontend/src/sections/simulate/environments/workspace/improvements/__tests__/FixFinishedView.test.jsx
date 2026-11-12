@@ -578,6 +578,44 @@ describe("FixFinishedView", () => {
   });
 });
 
+describe("Ship, while the evals grade the winner", () => {
+  const shipButton = () => screen.findByRole("button", { name: "Ship" });
+
+  it("waits until grading finishes, and says why", async () => {
+    updateFixtureFixRun("fix-ready-github", (f) => ({
+      ...f,
+      eval_grading: "pending",
+    }));
+    renderPage("fix-ready-github");
+    expect(await shipButton()).toBeDisabled();
+    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
+      "The evals are still grading this trial. Ship it once they finish.",
+    );
+  });
+
+  it("ships a trial the evals could not finish grading, and says so", async () => {
+    updateFixtureFixRun("fix-ready-archive", (f) => ({
+      ...f,
+      eval_grading: "incomplete",
+    }));
+    renderPage("fix-ready-archive");
+    expect(await shipButton()).toBeEnabled();
+    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
+      "The evals could not finish grading this trial; it was not checked by them.",
+    );
+  });
+
+  it("says nothing once grading is done", async () => {
+    updateFixtureFixRun("fix-ready-github", (f) => ({
+      ...f,
+      eval_grading: "done",
+    }));
+    renderPage("fix-ready-github");
+    expect(await shipButton()).toBeEnabled();
+    expect(screen.queryByTestId("ship-grading-note")).toBeNull();
+  });
+});
+
 describe("Ship", () => {
   it("asks before it acts: where a pull request goes and what it changes, or which version becomes the default", async () => {
     const user = userEvent.setup();

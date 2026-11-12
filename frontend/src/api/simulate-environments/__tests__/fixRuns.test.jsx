@@ -84,6 +84,17 @@ describe("fix-run list", () => {
       "failed",
     ].forEach((state) => expect(fixPollInterval({ state })).toBe(false));
   });
+
+  it("polls a finished fix while its winner's evals are grading", () => {
+    expect(fixPollInterval({ state: "ready", eval_grading: "pending" })).toBe(
+      FIX_POLL_MS,
+    );
+    ["done", "incomplete", "none"].forEach((grading) =>
+      expect(fixPollInterval({ state: "ready", eval_grading: grading })).toBe(
+        false,
+      ),
+    );
+  });
 });
 
 describe("fixErrorOf", () => {
