@@ -90299,6 +90299,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
+          "x-nullable": true,
+        },
         is_mute: {
           title: "Is mute",
           type: "boolean",
@@ -90922,6 +90929,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         slack_notes: {
           title: "Slack notes",
           type: "string",
+          "x-nullable": true,
+        },
+        webhook_url: {
+          title: "Webhook url",
+          type: "string",
+          format: "uri",
+          maxLength: 200,
           "x-nullable": true,
         },
         is_mute: {
