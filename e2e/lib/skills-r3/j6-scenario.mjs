@@ -174,6 +174,17 @@ export async function prepareJ6Scenario({ apiUrl, appUrl, author, reviewer, prob
   await guest.remove('/state/t3.sqlite-shm');
   log('paused threads prepared');
 
+  // The application's own thread registry: where each durable thread lives, its binding and the NAMES of the environment
+  // variables holding its credentials. Application configuration that predates the incident; it holds no secret and no
+  // recovery decision (which thread is rechecked is named by the operator when the plan is made).
+  const registryRow = (key, binding, consumeEnv, extra = {}) => ({ key, thread: threads[key], state: `/state/${key}.sqlite`, binding_id: bindings[binding].id, report_env: `${binding}_REPORT`, consume_env: consumeEnv, ...extra });
+  await guest.put('/state/requests/recovery-registry.json', JSON.stringify({ schema: 1, threads: [
+    registryRow('t1', 'A', 'APP_CONSUME'),
+    registryRow('t2', 'E', 'E_CONSUME', { replacement_env: 'APP_CONSUME' }),
+    registryRow('t3', 'L', 'L_CONSUME', { replacement_env: 'APP_CONSUME' }),
+    registryRow('t0', 'A', 'APP_CONSUME', { replacement_env: 'APP_CONSUME' }),
+  ] }) + '\n');
+
   // Retire the refund child and quarantine the alternative after all identities exist.
   const refundState = await api(author, 'GET', `${leaves[0].skill.id}/`);
   await api(author, 'DELETE', `${leaves[0].skill.id}/`, { expected_release_revision: refundState.release_revision });

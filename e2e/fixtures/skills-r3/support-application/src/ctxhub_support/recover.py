@@ -84,20 +84,16 @@ def load_registry(path):
             "report_env",
             "consume_env",
             "replacement_env",
-            "role",
         }
         if (
             set(row) - allowed
-            or not {"key", "thread", "state", "binding_id", "report_env", "role"}
-            <= set(row)
+            or not {"key", "thread", "state", "binding_id", "report_env"} <= set(row)
             or not KEY.fullmatch(row["key"])
             or row["key"] in seen
-            or row["role"] not in {"recover", "recheck"}
             or not UUID.fullmatch(row["binding_id"])
             or not isinstance(row["thread"], str)
             or not row["thread"]
             or not isinstance(row["state"], str)
-            or (row["role"] == "recover" and "consume_env" not in row)
             or any(
                 name in row and not ENV_NAME.fullmatch(row[name])
                 for name in ("report_env", "consume_env", "replacement_env")
@@ -128,13 +124,13 @@ def _facts(inspected):
     }
 
 
-def _inspect(row, stack):
+def _inspect(row, role, stack):
     """Read-only facts for one registered thread: (store, inspection, durable state)."""
     store = Store(row["state"])
     stack.callback(store.close)
     state = store.load(row["thread"])
-    if row["role"] == "recover":
-        client = _client(row["consume_env"])
+    if role == "recover":
+        client = _client(row.get("consume_env"))
         stack.callback(client.close)
         return inspect(store, row["thread"], client, row["binding_id"]), state
     # A superseded incident thread is never probed for authority; its durable state is the fact.
@@ -165,12 +161,13 @@ def _inspect(row, stack):
 def observe(row, *, orders, rechecks, request, recheck_request):
     """Inspect one registered thread and decide what it needs; read-only."""
     with ExitStack() as stack:
-        inspected, state = _inspect(row, stack)
+        role = "recheck" if row["key"] in rechecks else "recover"
+        inspected, state = _inspect(row, role, stack)
         reason = inspected["reason"]
         entry = {
             "key": row["key"],
             "thread": row["thread"],
-            "role": row["role"],
+            "role": role,
             "known": inspected.get("known", False),
             "reason": reason,
             "checkpoint": inspected.get("checkpoint"),
@@ -185,7 +182,7 @@ def observe(row, *, orders, rechecks, request, recheck_request):
             and bool(state.get("session"))
             and state["phase"] != "closed"
         )
-        if row["role"] == "recheck":
+        if role == "recheck":
             if state is None or row["key"] not in rechecks or not recheck_request:
                 raise ValueError("recheck_requires_thread_order_and_request")
             entry.update(
@@ -310,7 +307,9 @@ def apply_plan(registry, plan, *, phase, reviewed):
         current = observe(
             rows[entry["key"]],
             orders={entry["key"]: entry.get("order_id")},
-            rechecks={entry["key"]: entry.get("order_id")},
+            rechecks={entry["key"]: entry["order_id"]}
+            if entry["phase"] == "recheck"
+            else {},
             request=entry.get("request"),
             recheck_request=entry.get("request"),
         )
@@ -453,9 +452,29 @@ def main(argv=None):
                     "status": "planned",
                     "executed": False,
                     "plan_sha256": plan["plan_sha256"],
-                    "threads": {
-                        entry["key"]: entry["action"] for entry in plan["entries"]
-                    },
+                    # What the operator reviews: each thread, what it needs and why. No secret, message or tool result.
+                    "threads": [
+                        {
+                            name: entry[name]
+                            for name in (
+                                "key",
+                                "action",
+                                "reason",
+                                "phase",
+                                "known",
+                                "checkpoint",
+                                "session_id",
+                                "order_id",
+                            )
+                        }
+                        | {
+                            "pending_tool_calls": entry["pending_tool_calls"],
+                            "durable_receipt_calls": [
+                                row["call_id"] for row in entry["durable_receipts"]
+                            ],
+                        }
+                        for entry in plan["entries"]
+                    ],
                     "evidence_class": EVIDENCE,
                 }
             )

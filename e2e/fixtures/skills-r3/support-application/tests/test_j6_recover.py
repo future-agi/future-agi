@@ -70,11 +70,11 @@ def fleet(tmp_path, monkeypatch):
     for name, value in ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
     rows, clients, runs = [], {}, []
-    for key, role, consume in (
-        ("t1", "recover", "CONSUME_PAUSED"),
-        ("t2", "recover", "CONSUME_EXPIRED"),
-        ("t3", "recover", "CONSUME_LOST"),
-        ("t0", "recheck", None),
+    for key, consume in (
+        ("t1", "CONSUME_PAUSED"),
+        ("t2", "CONSUME_EXPIRED"),
+        ("t3", "CONSUME_LOST"),
+        ("t0", "CONSUME_PAUSED"),
     ):
         thread = str(uuid4())
         path = tmp_path / f"{key}.sqlite"
@@ -96,7 +96,6 @@ def fleet(tmp_path, monkeypatch):
                 "state": str(path),
                 "binding_id": BINDING,
                 "report_env": "REPORT",
-                "role": role,
                 **({"consume_env": consume} if consume else {}),
                 "replacement_env": "REPLACEMENT",
             }
@@ -204,7 +203,7 @@ def test_plan_requires_the_typed_order_and_request_only_where_state_is_gone(flee
         recover.build_plan(
             fleet["registry"],
             orders={"t3": "o"},
-            rechecks={},
+            rechecks={"t0": "o"},
             request="Verify.",
             recheck_request=None,
         )
@@ -307,6 +306,64 @@ def test_a_second_apply_of_a_finished_phase_is_refused_not_repeated(fleet):
     assert len(fleet["runs"]) == count
 
 
+def test_the_registry_holds_no_incident_decision_the_operator_names_the_recheck(fleet):
+    # The registry only describes the application's threads; which one is rechecked comes from the typed flag.
+    assert all("role" not in row for row in fleet["registry"]["threads"])
+    plan = recover.build_plan(
+        fleet["registry"],
+        orders={"t3": "synthetic-o3"},
+        rechecks={},
+        request="Verify the receipt; take no new action.",
+        recheck_request=None,
+    )
+    assert {entry["key"]: entry["role"] for entry in plan["entries"]}["t0"] == "recover"
+    assert plan["entries"][-1]["action"] == "none"  # a completed thread needs nothing
+
+
+def test_plan_output_shows_what_the_operator_reviews_and_no_secret(
+    fleet, capsys, tmp_path
+):
+    out = tmp_path / "plan.json"
+    argv = [
+        "plan",
+        "--registry",
+        str(fleet["path"]),
+        "--output",
+        str(out),
+        "--request",
+        "Verify the receipt; take no new action.",
+        "--order",
+        "t3=synthetic-o3",
+        "--recheck",
+        "t0=" + ORDERS["t0"],
+        "--recheck-request",
+        "Refund 25 units.",
+    ]
+    assert recover.main(argv) == 0
+    printed = json.loads(capsys.readouterr().out)
+    by_key = {row["key"]: row for row in printed["threads"]}
+    assert by_key["t1"]["pending_tool_calls"] == ["refund-1"]
+    assert by_key["t1"]["durable_receipt_calls"] == ["refund-1"]
+    assert (
+        by_key["t2"]["reason"] == "authority_unavailable"
+        and by_key["t2"]["action"] == "close_and_reconstruct"
+    )
+    assert by_key["t3"]["known"] is False and by_key["t0"]["phase"] == "recheck"
+    assert printed["plan_sha256"] == json.loads(out.read_text())["plan_sha256"]
+    assert set(by_key["t1"]) == {
+        "key",
+        "action",
+        "reason",
+        "phase",
+        "known",
+        "checkpoint",
+        "session_id",
+        "order_id",
+        "pending_tool_calls",
+        "durable_receipt_calls",
+    }
+
+
 def test_registry_must_name_credentials_never_contain_them(tmp_path):
     path = tmp_path / "registry.json"
     base = {
@@ -315,7 +372,6 @@ def test_registry_must_name_credentials_never_contain_them(tmp_path):
         "state": "/s",
         "binding_id": BINDING,
         "report_env": "REPORT",
-        "role": "recover",
         "consume_env": "CONSUME",
     }
     for bad in (

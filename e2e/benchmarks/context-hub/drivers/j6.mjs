@@ -478,15 +478,6 @@ export async function createDriver({ jobId, runId, registration }) {
         const t = input.threads;
         await guest.faults({ available: true, arm_after_business: false });
         const reports = input.credentials.report;
-        // The application's own thread registry: where each durable thread lives and the NAMES of the environment variables
-        // that hold its credentials (the application's configuration, not operator work; it never contains a secret).
-        const row = (key, role, binding, extra) => ({ key, thread: t[key], state: `/state/${key}.sqlite`, binding_id: input.bindings[binding].id, role, report_env: `${binding}_REPORT`, ...extra });
-        await guest.put('/state/requests/recovery-registry.json', JSON.stringify({ schema: 1, threads: [
-          row('t1', 'recover', 'A', { consume_env: 'APP_CONSUME' }),
-          row('t2', 'recover', 'E', { consume_env: 'E_CONSUME', replacement_env: 'APP_CONSUME' }),
-          row('t3', 'recover', 'L', { consume_env: 'L_CONSUME', replacement_env: 'APP_CONSUME' }),
-          row('t0', 'recheck', 'A', { replacement_env: 'APP_CONSUME' }),
-        ] }) + '\n');
         const recoverEnv = await guest.envFile(`recover-${randomUUID().slice(0, 8)}`, { ...guestEnvironment({ consume: state.appCredential, report: reports.A.secret, bindingId: input.bindings.A.id }),
           APP_CONSUME: state.appCredential, A_REPORT: reports.A.secret, E_REPORT: reports.E.secret, L_REPORT: reports.L.secret, E_CONSUME: input.credentials.E.secret, L_CONSUME: input.credentials.L.secret });
         state.recoverEnv = recoverEnv;
@@ -497,10 +488,13 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue([401, 403].includes(eDenied.status), 'The expired credential must be denied by the public access check');
         // ONE command inspects every registered thread (no session opened, no model call, no tool repeated) and writes what each needs.
         // The operator types the reconstruction request once, the order of the thread whose mapping is lost, and the original case to recheck.
-        await guestCommand(stage, ledger, 'incident-operator', 'plan-thread-recovery', recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'plan', '--registry', '/state/requests/recovery-registry.json',
+        const planned = await guestCommand(stage, ledger, 'incident-operator', 'plan-thread-recovery', recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'plan', '--registry', '/state/requests/recovery-registry.json',
           '--request', VERIFY_REQUEST, '--order', `t3=${input.orders.o3}`, '--recheck', `t0=${input.orders.o0}`, '--recheck-request', REFUND_REQUEST, '--output', '/state/out/recovery-plan.json']);
+        // What the operator reviews is the command's own printed plan (each thread, what it needs and why), not a file the driver reads on their behalf.
+        const shown = JSON.parse(planned.stdout);
         const plan = await guestJson('/state/out/recovery-plan.json');
-        const entry = Object.fromEntries(plan.entries.map((item) => [item.key, item]));
+        requireValue(shown.plan_sha256 === plan.plan_sha256 && shown.executed === false, 'The printed plan must be the written plan and executed nothing');
+        const entry = Object.fromEntries(shown.threads.map((item) => [item.key, item]));
         const t1Plan = entry.t1;
         const businessBefore = await guest.business();
         requireValue([input.orders.o2, input.orders.o3].every((order) => businessBefore.operations.filter((item) => item.order_id === order && item.status === 'applied').length === 1), 'The executed refunds must be visible before reconstruction');
@@ -508,8 +502,8 @@ export async function createDriver({ jobId, runId, registration }) {
         const reviewPlan = async () => {
           // The refund call is still pending in the transcript, but its business receipt is already durable.
           requireValue(t1Plan.action === 'resume' && t1Plan.reason === 'original_identity_available' && t1Plan.pending_tool_calls.length === 1
-            && t1Plan.pending_tool_calls.every((id) => t1Plan.durable_receipts.some((item) => item.call_id === id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
-          requireValue(entry.t2.action === 'close_and_reconstruct' && entry.t2.reason === 'authority_unavailable' && entry.t2.durable_receipts.length >= 1
+            && t1Plan.pending_tool_calls.every((id) => t1Plan.durable_receipt_calls.includes(id)), 'The paused thread must be resumable under its original identity with its refund receipt durable');
+          requireValue(entry.t2.action === 'close_and_reconstruct' && entry.t2.reason === 'authority_unavailable' && entry.t2.durable_receipt_calls.length >= 1
             && entry.t2.order_id === input.orders.o2, 'The expired-credential thread must not be resumable');
           requireValue(entry.t3.action === 'reconstruct' && entry.t3.known === false && entry.t3.reason === 'thread_state_missing' && entry.t3.order_id === input.orders.o3, 'The lost-mapping thread must not be resumable');
           requireValue(entry.t0.action === 'close_and_recheck' && entry.t0.phase === 'recheck' && entry.t0.order_id === input.orders.o0, 'The superseded incident thread must be rechecked as a clean thread');
@@ -519,8 +513,8 @@ export async function createDriver({ jobId, runId, registration }) {
         const decision = decisionFor({ plan: plan.plan_sha256, resume: [t.t1], reconstruct: [t.t2, t.t3], recheck: [t.t0], requests: [VERIFY_REQUEST, REFUND_REQUEST], copied_messages: 0 },
           { t1: [t1Plan.checkpoint, t1Plan.session_id], t2: entry.t2.reason, t3: entry.t3.reason, t0: entry.t0.reason, replay_refunds: false });
         await ledger.measure({ dimension: 'A', primitive: 'recovery_decision', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'resume-one-reconstruct-two',
-          items: plan.entries.map((item) => item.key), exceptionItems: plan.entries.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, reviewPlan);
-        const expiredHash = await record('expired-credential', { inspect: { reason: entry.t2.reason, receipts: entry.t2.durable_receipts.length, checkpoint: entry.t2.checkpoint }, access_check_status: eDenied.status });
+          items: shown.threads.map((item) => item.key), exceptionItems: shown.threads.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, reviewPlan);
+        const expiredHash = await record('expired-credential', { inspect: { reason: entry.t2.reason, receipts: entry.t2.durable_receipt_calls.length, checkpoint: entry.t2.checkpoint }, access_check_status: eDenied.status });
         faultSeen(ledger, 'expired', expiredHash, { reason: entry.t2.reason, status: eDenied.status });
         const lostHash = await record('lost-mapping', { inspect: { known: entry.t3.known, reason: entry.t3.reason }, business_receipts_for_order: 1 });
         faultSeen(ledger, 'lost', lostHash, { reason: entry.t3.reason });
