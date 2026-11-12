@@ -126,10 +126,31 @@ class HarnessSandboxClient:
                 timeout=kwargs.pop("timeout", (5, 30)),
                 **kwargs,
             )
+        except (requests.exceptions.InvalidHeader, UnicodeError):
+            # These errors quote the Authorization header, so none of their text is kept.
+            raise HarnessSandboxUnavailable(
+                "ALK sandbox token is not a valid HTTP header value"
+            ) from None
         except requests.RequestException as exc:
             raise HarnessSandboxUnavailable(
                 f"ALK sandbox is unavailable at {self.base_url}: {exc}"
             ) from exc
+        except ValueError:
+            # http.client raises a bare ValueError quoting the header for a token with a
+            # trailing line break.
+            raise HarnessSandboxUnavailable(
+                "ALK sandbox token is not a valid HTTP header value"
+            ) from None
+        if response.status_code in (401, 403):
+            # The frontend treats any 401 as an expired session, so a token
+            # mismatch with the sandbox must reach the browser as a 503.
+            if self.token:
+                reason = "rejected the platform's token"
+            else:
+                reason = "requires a token, and ALK_HARNESS_SANDBOX_TOKEN is not set"
+            raise HarnessSandboxUnavailable(
+                f"ALK sandbox {reason} ({response.status_code})"
+            )
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")
