@@ -16,6 +16,7 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.evals_metric import Feedback
 from model_hub.models.score import Score
+from model_hub.serializers.contracts import EvalApiLogRowResponseSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -210,6 +211,22 @@ def test_i05_real_clickhouse_trace(auth_client, log_factory, collector_tree, pro
     assert nav["kind"] == "trace"
     assert nav["project_id"] == str(project.id)
     assert nav["span_id"] == collector_tree[1]["id"]
+
+
+@pytest.mark.parametrize("opt_in", [None, "true"])
+def test_i05c_collector_span_id_matches_declared_response(
+    auth_client, log_factory, fake_reader, opt_in
+):
+    # Observe logs store the collector's 16-hex OTel span id. The declared
+    # response (and the frontend contract generated from it) must accept it.
+    log = log_factory(extra={"span_id": uuid4().hex[:16]})
+    fake_reader(log)
+    response = _get(auth_client, log, opt_in)
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["result"]["span_id"] == json.loads(log.config)["span_id"]
+    declared = EvalApiLogRowResponseSerializer(data=body)
+    assert declared.is_valid(), declared.errors
 
 
 def test_i05b_trace_destination_nests_the_evaluated_child(

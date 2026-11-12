@@ -2211,7 +2211,8 @@ class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     error_localizer_status = serializers.CharField(required=False, allow_blank=True)
     error_localizer_message = serializers.CharField(required=False, allow_blank=True)
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
-    span_id = serializers.UUIDField(required=False, allow_null=True)
+    # The evaluated span's id as stored, e.g. a 16-hex OTel id for Observe.
+    span_id = serializers.CharField(required=False, allow_null=True)
     trace_id = serializers.UUIDField(required=False, allow_null=True)
     prompt_id = serializers.UUIDField(required=False, allow_null=True)
     optimization_id = serializers.UUIDField(required=False, allow_null=True)

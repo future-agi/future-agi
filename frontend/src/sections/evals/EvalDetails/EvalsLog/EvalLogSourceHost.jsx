@@ -249,9 +249,11 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
 function SourceDialog({ pinned, onClose, revalidate, onState }) {
   // Reused hooks omit org/workspace in their keys. A new client for each open
   // prevents even a single paint from another scope's cached destination.
-  // Like the app's client, it toasts a failed viewer read or save (Annotate,
-  // Add to dataset) that does not report its own error. This host reports its
-  // destination reads itself, so queries default to errorHandled.
+  // Like the app's client, it toasts a failed viewer save (Annotate, Add to
+  // dataset) unless the save sets meta.errorHandled. Reads are different: this
+  // host reports its own destination reads, so queries default to
+  // meta.errorHandled, and a failed viewer read stays silent unless the query
+  // sets its own meta, which replaces that default.
   const [client] = useState(
     () =>
       new QueryClient({

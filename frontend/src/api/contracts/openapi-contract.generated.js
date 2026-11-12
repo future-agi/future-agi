@@ -99150,7 +99150,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         span_id: {
           title: "Span id",
           type: "string",
-          format: "uuid",
+          minLength: 1,
           "x-nullable": true,
         },
         trace_id: {

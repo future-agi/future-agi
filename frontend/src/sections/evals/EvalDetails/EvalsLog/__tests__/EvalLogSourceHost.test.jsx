@@ -2,6 +2,8 @@ import React from "react";
 import {
   QueryClient,
   QueryClientProvider,
+  useMutation,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { Drawer } from "@mui/material";
@@ -158,8 +160,8 @@ function mount(props = {}) {
   };
 }
 // Annotate's save inside the viewer (AnnotationSidebarContent): the real
-// useBulkCreateScores with onSuccess only, so a failure relies on the
-// client's toast.
+// useBulkCreateScores, called with onSuccess only. The hook shows its own
+// generic toast on failure; the client's toast adds the server's message.
 function SaveScore() {
   const { mutate } = useBulkCreateScores();
   return (
@@ -180,6 +182,36 @@ function SaveScore() {
       Save score
     </button>
   );
+}
+// Add to dataset's save inside the viewer (AddNewDataset): an inline
+// mutation with onSuccess only and no meta, so only the client reports a
+// failure.
+function SaveToNewDataset() {
+  const { mutate } = useMutation({
+    mutationFn: (payload) =>
+      axios.post(endpoints.project.addNewDataset, payload),
+    onSuccess: () => {},
+  });
+  return (
+    <button type="button" onClick={() => mutate({ new_dataset_name: "eval" })}>
+      Add to new dataset
+    </button>
+  );
+}
+const PLAIN_READ = "/tracer/viewer-read/plain/";
+const META_READ = "/tracer/viewer-read/meta/";
+// Two reads a viewer might make: one with no meta, one with its own meta.
+function ViewerReads() {
+  useQuery({
+    queryKey: ["viewer-read", "plain"],
+    queryFn: () => axios.get(PLAIN_READ),
+  });
+  useQuery({
+    queryKey: ["viewer-read", "meta"],
+    queryFn: () => axios.get(META_READ),
+    meta: { source: "viewer" },
+  });
+  return null;
 }
 async function activate(kind = "trace") {
   const button = await screen.findByRole("button", {
@@ -717,6 +749,10 @@ describe("eval-owned source host", () => {
       expect(
         await screen.findByText("This label is archived."),
       ).toBeInTheDocument();
+      // The hook's own generic toast stays alongside it, as in Observe.
+      expect(
+        screen.getByText("Failed to save annotations"),
+      ).toBeInTheDocument();
       expect(axios.post).toHaveBeenCalledTimes(1);
       expect(axios.post.mock.calls[0][0]).toMatch(
         /\/model-hub\/scores\/bulk\/$/,
@@ -725,6 +761,59 @@ describe("eval-owned source host", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
     },
   );
+
+  it.each(["trace", "voice_call"])(
+    "S3 a failed Add to dataset inside the opened %s, which reports nothing itself, shows the app's error toast",
+    async (kind) => {
+      nav = { ...ready, kind };
+      destination = kind === "trace" ? traceData : voiceData;
+      mocks.ViewerAction = SaveToNewDataset;
+      axios.post.mockRejectedValueOnce({
+        statusCode: 400,
+        result: "A dataset with this name already exists in your organization.",
+      });
+      mount();
+      await activate(kind);
+      await screen.findByTestId(kind === "trace" ? "trace-body" : "voice-body");
+      await user.click(
+        screen.getByRole("button", { name: "Add to new dataset" }),
+      );
+      expect(
+        await screen.findByText(
+          "A dataset with this name already exists in your organization.",
+        ),
+      ).toBeInTheDocument();
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(axios.post.mock.calls[0][0]).toBe(endpoints.project.addNewDataset);
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    },
+  );
+
+  it("a failed viewer read toasts only when the query sets its own meta", async () => {
+    mocks.ViewerAction = ViewerReads;
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation(async (url, config) => {
+      if (url === PLAIN_READ)
+        throw { statusCode: 404, result: "Plain viewer read failed." };
+      if (url === META_READ)
+        throw { statusCode: 404, result: "Viewer read with meta failed." };
+      return base(url, config);
+    });
+    mount();
+    await activate();
+    await screen.findByTestId("trace-body");
+    expect(
+      await screen.findByText("Viewer read with meta failed."),
+    ).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(axios.get.mock.calls.some(([url]) => url === PLAIN_READ)).toBe(true);
+    expect(
+      screen.queryByText("Plain viewer read failed."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 
   it.each(["trace", "voice_call"])(
     "S3 keeps the host's own failed %s read in its row, with no toast",

@@ -324,6 +324,9 @@ const EvalUsageTab = ({
     if (detailIndex === null) return;
     const handler = (e) => {
       if (e.repeat) return;
+      // A key something on the page already handled, such as the open
+      // trace's own Escape (DrawerHeader's document listener), is not ours.
+      if (e.defaultPrevented) return;
       if (isEditableElement(e)) return;
       // The open trace or call owns the keyboard; its own Escape closes it.
       if (sourceOpen) return;

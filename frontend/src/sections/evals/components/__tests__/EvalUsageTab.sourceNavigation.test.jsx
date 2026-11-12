@@ -473,6 +473,34 @@ describe("Usage tab: View trace / View call on an opened eval log", () => {
     );
   });
 
+  it("leaves a key that another handler already took to that handler", async () => {
+    mount();
+    await openLog("root");
+    expect(position(1)).toBeInTheDocument();
+    // Stands in for the open trace's own Escape (DrawerHeader's document
+    // listener), which marks the key handled before it reaches window.
+    const takeKey = (e) => e.preventDefault();
+    document.addEventListener("keydown", takeKey);
+    try {
+      await user.keyboard("j");
+      expect(position(1)).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(position(1)).toBeInTheDocument();
+      expect(
+        screen.getByText("judged the root span", { selector: "p" }),
+      ).toBeInTheDocument();
+    } finally {
+      document.removeEventListener("keydown", takeKey);
+    }
+    // Keys nothing else took still drive the panel.
+    await user.keyboard("j");
+    expect(position(2)).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByText(/ \/ 6$/)).not.toBeInTheDocument(),
+    );
+  });
+
   it("keeps an open trace while the Usage list refreshes the same rows", async () => {
     const view = mount();
     await openLog("grandchild");

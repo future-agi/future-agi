@@ -13705,6 +13705,7 @@ export interface EvalApiLogRowResponseResultApi {
   error_localizer_status?: string;
   error_localizer_message?: string;
   dataset_id?: string;
+  /** @minLength 1 */
   span_id?: string;
   trace_id?: string;
   prompt_id?: string;

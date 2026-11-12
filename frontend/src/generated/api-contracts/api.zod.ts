@@ -27242,7 +27242,7 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
     error_localizer_status: zod.string().optional(),
     error_localizer_message: zod.string().optional(),
     dataset_id: zod.string().uuid().optional(),
-    span_id: zod.string().uuid().optional(),
+    span_id: zod.string().min(1).optional(),
     trace_id: zod.string().uuid().optional(),
     prompt_id: zod.string().uuid().optional(),
     optimization_id: zod.string().uuid().optional(),
