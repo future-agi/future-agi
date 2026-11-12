@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet
 from django.conf import settings
@@ -81,7 +81,7 @@ def generate_refresh_token(user_id, org_id, client_id, expires_at=None):
 
 def refresh_token_expiry(now=None):
     """Expiry for a refresh token issued now."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return now + timedelta(seconds=refresh_token_ttl_seconds())
 
 

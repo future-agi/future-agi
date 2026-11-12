@@ -8,7 +8,7 @@ import hashlib
 import secrets
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -110,7 +110,7 @@ async def _store_refresh_token(
         user_id=user_id,
         org_id=organization_id,
         client_id=client_id,
-        expires_at=datetime.fromtimestamp(expires_at, tz=timezone.utc),
+        expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
     )
     data = FutureAGIRefreshToken(
         token=token,

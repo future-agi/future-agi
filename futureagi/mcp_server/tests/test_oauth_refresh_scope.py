@@ -154,9 +154,7 @@ class TestRefreshKeepsConsentedScope:
             user, workspace, ["context", "datasets"], "client-b", "code-b"
         )
 
-        assert _granted(_refresh(narrow["refresh_token"], "client-a")) == [
-            "context"
-        ]
+        assert _granted(_refresh(narrow["refresh_token"], "client-a")) == ["context"]
         assert _granted(_refresh(wide["refresh_token"], "client-b")) == [
             "context",
             "datasets",
