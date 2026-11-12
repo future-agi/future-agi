@@ -363,16 +363,19 @@ def test_removed_member_socket_receives_no_former_org_traffic(
             assert (status, leaked) == (403, None)
 
 
-def test_removed_member_socket_cannot_publish_to_former_org_stream(relay_server):
+def test_client_frames_never_reach_stream_subscribers(relay_server):
     org, owner, member, _ = create_organization()
     target = str(uuid4())
     with subscriber(relay_server, org, owner, target) as own:
-        # While still a member, a peer frame on the shared target reaches the owner.
+        # Stream frames come only from the server-side relay, even for members.
         with subscriber(relay_server, org, member, target) as peer:
             data = {"marker": uuid4().hex}
             peer.send(json.dumps({"type": "peer_msg", "uuid": target, "data": data}))
-            expected = {"type": "peer_msg", "data": data, "uuid": target}
-            assert json.loads(own.recv(timeout=10)) == expected
+            assert json.loads(peer.recv(timeout=10)) == {
+                "type": "error",
+                "message": "Unsupported message type.",
+            }
+            assert receive_optional(own) is None
 
         token = remove_member_and_log_in_again(relay_server, org, owner, member)
         url = f"{relay_server[2]}/ws/connect/?token={token['access']}"

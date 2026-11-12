@@ -351,6 +351,36 @@ def test_delivery_revalidates_membership_without_a_notification(settings, target
     asyncio.run(run())
 
 
+def test_client_frames_are_not_relayed_to_subscribers():
+    org, owner, workspace, _ = create_organization()
+    member = create_member(org, workspace)
+    target = str(uuid4())
+
+    async def run():
+        own = await open_socket(owner, org, target)
+        peer = await open_socket(member, org, target)
+        try:
+            await peer.send_json_to(
+                {"type": "peer_msg", "uuid": target, "data": {"marker": "x"}}
+            )
+            assert await peer.receive_json_from(timeout=10) == {
+                "type": "error",
+                "message": "Unsupported message type.",
+            }
+            assert await own.receive_nothing(timeout=0.5)
+            # Keep-alive and subscription control frames still work.
+            await peer.send_json_to({"type": "ping", "uuid": target})
+            assert await peer.receive_json_from(timeout=10) == {"type": "pong"}
+            assert await own.receive_nothing(timeout=0.5)
+            await peer.send_json_to({"type": "unsubscribe", "uuid": target})
+            confirmed = await peer.receive_json_from(timeout=10)
+            assert confirmed["type"] == "unsubscription_confirmed"
+        finally:
+            await disconnect(own, peer)
+
+    asyncio.run(run())
+
+
 def _membership_state(state):
     org, _, workspace, _ = create_organization()
     member = create_member(org, workspace)

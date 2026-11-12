@@ -150,38 +150,12 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def handle_message(self, content):
-        message_type = content.get("type")
-        data = content.get("data", {})
-        target_uuid = content.get("uuid")
-
-        if message_type == "ping":
+        # Clients only keep the connection alive; stream frames come from the
+        # server-side relay, never from other clients.
+        if content.get("type") == "ping":
             await self.send_json({"type": "pong"})
-
-        if target_uuid:
-            channel_name = self._uuid_group_name(target_uuid)
-            if channel_name == self.current_subscription:
-                await self.channel_layer.group_send(
-                    channel_name,
-                    {
-                        "type": "send_data",
-                        "data": {
-                            "type": message_type,
-                            "data": data,
-                            "uuid": target_uuid,
-                        },
-                    },
-                )
-            else:
-                logger.error(
-                    f"websocket: User {self.user.id} attempted to send message to {target_uuid} without being subscribed"
-                )
-
-                await self.send_json(
-                    {
-                        "type": "error",
-                        "message": f"Not subscribed to {target_uuid}. Please subscribe first.",
-                    }
-                )
+            return
+        await self.send_json({"type": "error", "message": "Unsupported message type."})
 
     async def disconnect(self, close_code):
         if self.user_group_name:
