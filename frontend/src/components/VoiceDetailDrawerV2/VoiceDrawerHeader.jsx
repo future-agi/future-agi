@@ -135,85 +135,140 @@ const VoiceDrawerHeader = ({
         spacing={1.5}
         sx={{ minWidth: 0, flex: 1 }}
       >
-        {/* Optional title (simulate: which trial this is) ahead of the ID —
-            text, or a node such as a trial switcher with the title beside it. */}
-        {title &&
-          (typeof title === "string" ? (
+        {title ? (
+          /* Simulate: a two-line block — the trial and its title on top, the
+             versions and the trial's ID quietly underneath — so nothing is
+             cut off in a narrow drawer. */
+          <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
+            {/* Optional title (simulate: which trial this is) ahead of the ID —
+                text, or a node such as a trial switcher with the title beside it. */}
+            {title &&
+              (typeof title === "string" ? (
+                <Typography
+                  noWrap
+                  sx={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "text.primary",
+                    minWidth: 0,
+                    flexShrink: 1,
+                  }}
+                >
+                  {title}
+                </Typography>
+              ) : (
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    minWidth: 0,
+                    flexShrink: 1,
+                  }}
+                >
+                  {title}
+                </Box>
+              ))}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ minWidth: 0 }}
+            >
+              {subtitle && (
+                <Typography
+                  noWrap
+                  sx={{ fontSize: 12, color: "text.tertiary", flexShrink: 0 }}
+                >
+                  {subtitle}
+                </Typography>
+              )}
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.25}
+                sx={{ minWidth: 0, maxWidth: title ? "none" : 320 }}
+              >
+                <Typography
+                  sx={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: title ? "text.tertiary" : "text.primary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {idLabel} :
+                </Typography>
+                <Typography
+                  noWrap
+                  sx={{
+                    fontSize: 12,
+                    color: title ? "text.tertiary" : "text.primary",
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
+                >
+                  {callId || "-"}
+                </Typography>
+                <Tooltip title={copyTooltip} arrow placement="bottom">
+                  <IconButton
+                    size="small"
+                    onClick={handleCopy}
+                    aria-label="Copy call ID"
+                  >
+                    <Iconify
+                      icon="solar:copy-linear"
+                      width={12}
+                      sx={{ color: "text.secondary" }}
+                    />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </Stack>
+          </Stack>
+        ) : (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.25}
+            sx={{ minWidth: 0, maxWidth: title ? "none" : 320 }}
+          >
+            <Typography
+              sx={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: title ? "text.tertiary" : "text.primary",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {idLabel} :
+            </Typography>
             <Typography
               noWrap
               sx={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: "text.primary",
+                fontSize: 12,
+                color: title ? "text.tertiary" : "text.primary",
+                whiteSpace: "nowrap",
                 minWidth: 0,
-                flexShrink: 1,
               }}
             >
-              {title}
+              {callId || "-"}
             </Typography>
-          ) : (
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                minWidth: 0,
-                flexShrink: 1,
-              }}
-            >
-              {title}
-            </Box>
-          ))}
-        {subtitle && (
-          <Typography
-            noWrap
-            sx={{ fontSize: 12, color: "text.tertiary", flexShrink: 0 }}
-          >
-            {subtitle}
-          </Typography>
+            <Tooltip title={copyTooltip} arrow placement="bottom">
+              <IconButton
+                size="small"
+                onClick={handleCopy}
+                aria-label="Copy call ID"
+              >
+                <Iconify
+                  icon="solar:copy-linear"
+                  width={12}
+                  sx={{ color: "text.secondary" }}
+                />
+              </IconButton>
+            </Tooltip>
+          </Stack>
         )}
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.25}
-          sx={{ minWidth: 0, maxWidth: 320 }}
-        >
-          <Typography
-            sx={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: title ? "text.tertiary" : "text.primary",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {idLabel} :
-          </Typography>
-          <Typography
-            noWrap
-            sx={{
-              fontSize: 12,
-              color: title ? "text.tertiary" : "text.primary",
-              whiteSpace: "nowrap",
-              minWidth: 0,
-            }}
-          >
-            {callId || "-"}
-          </Typography>
-          <Tooltip title={copyTooltip} arrow placement="bottom">
-            <IconButton
-              size="small"
-              onClick={handleCopy}
-              aria-label="Copy call ID"
-            >
-              <Iconify
-                icon="solar:copy-linear"
-                width={12}
-                sx={{ color: "text.secondary" }}
-              />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-
         <Stack direction="row" spacing={0.5}>
           <NavButton
             icon="solar:alt-arrow-up-linear"
