@@ -482,6 +482,12 @@ def _ensure_workflows_registered() -> None:
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
         from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+        from simulate.temporal.workflows.certification_case_workflow import (
+            CertificationCaseWorkflow,
+        )
+        from simulate.temporal.workflows.certification_workflow import (
+            ProductionCertificationWorkflow,
+        )
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
         )
@@ -494,6 +500,8 @@ def _ensure_workflows_registered() -> None:
             workflows=[
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
+                CertificationCaseWorkflow,
+                ProductionCertificationWorkflow,
                 AgentFixWorkflow,
             ],
         )
@@ -786,6 +794,16 @@ def _ensure_activities_registered() -> None:
             release_agent_fix_sandbox,
             watch_agent_fix_engine,
         )
+        from simulate.temporal.activities.certification import (
+            certification_cancel_case,
+            certification_deliver_notifications,
+            certification_finalize_campaign,
+            certification_load_cases,
+            certification_poll_case,
+            certification_reconcile_case,
+            certification_record_case_result,
+            certification_submit_case,
+        )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
@@ -809,13 +827,21 @@ def _ensure_activities_registered() -> None:
                 record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
+                certification_load_cases,
+                certification_submit_case,
+                certification_poll_case,
+                certification_reconcile_case,
+                certification_record_case_result,
+                certification_deliver_notifications,
+                certification_cancel_case,
+                certification_finalize_campaign,
                 launch_agent_fix_sandbox,
                 watch_agent_fix_engine,
                 release_agent_fix_sandbox,
                 close_agent_fix_run,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=11)
+        log.info("registered_hosted_runner_activities", count=19)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

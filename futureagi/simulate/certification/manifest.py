@@ -541,6 +541,19 @@ def _validate_interaction(
             if field in raw and raw[field] is not None:
                 _assert_no_secret_material(raw[field], f"{w}.{field}")
                 out[field] = raw[field]
+        stable_assertions = raw.get("stable_assertions")
+        if stable_assertions is not None:
+            if not isinstance(stable_assertions, list) or not all(
+                isinstance(name, str) and name.strip() for name in stable_assertions
+            ):
+                _fail(
+                    "invalid_schema",
+                    w,
+                    "stable_assertions must be a list of non-empty evaluation names",
+                )
+            out["stable_assertions"] = list(
+                dict.fromkeys(name.strip() for name in stable_assertions)
+            )
     else:
         # Placeholder interactions keep only their declared count; scenario and
         # config material is filled in when the case is materialized.
