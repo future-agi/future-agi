@@ -2173,9 +2173,7 @@ def test_send_message_to_a_finished_job_checks_sandbox_minutes(
     ).exists()
 
 
-def test_send_message_to_a_running_job_does_not(
-    user, workspace, settings, monkeypatch
-):
+def test_send_message_to_a_running_job_does_not(user, workspace, settings, monkeypatch):
     settings.HARNESS_PUBLIC_BASE_URL = PLATFORM
     asked = []
     monkeypatch.setattr(
