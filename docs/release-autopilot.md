@@ -807,8 +807,9 @@ Python calls left without `-I`, and why:
   `deploy.update` and `scripts` from the job's `refs/tags/<version>` checkout,
   so plain `-I` would break it. It needs `python3 -I` plus an explicit
   `sys.path` entry for the checkout, appended after the standard library so a
-  top-level module file cannot shadow it. That workflow is outside this
-  change.
+  top-level module file cannot shadow it. Its `generate` job also runs
+  `python3 scripts/generate_update_manifest.py`, but that job holds only a
+  read token. That workflow is outside this change.
 - `refresh-disposable-domains.yml` reads the release-bot key and runs
   `python3 scripts/generate_disposable_domains.py`. The script imports only
   the standard library, so `-I` alone is enough. That workflow is outside this
