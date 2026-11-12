@@ -45,16 +45,16 @@ describe("held back", () => {
 
   it("counts what is fixed, held back and protected", () => {
     expect(countsLine(12, 9)).toBe(
-      "12 failing: 8 to fix, 4 held back to prove it · 9 must keep passing",
+      "12 failing: 8 to fix, 4 held back to prove it · 9 protected",
     );
-    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 must keep passing");
+    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 protected");
   });
 });
 
 describe("variations", () => {
   it("writes variations first below the floor, instead of refusing", () => {
     expect(countsLine(5, 1, FLOOR)).toBe(
-      "5 failing, and up to 15 variations of them · 1 must keep passing",
+      "5 failing, and up to 15 variations of them · 1 protected",
     );
     expect(variationsNote(7, FLOOR)).toBe(
       "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",

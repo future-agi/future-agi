@@ -7,7 +7,8 @@ import { hasTargetRate, pct, pts } from "./fixRunView";
 
 const DEFAULT_W = 720;
 const H = 190;
-const PAD = { l: 40, r: 44, t: 28, b: 24 };
+// The left pad fits the axis label, "Candidate".
+const PAD = { l: 66, r: 44, t: 28, b: 24 };
 const num = { fontVariantNumeric: "tabular-nums" };
 
 // The design's trial chart (RunsOverview in trial mode), hand-built SVG: the

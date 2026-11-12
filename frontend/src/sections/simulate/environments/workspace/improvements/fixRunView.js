@@ -113,6 +113,12 @@ const triedText = (fix) => {
   return `${n} ${n === 1 ? "candidate" : "candidates"}`;
 };
 
+// When an ending came: after how many candidates, or before the first one.
+const whenEnded = (fix) =>
+  (fix.candidates || []).length
+    ? `after ${triedText(fix)}`
+    : "before any candidate ran";
+
 // Failures that are ours, not the agent's: the user can only retry.
 const OUR_FAILURES = new Set([
   "fix_engine_failed",
@@ -135,18 +141,22 @@ export function endingText(fix) {
   if (fix.state === "not_reproduced")
     return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then run a new epoch.";
   if (fix.state === "out_of_budget")
-    return `Stopped at the budget after ${triedText(fix)}. Nothing changed. Run a new epoch with a larger budget.`;
+    return `Stopped at the budget ${whenEnded(fix)}. Nothing changed. Run a new epoch with a larger budget.`;
   if (fix.state === "stopped")
-    return `You stopped this epoch after ${triedText(fix)}. Nothing changed.`;
+    return `You stopped this epoch ${whenEnded(fix)}. Nothing changed.`;
   if (fix.state === "too_few_cases")
     return "The run had too few failing scenarios to fix. Pick more failing scenarios, or let the epoch write variations of them.";
   if (fix.state !== "failed") return null;
   if (code === "fix_deadline")
-    return `This epoch ran out of its time limit after ${triedText(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
+    return `This epoch ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
+  // A failed epoch can be retried once; after that, the next one starts from the run.
+  const again = fix.retryable
+    ? "Retry it"
+    : "It was retried once already. Run a new epoch from the run's Debug failures";
   if (code === "fix_queue_timeout")
-    return "Too many epochs were running, so this one could not start. Nothing changed. Retry it in a few minutes.";
+    return `Too many epochs were running, so this one could not start. Nothing changed. ${again}${fix.retryable ? " in a few minutes" : ""}.`;
   if (!code || OUR_FAILURES.has(code))
-    return "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.";
+    return `This epoch stopped because of a problem on our side, not your agent. Nothing changed. ${again}.`;
   // The engine writes a user-owned failure for the user: what to change, then start again.
   return `This epoch stopped on something only you can change: ${sentence(fix.failure.message)}`;
 }

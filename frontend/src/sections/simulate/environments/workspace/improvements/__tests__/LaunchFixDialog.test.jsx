@@ -126,7 +126,7 @@ describe("LaunchFixDialog", () => {
     );
     expect(
       screen.getByText(
-        "11 failing, and up to 33 variations of them · 6 must keep passing",
+        "11 failing, and up to 33 variations of them · 6 protected",
       ),
     ).toBeInTheDocument();
     expect(protectCases().getByText("6 of 6")).toBeInTheDocument();

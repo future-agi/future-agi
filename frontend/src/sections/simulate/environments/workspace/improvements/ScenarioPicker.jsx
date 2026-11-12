@@ -240,7 +240,7 @@ export default function ScenarioPicker({
       <ScenarioList
         testId="cases-protect"
         title="Cases to protect"
-        note="Cases that must keep passing. Suggested: every case that passed in this run."
+        note="Cases this epoch must not break. Suggested: every case that passed in this run."
         items={protectable}
         chosen={protectedKeys}
         suggested={options.suggested.protected_scenario_keys.filter(
