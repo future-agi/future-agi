@@ -22,6 +22,11 @@ import struct
 import sys
 import zlib
 
+# The only exit status that means "these bytes are refused". The interpreter
+# itself exits 2 (unreadable script, bad arguments) and 1 (startup failure), so
+# neither may be read as a verdict on the input.
+REJECTED_EXIT = 65
+
 MAX_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_SIDE = 16384
 MAX_IMAGE_PIXELS = 40_000_000
@@ -929,4 +934,4 @@ if __name__ == "__main__":
         print(json.dumps(probe(sys.argv[1]), separators=(",", ":")))
     except Exception:
         # Do not include filenames, parser details or input fragments.
-        sys.exit(2)
+        sys.exit(REJECTED_EXIT)
