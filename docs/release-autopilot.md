@@ -5,6 +5,12 @@ publication approval. Neither policy deploys a cluster. Both switches ship off.
 The main-ancestry guard is unconditional: even a manually approved release must
 come from reviewed `main` history.
 
+The `future-agi/deployment` files this document cites are on open PRs, not on
+deployment `main` (read-only contents reads, 12 Nov): `us/gcp/terraform/deploy_github.tf`
+on #434, `docs/auto-deploy.md` and `scripts/deploy/migration_check_job.py` on
+#437 (stacked on #435), and `docs/bot-pr-autopilot.md` on #438. What they
+describe does not run until those PRs merge and are applied or turned on.
+
 ## Switches and prerequisites
 
 All variables below are **repository variables**, not environment variables set
@@ -206,6 +212,13 @@ changes none of them.
   Its installation needs Contents and Pull requests write on this repository.
   Comments and labels stay on the workflow token. Nothing reads or prints a
   secret value.
+- **ee migrations.** The bump's `Migrations: 0 new files` counts future-agi
+  only, not the `future-agi/ee` repository that the hosted backend image is
+  built from. Before anyone relies on that line for ee, merge
+  `future-agi/deployment` PRs #435 and #437 into deployment `main` (#437 is
+  stacked on #435) and set deployment's `AUTO_DEPLOY` to `apply`. Until then,
+  the person who deploys checks for unapplied ee migrations. See "What neither
+  count sees" below.
 - **`Production` and `production-auto`.** Keep `Production`'s required
   reviewers and allowed release tags. Verify that `production-auto` exists and
   has **no reviewers**. Set `production-auto` to "Selected branches and tags"
@@ -471,8 +484,8 @@ approval. New steps then fetch full history and execute the policy from `main`:
    added anywhere else is not counted until it is added to the list.
    System-eval seeds (`seed_system_evals`) and operator backfill commands do not
    count either. Hosted pods never run them and the deployment pipeline runs no
-   seed, so a seed-only release deploys automatically and its eval content stays
-   stale until someone runs the seeder.
+   seed. So once that pipeline is on, a seed-only release deploys automatically
+   and its eval content stays stale until someone runs the seeder.
 4. Choose `production-auto` only when `RELEASE_AUTO_APPROVE=on`, the event is an
    exact tag push by the release App, this is the run's first attempt, and the
    count is known to be zero. "By the release App" means both `GITHUB_ACTOR` and
@@ -577,15 +590,17 @@ v1.58.0 in one step it is 6.
 - **For the `Production` approver.** A release with a positive or unknown
   count still publishes its images once approved, but its bump PR then waits.
   If the release changes ClickHouse schema, apply the schema first, then merge
-  the bump PR by hand. Django migrations are also stopped at deploy time by the
-  deployment's `migrate --check`; the operator then applies them with the
-  procedure in `future-agi/deployment`'s `docs/auto-deploy.md`, "Applying
-  migrations after a failed check".
+  the bump PR by hand. Django migrations are applied by the person who deploys.
+  The deployment pipeline's `migrate --check`, which would also stop them at
+  deploy time, is not on deployment `main` yet (see the ee section below).
+  Once it is, the operator applies them with the procedure in
+  `future-agi/deployment`'s `docs/auto-deploy.md`, "Applying migrations after
+  a failed check".
 
 This count is source evidence from this repository, not proof of the deployed
-database state or evidence about independently changed external EE code. The
-deployment-side pending-migration check remains mandatory; migrations are never
-run by this bot.
+database state or evidence about independently changed external EE code. A
+deploy-time pending-migration check is still needed, and it is not on deployment
+`main` yet; migrations are never run by this bot.
 
 **What neither count sees: the `future-agi/ee` repository.** The hosted
 backend image is `futureagi/future-agi-ee`. ee's `release-image.yml` builds it
@@ -606,16 +621,35 @@ with only an ee migration can use `production-auto`, and its bump says
 - The bump job's token covers `future-agi/deployment` only.
 
 Writing `unknown` on every bump would send every release to a person, so the
-bump does not do that. The stop is the deployment's migration check. Before
-any upgrade, the pipeline runs `python manage.py migrate --check --noinput`
-from the candidate backend image with the backend's environment
-(`scripts/deploy/migration_check_job.py` in `future-agi/deployment`; read from
+bump does not do that.
+
+**Today nothing automated stops an ee-only migration.** The deployment
+pipeline's migration check would, but it is not on deployment `main`. It
+arrives with `future-agi/deployment` PR #437, which is open, targets PR #435's
+branch (`feat/deploy-pr-checks`) rather than `main`, and ships off. On 12 Nov
+`scripts/deploy/migration_check_job.py` was absent from deployment `main` and
+from `feat/deploy-pr-checks`, and present on `feat/deploy-pipeline` (read-only
+contents reads). By that branch's `docs/auto-deploy.md`, the check runs only
+when the repository variable `AUTO_DEPLOY` is `apply`; `plan` runs no
+migration Job (read from the branch, not run). Until #435 and #437 are on
+deployment `main` and `AUTO_DEPLOY` is `apply`:
+
+- `Migrations: 0 new files` covers future-agi only.
+- The person who deploys is the only stop for an ee migration. The US runbook
+  (`docs/us-gcp-deploy-new-images-runbook.md` in `future-agi/deployment`,
+  section 4) has that person list unapplied migrations with `python manage.py
+  showmigrations`, which includes ee's app. `eu/gcp/APPLY_UPDATES.md` has no
+  such step (read-only, 12 Nov).
+
+Once both PRs are on `main` and `AUTO_DEPLOY` is `apply`, the pipeline runs
+`python manage.py migrate --check --noinput` before any upgrade, from the
+candidate backend image with the backend's environment (read from the branch's
 code, not run). It sees every installed Django app, ee's included, and stops
 the first region at `migration-check-failed`. A third-party app's migrations
-from a dependency bump are in the same position. What that check does not
+from a dependency bump are in the same position. What that check will not
 cover:
 
-- It does not stop the bump PR from merging without a person. After such a
+- It will not stop the bump PR from merging without a person. After such a
   merge, every later automatic deploy, including config PRs and sandbox pins,
   stops at the same check until a person applies the migrations in both
   regions.
