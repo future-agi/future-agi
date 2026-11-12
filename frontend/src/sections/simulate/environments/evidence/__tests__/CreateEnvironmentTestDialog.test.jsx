@@ -65,10 +65,14 @@ describe("CreateEnvironmentTestDialog", () => {
     expect(
       screen.getByText(/2 sessions from this project/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create environment test" }),
+    ).toBeDisabled();
 
     pickEnvironment();
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(axios.post).toHaveBeenCalledWith(
@@ -88,7 +92,9 @@ describe("CreateEnvironmentTestDialog", () => {
     });
     const { onClose } = renderDialog();
     pickEnvironment();
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     expect(
       await screen.findByText("These sessions are not in this project."),
@@ -110,7 +116,9 @@ describe("CreateEnvironmentTestDialog", () => {
     renderDialog();
     expect(screen.getByText("Loading your environments…")).toBeInTheDocument();
     expect(screen.queryByText(/No environment to import into/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create environment test" }),
+    ).toBeDisabled();
   });
 
   it("says the list failed, not that there is none", () => {

@@ -139,7 +139,7 @@ test(
       await page.getByRole('option', { name: environment.name }).click();
       const created = page.waitForResponse((r) => r.url().endsWith(imports(environment.environmentId))
         && r.request().method() === 'POST', { timeout: UI_READY });
-      await dialog.getByRole('button', { name: 'Import' }).click();
+      await dialog.getByRole('button', { name: ACTION }).click();
       const response = await created;
       expect(response.status()).toBe(201);
       bundle = await response.json() as Bundle;
