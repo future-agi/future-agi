@@ -3,6 +3,7 @@
 import uuid
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -66,6 +67,9 @@ class E2EFeedIssueView(APIView):
                 before = issue_snapshot(issue)
             else:
                 title = data.get("title") or "E2E Error Feed issue"
+                # The real feed defaults to a last_seen window. A newly seeded
+                # issue must be visible there without rewriting its list response.
+                now = timezone.now()
                 issue = TraceErrorGroup.no_workspace_objects.create(
                     project=project,
                     cluster_id=f"E2E-{uuid.uuid4().hex[:8].upper()}",
@@ -77,6 +81,8 @@ class E2EFeedIssueView(APIView):
                         data.get("severity"), data.get("severity", "medium")
                     ),
                     error_count=data.get("occurrences", 1),
+                    first_seen=now,
+                    last_seen=now,
                     issue_group=data.get("issue_group", ""),
                     issue_category=data.get("issue_category", ""),
                 )
