@@ -70,6 +70,9 @@ export const ACTORS_COPY = {
     subtitle:
       "Everyone the agent deals with who is not the agent. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
+    // A change sent while offline waits and goes through once the connection is back.
+    offline:
+      "No connection: your change is kept and saves once you are back online",
     everyoneAbout:
       "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
     add: "Add an actor",
@@ -84,6 +87,8 @@ export const ACTORS_COPY = {
     notInWorld: "not an action of this world",
     inUse: (name, count) =>
       `${name} is in ${count === 1 ? "1 scenario" : `${count} scenarios`}. Take them out of ${count === 1 ? "it" : "those scenarios"} first, by editing the scenario or asking the builder chat.`,
+    namedBy: (name, names) =>
+      `${names.join(", ")} still ${names.length === 1 ? "names" : "name"} ${name}, as who answers instead or who brings them in. Change ${names.length === 1 ? "that" : "those"} first.`,
     showView: "What they see",
     hideView: "Hide what they see",
     sees: "Sees",
@@ -161,6 +166,8 @@ export const ACTORS_COPY = {
       roleHelp:
         "Who they are, in a few words, such as a manager or a family member",
       atLimit: (max) => `At most ${max} characters`,
+      tooLong: (over) =>
+        `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",
       kinds: { person: "A person", agent: "Another agent", system: "A system" },
       parent: "Brought in by (optional)",
@@ -241,6 +248,7 @@ export const ACTORS_COPY = {
       noLimitHelp: "Empty is no limit of their own",
       wholeNumber: "A whole number above 0, or empty for no limit",
       timeout: "Waits, in seconds (optional)",
+      badTimeout: "A number of seconds, 0 or more",
       timeoutHelp:
         "How long the world waits for them; 0 waits as long as the call lasts",
       fallback: "If they do not answer",
@@ -250,6 +258,8 @@ export const ACTORS_COPY = {
         ACTORS_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
       channel: "How they join the conversation",
       noChannel: "Doesn't speak in the conversation",
+      joinsFixed: (count) =>
+        `In ${count === 1 ? "1 scenario" : `${count} scenarios`}, so how they join stays as it is. Take them out of ${count === 1 ? "that scenario" : "those scenarios"} first to change it.`,
       play: "How they act in the world",
       plays: {
         mocked: "Only the actions each scenario gives them",

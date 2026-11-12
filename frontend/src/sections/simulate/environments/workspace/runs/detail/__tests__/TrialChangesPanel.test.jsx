@@ -208,6 +208,62 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("names a commit the agent was told timed out, and a fallback the world refused", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 2,
+              committed: 2,
+              committed_actions: ["apply_discount", "apply_discount"],
+              answer_lost_actions: ["apply_discount"],
+            },
+            {
+              who: "alex",
+              name: "Alex Vance",
+              attempted: 1,
+              refused: 1,
+              committed: 0,
+              committed_actions: [],
+            },
+          ],
+          decisions: [
+            {
+              actor: "alex",
+              play: "timeout",
+              fallback: "approvals.change",
+              outcome: "fallback_action",
+              action_outcome: "refused",
+            },
+            {
+              actor: "alex",
+              play: "timeout",
+              fallback: "approvals.change",
+              outcome: "fallback_action",
+              action_outcome: "committed",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("Committed but answered with a timeout: apply_discount"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Alex Vance · Timed out · No answer: their fallback action was tried for them and refused by the world",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Alex Vance · Timed out · No answer: their fallback action was taken for them",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("says no change for a participant that committed nothing", () => {
     render(
       <TrialChangesPanel

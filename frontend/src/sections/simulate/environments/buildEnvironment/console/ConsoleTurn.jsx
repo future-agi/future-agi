@@ -1,10 +1,10 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import AskUserQuestionCard from "./AskUserQuestionCard";
-import Markdown from "./Markdown";
+import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -23,7 +23,6 @@ const STEP_SHAPE = PropTypes.shape({
     "error",
     "cancelled",
     "completed",
-    "heartbeat",
     "nudge-line",
   ]),
   text: PropTypes.string,
@@ -36,7 +35,6 @@ const STEP_SHAPE = PropTypes.shape({
   value: PropTypes.string,
   count: PropTypes.number,
   lines: PropTypes.arrayOf(PropTypes.string),
-  since: PropTypes.string,
   question: PropTypes.object,
   resolved: PropTypes.bool,
   answerText: PropTypes.string,
@@ -112,7 +110,7 @@ export function Step({ step }) {
 
   if (step.kind === "think" || step.kind === "note") {
     if (step.markdown) {
-      return <Markdown text={step.text} dim={step.kind === "think"} />;
+      return <ChatMarkdown text={step.text} dim={step.kind === "think"} />;
     }
     return (
       <Typography
@@ -257,10 +255,6 @@ export function Step({ step }) {
     );
   }
 
-  if (step.kind === "heartbeat") {
-    return <HeartbeatRow since={step.since} />;
-  }
-
   if (step.kind === "nudge-line") {
     return (
       <Typography
@@ -402,56 +396,3 @@ QuietRow.propTypes = {
   pulse: PropTypes.bool,
   children: PropTypes.node,
 };
-
-/* ── working indicator ───────────────────────────────────────────────────── */
-
-export function Working({ label }) {
-  return (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Box
-        sx={{
-          width: 8, height: 8, borderRadius: "50%", bgcolor: "text.secondary",
-          animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
-        }}
-      />
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>{label}</Typography>
-    </Stack>
-  );
-}
-Working.propTypes = { label: PropTypes.string };
-
-/* ── autonomous heartbeat ────────────────────────────────────────────────── */
-
-function elapsedLabel(sinceIso) {
-  if (!sinceIso) return null;
-  const ms = Date.now() - Date.parse(sinceIso);
-  if (Number.isNaN(ms) || ms < 0) return null;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function HeartbeatRow({ since }) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const elapsed = elapsedLabel(since);
-  return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-      <Box
-        sx={{
-          width: 8, height: 8, borderRadius: "50%", bgcolor: "status.info.solid",
-          animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
-        }}
-      />
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        ALK is working autonomously{elapsed ? ` · ${elapsed}` : ""}
-      </Typography>
-    </Stack>
-  );
-}
-HeartbeatRow.propTypes = { since: PropTypes.string };

@@ -863,8 +863,20 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
 
 
 def call_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
-    """How the scenario filter names each of the environment's actors."""
-    return call_actor_choice_labels(_stage_output(job, "call_actors"))
+    """How the scenario filter names each of the environment's actors: every actor in its `actors.json`, world-only
+    ones included, over the speaking actors the actor list stage output kept for environments without one."""
+    from simulate.services.harness_versioning import drafts, hashing
+
+    labels = call_actor_choice_labels(_stage_output(job, "call_actors"))
+    names = hashing.actor_names(drafts.edit_sides(job)["environment"]) or {}
+    labels.update(
+        {
+            actor_id: name
+            for actor_id, name in names.items()
+            if actor_id not in (hashing.ACTOR_LIMITS_KEY, hashing.ACTOR_OTHER_KEY)
+        }
+    )
+    return labels
 
 
 def _call_actor_list(listing: object, scenario_docs: object) -> list[ContractCallActor]:

@@ -393,7 +393,7 @@ def write_actor_limits(
     """Set the environment's actor limits in the draft, as one whole block: each a positive number or null for no
     limit, `model` one of the models its sealed rules list; a field left out of the block takes the channel's default.
     Refuses `limits_invalid` (400)."""
-    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    refs, environment_files, suite_files = _draft_read(environment, expected_revision)
     rules = actor_rules(environment_files)
     models = actor_models(rules)
     problems = []
@@ -424,7 +424,7 @@ def write_actor_limits(
         environment,
         _with_cast(environment_files, _cast(environment_files), rules, limits=clean),
         suite_files,
-        draft,
+        refs,
         user,
     )
 
@@ -511,11 +511,21 @@ def _new_choices(
                 )
         problems += _sharing_the_caller(before, after, suite_files or {}, rules)
     problems += _knowledge_problems(before, after, files, rules, stores)
+    model = after.get("model")
+    if model and model != before.get("model") and model not in actor_models(rules):
+        problems.append(
+            f"{actor_id}'s model {model!r} is not one of: {', '.join(actor_models(rules))}."
+        )
     known = [one["action"] for one in world_actions(files, rules)]
-    old = set(before.get("permitted_actions") or [])
+    old = {
+        str(one)
+        for one in before.get("permitted_actions") or []
+        if isinstance(one, (str, int))
+    }
+    given = after.get("permitted_actions")
     added = [
-        one
-        for one in after.get("permitted_actions") or []
+        str(one)
+        for one in (given if isinstance(given, list) else [])
         if one not in old and one not in known
     ]
     tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
@@ -645,7 +655,9 @@ def _record_problems(
         subject = (
             "The id"
             if where == "id"
-            else f"{actor_id}'s {where}:" if where else f"{actor_id}:"
+            else f"{actor_id}'s {where}:"
+            if where
+            else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
     for path, field in (rules.get("equal_when_set") or {}).items():
@@ -749,6 +761,9 @@ def actor_problems(
     known = {str(one.get("id") or "") for one in actors}
     actor = next(one for one in actors if one.get("id") == actor_id)
     problems = _record_problems(actor, rules, new_id=new_id)
+    if problems:
+        # The links are read only from a record of the right shape.
+        return problems
     problems += [
         f"{actor_id}'s {path} {other!r} is not another listed actor."
         for path, other in _broken_references(actor, known, rules)
@@ -762,16 +777,36 @@ def actor_problems(
 
 
 def _removal_problems(
-    actors: list[ActorRecord], actor_id: str, rules: ActorRules
+    actors: list[ActorRecord],
+    actor_id: str,
+    rules: ActorRules,
+    before: list[ActorRecord],
 ) -> list[str]:
     """Another actor naming the removed one would point at nobody."""
     known = {str(one.get("id") or "") for one in actors}
+    names = {
+        str(one.get("id") or ""): str(one.get("name") or one.get("id"))
+        for one in before
+    }
+    removed = names.get(actor_id, actor_id)
     return [
-        f"{one.get('id')}'s {path} is {actor_id}; change it first."
+        f"{_naming(path, names[str(one.get('id') or '')], removed)}; change that on "
+        f"{names[str(one.get('id') or '')]} before removing {removed}."
         for one in actors
         for path, other in _broken_references(one, known, rules)
         if other == actor_id
     ]
+
+
+def _naming(path: str, holder: str, named: str) -> str:
+    """How one actor's record names another, in the editor's words."""
+    if path == "parent":
+        return f"{holder} is brought in by {named}"
+    if path == "activation.fallback":
+        return f"{holder} has {named} answer instead when {holder} does not"
+    if path == "on_behalf_of":
+        return f"{holder} acts on behalf of {named}"
+    return f"{holder}'s {path} names {named}"
 
 
 def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str]:
@@ -909,18 +944,18 @@ def write_actor_edit(
             "actor_id_mismatch", "an actor's id never changes", status_code=400
         )
     actor_id = given
-    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    refs, environment_files, suite_files = _draft_read(environment, expected_revision)
     before = _cast(environment_files)
     actors = _edited(
         before, op=op, actor_id=actor_id, body=body, user=user, suite_files=suite_files
     )
     rules = actor_rules(environment_files)
     if op == "delete":
-        problems = _removal_problems(actors, actor_id, rules)
+        problems = _removal_problems(actors, actor_id, rules, before)
     else:
-        problems = actor_problems(
-            actors, actor_id, rules, new_id=op == "create"
-        ) + _new_choices(
+        problems = actor_problems(actors, actor_id, rules, new_id=op == "create")
+        # The choices are read only from a record of the right shape: a list of numbers is a type to fix first.
+        problems = problems or _new_choices(
             next((one for one in before if one.get("id") == actor_id), None),
             next(one for one in actors if one.get("id") == actor_id),
             environment_files,
@@ -946,53 +981,58 @@ def write_actor_edit(
         environment,
         _with_cast(environment_files, actors, rules),
         suite_files,
-        draft,
+        refs,
         user,
     )
 
 
 def _draft_read(
     environment: HostedHarnessJob, expected_revision: int | None
-) -> tuple[Any, dict[str, bytes], dict[str, bytes]]:
-    """The environment draft and both sides' files, refusing `draft_changed` (409) when the caller read an older
-    revision. The draft is read before its files, so an edit landing in between fails the write's revision check.
-    """
-    draft = drafts.fresh_draft(environment, "environment")
+) -> tuple[dict[str, Any], dict[str, bytes], dict[str, bytes]]:
+    """Both pieces' draft refs and files, refusing `draft_changed` (409) when the caller read an older revision. The
+    refs are read before the files, so an edit landing on either piece in between fails the write's check of both."""
+    refs = drafts.draft_refs(environment)
     sides = drafts.edit_sides(environment)
-    if expected_revision is not None and expected_revision != (
-        draft.revision if draft is not None else 0
+    if (
+        expected_revision is not None
+        and expected_revision != refs["environment"].revision
     ):
         raise HostedHarnessError(
             "draft_changed",
             "the actors were edited elsewhere since you read them; read them again",
             status_code=409,
         )
-    return draft, sides["environment"], sides["suite"]
+    return refs, sides["environment"], sides["suite"]
 
 
 def _written(
     environment: HostedHarnessJob,
     environment_files: dict[str, bytes],
     suite_files: dict[str, bytes],
-    draft: Any,
+    refs: dict[str, Any],
     user: User | None,
 ) -> Cast:
-    """Record the environment side of the draft and return the cast as it now reads."""
-    expected = {
-        "environment": (
-            drafts.DraftRef(str(draft.id), draft.revision)
-            if draft is not None
-            else drafts.NO_DRAFT
+    """Record the environment side of the draft and return the cast as it now reads. Both pieces' refs are checked:
+    a scenario saved meanwhile may name an actor this edit removes."""
+    try:
+        written = drafts.record_draft(
+            environment,
+            archives.pack_archive(archives.compose(environment_files, suite_files)),
+            origin="manual",
+            user=user,
+            expected=dict(refs),
+            pieces={"environment"},
+            # Validated against the scenarios: a scenario edit landing meanwhile refuses this one.
+            checked=set(drafts.DRAFT_PIECES),
         )
-    }
-    written = drafts.record_draft(
-        environment,
-        archives.pack_archive(archives.compose(environment_files, suite_files)),
-        origin="manual",
-        user=user,
-        expected=expected,
-        pieces={"environment"},
-    )
+    except HostedHarnessError as exc:
+        if exc.code != "draft_changed":
+            raise
+        raise HostedHarnessError(
+            "draft_changed",
+            "the actors were edited elsewhere since you read them; read them again",
+            status_code=409,
+        ) from exc
     if written is None:
         raise HostedHarnessError(
             "drafts_unavailable",
@@ -1063,7 +1103,7 @@ def upload_environment_file(
             f"{base or 'The file'}: " + "; ".join(problems),
             status_code=400,
         )
-    draft, environment_files, suite_files = _draft_read(environment, expected_revision)
+    refs, environment_files, suite_files = _draft_read(environment, expected_revision)
     path = spec["folder"] + base
     if kind == "knowledge" and not _readable_file(path, actor_rules(environment_files)):
         raise HostedHarnessError(
@@ -1072,7 +1112,7 @@ def upload_environment_file(
             status_code=400,
         )
     return _written(
-        environment, {**environment_files, path: content}, suite_files, draft, user
+        environment, {**environment_files, path: content}, suite_files, refs, user
     )
 
 

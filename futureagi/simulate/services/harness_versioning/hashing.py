@@ -296,40 +296,88 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     }
 
 
-def _actor_records(environment: Mapping[str, bytes]) -> list[dict[str, Any]] | None:
+# The environment's actor limits, listed with its actors so a limits edit reads as a change; never an actor id, which
+# is lowercase letters, digits and underscores.
+ACTOR_LIMITS_KEY = "#limits"
+ACTOR_LIMITS_NAME = "Actor limits"
+# Whatever else `actors.json` holds (an entry without an id, a repeated id, another field), so a change to it still
+# reads as a change: the file itself is left out of the file diff when the cast is shown actor by actor.
+ACTOR_OTHER_KEY = "#other"
+ACTOR_OTHER_NAME = "Other actor settings"
+
+
+def _actor_body(environment: Mapping[str, bytes]) -> dict[str, Any] | None:
     raw = environment.get("actors.json")
     try:
         body = json.loads(raw) if raw else {}
     except ValueError:
         return None
-    return [
-        actor
-        for actor in (body.get("actors") if isinstance(body, dict) else None) or []
-        if isinstance(actor, dict) and actor.get("id")
-    ]
+    return body if isinstance(body, dict) else None
+
+
+def _actor_entries(body: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[Any]]:
+    """The first record for each actor id, and every other entry (no id, a repeated id, not a record)."""
+    entries = body.get("actors") or []
+    if not isinstance(entries, list):
+        return [], [entries]
+    records: list[dict[str, Any]] = []
+    other: list[Any] = []
+    seen: set[str] = set()
+    for actor in entries:
+        if isinstance(actor, dict) and actor.get("id") and str(actor["id"]) not in seen:
+            seen.add(str(actor["id"]))
+            records.append(actor)
+        else:
+            other.append(actor)
+    return records, other
+
+
+def _actor_other(body: Mapping[str, Any]) -> dict[str, Any]:
+    rest = {
+        field: value
+        for field, value in body.items()
+        if field not in ("actors", "limits", "schema")
+    }
+    _records, other = _actor_entries(body)
+    return {**rest, **({"actors": other} if other else {})}
 
 
 def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str] | None:
-    """A digest of each actor's record in the environment's `actors.json`, keyed by its id; who last set it is left
-    out, so only a change to the actor itself reads as a change. None when the file is not valid JSON: the cast is
-    unknown."""
-    actors = _actor_records(environment)
-    if actors is None:
+    """A digest of each actor's record in the environment's `actors.json`, keyed by its id, of the actor limits when
+    any are set, and of anything else the file holds; who last set a record is left out, so only a change to the actor
+    itself reads as a change. None when the file is not a valid JSON object: the cast is unknown."""
+    body = _actor_body(environment)
+    if body is None:
         return None
-    return {
+    records, _other = _actor_entries(body)
+    digests = {
         str(actor["id"]): canonical_digest(
             {field: value for field, value in actor.items() if field != "provenance"}
         )
-        for actor in actors
+        for actor in records
     }
+    if body.get("limits"):
+        digests[ACTOR_LIMITS_KEY] = canonical_digest(body["limits"])
+    other = _actor_other(body)
+    if other:
+        digests[ACTOR_OTHER_KEY] = canonical_digest(other)
+    return digests
 
 
 def actor_names(environment: Mapping[str, bytes]) -> dict[str, str] | None:
     """Each actor's name by its id, so a change is shown by who it is about; None when the cast is unknown."""
-    actors = _actor_records(environment)
-    if actors is None:
+    body = _actor_body(environment)
+    if body is None:
         return None
-    return {str(actor["id"]): str(actor.get("name") or actor["id"]) for actor in actors}
+    records, _other = _actor_entries(body)
+    names = {
+        str(actor["id"]): str(actor.get("name") or actor["id"]) for actor in records
+    }
+    if body.get("limits"):
+        names[ACTOR_LIMITS_KEY] = ACTOR_LIMITS_NAME
+    if _actor_other(body):
+        names[ACTOR_OTHER_KEY] = ACTOR_OTHER_NAME
+    return names
 
 
 def organization_credential_key(organization_id: object) -> bytes:

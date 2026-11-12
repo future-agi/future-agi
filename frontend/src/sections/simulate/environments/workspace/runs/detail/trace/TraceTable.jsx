@@ -354,12 +354,19 @@ export default function TraceTable({
                     </Typography>
                   </>
                 )}
-                {(t.outcomeReason || unscoredSummary(t)) && (
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {t.outcomeReason || unscoredSummary(t)}
-                  </Typography>
-                )}
               </Stack>
+              {/* On its own line, so a long reason never squeezes the status. */}
+              {(t.outcomeReason || unscoredSummary(t)) && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {t.outcomeReason || unscoredSummary(t)}
+                </Typography>
+              )}
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {

@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from simulate.services.harness_versioning.hashing import (
+    ACTOR_LIMITS_KEY,
+    ACTOR_OTHER_KEY,
+)
+
 # Contract fields compared item by item below, or never part of a diff.
 _CONTRACT_ITEM_FIELDS = frozenset(
     {"tools", "hard_constraints", "real_use_cases", "use_cases"}
@@ -198,6 +203,31 @@ def _count(noun: str, nouns: str, verb: str, values: object) -> str | None:
     return f"{size} {noun if size == 1 else nouns} {verb}"
 
 
+def _key(one: Any) -> Any:
+    return one.get("id") if isinstance(one, dict) else one
+
+
+def _cast(entries: Any) -> list[Any]:
+    """The actors among a diff's entries, without the actor limits and other settings listed beside them."""
+    return [
+        one
+        for one in entries or []
+        if _key(one) not in (ACTOR_LIMITS_KEY, ACTOR_OTHER_KEY)
+    ]
+
+
+def _setting_changed(actors: Mapping[str, Any], key: str) -> bool:
+    return any(
+        _key(one) == key
+        for entries in (
+            actors.get("added"),
+            actors.get("removed"),
+            actors.get("changed"),
+        )
+        for one in entries or []
+    )
+
+
 def summarize_environment(diff: Mapping[str, Any] | None) -> str:
     if not diff:
         return "First version"
@@ -223,9 +253,13 @@ def summarize_environment(diff: Mapping[str, Any] | None) -> str:
         _count("world file", "world files", "added", files.get("added")),
         _count("world file", "world files", "removed", files.get("removed")),
         _count("world file", "world files", "changed", files.get("changed")),
-        _count("actor", "actors", "added", actors.get("added")),
-        _count("actor", "actors", "removed", actors.get("removed")),
-        _count("actor", "actors", "changed", actors.get("changed")),
+        _count("actor", "actors", "added", _cast(actors.get("added"))),
+        _count("actor", "actors", "removed", _cast(actors.get("removed"))),
+        _count("actor", "actors", "changed", _cast(actors.get("changed"))),
+        "actor limits changed" if _setting_changed(actors, ACTOR_LIMITS_KEY) else "",
+        "other actor settings changed"
+        if _setting_changed(actors, ACTOR_OTHER_KEY)
+        else "",
     ]
     if "modality" in contract:
         modality = contract["modality"]

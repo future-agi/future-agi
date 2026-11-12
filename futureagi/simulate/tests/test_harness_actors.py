@@ -230,6 +230,31 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     assert fresh_draft(environment, "environment") is None
 
 
+def test_a_limits_only_edit_reads_as_a_change_to_the_actor_limits(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning import diffs
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    environment = _built(user, workspace, "actors-limits-diff")
+    limited = auth_client.put(
+        f"{BASE}/{environment.id}/actor-limits/",
+        {"limits": {"max_messages": 7}},
+        format="json",
+    )
+    assert limited.status_code == 200, limited.content
+    draft = fresh_draft(environment, "environment")
+    listed = auth_client.get(f"{BASE}/{environment.id}/drafts/").json()["environment"]
+
+    assert draft.diff["actors"] == {
+        "added": [{"id": "#limits", "name": "Actor limits"}],
+        "removed": [],
+        "changed": [],
+    }
+    assert diffs.summarize_environment(draft.diff) == "actor limits changed"
+    assert listed["changes"]["actors"] == 1
+
+
 def test_a_view_hides_another_actor_s_private_material(
     user, workspace, storage, auth_client
 ):
@@ -448,6 +473,37 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(
         }
     )
     assert before != after and before == restamped
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        # An entry without an id, a second record under one id, and a field beside the cast.
+        {"actors": [MANAGER, {"name": "No id"}]},
+        {"actors": [MANAGER, {**MANAGER, "goal": "Approve fast"}]},
+        {"actors": [MANAGER], "extra": 1},
+    ],
+)
+def test_a_change_to_actors_json_outside_one_record_per_actor_still_reads_as_a_change(
+    edited,
+):
+    from simulate.services.harness_versioning import diffs, hashing
+
+    def digests(body):
+        return hashing.actor_digests({"actors.json": json.dumps(body).encode()})
+
+    before = digests({"schema": "actors.v1", "actors": [MANAGER]})
+    after = digests({"schema": "actors.v1", **edited})
+    assert before != after
+    summary = diffs.summarize_environment({"actors": diffs.keyed_diff(before, after)})
+    assert summary == "other actor settings changed"
+    assert hashing.actor_names({"actors.json": json.dumps(edited).encode()})[
+        hashing.ACTOR_OTHER_KEY
+    ]
+    assert digests({"schema": "x", "actors": [MANAGER]}) == digests(
+        {"actors": [MANAGER]}
+    )
+    assert hashing.actor_digests({"actors.json": b"[]"}) is None
 
 
 def test_an_actor_who_speaks_takes_the_whole_contract_in_the_one_actor_list(
@@ -936,6 +992,14 @@ def test_an_actor_s_fields_are_bounded_on_the_server(
             160,
         )
     assert listed["actors"] == []
+    # Counted as compact JSON, the way the editor counts it, so a record the editor allows is saved.
+    bare = json.dumps(
+        {**MANAGER, "goal": ""}, ensure_ascii=False, separators=(",", ":")
+    )
+    at_bound = _add(
+        auth_client, environment, {**MANAGER, "goal": "ü" * (65_536 - len(bare))}
+    )
+    assert at_bound.status_code == 200, at_bound.content
 
 
 def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
@@ -1076,7 +1140,19 @@ def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refu
     assert (cycle.status_code, cycle.json()["error"]) == (400, "actor_invalid")
     assert "boss is in a cycle of parent links; break it." in cycle.json()["message"]
     assert (dangling.status_code, dangling.json()["error"]) == (400, "actor_invalid")
-    assert "lead's parent is boss; change it first." in dangling.json()["message"]
+    assert (
+        dangling.json()["message"]
+        == "Bo is brought in by Ana; change that on Bo before removing Ana."
+    )
+    _add(
+        auth_client,
+        environment,
+        {"id": "fred", "name": "Fred", "activation": {"fallback": "lead"}},
+    )
+    named = auth_client.delete(f"{url}lead/")
+    assert named.json()["message"] == (
+        "Fred has Bo answer instead when Fred does not; change that on Fred before removing Bo."
+    )
 
 
 @pytest.mark.parametrize("failure", ["gone", "unreadable", "invalid_actors_json"])
@@ -1616,9 +1692,9 @@ def test_an_actor_is_offered_and_given_only_the_environment_s_own_files_and_reco
             {"actor": {**reads, "knowledge": [*reads["knowledge"], bad]}},
             format="json",
         )
-        assert (
-            refused.status_code == 400 and said in refused.json()["message"]
-        ), refused.content
+        assert refused.status_code == 400 and said in refused.json()["message"], (
+            refused.content
+        )
 
 
 def test_a_worker_s_entry_with_its_refused_attempts_is_served_as_the_world_recorded_it():
@@ -1706,6 +1782,54 @@ def test_the_harness_s_own_tables_are_never_offered_or_given_as_records_an_actor
     assert refused.status_code == 400, refused.content
 
 
+def test_an_environment_sealed_before_actor_rules_never_offers_the_harness_s_own_files_or_tables(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessStageOutput
+
+    environment = record_tests._environment(user, workspace, "actors-before-rules")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "docs/discount-policy.md": "Up to 15% needs the manager.",
+                "env/tools.py": "def get_deal(): ...",
+                "sub_actors.json": "[]",
+            },
+        ),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Stores",
+        summary="",
+        kind="stores",
+        data=[
+            {
+                "capability": "world_db",
+                "engine": "postgres",
+                "tables": [
+                    {"name": "deals"},
+                    {"name": "_alk_tool_trace"},
+                    {"name": "harness_seed_sentinel"},
+                ],
+            }
+        ],
+    )
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    assert listed["knowledge_sources"] == {
+        "files": ["docs/discount-policy.md"],
+        "records": [{"store": "world_db", "collection": "deals"}],
+    }
+    assert [one["action"] for one in listed["actions"]] == sorted(
+        one["action"] for one in listed["actions"] if "." in one["action"]
+    ) and not any(
+        one["action"].endswith((".put", ".change")) for one in listed["actions"]
+    )
+
+
 def test_giving_an_actor_an_action_only_one_other_actor_holds_shows_the_conflict_before_saving(
     user, workspace, storage, auth_client
 ):
@@ -1785,3 +1909,121 @@ def test_no_conflict_for_an_action_the_actor_already_had_none_holds_or_two_alrea
 
     assert added.status_code == 200, added.content
     assert kept.status_code == 200, kept.content
+
+
+def test_an_actor_s_model_is_one_the_environment_offers(
+    user, workspace, storage, auth_client
+):
+    from simulate.services import harness_actors
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests import test_harness_versioning_record as record_tests
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    # A release whose actor record takes any model name of up to 120 characters, as today's does.
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules["records"]["actors.json"]["properties"]["model"] = {
+        "type": ["string", "null"],
+        "maxLength": 120,
+    }
+    rules["actor_models"] = ["gemini-4.0-flash"]
+    environment = record_tests._environment(user, workspace, "actors-model")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
+    )
+    unknown = _add(auth_client, environment, {**MANAGER, "model": "gpt-unknown"})
+    offered = _add(auth_client, environment, {**MANAGER, "model": "gemini-4.0-flash"})
+
+    assert (unknown.status_code, unknown.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "manager's model 'gpt-unknown' is not one of: gemini-4.0-flash."
+        in unknown.json()["message"]
+    )
+    assert offered.status_code == 200, offered.content
+
+
+@pytest.mark.parametrize(
+    "permitted",
+    [[1, None], "crm.approve_discount", [{"a": 1}]],
+)
+def test_an_actor_whose_actions_are_not_a_list_of_names_is_refused_never_an_error(
+    permitted, user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, f"actors-bad-actions-{len(str(permitted))}")
+    response = _add(
+        auth_client, environment, {**MANAGER, "permitted_actions": permitted}
+    )
+    linked = _add(auth_client, environment, {**MANAGER, "parent": {"id": "x"}})
+
+    assert (response.status_code, response.json()["error"]) == (400, "actor_invalid")
+    assert (linked.status_code, linked.json()["error"]) == (400, "actor_invalid")
+
+
+# A scenario's actor as the runtime writes it: no trigger of its own, files and records to read, and scheduled
+# actions with nested arguments and their own triggers.
+SCENARIO_ACTOR_PAYLOAD = {
+    "id": "manager",
+    "instruction": "Approve only with a reason.",
+    "knowledge": [
+        {"kind": "facts", "text": "The discount ceiling is 15%."},
+        {"kind": "files", "paths": ["knowledge/policy.md"]},
+        {
+            "kind": "records",
+            "store": "crm",
+            "collection": "deals",
+            "where": {"stage": "review"},
+        },
+    ],
+    "actions": [
+        {
+            "action": "deals.change",
+            "arguments": {"id": "D-1", "approval": {"by": "manager", "levels": [1, 2]}},
+            "trigger": {"kind": "after_seconds", "seconds": 30},
+        },
+        {
+            "action": "deals.put",
+            "arguments": {"id": "D-2"},
+            "trigger": {
+                "kind": "conditional",
+                "collection": "deals",
+                "where": {"status": "pending"},
+            },
+        },
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        SCENARIO_ACTOR_PAYLOAD,
+        {"id": "friend"},
+        {**SCENARIO_ACTOR_PAYLOAD, "trigger": None},
+        {
+            **SCENARIO_ACTOR_PAYLOAD,
+            "trigger": {"kind": "on_tool", "tool": "book_ride", "on_call": 2},
+        },
+    ],
+    ids=["full", "id-only", "null-trigger", "own-trigger"],
+)
+def test_the_scenario_actor_contract_reads_what_the_runtime_writes(payload):
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentScenarioCallActorSerializer,
+    )
+
+    contract = HarnessEnvironmentScenarioCallActorSerializer(data=payload)
+    assert contract.is_valid(), contract.errors
+    # Nothing the runtime wrote is dropped or reshaped, nested arguments and triggers included.
+    assert json.loads(json.dumps(contract.validated_data)) == payload
+
+
+def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_environment import call_actor_labels
+
+    environment = _built(user, workspace, "actor-filter-labels")
+    assert "channel" not in MANAGER
+    assert _add(auth_client, environment, MANAGER).status_code == 200
+    assert call_actor_labels(environment)["manager"] == "Priya Raman"

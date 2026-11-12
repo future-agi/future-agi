@@ -231,8 +231,9 @@ def test_a_call_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_p
         "Rowan (not the person being served): Add a stop.",
         "Customer: Just the airport.",
     ]
-    assert "Rowan (not the person being served): Add a stop." in (
-        _build_transcript_data(call)["transcript"]
+    assert (
+        "Rowan (not the person being served): Add a stop."
+        in (_build_transcript_data(call)["transcript"])
     )
 
 
@@ -818,3 +819,25 @@ def test_a_pre_run_message_keeps_its_actor_s_name_in_the_served_trial_state():
         ("lead", "Sam Lee"),
         ("manager", None),
     ]
+
+
+@pytest.mark.django_db
+def test_deleting_transcripts_by_any_path_takes_their_actor_turns(
+    organization, workspace
+):
+    from simulate.models import CallTranscriptActor
+    from simulate.models.test_execution import CallTranscript
+
+    call = _ingest(
+        organization,
+        workspace,
+        "actor-turns-deleted",
+        CallExecution.SimulationCallType.VOICE,
+        _ACTOR_CALL,
+        {},
+    )
+    assert CallTranscriptActor.objects.filter(transcript__call_execution=call).exists()
+    CallTranscript.objects.filter(call_execution=call).delete()
+    assert not CallTranscriptActor.objects.filter(
+        actor_id__in=["friend", "partner"]
+    ).exists()

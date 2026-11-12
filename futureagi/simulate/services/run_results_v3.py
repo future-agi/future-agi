@@ -615,6 +615,42 @@ def _failure_fields(receipt: Mapping[str, Any]) -> dict[str, str | None]:
     }
 
 
+# What each reason an actor did not reach the agent means, as the reader of a run reads it.
+_ACTOR_MISSING_WHY = {
+    "not_triggered": "never came in",
+    "not_delivered": "came in but never spoke",
+    "not_listed": "is not an actor in this environment",
+    "no_world_door": "could not act: this agent's tools run where no actor can act",
+    "no_private_token": "could not act in the world",
+}
+_ACTOR_MISSING_PREFIX = "inconclusive: scenario problem, not the agent's: "
+# A call the run was stopped before it finished, counted with the errors.
+_STOPPED = "Stopped before it finished: the run was cancelled"
+
+
+def _actor_missing_reason(receipt: Mapping[str, Any]) -> str | None:
+    """Why a call its scenario's actor never reached is inconclusive, in the reader's words; None for any other
+    failure, whose message is not written for the reader."""
+    failure = receipt.get("failure")
+    if not isinstance(failure, Mapping) or failure.get("code") != "actor_missing":
+        return None
+    message = str(failure.get("message") or "")
+    detail = message.removeprefix(_ACTOR_MISSING_PREFIX)
+    detail = re.sub(
+        r"\((\w+)(?::\s*([^)]*))?\)",
+        lambda found: "({}{})".format(
+            _ACTOR_MISSING_WHY.get(found.group(1), found.group(1).replace("_", " ")),
+            f": {found.group(2)}" if found.group(2) else "",
+        ),
+        detail,
+    )
+    return (
+        f"Inconclusive, a problem of the scenario, not the agent: {detail}"
+        if detail
+        else ("Inconclusive, a problem of the scenario, not the agent")
+    )
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -797,8 +833,14 @@ def build_call_rows(
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
-                # Why it was skipped, when the harness gave a reason.
-                "outcome_reason": receipt.get("reason"),
+                # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
+                "outcome_reason": receipt.get("reason")
+                or _actor_missing_reason(receipt)
+                or (
+                    _STOPPED
+                    if call.status == CallExecution.CallStatus.CANCELLED
+                    else None
+                ),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,

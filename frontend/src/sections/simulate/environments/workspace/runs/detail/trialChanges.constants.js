@@ -15,6 +15,9 @@ export const TRIAL_CHANGES_COPY = {
       .filter(Boolean)
       .join(" · "),
   committed: (actions) => `Committed: ${actions.join(", ")}`,
+  // A commit the scenario's timeout hid: the world made it, the one who acted was told it timed out.
+  answerLost: (actions) =>
+    `Committed but answered with a timeout: ${actions.join(", ")}`,
   // Doing nothing can be the right result, so it is said, never left blank.
   noChange: "No change: it committed nothing",
   // A worker the world told apart from the rest of the agent.
@@ -45,6 +48,9 @@ export const TRIAL_CHANGES_COPY = {
     timed_out: "No answer: nothing happened",
     declined: "No answer: the request was declined",
     fallback_action: "No answer: their fallback action was taken for them",
+    // The fallback was tried for them and the world did not commit it.
+    fallbackNotCommitted: (outcome) =>
+      `No answer: their fallback action was tried for them and ${outcome}`,
     unresolved_at_end: "Still waited on when the trial ended",
     answered_by: (who) => `No answer: ${who} answered instead`,
   },
