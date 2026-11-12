@@ -12679,13 +12679,27 @@ def run_evaluation_task(evaluation_data):
                         metric_id, [row_id], column_id=target_column_id
                     )
 
+        # Record final statuses before reporting: every row has finished, so an
+        # analytics failure must not relabel completed metrics as FAILED.
         if failed_metric_ids:
             UserEvalMetric.objects.filter(id__in=failed_metric_ids).update(
                 status=StatusType.FAILED.value
             )
+        completed_metric_ids = [
+            metric_id
+            for metric_id in metric_ids
+            if str(metric_id) not in failed_metric_ids
+        ]
+        if completed_metric_ids:
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
+                status=StatusType.COMPLETED.value
+            )
+
         for metric_id in metric_ids:
             metric = metric_map.get(str(metric_id))
-            if metric:
+            if not metric:
+                continue
+            try:
                 properties = get_mixpanel_properties(
                     eval=metric,
                     org=metric.organization,
@@ -12697,17 +12711,11 @@ def run_evaluation_task(evaluation_data):
                 track_mixpanel_event(
                     MixpanelEvents.EVAL_RUN_COMPLETED.value, properties
                 )
-
-        # Update status to completed for successful metrics
-        completed_metric_ids = [
-            metric_id
-            for metric_id in metric_ids
-            if str(metric_id) not in failed_metric_ids
-        ]
-        if completed_metric_ids:
-            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
-                status=StatusType.COMPLETED.value
-            )
+            except Exception:
+                logger.exception(
+                    "dataset_rerun_completion_reporting_failed",
+                    metric_id=str(metric_id),
+                )
     except Exception as e:
         # Handle exceptions and log errors
         UserEvalMetric.objects.filter(id__in=metric_ids).update(

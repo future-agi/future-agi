@@ -3,11 +3,12 @@
 import inspect
 import json
 import sys
-from threading import Barrier, Event
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.db import OperationalError, connection
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
@@ -98,10 +99,10 @@ def rerun():
         )
 
 
-def run_selected(rerun):
+def run_selected(rerun, metrics=None):
     run_evaluation_task._original_func(
         {
-            "metric_ids": [str(rerun.metric.id)],
+            "metric_ids": [str(metric.id) for metric in metrics or [rerun.metric]],
             "row_ids": [str(row.id) for row in rerun.rows[:2]],
         }
     )
@@ -112,12 +113,52 @@ def result_for_row(self, row, mappings):
     return {"reason": value}, CellStatus.PASS.value, value
 
 
+def add_healthy_metric(rerun):
+    healthy = UserEvalMetric.objects.create(
+        name="Healthy metric",
+        dataset=rerun.dataset,
+        organization=rerun.metric.organization,
+        workspace=rerun.metric.workspace,
+        template=rerun.metric.template,
+        config={"mapping": {}},
+    )
+    healthy_column = Column.objects.create(
+        name="Healthy score",
+        dataset=rerun.dataset,
+        source=SourceChoices.EVALUATION.value,
+        source_id=str(healthy.id),
+        data_type="text",
+    )
+    for row in rerun.rows:
+        Cell.objects.create(
+            dataset=rerun.dataset,
+            row=row,
+            column=healthy_column,
+            status=CellStatus.PASS.value,
+            value="previous result",
+        )
+    return healthy, healthy_column
+
+
 def completion_counts(rerun):
     return [
         (str(call.kwargs["eval"].id), call.kwargs["count"], call.kwargs["failed"])
         for call in rerun.properties.call_args_list
         if "failed" in call.kwargs
     ]
+
+
+def column_state(column):
+    return list(
+        Cell.objects.filter(column=column)
+        .order_by("row__order")
+        .values_list("status", "value")
+    )
+
+
+def status_of(metric):
+    metric.refresh_from_db()
+    return metric.status
 
 
 def test_selected_rows_do_not_share_runner_initialization(rerun):
@@ -390,6 +431,63 @@ def test_reporting_failure_does_not_request_replay_of_finished_evaluations(rerun
         .order_by("row__order")
         .values_list("value", flat=True)
     ) == ["row-0", "row-1", "previous result"]
+    # Every row finished, so a reporting failure must not relabel the run.
+    assert status_of(rerun.metric) == StatusType.COMPLETED.value
+
+
+def test_completion_reporting_db_error_keeps_finished_metrics_completed(rerun):
+    """A usage-limited metric never loads its dataset before fan-out, so the
+    completion loop is the first place it is read. A database error on that
+    read must not relabel the healthy metric or drop its completion event."""
+    healthy, healthy_column = add_healthy_metric(rerun)
+    limited = SimpleNamespace(
+        allowed=False,
+        reason="synthetic usage limit",
+        error_code="USAGE_LIMIT_EXCEEDED",
+        dimension="evals",
+        current_usage=10,
+        limit=10,
+        upgrade_cta=None,
+    )
+    usage = iter([limited, SimpleNamespace(allowed=True)])
+    stored, lock, rows_stored = [], Lock(), Event()
+    original_create_cell = EvaluationRunner._create_cell
+
+    def create_cell(self, *args, **kwargs):
+        original_create_cell(self, *args, **kwargs)
+        with lock:
+            stored.append(self.user_eval_metric_id)
+            if len(stored) == 2:
+                rows_stored.set()
+
+    dataset_reads = []
+
+    def dataset_read_fails(execute, sql, params, many, context):
+        if rows_stored.is_set() and f'FROM "{Dataset._meta.db_table}"' in sql:
+            dataset_reads.append(sql)
+            raise OperationalError("synthetic connection failure")
+        return execute(sql, params, many, context)
+
+    with (
+        patch(
+            "ee.usage.services.metering.check_usage",
+            side_effect=lambda *args, **kwargs: next(usage),
+        ),
+        patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+        patch.object(EvaluationRunner, "_create_cell", create_cell),
+        connection.execute_wrapper(dataset_read_fails),
+    ):
+        run_selected(rerun, [rerun.metric, healthy])
+
+    assert len(dataset_reads) == 1
+    assert column_state(healthy_column) == [
+        (CellStatus.PASS.value, "row-0"),
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "previous result"),
+    ]
+    assert status_of(healthy) == StatusType.COMPLETED.value
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+    assert completion_counts(rerun) == [(str(healthy.id), 2, 0)]
 
 
 def test_optimization_failure_only_updates_the_requested_column(rerun):
