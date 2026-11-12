@@ -317,7 +317,9 @@ class TestFileUploadView:
         # The proxy-aware transport the app's own storage client uses.
         assert type(FakeMinio.instances[0].http_client) is type(storage_http_client())
 
-    @pytest.mark.parametrize("setting", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL", "MINIO_URL"])
+    @pytest.mark.parametrize(
+        "setting", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL", "MINIO_URL"]
+    )
     @pytest.mark.parametrize(
         "endpoint", ["", "http://", "minio:bad", "http://user:secret@storage.example"]
     )
@@ -356,7 +358,8 @@ class TestFileUploadView:
         assert FalconFile.objects.count() == 0
         client_factory.assert_not_called()
         errors = [
-            row for row in logs
+            row
+            for row in logs
             if row["event"] == "falcon_upload_storage_configuration_error"
         ]
         assert len(errors) == 1

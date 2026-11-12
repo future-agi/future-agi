@@ -196,7 +196,9 @@ def test_dataset_upload_with_public_idn_roundtrips_real_minio(
     monkeypatch.setattr(file_upload, "UPLOAD_BUCKET_NAME", bucket)
     # Other storage tests reload the factory module. Bind the current real
     # implementation rather than any stale import; no storage I/O is mocked.
-    monkeypatch.setattr(file_upload, "get_storage_client", idn_storage.get_storage_client)
+    monkeypatch.setattr(
+        file_upload, "get_storage_client", idn_storage.get_storage_client
+    )
     monkeypatch.setattr(file_upload, "ensure_bucket", idn_storage.ensure_bucket)
     client = idn_storage.get_storage_client()
     key = "synthetic/notes.txt"
