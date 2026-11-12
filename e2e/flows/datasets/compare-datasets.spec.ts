@@ -11,44 +11,62 @@ const comparePath = (id: string) => `/model-hub/datasets/${id}/compare-datasets/
 const PAGE_SIZE = 10;
 const ROW_HEIGHT = 120;
 const UI_READY = 60_000;
+// Eleven shared inputs: the second block holds exactly one row, the edge where
+// CompareDatasetsView's page writer once repeated rows 0-9 as the last block.
+const SHARED = 11;
+// src/utils/axios.js endpoints.dataset.getCompareDatasetRow / GetCompareDatasetRow.
+const rowPath = (compareId: string, rowId: string) =>
+  `/model-hub/datasets/get-compare-row/${compareId}/${rowId}/`;
 
 type Column = { id: string; name: string };
 type SourceRow = { row_id: string; input: string; output: string };
 type Dataset = { id: string; name: string; columns: Column[]; rows: SourceRow[] };
 // CompareDatasetResponseSerializer and the actual CompareData datasource envelope.
+type CompareRow = Record<string, string | { cell_value: string; cell_row_id: string }>;
 type ComparePage = {
   status: boolean;
   result: {
     column_config: Column[];
-    table: Record<string, { cell_value: string; cell_row_id: string }>[];
+    table: CompareRow[];
     metadata: { compare_id: string; total_rows: number; total_pages: number };
   };
 };
+// GetCompareDatasetRow response, as CompareDatasetDetailDrawer reads it.
+type RowDetail = {
+  status: boolean;
+  result: { table: CompareRow[]; prev_row_id: string | null; next_row_id: string | null };
+};
+const cellValue = (row: CompareRow, columnId: string) =>
+  (row[columnId] as { cell_value: string }).cell_value;
 
 test('DATA-E2E-003: compared datasets show joined rows across both result blocks', {
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'DATA-E2E-003',
     area: 'datasets',
-    userGoal: 'Compare two uploaded datasets and inspect every matching input with both outputs across result blocks',
+    userGoal: 'Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail',
     steps: [
-      'upload two synthetic CSV datasets with twelve shared inputs and one unmatched input each',
+      'upload two synthetic CSV datasets with eleven shared inputs and one unmatched input each',
       'open Compare from the first dataset, select the second and join on input',
       'open Data and read the first ten joined input and output pairs',
-      'scroll to the final two joined rows and verify that unmatched inputs are absent',
+      'scroll to the final joined row, alone in the second block, and verify that unmatched inputs are absent',
+      'click the final joined row, read both outputs in row detail and step back across the block boundary with Prev',
+      'close row detail, click the first joined row and confirm Prev is unavailable',
     ],
     backendChecks: [
       'both uploaded datasets retain the actor scope and exact independently seeded input/output pairs in Postgres',
-      'the browser comparison and API replay return exactly twelve joined pairs across ten-row blocks with one stable compare_id',
+      'the browser comparison and API replay return exactly eleven joined pairs across ten-row blocks with one stable compare_id',
+      'row detail requests return the clicked joined row with previous and next row ids that cross the block boundary and stop at the first and last rows',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   // Two uploads: 2 * (UI_READY + ASYNC_JOB + UI_READY) = 360s.
-  // Compare navigation + two result blocks: 3 * UI_READY = 180s; 60s headroom.
-  test.setTimeout(600_000);
+  // Compare navigation + two result blocks: 3 * UI_READY = 180s.
+  // Row detail: last row, Prev, first row: 3 * UI_READY = 180s; 60s headroom.
+  test.setTimeout(780_000);
   page.setDefaultTimeout(UI_READY);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
-  const expected = Array.from({ length: 12 }, (_, index) => {
+  const expected = Array.from({ length: SHARED }, (_, index) => {
     const key = `${suffix}-${String(index).padStart(2, '0')}`;
     return { input: `join-${key}`, left: `left-${key}`, right: `right-${key}` };
   });
@@ -91,7 +109,7 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
       // columns/cells directly, so a CDC wait is neither necessary nor evidence.
       await expect.poll(async () => (await probe.pg<{ n: string }>(
         'SELECT count(*) AS n FROM model_hub_cell WHERE dataset_id = $1 AND NOT deleted',
-        [datasetId]))[0].n, POLL.ASYNC_JOB).toBe('26');
+        [datasetId]))[0].n, POLL.ASYNC_JOB).toBe(String((SHARED + 1) * 2));
       expect(await probe.pg<{ name: string; organization_id: string; workspace_id: string }>(
         'SELECT name, organization_id, workspace_id FROM model_hub_dataset WHERE id = $1 AND NOT deleted',
         [datasetId])).toEqual([{ name, organization_id: actor.organizationId, workspace_id: actor.workspaceId }]);
@@ -159,8 +177,8 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
         contentType: 'application/json', body: JSON.stringify({ request: response.request().postDataJSON(), body }),
       });
       expect(body.status).toBe(true);
-      expect(body.result.metadata).toEqual({ compare_id: expect.any(String), total_rows: 12, total_pages: 2 });
-      expect(body.result.table).toHaveLength(index === 0 ? PAGE_SIZE : 2);
+      expect(body.result.metadata).toEqual({ compare_id: expect.any(String), total_rows: SHARED, total_pages: 2 });
+      expect(body.result.table).toHaveLength(index === 0 ? PAGE_SIZE : SHARED - PAGE_SIZE);
       expect(body.result.column_config.map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)))
         .toEqual([{ id: inputId, name: 'input' }, { id: leftId, name: left.name }, { id: rightId, name: right.name }]
           .sort((a, b) => a.id.localeCompare(b.id)));
@@ -173,9 +191,9 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
       // Check every pair against the planted values, not against API text alone.
       // Scrolling is native; row-index/col-id are AG Grid's existing cell hooks.
       for (const [offset, row] of body.result.table.entries()) {
-        const planted = expected.find(value => value.input === row[inputId].cell_value);
+        const planted = expected.find(value => value.input === cellValue(row, inputId));
         expect(planted).toBeDefined();
-        expect([row[leftId].cell_value, row[rightId].cell_value]).toEqual([planted!.left, planted!.right]);
+        expect([cellValue(row, leftId), cellValue(row, rightId)]).toEqual([planted!.left, planted!.right]);
         await grid.locator('.ag-body-viewport').evaluate((element, top) => { element.scrollTop = top; },
           (index * PAGE_SIZE + offset) * ROW_HEIGHT);
         const uiRow = grid.locator(`.ag-center-cols-container .ag-row[row-index="${index * PAGE_SIZE + offset}"]`);
@@ -189,10 +207,11 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
     }, { timeout: UI_READY });
   }
 
-  const joined = pages.flatMap(body => body.result.table).map(row => ({
-    input: row[inputId].cell_value, left: row[leftId].cell_value, right: row[rightId].cell_value,
+  const ordered = pages.flatMap(body => body.result.table); // grid row order
+  const joined = ordered.map(row => ({
+    input: cellValue(row, inputId), left: cellValue(row, leftId), right: cellValue(row, rightId),
   }));
-  expect(joined.sort((a, b) => a.input.localeCompare(b.input))).toEqual(expected);
+  expect([...joined].sort((a, b) => a.input.localeCompare(b.input))).toEqual(expected);
   await expect(page.getByText('No Common rows', { exact: true })).toHaveCount(0, { timeout: UI_READY });
   // Replay the same authenticated UI endpoint, preserving its comparison ID.
   const replay = await actor.api.post<ComparePage>(comparePath(left.id), {
@@ -200,5 +219,64 @@ test('DATA-E2E-003: compared datasets show joined rows across both result blocks
     current_page_index: 1, compare_id: pages[0].result.metadata.compare_id,
   });
   expect(replay.result).toEqual(pages[1].result);
+
+  // Row detail: CompareDatasetDetailDrawer requests each row by its row_id and
+  // prefetches its neighbours, so register the waits before the click.
+  const compareId = pages[0].result.metadata.compare_id;
+  const rowId = (index: number) => ordered[index].row_id as string;
+  const rowLoaded = (index: number) => page.waitForResponse(response =>
+    new URL(response.url()).pathname === rowPath(compareId, rowId(index))
+      && response.request().method() === 'GET', { timeout: UI_READY });
+  const drawer = page.locator('.MuiDrawer-paper').filter({
+    has: page.getByText('Datapoint-compare', { exact: true }),
+  });
+  const expectRowDetail = async (index: number, response: Response) => {
+    expect(response.status()).toBe(200);
+    const body: RowDetail = await response.json();
+    await testInfo.attach(`row-detail-${index}`, { contentType: 'application/json', body: JSON.stringify(body) });
+    expect(body.status).toBe(true);
+    expect(body.result.table).toEqual([ordered[index]]);
+    expect(body.result.prev_row_id).toBe(index === 0 ? null : rowId(index - 1));
+    expect(body.result.next_row_id).toBe(index === ordered.length - 1 ? null : rowId(index + 1));
+    // CompareDatasetDetailContent: one column per compared dataset, then each
+    // dataset's output in the "Dataset Details" row.
+    await expect(drawer.locator('thead th')).toHaveText([`A ${left.name}`, `B ${right.name}`]);
+    const details = drawer.locator('table > tbody > tr').nth(1).locator(':scope > td');
+    await expect(details.nth(0).getByText(joined[index].left, { exact: true })).toBeVisible();
+    await expect(details.nth(1).getByText(joined[index].right, { exact: true })).toBeVisible();
+    for (const other of [index - 1, index + 1].filter(value => value >= 0 && value < ordered.length)) {
+      await expect(details.nth(0)).not.toContainText(joined[other].left);
+    }
+  };
+  const clickRow = async (index: number) => {
+    await grid.locator('.ag-body-viewport').evaluate((element, top) => { element.scrollTop = top; },
+      index * ROW_HEIGHT);
+    await grid.locator(`.ag-center-cols-container .ag-row[row-index="${index}"] [col-id="${leftId}"]`).click();
+  };
+  const last = ordered.length - 1;
+
+  await test.step('backend check 3: open the last joined row in row detail', async () => {
+    const lastLoaded = rowLoaded(last);
+    const previousLoaded = rowLoaded(last - 1);
+    await clickRow(last);
+    await expectRowDetail(last, await lastLoaded);
+    await expect(drawer.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+    await expect(drawer.getByRole('button', { name: 'Prev', exact: true })).toBeEnabled();
+    // Prev reads the prefetched row from block 0, across the block boundary.
+    await drawer.getByRole('button', { name: 'Prev', exact: true }).click();
+    await expectRowDetail(last - 1, await previousLoaded);
+    await expect(drawer.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+    await testInfo.attach('row-detail-boundary', { contentType: 'image/png', body: await page.screenshot() });
+  }, { timeout: UI_READY });
+
+  await test.step('backend check 3: the first joined row has no previous row', async () => {
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    const firstLoaded = rowLoaded(0);
+    await clickRow(0);
+    await expectRowDetail(0, await firstLoaded);
+    await expect(drawer.getByRole('button', { name: 'Prev', exact: true })).toBeDisabled();
+    await expect(drawer.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+  }, { timeout: UI_READY });
   // actor, browser context and StateProbe are disposed by lib/fixtures.ts.
 });

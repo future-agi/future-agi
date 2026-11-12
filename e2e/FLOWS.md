@@ -816,23 +816,26 @@
 
 ### DATA-E2E-003 — compared datasets show joined rows across both result blocks
 
-**Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks
+**Goal:** Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail
 
-**Spec:** `flows/datasets/compare-datasets.spec.ts:28`
+**Spec:** `flows/datasets/compare-datasets.spec.ts:42`
 
 **Tags:** —
 
 **User steps:**
 
-1. upload two synthetic CSV datasets with twelve shared inputs and one unmatched input each
+1. upload two synthetic CSV datasets with eleven shared inputs and one unmatched input each
 2. open Compare from the first dataset, select the second and join on input
 3. open Data and read the first ten joined input and output pairs
-4. scroll to the final two joined rows and verify that unmatched inputs are absent
+4. scroll to the final joined row, alone in the second block, and verify that unmatched inputs are absent
+5. click the final joined row, read both outputs in row detail and step back across the block boundary with Prev
+6. close row detail, click the first joined row and confirm Prev is unavailable
 
 **Backend state verified:**
 
 - both uploaded datasets retain the actor scope and exact independently seeded input/output pairs in Postgres
-- the browser comparison and API replay return exactly twelve joined pairs across ten-row blocks with one stable compare_id
+- the browser comparison and API replay return exactly eleven joined pairs across ten-row blocks with one stable compare_id
+- row detail requests return the clicked joined row with previous and next row ids that cross the block boundary and stop at the first and last rows
 
 ## error-feed
 
