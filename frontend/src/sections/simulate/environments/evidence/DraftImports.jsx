@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Alert, Box, Link, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Link, Stack, Tooltip, Typography } from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
+import { useSnackbar } from "notistack";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { fToNow } from "src/utils/format-time";
 import {
@@ -16,20 +17,26 @@ import { EVIDENCE_COPY, errorText } from "./evidence.constants";
 // stay readable. Shown only while there is one.
 export default function DraftImports({ envId, onResume }) {
   const { data } = useEvidenceImports(envId);
+  const { enqueueSnackbar } = useSnackbar();
   const discard = useDiscardEvidenceImport(envId);
   const [asked, setAsked] = useState(null);
   const items = data ?? [];
   if (!items.length) return null;
 
+  // A refused discard says why in a toast; the confirm stays open to retry.
   const onDiscard = () =>
-    discard.mutate(asked.id, { onSuccess: () => setAsked(null) });
+    discard.mutate(asked.id, {
+      onSuccess: () => setAsked(null),
+      onError: (error) =>
+        enqueueSnackbar(errorText(error), { variant: "error" }),
+    });
 
   return (
     <Box
       sx={{ px: 2, py: 1, borderBottom: 1, borderColor: "divider" }}
       data-testid="draft-imports"
     >
-      <Typography variant="caption" fontWeight={600} color="text.secondary">
+      <Typography sx={{ typography: "s1", fontWeight: 500 }}>
         {EVIDENCE_COPY.draftImports}
       </Typography>
       {items.map((item) => (
@@ -41,7 +48,15 @@ export default function DraftImports({ envId, onResume }) {
           sx={{ py: 0.25 }}
           data-testid={`draft-import-${item.id}`}
         >
-          <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s1",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             {[
               EVIDENCE_COPY.importSource(item),
               EVIDENCE_COPY.importStatus[item.status],
@@ -50,17 +65,18 @@ export default function DraftImports({ envId, onResume }) {
           </Typography>
           <Link
             component="button"
-            variant="body2"
+            sx={{ typography: "s1" }}
             onClick={() => onResume(item.id)}
           >
             {EVIDENCE_COPY.resume}
           </Link>
           <Tooltip title={item.can_discard ? "" : EVIDENCE_COPY.discardBusy}>
             <span>
+              {/* Plain: red appears only on the confirm's button. */}
               <Link
                 component="button"
-                variant="body2"
-                color="error"
+                sx={{ typography: "s1" }}
+                color="text.secondary"
                 disabled={!item.can_discard}
                 onClick={() => {
                   discard.reset();
@@ -78,16 +94,7 @@ export default function DraftImports({ envId, onResume }) {
           open
           onClose={() => setAsked(null)}
           title={EVIDENCE_COPY.discardTitle(asked)}
-          content={
-            <Stack spacing={1.5}>
-              <Typography variant="body2">
-                {EVIDENCE_COPY.discardBody(asked)}
-              </Typography>
-              {discard.error ? (
-                <Alert severity="error">{errorText(discard.error)}</Alert>
-              ) : null}
-            </Stack>
-          }
+          content={EVIDENCE_COPY.discardBody(asked)}
           action={
             <LoadingButton
               variant="contained"

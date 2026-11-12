@@ -1,12 +1,13 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { Alert, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, MenuItem, Stack, TextField } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import {
   getDatasetQueryOptions,
   useDatasetColumnConfig,
 } from "src/api/develop/develop-detail";
 import { MAX_LABEL_COLUMNS } from "src/api/simulate-environments/evidenceImports";
+import ContentSkeleton from "src/components/content-skeleton";
 import { EVIDENCE_COPY } from "./evidence.constants";
 
 // Columns whose cells are media, not text: never a conversation, a label or an
@@ -18,7 +19,7 @@ const MEDIA_TYPES = new Set(["audio", "image", "images", "document"]);
 export default function DatasetColumnsFields({ datasetId, value, onChange }) {
   const all = useDatasetColumnConfig(datasetId, true, true);
   // The same query the columns come from (one request): its failure state.
-  const { isError } = useQuery(
+  const { isError, refetch } = useQuery(
     getDatasetQueryOptions(datasetId, 0, [], [], "", { enabled: true }),
   );
   const columns = useMemo(
@@ -33,13 +34,26 @@ export default function DatasetColumnsFields({ datasetId, value, onChange }) {
     columns.filter((one) => !taken.flat().includes(one.id));
 
   if (isError && !all.length) {
-    return <Alert severity="error">{EVIDENCE_COPY.columnsError}</Alert>;
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => refetch()}>
+            {EVIDENCE_COPY.retry}
+          </Button>
+        }
+      >
+        {EVIDENCE_COPY.columnsError}
+      </Alert>
+    );
   }
   if (!all.length) {
     return (
-      <Typography variant="body2" color="text.secondary">
-        {EVIDENCE_COPY.columnsLoading}
-      </Typography>
+      <ContentSkeleton
+        variant="rows"
+        rows={3}
+        label={EVIDENCE_COPY.columnsLoading}
+      />
     );
   }
   if (!columns.length) {

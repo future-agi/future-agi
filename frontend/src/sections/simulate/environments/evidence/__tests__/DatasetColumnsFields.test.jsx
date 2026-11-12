@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
@@ -62,17 +62,19 @@ describe("DatasetColumnsFields", () => {
 
   it("says when the dataset's columns could not be loaded, not loading forever", async () => {
     state.columns = [];
-    state.read = () => Promise.reject(new Error("boom"));
+    state.read = vi.fn(() => Promise.reject(new Error("boom")));
     renderFields({ conversation: "", labels: [], expected: "" });
 
     expect(
-      screen.getByText("Loading this dataset's columns…"),
+      screen.getByRole("progressbar", { name: "Loading this dataset's columns…" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "Couldn't load this dataset's columns. Close this and try again in a moment.",
+        "Couldn't load this dataset's columns.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Loading this dataset's columns…")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(state.read).toHaveBeenCalledTimes(2));
   });
 });

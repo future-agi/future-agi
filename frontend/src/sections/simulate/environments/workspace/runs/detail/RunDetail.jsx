@@ -51,7 +51,8 @@ import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import LaunchFixDialog from "../../improvements/LaunchFixDialog";
 import {
-  importedFailingKeys,
+  epochTargets,
+  epochTargetsNote,
   useFixLaunchOptions,
 } from "src/api/simulate-environments/fixRuns";
 import BetaChip from "./fixmyagent/BetaChip";
@@ -177,7 +178,8 @@ export default function RunDetail({
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
-  const improvable = importedFailingKeys(fixOptions);
+  const epoch = epochTargets(fixOptions);
+  const improvable = epoch.imported;
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -401,7 +403,7 @@ export default function RunDetail({
               variant="outlined"
               size="small"
               onClick={() => {
-                setFixTargets(improvable);
+                setFixTargets(epoch);
                 setFixLaunching(true);
               }}
               startIcon={
@@ -623,7 +625,8 @@ export default function RunDetail({
           onClose={() => setFixLaunching(false)}
           envId={env.id}
           sourceRunId={executionId}
-          initialTargets={fixTargets}
+          initialTargets={fixTargets?.keys}
+          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
         />
       )}
 

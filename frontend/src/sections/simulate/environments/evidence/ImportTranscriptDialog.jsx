@@ -12,8 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import LoadingButton from "@mui/lab/LoadingButton";
-import { ConfirmDialog } from "src/components/custom-dialog";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import {
   MAX_EVIDENCE_SOURCES,
   MAX_TRANSCRIPT_CHARS,
@@ -126,125 +125,115 @@ export default function ImportTranscriptDialog({
     );
 
   return (
-    <ConfirmDialog
+    // A form: the design system's form dialog, md 560.
+    <ModalWrapper
       open={open}
       onClose={onClose}
       title={EVIDENCE_COPY.transcriptTitle}
-      PaperProps={{ sx: { maxWidth: 560 } }}
-      content={
-        <Stack spacing={2} sx={{ pt: 0.5 }}>
-          <Typography variant="body2">
-            {EVIDENCE_COPY.transcriptBody}
-          </Typography>
-          {files.length ? (
-            <Stack spacing={1} data-testid="transcript-files">
-              {files.map((one, index) => (
-                <Stack
-                  key={`${one.name}-${index}`}
-                  direction="row"
-                  spacing={1}
-                  alignItems="center"
+      actionBtnTitle={EVIDENCE_COPY.create}
+      isValid={Boolean(transcripts.length) && !problem}
+      isLoading={create.isPending}
+      onSubmit={onImport}
+    >
+      <Stack spacing={2}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {EVIDENCE_COPY.transcriptBody}
+        </Typography>
+        {files.length ? (
+          <Stack spacing={1} data-testid="transcript-files">
+            {files.map((one, index) => (
+              <Stack
+                key={`${one.name}-${index}`}
+                direction="row"
+                spacing={1}
+                alignItems="center"
+              >
+                <Typography
+                  noWrap
+                  sx={{ typography: "s1", flex: 1, minWidth: 0 }}
                 >
-                  <Typography
-                    variant="body2"
-                    noWrap
-                    sx={{ flex: 1, minWidth: 0 }}
-                  >
-                    {one.name}
-                  </Typography>
-                  <FormatSelect
-                    value={one.format}
-                    onChange={(value) => setFileFormat(index, value)}
-                  />
-                </Stack>
-              ))}
-            </Stack>
-          ) : (
-            <>
-              <TextField
-                label={EVIDENCE_COPY.pasteLabel}
-                multiline
-                minRows={6}
-                maxRows={14}
-                fullWidth
-                value={pasted}
-                onChange={(event) => setPasted(event.target.value)}
-              />
-              <Stack direction="row" spacing={1}>
-                <TextField
-                  size="small"
-                  label={EVIDENCE_COPY.nameLabel}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  inputProps={{ maxLength: TRANSCRIPT_NAME_CHARS }}
-                  sx={{ flex: 1 }}
-                />
+                  {one.name}
+                </Typography>
                 <FormatSelect
-                  value={format ?? guessFormat("", pasted)}
-                  onChange={setFormat}
+                  value={one.format}
+                  onChange={(value) => setFileFormat(index, value)}
                 />
               </Stack>
-            </>
-          )}
-          <Box>
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              onClick={() => {
-                if (files.length) {
-                  setFiles([]);
-                  setFileProblem("");
-                } else {
-                  fileInput.current?.click();
-                }
-              }}
-            >
-              {files.length
-                ? EVIDENCE_COPY.usePaste
-                : EVIDENCE_COPY.uploadFiles}
-            </Button>
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              accept=".json,.txt,.csv,application/json,text/plain,text/csv"
-              hidden
-              data-testid="transcript-file-input"
-              onChange={pickFiles}
+            ))}
+          </Stack>
+        ) : (
+          <>
+            <TextField
+              label={EVIDENCE_COPY.pasteLabel}
+              multiline
+              minRows={6}
+              maxRows={14}
+              fullWidth
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
             />
-          </Box>
-          <Box>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={production}
-                  onChange={(event) => setProduction(event.target.checked)}
-                />
+            <Stack direction="row" spacing={1}>
+              <TextField
+                size="small"
+                label={EVIDENCE_COPY.nameLabel}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                inputProps={{ maxLength: TRANSCRIPT_NAME_CHARS }}
+                sx={{ flex: 1 }}
+              />
+              <FormatSelect
+                value={format ?? guessFormat("", pasted)}
+                onChange={setFormat}
+              />
+            </Stack>
+          </>
+        )}
+        <Box>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={() => {
+              if (files.length) {
+                setFiles([]);
+                setFileProblem("");
+              } else {
+                fileInput.current?.click();
               }
-              label={EVIDENCE_COPY.production}
-            />
-            <FormHelperText sx={{ mt: 0 }}>
-              {EVIDENCE_COPY.productionHelp}
-            </FormHelperText>
-          </Box>
-          {problem ? <Alert severity="error">{problem}</Alert> : null}
-          {create.error ? (
-            <Alert severity="error">{errorText(create.error)}</Alert>
-          ) : null}
-        </Stack>
-      }
-      action={
-        <LoadingButton
-          variant="contained"
-          disabled={!transcripts.length || Boolean(problem)}
-          loading={create.isPending}
-          onClick={onImport}
-        >
-          {EVIDENCE_COPY.create}
-        </LoadingButton>
-      }
-    />
+            }}
+          >
+            {files.length ? EVIDENCE_COPY.usePaste : EVIDENCE_COPY.uploadFiles}
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            accept=".json,.txt,.csv,application/json,text/plain,text/csv"
+            hidden
+            data-testid="transcript-file-input"
+            onChange={pickFiles}
+          />
+        </Box>
+        <Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={production}
+                onChange={(event) => setProduction(event.target.checked)}
+              />
+            }
+            label={EVIDENCE_COPY.production}
+          />
+          <FormHelperText sx={{ mt: 0 }}>
+            {EVIDENCE_COPY.productionHelp}
+          </FormHelperText>
+        </Box>
+        {problem ? <Alert severity="error">{problem}</Alert> : null}
+        {create.error ? (
+          <Alert severity="error">{errorText(create.error)}</Alert>
+        ) : null}
+      </Stack>
+    </ModalWrapper>
   );
 }
 

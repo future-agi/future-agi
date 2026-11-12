@@ -3,6 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, Divider, Stack, Typography } from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useSnackbar } from "notistack";
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
+import SharedSection from "src/components/section";
 import SideDrawer from "../components/SideDrawer";
 import EvidenceCaseCard from "./EvidenceCaseCard";
 import {
@@ -20,15 +23,14 @@ import {
 import { useDrafts } from "src/api/simulate-environments/versions";
 import { paths } from "src/routes/paths";
 
+// One step of the review, as the design system's section; the ref lets a
+// resumed review scroll to the step it reached.
 function Section({ title, children, sectionRef }) {
   return (
-    <Box sx={{ mt: 2.5 }} ref={sectionRef}>
-      <Typography variant="overline" color="text.secondary">
-        {title}
-      </Typography>
-      <Stack spacing={1.25} sx={{ mt: 0.75 }}>
-        {children}
-      </Stack>
+    <Box ref={sectionRef} sx={{ mt: 3 }}>
+      <SharedSection title={title}>
+        <Stack spacing={1.25}>{children}</Stack>
+      </SharedSection>
     </Box>
   );
 }
@@ -59,7 +61,10 @@ export default function EvidenceReviewDrawer({
   onClose,
 }) {
   const { enqueueSnackbar } = useSnackbar();
-  const { data, error, isLoading } = useEvidenceImport(envId, importId);
+  const { data, error, isLoading, refetch } = useEvidenceImport(
+    envId,
+    importId,
+  );
   const { data: drafts } = useDrafts(envId, { enabled: open });
   const draft = useDraftEvidenceCases(envId, importId);
   const add = useAddEvidenceCases(envId, importId);
@@ -116,26 +121,36 @@ export default function EvidenceReviewDrawer({
     );
 
   return (
-    <SideDrawer open={open} onClose={onClose} width={720}>
+    <SideDrawer open={open} onClose={onClose} width={640}>
       <Box sx={{ p: 3, pr: 6 }} data-testid="evidence-review">
-        <Typography variant="h6">{EVIDENCE_COPY.title}</Typography>
+        <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+          {EVIDENCE_COPY.title}
+        </Typography>
         {data ? (
-          <Typography variant="body2" color="text.secondary">
+          <Typography sx={{ typography: "s1", color: "text.tertiary" }}>
             {EVIDENCE_COPY.subtitle(cases.length, kind)}
           </Typography>
         ) : null}
 
         {isLoading ? (
-          <Typography variant="body2" sx={{ mt: 2 }}>
-            {EVIDENCE_COPY.loading}
-          </Typography>
+          <ContentSkeleton
+            variant="rows"
+            rows={3}
+            label={EVIDENCE_COPY.loading}
+            sx={{ mt: 2 }}
+          />
         ) : null}
         {error ? (
-          <Alert severity="error" sx={{ mt: 2 }}>
-            {error?.statusCode === 404
-              ? EVIDENCE_COPY.notFound
-              : EVIDENCE_COPY.loadError}
-          </Alert>
+          // A gone import cannot come back; any other failure can be retried.
+          <ErrorState
+            title={
+              error?.statusCode === 404
+                ? EVIDENCE_COPY.notFound
+                : EVIDENCE_COPY.loadError
+            }
+            onRetry={error?.statusCode === 404 ? undefined : () => refetch()}
+            sx={{ mt: 2 }}
+          />
         ) : null}
 
         {data ? (
@@ -204,7 +219,9 @@ export default function EvidenceReviewDrawer({
             <Section title={EVIDENCE_COPY.stepDraft} sectionRef={draftRef}>
               {data.drafting ? (
                 <Alert severity="info" data-testid="evidence-drafting">
-                  <strong>{EVIDENCE_COPY.drafting(waiting.length)}</strong>
+                  <Box component="span" sx={{ fontWeight: 500 }}>
+                    {EVIDENCE_COPY.drafting(waiting.length)}
+                  </Box>
                   <br />
                   {EVIDENCE_COPY.draftingBody}
                 </Alert>
@@ -219,7 +236,7 @@ export default function EvidenceReviewDrawer({
                   </LoadingButton>
                 </Box>
               ) : (
-                <Typography variant="body2" color="text.secondary">
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
                   {EVIDENCE_COPY.noneWaiting}
                 </Typography>
               )}
@@ -262,7 +279,7 @@ export default function EvidenceReviewDrawer({
                 </LoadingButton>
               </Box>
               {!drafted.length && !data.drafting ? (
-                <Typography variant="body2" color="text.secondary">
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
                   {EVIDENCE_COPY.noneDrafted}
                 </Typography>
               ) : null}

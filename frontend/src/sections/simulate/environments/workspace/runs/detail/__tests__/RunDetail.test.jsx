@@ -105,17 +105,22 @@ vi.mock(
 
 // The fix launch form reads launch-options itself; stub it to a marker that
 // names the run it was opened for, and the cases Run Epoch picked.
+const launchFix = vi.hoisted(() => ({ props: null }));
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
-  // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId, initialTargets }) =>
-    open ? (
+  // Reads the captured props, which the assertions read too.
+  default: (props) => {
+    launchFix.props = props;
+    const { open, sourceRunId, initialTargets, initialNote } = launchFix.props;
+    return open ? (
       <>
         <div>{`launch-fix:${sourceRunId}`}</div>
         {initialTargets ? (
           <div>{`fix-targets:${initialTargets.join(",")}`}</div>
         ) : null}
+        {initialNote ? <div>{`fix-note:${initialNote}`}</div> : null}
       </>
-    ) : null,
+    ) : null;
+  },
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -821,9 +826,42 @@ describe("RunDetail", () => {
 
       expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
       expect(screen.getByText("fix-targets:evidence-a")).toBeInTheDocument();
+      // Nothing added silently: the form says where its cases came from.
+      expect(
+        screen.getByText("fix-note:1 failing scenario from imported evidence"),
+      ).toBeInTheDocument();
       expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
         enabled: true,
       });
+    });
+
+    it("tops up with the run's other failing cases to reach the minimum, imported first", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          limits: { scenarios_min: 3 },
+          scenarios: [
+            scenario("ordinary-1", null, true),
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary-2", null, false),
+            scenario("ordinary-3", null, true),
+            scenario("ordinary-4", null, true),
+          ],
+        },
+      });
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+      expect(
+        screen.getByText("fix-targets:evidence-a,ordinary-1,ordinary-3"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "fix-note:1 from imported evidence, 2 more failing scenarios from this run to reach the minimum",
+        ),
+      ).toBeInTheDocument();
     });
 
     it("is not offered when no failing case came from evidence", () => {

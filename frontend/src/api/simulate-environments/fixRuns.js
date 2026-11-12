@@ -268,6 +268,27 @@ export const importedFailingKeys = (options) =>
     .filter((one) => one.evidence_import_id && one.failing_sub_goals?.length)
     .map((one) => one.key);
 
+// Run Epoch's starting cases: the imported failing ones first, then the run's
+// other failing cases, only as many as reach the launch minimum. The person can
+// still deselect any of them, or add more.
+export const epochTargets = (options) => {
+  const imported = importedFailingKeys(options);
+  const others = (options?.scenarios ?? [])
+    .filter((one) => !one.evidence_import_id && one.failing_sub_goals?.length)
+    .map((one) => one.key);
+  const short = (options?.limits?.scenarios_min ?? 0) - imported.length;
+  const added = others.slice(0, Math.max(short, 0));
+  return { imported, added, keys: [...imported, ...added] };
+};
+
+// What Run Epoch put in the form, so nothing is added silently.
+export const epochTargetsNote = ({ imported, added }) => {
+  const plural = (n) => (n === 1 ? "" : "s");
+  return added.length
+    ? `${imported.length} from imported evidence, ${added.length} more failing scenario${plural(added.length)} from this run to reach the minimum`
+    : `${imported.length} failing scenario${plural(imported.length)} from imported evidence`;
+};
+
 export function useFixLaunchOptions(sourceRunId, { enabled = true } = {}) {
   const { data, isLoading, error } = useQuery({
     queryKey: fixLaunchOptionsKey(sourceRunId),

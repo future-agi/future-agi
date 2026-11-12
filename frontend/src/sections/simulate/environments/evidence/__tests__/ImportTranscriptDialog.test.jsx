@@ -88,7 +88,7 @@ describe("ImportEvidenceButton", () => {
     await openDialog();
     expect(
       screen.getByText(
-        /Emails, phone numbers, card and ID numbers are replaced with placeholders before anything is stored\. An import keeps up to 60,000 characters\.$/,
+        /Emails, phone, card and ID numbers become placeholders; an import keeps 60,000 characters\.$/,
       ),
     ).toBeInTheDocument();
   });

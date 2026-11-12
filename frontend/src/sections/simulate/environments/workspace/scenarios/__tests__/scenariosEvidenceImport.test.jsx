@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { configure } from "@testing-library/react";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
@@ -24,7 +23,8 @@ vi.mock(
     default: (props) => {
       drawer.props = props;
       return (
-        <button type="button" onClick={props.onClose}>
+        // Through the captured props, which the assertions read too.
+        <button type="button" onClick={() => drawer.props.onClose()}>
           close review
         </button>
       );

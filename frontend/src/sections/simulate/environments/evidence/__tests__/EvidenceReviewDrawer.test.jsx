@@ -101,11 +101,14 @@ beforeEach(() => {
 describe("EvidenceReviewDrawer", () => {
   it("says what each source holds and lacks, and what redaction replaces", async () => {
     renderDrawer();
-    expect(screen.getByText("Loading this import…")).toBeInTheDocument();
+    // The design system's skeleton keeps the layout while it loads.
+    expect(
+      screen.getByRole("progressbar", { name: "Loading this import…" }),
+    ).toBeInTheDocument();
     const card = await screen.findByTestId("evidence-case-c1");
     // Named by what the user asked, never by the source's id.
     expect(
-      within(card).getByText("Refund my order", { selector: "h6" }),
+      within(card).getByRole("heading", { name: "Refund my order" }),
     ).toBeInTheDocument();
     expect(card).not.toHaveTextContent("session-1");
     // Each reason is on the card, not behind a hover; step 2 explains the
@@ -212,7 +215,7 @@ describe("EvidenceReviewDrawer", () => {
       "Not set: the builder judges from the evidence",
     );
     expect(
-      screen.getByText(/^Nothing in this source records how it ended/),
+      screen.getByText(/^Nothing here records how it ended/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Draft 1 scenario" }),
@@ -315,7 +318,7 @@ describe("EvidenceReviewDrawer", () => {
     expect(screen.getByText("1 transcript you added")).toBeInTheDocument();
     // The mark is fixed at import; the notice says how to change it.
     expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
-      "Not marked as production, so these become tests, not regression tests. To change this, discard the import and import again with the box ticked.",
+      "Not marked as production, so these become tests, not regression tests. To change it, discard this and import again.",
     );
     expect(
       screen.getByText(
@@ -355,7 +358,7 @@ describe("EvidenceReviewDrawer", () => {
     // Titled by what the user asked; its dataset beneath, with a way to open
     // it, and never the row id.
     expect(
-      within(card).getByText("Refund my order", { selector: "h6" }),
+      within(card).getByRole("heading", { name: "Refund my order" }),
     ).toBeInTheDocument();
     expect(card).toHaveTextContent("Row from Support evals · Open in dataset");
     expect(
@@ -370,7 +373,7 @@ describe("EvidenceReviewDrawer", () => {
     // What the builder makes follows the expected outcome, not the policy alone.
     expect(
       within(card).getByText(
-        /^Keeps: the situation.*Makes: what should have happened, from the expected outcome column; the environment's rules win a conflict\.$/,
+        /^Keeps: the situation.*Makes: what should have happened, from the expected outcome column\.$/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("1 row from a dataset")).toBeInTheDocument();
@@ -429,7 +432,7 @@ describe("EvidenceReviewDrawer", () => {
       within(card).getByText("Your transcript, from production"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
-      "They are your transcripts, not recordings Observe made.",
+      "They are yours, not Observe's.",
     );
     expect(
       screen.getByRole("combobox", {
@@ -454,7 +457,7 @@ describe("EvidenceReviewDrawer", () => {
       screen.getByRole("button", { name: "Save 0 to the suite" }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/This can take up to 90 minutes; you can close this/),
+      screen.getByText(/^Up to 90 minutes; you can close this meanwhile\./),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Draft scenarios first, then add them here."),
@@ -656,7 +659,7 @@ describe("EvidenceReviewDrawer", () => {
     });
   });
 
-  it("says when the import is gone", async () => {
+  it("says when the import is gone, and offers no retry", async () => {
     axios.get.mockImplementation((url) =>
       url === BASE ? Promise.reject({ statusCode: 404 }) : answer(url),
     );
@@ -664,5 +667,25 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       await screen.findByText("This import is not available."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("says a failed load and retries it", async () => {
+    let calls = 0;
+    axios.get.mockImplementation((url) => {
+      if (url !== BASE) return answer(url);
+      calls += 1;
+      return calls === 1
+        ? Promise.reject({ statusCode: 500 })
+        : Promise.resolve({ data: evidence });
+    });
+    renderDrawer();
+    expect(
+      await screen.findByText(
+        "Couldn't load this import. Try again in a moment.",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByTestId("evidence-case-c1")).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Typography } from "@mui/material";
+import { Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
@@ -29,9 +29,7 @@ export default function ImportEvidenceButton({ envId, onImported }) {
         open={open}
         onClose={() => setOpen(false)}
         title={EVIDENCE_COPY.importHintTitle}
-        content={
-          <Typography variant="body2">{EVIDENCE_COPY.importHint}</Typography>
-        }
+        content={EVIDENCE_COPY.importHint}
         action={
           <>
             <Button

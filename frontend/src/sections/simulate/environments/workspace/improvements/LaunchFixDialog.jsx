@@ -143,6 +143,7 @@ export default function LaunchFixDialog({
   envId,
   sourceRunId,
   initialTargets,
+  initialNote,
 }) {
   const navigate = useNavigate();
   const { options, error: optionsError } = useFixLaunchOptions(sourceRunId, {
@@ -293,6 +294,14 @@ export default function LaunchFixDialog({
             <Typography sx={{ typography: "s2" }}>
               {countsLine(targets.length, protectedKeys.length)}
             </Typography>
+            {initialNote ? (
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary" }}
+                data-testid="epoch-targets-note"
+              >
+                {initialNote}
+              </Typography>
+            ) : null}
             <Typography
               component="button"
               type="button"
@@ -430,4 +439,5 @@ LaunchFixDialog.propTypes = {
   envId: PropTypes.string.isRequired,
   sourceRunId: PropTypes.string,
   initialTargets: PropTypes.arrayOf(PropTypes.string),
+  initialNote: PropTypes.string,
 };

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
+  Button,
   Checkbox,
   FormControlLabel,
   FormHelperText,
@@ -12,8 +13,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import LoadingButton from "@mui/lab/LoadingButton";
-import { ConfirmDialog } from "src/components/custom-dialog";
+import ContentSkeleton from "src/components/content-skeleton";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { paths } from "src/routes/paths";
 import { useMyEnvironments } from "src/api/simulate-environments/environments";
 import { useCreateEvidenceImport } from "src/api/simulate-environments/evidenceImports";
@@ -39,7 +40,7 @@ export default function CreateEnvironmentTestDialog({
 }) {
   const rows = sourceKind === "dataset";
   const navigate = useNavigate();
-  const { data, isError } = useMyEnvironments({
+  const { data, isError, refetch } = useMyEnvironments({
     page: 0,
     pageSize: ENVIRONMENTS_SHOWN,
   });
@@ -74,12 +75,25 @@ export default function CreateEnvironmentTestDialog({
       </TextField>
     );
   } else if (isError) {
-    picker = <Alert severity="error">{EVIDENCE_COPY.environmentsError}</Alert>;
+    picker = (
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => refetch()}>
+            {EVIDENCE_COPY.retry}
+          </Button>
+        }
+      >
+        {EVIDENCE_COPY.environmentsError}
+      </Alert>
+    );
   } else if (!data) {
     picker = (
-      <Typography variant="body2" color="text.secondary">
-        {EVIDENCE_COPY.environmentsLoading}
-      </Typography>
+      <ContentSkeleton
+        variant="rows"
+        rows={1}
+        label={EVIDENCE_COPY.environmentsLoading}
+      />
     );
   } else {
     picker = <Alert severity="info">{EVIDENCE_COPY.noEnvironments}</Alert>;
@@ -108,57 +122,51 @@ export default function CreateEnvironmentTestDialog({
     );
 
   return (
-    <ConfirmDialog
+    // A short form: the design system's form dialog, md 560.
+    <ModalWrapper
       open={open}
       onClose={onClose}
       title={EVIDENCE_COPY.dialogTitle}
-      content={
-        <Stack spacing={2} sx={{ pt: 0.5 }}>
-          <Typography variant="body2">
-            {rows
-              ? EVIDENCE_COPY.datasetDialogBody(ids.length)
-              : EVIDENCE_COPY.dialogBody(ids.length, sourceKind)}
-          </Typography>
-          {picker}
-          {rows ? (
-            <>
-              <DatasetColumnsFields
-                datasetId={datasetId}
-                value={columns}
-                onChange={setColumns}
+      actionBtnTitle={EVIDENCE_COPY.create}
+      isValid={Boolean(envId && ids.length && (!rows || columns.conversation))}
+      isLoading={create.isPending}
+      onSubmit={onCreate}
+    >
+      <Stack spacing={2}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {rows
+            ? EVIDENCE_COPY.datasetDialogBody(ids.length)
+            : EVIDENCE_COPY.dialogBody(ids.length, sourceKind)}
+        </Typography>
+        {picker}
+        {rows ? (
+          <>
+            <DatasetColumnsFields
+              datasetId={datasetId}
+              value={columns}
+              onChange={setColumns}
+            />
+            <Box>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={production}
+                    onChange={(event) => setProduction(event.target.checked)}
+                  />
+                }
+                label={EVIDENCE_COPY.rowsProduction}
               />
-              <Box>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={production}
-                      onChange={(event) => setProduction(event.target.checked)}
-                    />
-                  }
-                  label={EVIDENCE_COPY.rowsProduction}
-                />
-                <FormHelperText sx={{ mt: 0 }}>
-                  {EVIDENCE_COPY.rowsProductionHelp}
-                </FormHelperText>
-              </Box>
-            </>
-          ) : null}
-          {create.error ? (
-            <Alert severity="error">{errorText(create.error)}</Alert>
-          ) : null}
-        </Stack>
-      }
-      action={
-        <LoadingButton
-          variant="contained"
-          disabled={!envId || !ids.length || (rows && !columns.conversation)}
-          loading={create.isPending}
-          onClick={onCreate}
-        >
-          {EVIDENCE_COPY.create}
-        </LoadingButton>
-      }
-    />
+              <FormHelperText sx={{ mt: 0 }}>
+                {EVIDENCE_COPY.rowsProductionHelp}
+              </FormHelperText>
+            </Box>
+          </>
+        ) : null}
+        {create.error ? (
+          <Alert severity="error">{errorText(create.error)}</Alert>
+        ) : null}
+      </Stack>
+    </ModalWrapper>
   );
 }
 
