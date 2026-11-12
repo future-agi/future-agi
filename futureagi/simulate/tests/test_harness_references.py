@@ -46,7 +46,7 @@ def test_a_change_touches_the_scenarios_that_use_it_and_everything_when_nothing_
         assert affects(_change(kind, "x"), SCENARIOS) == ALL
 
 
-def test_a_scenario_needs_the_tools_sub_goals_and_actors_only_the_draft_adds():
+def test_a_scenario_needs_the_tools_sub_goals_and_actors_the_draft_adds_or_changes():
     changes = [
         _change("scenario", "refund-in-window", "added"),
         _change("tool", "issue_refund", "added"),
@@ -56,6 +56,7 @@ def test_a_scenario_needs_the_tools_sub_goals_and_actors_only_the_draft_adds():
     ]
     assert depends_on(changes[0], changes, SCENARIOS) == [
         "sub_goal:one_refund",
+        "tool:get_order",
         "tool:issue_refund",
     ]
     assert (
@@ -90,6 +91,7 @@ def test_save_refuses_an_accepted_change_that_needs_a_rejected_one(monkeypatch):
     monkeypatch.setattr(
         review, "draft_review", lambda _env: {"changes": changes, "review_digest": "d"}
     )
+    monkeypatch.setattr(review, "heal_suite_index", lambda _env: None)
     with pytest.raises(HostedHarnessError) as refused:
         review.apply_review(None, {"suite", "environment"}, expected_review_digest=None)
     assert refused.value.code == "change_depends_on_rejected"
@@ -117,3 +119,17 @@ def test_removing_a_tool_needs_the_scenario_edit_that_stops_using_it():
     assert depends_on(removal, [removal, edit, unrelated], draft, base) == [
         "scenario:s"
     ]
+
+
+def test_a_graded_scenario_edit_needs_the_changes_to_definitions_it_names_and_a_rename_needs_none():
+    changes = [
+        {**_change("scenario", "refund-in-window", "changed"), "fields": ["solution"]},
+        _change("tool", "get_order", "changed"),
+        _change("tool", "issue_refund", "added"),
+    ]
+    assert depends_on(changes[0], changes, SCENARIOS) == [
+        "tool:get_order",
+        "tool:issue_refund",
+    ]
+    renamed = {**_change("scenario", "refund-in-window", "changed"), "fields": ["name"]}
+    assert depends_on(renamed, changes, SCENARIOS) == ["tool:issue_refund"]

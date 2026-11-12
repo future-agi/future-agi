@@ -223,6 +223,9 @@ def validate_drafts(
         require_no_rebuild(locked, piece=first)
         require_chat_idle(locked)
         _require_fresh(locked, opened)
+        review.heal_suite_index(locked)
+        # Read again: a healed suite draft has a new archive.
+        opened = open_drafts(locked)
         reviewed = review.draft_review(locked)
         review.check_review(
             reviewed, expected_review_digest, digest_required=True, environment=locked
@@ -264,8 +267,6 @@ def validate_drafts(
             "job_id": str(started.job.id) if started.job is not None else None,
             "at": timezone.now().isoformat(),
         }
-        if started.state == validation.CHECK_UNAVAILABLE:
-            entry["check_unavailable"] = True
         store_set(locked, entry)
         state = validation_state(locked, entry)
     logger.info(

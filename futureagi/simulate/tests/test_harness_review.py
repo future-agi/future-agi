@@ -677,9 +677,10 @@ def test_a_scenario_saved_with_a_suite_entry_its_document_disagrees_with_is_refu
 ):
     from simulate.services.harness_versioning import review
 
+    # An entry whose scenario has no folder cannot be put in step: it is refused.
     files = _tree(
         **{
-            "scenarios/s/scenario.json": {"name": "s", "sub_goals": ["a"]},
+            "scenarios/other/scenario.json": {"name": "other"},
             "scenarios.json": [{"name": "s", "sub_goals": ["b"]}],
         }
     )
@@ -756,3 +757,146 @@ def test_an_index_already_in_step_is_left_byte_for_byte():
         }
     )
     assert index_in_step(files)["scenarios.json"] == b'[{"name":"s","faults":[]}]'
+
+
+def test_a_suite_draft_stored_before_index_in_step_reviews_and_saves_in_step(
+    monkeypatch,
+):
+    from simulate.services.harness_versioning import review
+
+    # Written before draft writes kept the index in step: the builder edited only the scenario's own file.
+    files = _tree(
+        **{
+            "scenarios/s/scenario.json": {"name": "s", "faults": [{"on_call": 1}]},
+            "scenarios.json": [{"name": "s", "faults": []}],
+        }
+    )
+    monkeypatch.setattr(review, "open_draft", lambda environment, piece: object())
+    monkeypatch.setattr(
+        review, "piece_files", lambda environment, piece, version: files
+    )
+    change = {
+        "id": "scenario:s",
+        "kind": "scenario",
+        "action": "changed",
+        "decision": None,
+        "depends_on": [],
+    }
+    review.check_review(
+        {"changes": [change], "review_digest": "d"},
+        "d",
+        digest_required=False,
+        environment=object(),
+    )
+    read = review.draft_files(object(), "suite", object())
+    assert json.loads(read["scenarios.json"]) == [
+        {"name": "s", "faults": [{"on_call": 1}]}
+    ]
+
+
+def test_an_actor_and_a_sub_actor_sharing_an_id_are_reviewed_as_their_files():
+    default = _tree(
+        **{
+            "actors.json": {"actors": [{"id": "a", "name": "A"}]},
+            "sub_actors.json": {"sub_actors": [{"id": "a", "name": "S"}]},
+        }
+    )
+    edited_actor = {
+        **default,
+        "actors.json": json.dumps({"actors": [{"id": "a", "name": "A2"}]}).encode(),
+    }
+    edited_sub_actor = {
+        **default,
+        "sub_actors.json": json.dumps(
+            {"sub_actors": [{"id": "a", "name": "S2"}]}
+        ).encode(),
+    }
+
+    assert [one["id"] for one in compute_changes(default, edited_actor)] == [
+        "file:actors.json"
+    ]
+    assert [one["id"] for one in compute_changes(default, edited_sub_actor)] == [
+        "file:sub_actors.json"
+    ]
+    # Rejected, the edit is not saved; accepted, it is.
+    [change] = compute_changes(default, edited_actor)
+    kept = compose_accepted(default, edited_actor, [change], {change["id"]: "rejected"})
+    assert kept["actors.json"] == default["actors.json"]
+    taken = compose_accepted(
+        default, edited_actor, [change], {change["id"]: "accepted"}
+    )
+    assert taken["actors.json"] == edited_actor["actors.json"]
+
+
+def test_a_suite_in_the_older_scenario_folder_saves_the_accepted_edit_and_keeps_its_index():
+    default = _tree(
+        **{
+            "scenario/s1/scenario.json": {"name": "s1", "x": 1},
+            "scenario/s2/scenario.json": {"name": "s2", "x": 1},
+            "scenarios.json": [{"name": "s1"}, {"name": "s2"}],
+        }
+    )
+    draft = _tree(
+        **{
+            "scenario/s1/scenario.json": {"name": "s1", "x": 2},
+            "scenario/s2/scenario.json": {"name": "s2", "x": 2},
+            "scenarios.json": [{"name": "s1"}, {"name": "s2"}],
+        }
+    )
+    changes = compute_changes(default, draft)
+    assert [one["document"] for one in changes] == [
+        "scenario/s1/scenario.json",
+        "scenario/s2/scenario.json",
+    ]
+
+    saved = compose_accepted(
+        default,
+        draft,
+        changes,
+        {"scenario:s1": "accepted", "scenario:s2": "rejected"},
+    )
+    assert json.loads(saved["scenario/s1/scenario.json"]) == {"name": "s1", "x": 2}
+    assert json.loads(saved["scenario/s2/scenario.json"]) == {"name": "s2", "x": 1}
+    assert json.loads(saved["scenarios.json"]) == [{"name": "s1"}, {"name": "s2"}]
+
+
+@pytest.mark.parametrize(
+    ("before", "after"), [(b"{bad1", b"{bad2"), (b"[1]", b"[2]"), (b"{bad", b"[1]")]
+)
+def test_a_scenario_file_that_is_not_a_json_object_is_still_reviewed(before, after):
+    default = {"scenarios/s1/scenario.json": before}
+    draft = {"scenarios/s1/scenario.json": after}
+
+    [change] = compute_changes(default, draft)
+    assert (change["id"], change["action"]) == ("scenario:s1", "changed")
+    saved = compose_accepted(default, draft, [change], {"scenario:s1": "accepted"})
+    assert saved["scenarios/s1/scenario.json"] == after
+
+
+def test_a_bare_list_of_actors_stays_a_bare_list_when_one_change_is_rejected():
+    default = _tree(**{"actors.json": [{"id": "a", "n": 1}, {"id": "b", "n": 1}]})
+    draft = _tree(**{"actors.json": [{"id": "a", "n": 2}, {"id": "b", "n": 2}]})
+
+    changes = compute_changes(default, draft)
+    saved = compose_accepted(
+        default, draft, changes, {"actor:a": "accepted", "actor:b": "rejected"}
+    )
+    assert json.loads(saved["actors.json"]) == [
+        {"id": "a", "n": 2},
+        {"id": "b", "n": 1},
+    ]
+
+
+def test_an_edit_to_the_suite_index_alone_gives_way_to_the_scenario_s_own_file():
+    from simulate.services.harness_versioning.review_items import index_in_step
+
+    files = _tree(
+        **{
+            "scenarios/s/scenario.json": {"name": "s", "faults": []},
+            "scenarios.json": [{"name": "s", "faults": [{"on_call": 1}], "extra": 1}],
+        }
+    )
+    # The scenario's own file is what runs read as the scenario; a field only the index has is kept.
+    assert json.loads(index_in_step(files)["scenarios.json"]) == [
+        {"name": "s", "faults": [], "extra": 1}
+    ]

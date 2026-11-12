@@ -26,6 +26,7 @@ from simulate.services.harness_versioning.review_compose import (
 from simulate.services.harness_versioning.review_items import (
     compute_changes,
     graded,
+    index_in_step,
     index_mismatch,
     item_index,
 )
@@ -57,10 +58,41 @@ def held_decisions(draft: Any, files: Mapping[str, bytes]) -> dict[str, str]:
     }
 
 
+def draft_files(environment: Any, piece: str, draft: Any) -> dict[str, bytes]:
+    """A draft's files as a Save would store them: a suite draft written before draft writes kept the suite index in
+    step with each scenario's own file is read in step, so it reviews and saves like any other draft."""
+    files = piece_files(environment, piece, draft)
+    return index_in_step(files) if piece == "suite" else files
+
+
+def heal_suite_index(locked: Any) -> None:
+    """Store the open suite draft in step with its scenarios' own files when it is not, inside the caller's transaction,
+    so what Validate and Save build from is what the review showed. The draft's revision and documents stay."""
+    draft = open_draft(locked, "suite", lock=True)
+    if draft is None:
+        return
+    files = piece_files(locked, "suite", draft)
+    healed = index_in_step(files)
+    if healed == files:
+        return
+    environment_side = open_draft(locked, "environment") or locked.environment_version
+    _, prepared = prepare_tree(
+        locked, {**healed, **piece_files(locked, "environment", environment_side)}
+    )
+    archives.put_archive(prepared.suite_key, prepared.suite_body)
+    values = draft_content(
+        locked, "suite", prepared, origin=draft.origin, default=draft.parent
+    )
+    values["documents"] = {**(draft.documents or {}), **values["documents"]}
+    for name, value in values.items():
+        setattr(draft, name, value)
+    draft.save()
+
+
 def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, Any]]:
 
     before = piece_files(environment, piece, draft.parent) if draft.parent_id else {}
-    after = piece_files(environment, piece, draft)
+    after = draft_files(environment, piece, draft)
     return [{**change, "piece": piece} for change in compute_changes(before, after)]
 
 
@@ -77,7 +109,11 @@ def _scenarios(environment: Any, *, base: bool = False) -> dict[str, dict[str, A
         version = draft or environment.suite_version
     if version is None:
         return {}
-    files = piece_files(environment, "suite", version)
+    files = (
+        draft_files(environment, "suite", version)
+        if not base and draft is not None
+        else piece_files(environment, "suite", version)
+    )
     return {
         item.key: item.value
         for item in item_index(files).values()
@@ -245,7 +281,7 @@ def _index_mismatches(environment: Any, changes: list[dict[str, Any]]) -> list[s
     draft = open_draft(environment, "suite")
     if draft is None:
         return []
-    items = item_index(piece_files(environment, "suite", draft))
+    items = item_index(draft_files(environment, "suite", draft))
     return [
         one["id"]
         for one in changes
@@ -369,6 +405,7 @@ def apply_review(
     transaction. With no decision at all, Save keeps today's behaviour (the whole draft).
     """
 
+    heal_suite_index(locked)
     review = draft_review(locked)
     check_review(
         review, expected_review_digest, digest_required=False, environment=locked

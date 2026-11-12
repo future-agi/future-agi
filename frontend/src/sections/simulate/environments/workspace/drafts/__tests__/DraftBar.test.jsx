@@ -169,6 +169,11 @@ describe("DraftBar", () => {
     ["environment_busy", DRAFTS_COPY.errors.environment_busy],
     ["draft_not_found", DRAFTS_COPY.errors.draft_not_found],
     ["idempotency_key_reused", DRAFTS_COPY.errors.idempotency_key_reused],
+    ["scenario_index_mismatch", DRAFTS_COPY.errors.scenario_index_mismatch],
+    [
+      "change_depends_on_rejected",
+      DRAFTS_COPY.errors.change_depends_on_rejected,
+    ],
   ])("explains a save refused with %s", (code, text) => {
     state.save = { error: { statusCode: 409, error: code, message: "raw" } };
     render(<DraftBar env={ENV} />);

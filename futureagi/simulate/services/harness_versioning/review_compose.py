@@ -9,6 +9,7 @@ from typing import Any
 
 import jsonpatch
 
+from simulate.services.harness_versioning import hashing
 from simulate.services.harness_versioning.review_items import (
     LISTED,
     canonical,
@@ -65,6 +66,8 @@ def _apply_listed(files: dict[str, bytes], change: dict[str, Any]) -> None:
     else:
         _, field, _ = LISTED[document]
         holder = body if isinstance(body, dict) else {field: body or []}
+    # A document kept as a bare list stays a bare list.
+    bare = document != "contract.json" and isinstance(body, list)
     entries = list(holder.get(field) or [])
     found = [index for index, entry in enumerate(entries) if _is_item(kind, key, entry)]
     if change["action"] == "added":
@@ -81,7 +84,7 @@ def _apply_listed(files: dict[str, bytes], change: dict[str, Any]) -> None:
         else:
             entries[index] = jsonpatch.apply_patch(entries[index], change["patch"])
     holder[field] = entries
-    _put(files, document, holder)
+    _put(files, document, entries if bare else holder)
 
 
 def _is_item(kind: str, key: str, entry: Any) -> bool:
@@ -202,7 +205,12 @@ def _compose_suite_index(
     ]
     # An entry whose scenario folder is not in the composed tree names a scenario the version does not have.
     index = [
-        one for one in index if f"scenarios/{index_key(one)}/scenario.json" in files
+        one
+        for one in index
+        if any(
+            f"{root}/{index_key(one)}/scenario.json" in files
+            for root in hashing.SCENARIO_ROOTS
+        )
     ]
     _put(files, "scenarios.json", index)
 
