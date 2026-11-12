@@ -139,7 +139,8 @@ changes none of them.
   (Administrator setup step 1) in `future-agi/deployment`; where they differ,
   that header is the later text. The custody is not limited to this key. No
   credential that a branch workflow can read may have Contents, Pull
-  requests, Administration or Actions write on `future-agi/deployment`, or on
+  requests, Administration, Actions or Environments write on
+  `future-agi/deployment`, or on
   a branch or tag that a key environment admits, such as this repository's
   `main` once it holds the key. That covers personal access tokens (classic
   and fine-grained), OAuth tokens copied from a tool, App keys and deploy
