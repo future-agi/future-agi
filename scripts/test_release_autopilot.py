@@ -1623,8 +1623,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(len([step for step in steps if step.get("id") == "catalog-images"]), 1)
 
     CHECKS = Path(__file__).resolve().parents[1] / ".github/workflows/worker-release-checks.yml"
-    RELEASE_TEST_MODULES = ["test_release_autopilot", "test_release_error_feed_worker",
-                            "test_verify_platform_image_tags"]
+    RELEASE_TEST_MODULES = ("test_release_autopilot", "test_release_error_feed_worker",
+                            "test_verify_platform_image_tags")
 
     @staticmethod
     def unittest_modules(workflow):
@@ -1643,7 +1643,7 @@ class WorkflowContractTests(unittest.TestCase):
 
         workflow = yaml.safe_load(self.CHECKS.read_text())
         modules = self.unittest_modules(workflow)
-        self.assertEqual(modules, self.RELEASE_TEST_MODULES)
+        self.assertEqual(modules, list(self.RELEASE_TEST_MODULES))
         paths = set(workflow[True]["pull_request"]["paths"])
         scripts = Path(__file__).resolve().parent
         for name in modules:
@@ -1664,8 +1664,8 @@ class WorkflowContractTests(unittest.TestCase):
         # The shape that picked up dev's ruff canary test on run 43154266035.
         step["run"] = "python3 -m unittest discover -s scripts -p 'test_*.py' -v"
         self.assertIsNone(self.unittest_modules(workflow))
-        step["run"] = "python3 -m unittest -v " + " ".join(self.RELEASE_TEST_MODULES + ["test_check_python_lint_delta"])
-        self.assertNotEqual(self.unittest_modules(workflow), self.RELEASE_TEST_MODULES)
+        step["run"] = "python3 -m unittest -v " + " ".join((*self.RELEASE_TEST_MODULES, "test_check_python_lint_delta"))
+        self.assertNotEqual(self.unittest_modules(workflow), list(self.RELEASE_TEST_MODULES))
         del step["working-directory"]
         self.assertIsNone(self.unittest_modules(workflow))
 
@@ -1689,7 +1689,9 @@ class SdkSyncWorkflowTests(unittest.TestCase):
             output.touch()
             env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(output),
                    "DISPATCHED": dispatched, "RUN_REF": run_ref, "SDK_BASE": sdk_base}
-            result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, text=True, capture_output=True)
+            # check=False: the tests read the exit code of rejected values.
+            result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, text=True, capture_output=True,
+                                    check=False)
             return result.returncode, output.read_text().splitlines(), result.stdout + result.stderr
 
     def test_dev_is_the_only_base_and_it_is_checked_before_any_token_or_checkout(self):

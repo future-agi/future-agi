@@ -180,7 +180,10 @@ changes none of them.
   depends on that branch:
   - `sdk-sync.yml` runs `sdkgen/*.py` from futureagi-sdk `dev`. Its
     `sdk-base` input accepts only `dev`, and the first step checks it before
-    any token or checkout. The one dispatch so far (run 41805312254, 4 Nov)
+    any token or checkout. A dispatch runs the workflow file of the ref it
+    names, and `release-bot` admits `main`. So this check must be on `main`
+    before `sdk-sync.yml` names `release-bot` or that environment gets a key
+    copy. The one dispatch so far (run 41805312254, 4 Nov)
     used `feat/sdk-docs-reference`; that value now fails the run. To sync a
     feature branch, run `sdkgen/sync_contract.py` and `sdkgen/generate.py` on
     that branch locally. futureagi-sdk `dev` needs one approval from the
@@ -370,7 +373,8 @@ The suite also runs futureagi-sdk's live tests. The SDK ref is the
 futureagi-sdk branch named like the PR's head branch, if one exists, else the
 base branch (`main`). futureagi-sdk has had its own `release-please--branches--main`
 since 4 Nov, and does not delete it after a merge. So release heads now test
-against that SDK branch, not futureagi-sdk `main`. On v1.57.0 and v1.58.0
+against that SDK branch, not futureagi-sdk `main`. This is read from the
+resolver code and the branch list (12 Nov); no release head has run since. On v1.57.0 and v1.58.0
 (2 and 3 Nov) that branch did not exist yet. The suite used futureagi-sdk
 `main`, which then lacked `sdkgen/local_api_key.py`, and "E2E Tests Pass"
 failed for a reason no re-run could clear. Dev's `e2e-ci.yml` keeps the same
@@ -700,11 +704,13 @@ scripts or their tests change. Other `scripts/test_*.py` files run in their own
 workflows with their own tools: `python-lint.yml` runs the lint-gate test with
 ruff, `test-integrity.yml` runs its own self-test, and `standalone-ci.yml` runs
 the install smoke test. A test guards this list. The `paths` filter does not list
-`.github/workflows/build-image-multiarch.yml`,
+`.github/workflows/build-image-multiarch.yml`, `backend-ci.yml`, `e2e-ci.yml`,
 `futureagi/tracer/services/clickhouse/**` or the two grouping schema files. A
 rename of that workflow's `publish` job (one of the two jobs that prove a release
-shipped), or a move of a ClickHouse schema applier, of `v2/schema/` or of a
-grouping schema file, is therefore caught only when a listed file next changes.
+shipped), a rename of "Backend CI", "E2E CI" or their required jobs (the
+autopilot's wake-up signals), or a move of a ClickHouse schema applier, of
+`v2/schema/` or of a grouping schema file, is therefore caught only when a
+listed file next changes.
 Adding those paths to the filter closes the gap.
 
 The `release-images.yml` diff is deliberately limited:
