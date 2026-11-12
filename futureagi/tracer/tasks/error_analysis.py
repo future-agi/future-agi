@@ -498,7 +498,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             metadata={"hidden": True, "type": "background_analysis"},
         )
 
-        agent = AgentLoop(tool_context=ctx, conversation=conversation, headless=True)
+        agent = AgentLoop(tool_context=ctx, conversation=conversation)
 
         # Collect ALL events for comprehensive logging
         all_events = []
