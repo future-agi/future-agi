@@ -8,6 +8,7 @@ import { resetPromptState } from "src/sections/workbench-v2/store/usePromptStore
 import { resetGraphStore } from "src/components/GraphBuilder/store/graphStore";
 import { resetAllStates as resetDevelopDetailStates } from "src/sections/develop-detail/states";
 import logger from "src/utils/logger";
+import { resetAllStores } from "src/utils/zustand";
 
 // Resets the in-memory Zustand stores that hold user-scoped data.
 //
@@ -24,6 +25,14 @@ import logger from "src/utils/logger";
 // PR #82 introduced the pattern for useFalconStore. This is the same pattern
 // extended to the remaining stores that hold user-scoped data.
 export const resetAllUserStores = () => {
+  // First every store created through src/utils/zustand, listed below or not,
+  // goes back to its initial state, and persisted stores drop what they saved
+  // to browser storage. The list below then runs the stores' own clean-ups
+  // (Falcon streams, agent-details URL params, the develop summary columns
+  // read from localStorage at load), which must win over a reset to the
+  // state a store had when its module loaded.
+  resetAllStores();
+
   const resets = [
     ["falcon", () => useFalconStore.getState().resetAll()],
     ["agent-playground", resetAgentPlaygroundStore],
