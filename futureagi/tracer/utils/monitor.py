@@ -233,7 +233,7 @@ def _send_webhook_notification(
     try:
         post_webhook(monitor.webhook_url, json=payload, headers=headers, timeout=10)
         logger.info("monitor_webhook_sent", monitor_id=str(monitor.id))
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort delivery; logger.exception would log the URL's secrets
         # Transport exceptions can embed the entire URL, including secret query
         # parameters. Keep destination, payload and exception text out of logs.
         logger.error("monitor_webhook_failed", monitor_id=str(monitor.id))
