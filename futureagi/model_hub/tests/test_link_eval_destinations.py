@@ -271,9 +271,9 @@ class LinkAcceptance(unittest.TestCase):
                     connection = transport.return_value
                     connection.getresponse.return_value.__enter__.return_value.status = status
                     connection.request.side_effect = (
-                        lambda *a,
-                        connection=connection,
-                        **k: connection._create_connection()
+                        lambda *a, connection=connection, **k: (
+                            connection._create_connection()
+                        )
                     )
                     result = load(name)(
                         None,
