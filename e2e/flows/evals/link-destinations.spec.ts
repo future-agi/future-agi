@@ -13,10 +13,10 @@ type Template = { id: string; name: string; eval_id: number; owner: string;
   eval_type: string; visible_ui: boolean; required_keys: string[] };
 type CanaryRequest = { method: string; host: string; path: string };
 
-test('EVAL-E2E-013: shipped link evaluators accept approved links and refuse other destinations', {
+test('EVAL-E2E-015: shipped link evaluators accept approved links and refuse other destinations', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'EVAL-E2E-013', area: 'evals',
+    id: 'EVAL-E2E-015', area: 'evals',
     userGoal: 'Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them',
     steps: ['resolve the two shipped system template IDs without rewriting their code',
       'open each system evaluator in the browser',

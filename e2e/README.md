@@ -35,7 +35,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 
 The distributed harness starts the dedicated `code-executor` and sets
 `CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
-`EVAL-E2E-013` uses the shipped templates and an owned HTTP listener. The executor
+`EVAL-E2E-015` uses the shipped templates and an owned HTTP listener. The executor
 only joins internal Docker networks, with no default route. `allowed.example`
 resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
 not on the internet. `private.example` resolves to its private interface and is

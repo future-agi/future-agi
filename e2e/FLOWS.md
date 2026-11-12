@@ -1250,7 +1250,7 @@
 - both UI playground calls run through the real backend/gateway and return exact synthetic probability, verdict, usage and connection metadata
 - the reloaded editor, detail API and default version retain the saved OpenRouter route and authored criteria
 
-### EVAL-E2E-013 — shipped link evaluators accept approved links and refuse other destinations
+### EVAL-E2E-015 — shipped link evaluators accept approved links and refuse other destinations
 
 **Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
 
