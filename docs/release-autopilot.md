@@ -846,8 +846,12 @@ Run workload tests only in E2B or CI, not on the shared development host.
 from `scripts/`, runs three test modules by name: `test_release_autopilot`,
 `test_release_error_feed_worker` and `test_verify_platform_image_tags`. It runs
 when `release-images.yml`, `release-autopilot.yml`, `sdk-sync.yml`, the three
-scripts, their tests or this document change. This document is listed because
-a test checks that it quotes the autopilot's wait reasons. Other `scripts/test_*.py` files run in their own
+scripts, their tests, `scripts/image_size_budget.py` or this document change.
+This document is listed because a test checks that it quotes the autopilot's
+wait reasons. `scripts/image_size_budget.py` is listed because the isolation
+test runs it as `size-report` does. Its own tests,
+`deploy/tests/test_image_size_budget.py`, run in `images-ci.yml`. A test
+checks that every script the isolation test runs is in the list. Other `scripts/test_*.py` files run in their own
 workflows with their own tools: `python-lint.yml` runs the lint-gate test with
 ruff, `test-integrity.yml` runs its own self-test, and `standalone-ci.yml` runs
 the install smoke test. A test guards this list. The `paths` filter does not list

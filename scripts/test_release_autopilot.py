@@ -1749,11 +1749,21 @@ class WorkflowContractTests(unittest.TestCase):
     READ_INPUTS = (".github/workflows/release-images.yml", ".github/workflows/release-autopilot.yml",
                    ".github/workflows/sdk-sync.yml", ".github/workflows/worker-release-checks.yml",
                    "docs/release-autopilot.md")
+    # Scripts the release tests run whose own tests are elsewhere, with those tests.
+    RUN_ONLY = {"scripts/image_size_budget.py": "deploy/tests/test_image_size_budget.py"}
 
     @classmethod
     def unwatched_inputs(cls, workflow):
         paths = workflow[True]["pull_request"]["paths"]
-        return [path for path in cls.READ_INPUTS if path not in paths]
+        # PythonIsolationTests copies and runs each of these scripts.
+        ran = [f"scripts/{name}" for name in PythonIsolationTests.SCRIPT_CALLS]
+        return [path for path in dict.fromkeys([*cls.READ_INPUTS, *ran]) if path not in paths]
+
+    @classmethod
+    def expected_modules(cls, paths):
+        """test_<name> for each watched script, except the scripts whose tests are elsewhere."""
+        subjects = {path for path in paths if path.startswith("scripts/") and "/test_" not in path} - set(cls.RUN_ONLY)
+        return {"test_" + Path(path).stem.replace("-", "_") for path in subjects}
 
     @staticmethod
     def unittest_modules(workflow):
@@ -1779,11 +1789,13 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertTrue((scripts / f"{name}.py").is_file(), name)
             self.assertIn(f"scripts/{name}.py", paths)
         # Every watched script has its test module in the list, and nothing else is run.
-        subjects = {path for path in paths if path.startswith("scripts/") and "/test_" not in path}
-        self.assertEqual({"test_" + Path(path).stem.replace("-", "_") for path in subjects}, set(modules))
+        self.assertEqual(self.expected_modules(paths), set(modules))
         self.assertEqual(self.unwatched_inputs(workflow), [])
         for path in self.READ_INPUTS:
             self.assertTrue((scripts.parent / path).is_file(), path)
+        for script, test in self.RUN_ONLY.items():
+            self.assertIn(script, paths)
+            self.assertTrue((scripts.parent / test).is_file(), test)
 
     def test_a_discover_run_or_an_unrelated_module_is_not_the_release_set(self):
         import yaml
@@ -1800,6 +1812,22 @@ class WorkflowContractTests(unittest.TestCase):
         # A doc-only edit that the tests read must still start the job.
         workflow[True]["pull_request"]["paths"].remove("docs/release-autopilot.md")
         self.assertEqual(self.unwatched_inputs(workflow), ["docs/release-autopilot.md"])
+
+    def test_a_script_the_isolation_test_runs_must_start_the_job(self):
+        import yaml
+
+        workflow = yaml.safe_load(self.CHECKS.read_text())
+        paths = workflow[True]["pull_request"]["paths"]
+        # size-report's script: a change to it alone must run the planted-module test.
+        paths.remove("scripts/image_size_budget.py")
+        self.assertEqual(self.unwatched_inputs(workflow), ["scripts/image_size_budget.py"])
+        # A script added to that test later is watched without a second list.
+        with patch.dict(PythonIsolationTests.SCRIPT_CALLS, {"new_tool.py": []}):
+            self.assertEqual(self.unwatched_inputs(workflow), ["scripts/image_size_budget.py", "scripts/new_tool.py"])
+        # Only the named script is exempt from having a test module in the job.
+        self.assertEqual(self.expected_modules([*paths, "scripts/image_size_budget.py"]), set(self.RELEASE_TEST_MODULES))
+        self.assertEqual(self.expected_modules([*paths, "scripts/other_tool.py"]),
+                         {*self.RELEASE_TEST_MODULES, "test_other_tool"})
 
 
 class SdkSyncWorkflowTests(unittest.TestCase):
