@@ -775,28 +775,43 @@ class TestVersionAtHead:
         assert (version.id, created) == (synced.id, False)
         assert _versions(agent) == 2
 
-    def test_a_pending_version_whose_check_never_started_is_queued_again(
+    def test_a_pending_version_whose_check_stalled_is_queued_again(
         self, agent, production, django_capture_on_commit_callbacks
     ):
-        stalled = _connect(agent, parent=production, commit="b", trigger=Trigger.SYNC)
-        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from simulate.services.harness_agent_versions import _WAIT_LIMIT
+
+        schedule = "simulate.services.harness_agent_versions._schedule_preflight"
+        with patch(schedule), django_capture_on_commit_callbacks(execute=True):
+            stalled, created = version_at_head(agent, "b" * 40, trigger=Trigger.SYNC)
+        assert created
+        rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version=stalled
-        ).update(preflight_status=Status.PENDING, check_started_at=None)
+        )
 
         with (
-            patch(
-                "simulate.services.harness_agent_versions._schedule_preflight"
-            ) as scheduled,
+            patch(schedule) as scheduled,
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        assert (version.id, created) == (stalled.id, False)
+        scheduled.assert_not_called()
+
+        rows.update(
+            check_started_at=timezone.now() - _WAIT_LIMIT - timedelta(minutes=1)
+        )
+        with (
+            patch(schedule) as scheduled,
             django_capture_on_commit_callbacks(execute=True),
         ):
             version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
 
         assert (version.id, created) == (stalled.id, False)
-        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
-            agent_version=stalled
-        )
-        assert runtime.check_started_at is not None
         assert scheduled.call_args.args == (stalled.id,)
+        assert rows.get().check_started_at > timezone.now() - timedelta(minutes=1)
         assert _versions(agent) == 2
 
     def test_a_failed_version_at_the_commit_does_not_stand_for_it(

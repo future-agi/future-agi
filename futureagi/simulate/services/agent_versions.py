@@ -12,6 +12,7 @@ from uuid import UUID
 
 import structlog
 from django.db import transaction
+from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
@@ -225,18 +226,20 @@ def live_version_at(definition_id: Any, commit_sha: str) -> AgentVersion | None:
 
 
 def _restart_stalled_check(version: AgentVersion) -> None:
-    """Start the check of a pending version whose check never began, so a version
-    whose workflow failed to start is not reported as up to date forever."""
-    from simulate.services.harness_agent_versions import queue_check
+    """Start the check of a pending version whose check never began or has run past
+    the wait limit, so a version whose workflow failed to start is not reported as
+    up to date forever. Starting it again is safe: a check already running is
+    joined, not repeated."""
+    from simulate.services.harness_agent_versions import _WAIT_LIMIT, queue_check
 
     runtime = _runtime(version)
-    if (
-        runtime is not None
-        and runtime.preflight_status == Status.PENDING
-        and runtime.check_started_at is None
-    ):
-        logger.info("agent_version_check_restarted", version_id=str(version.id))
-        queue_check(version)
+    if runtime is None or runtime.preflight_status != Status.PENDING:
+        return
+    started = runtime.check_started_at
+    if started is not None and started > timezone.now() - _WAIT_LIMIT:
+        return
+    logger.info("agent_version_check_restarted", version_id=str(version.id))
+    queue_check(version)
 
 
 def version_at_head(
