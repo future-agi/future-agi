@@ -86,7 +86,7 @@ function Editor({ scopeKey, contextId }) {
     onReview={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined}
     contextControls={{
       renderTests: ({ session, onSave }) => <ContextTestsPanel contextId={contextId} canWrite={!detail.isError && detail.data.releaseState.permissions.canPublish === true}
-        openSavedDraftDisabled={Boolean(session.mutationError) || session.pendingMutations}
+        openSavedDraftDisabled={Boolean(session.mutationError) || session.pendingMutations > 0}
         onOpenSavedDraft={async () => { const saved = await onSave(); if (saved) navigate(`${paths.dashboard.skills.contextDetail(contextId)}?tab=tests&draft=1`); }} />,
       availableSkills: skills.isError ? [] : skills.data || [],
       proposedLinks: Array.isArray(proposedLinks) ? proposedLinks : undefined,
