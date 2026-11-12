@@ -373,6 +373,68 @@ class TestFileUploadView:
         assert "secret" not in str(resp.data)
         assert not errors[0].get("exc_info")
 
+    @pytest.mark.parametrize(
+        ("endpoint", "public_url", "host", "secure", "base_url"),
+        [
+            # MINIO_URL's path prefix stays in Falcon's URLs, as it always has.
+            (
+                "http://minio:9000",
+                "http://localhost:29005/storage",
+                "minio:9000",
+                False,
+                "http://localhost:29005/storage",
+            ),
+            (
+                "http://minio:9000/",
+                "http://localhost:29005/",
+                "minio:9000",
+                False,
+                "http://localhost:29005",
+            ),
+            # A trailing newline, as a secret file or YAML block scalar leaves.
+            (
+                "http://minio:9000\n",
+                "http://localhost:29005\n",
+                "minio:9000",
+                False,
+                "http://localhost:29005",
+            ),
+            (
+                "https://storage.example.test:9443/prefix",
+                "https://storage.example.test/minio/",
+                "storage.example.test:9443",
+                True,
+                "https://storage.example.test/minio",
+            ),
+        ],
+    )
+    def test_upload_accepts_endpoint_forms_that_worked_before(
+        self, auth_client, monkeypatch, endpoint, public_url, host, secure, base_url
+    ):
+        from tfc.settings.settings import UPLOAD_BUCKET_NAME
+
+        client = Mock()
+        client.bucket_exists.return_value = True
+        client_factory = Mock(return_value=client)
+        monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
+        monkeypatch.setenv("S3_ENDPOINT_URL", endpoint)
+        monkeypatch.setattr("tfc.settings.settings.MINIO_URL", public_url)
+        monkeypatch.setattr("minio.Minio", client_factory)
+        upload = SimpleUploadedFile(
+            "notes.txt", b"Synthetic notes", content_type="text/plain"
+        )
+
+        resp = auth_client.post(self.URL, {"file": upload}, format="multipart")
+
+        assert resp.status_code == 201
+        falcon_file = FalconFile.objects.get(id=resp.data["result"]["id"])
+        expected_url = f"{base_url}/{UPLOAD_BUCKET_NAME}/{falcon_file.storage_key}"
+        assert resp.data["result"]["url"] == expected_url
+        assert falcon_file.storage_url == expected_url
+        assert client_factory.call_args.args == (host,)
+        assert client_factory.call_args.kwargs["secure"] is secure
+        client.put_object.assert_called_once()
+
     def test_upload_rejects_unsupported_type(self, auth_client):
         upload = SimpleUploadedFile(
             "payload.bin",

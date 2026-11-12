@@ -450,7 +450,11 @@ class FileUploadView(APIView):
 
         from minio import Minio
 
-        from tfc.utils.storage_client import _parse_endpoint, storage_http_client
+        from tfc.utils.storage_client import (
+            _parse_endpoint,
+            public_base_url,
+            storage_http_client,
+        )
 
         # Keep Falcon's legacy endpoint/credential overrides, but share the
         # storage client's parser so bare host:port is not mistaken for a scheme.
@@ -466,7 +470,7 @@ class FileUploadView(APIView):
             return _storage_configuration_error(endpoint_setting, error)
         # Validate the public endpoint too, before writing any object or row.
         try:
-            _parse_endpoint(MINIO_URL)
+            storage_base_url = public_base_url(MINIO_URL)
         except ValueError as error:
             return _storage_configuration_error("MINIO_URL", error)
         secure = (
@@ -506,7 +510,7 @@ class FileUploadView(APIView):
             content_type=content_type,
         )
 
-        storage_url = f"{MINIO_URL}/{UPLOAD_BUCKET_NAME}/{object_key}"
+        storage_url = f"{storage_base_url}/{UPLOAD_BUCKET_NAME}/{object_key}"
 
         # Extract text content for LLM context
         text_content = ""
