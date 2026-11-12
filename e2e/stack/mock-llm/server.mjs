@@ -16,18 +16,78 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
+// Typed fixtures are intentionally not a model: pass/fail/refusal depends only
+// on an explicit marker in synthetic state. No real provider is contacted.
+const decisionModels = new Set([
+  "gpt-6-luna", "openai/gpt-6-luna-decisions",
+  "jev-latest", "jev-1.13.0", "jev-1.14.0",
+  "typesafe/jev-1.13", "typesafe/jev-1.14", "~typesafe/jev-latest",
+  "pplx-decider-v1.2", "pplx-decider-flash-v1.2",
+]);
+
+function decisions(body, nativeOpenAI) {
+  const input = nativeOpenAI ? body.input : body.state;
+  const questions = body.questions;
+  if (!decisionModels.has(body.model) || input === undefined ||
+      (nativeOpenAI ? !Array.isArray(questions) :
+        !questions || typeof questions !== "object" || Array.isArray(questions))) return null;
+  const entries = nativeOpenAI ? questions.map((q) => [q?.name, q]) : Object.entries(questions);
+  if (!entries.length || entries.length > 400 || new Set(entries.map(([id]) => id)).size !== entries.length) return null;
+  const state = typeof input === "string" ? input : JSON.stringify(input);
+  const passed = state.includes("e2e-decision:pass");
+  const refused = state.includes("e2e-decision:refuse");
+  const answers = [];
+  for (const [id, q] of entries) {
+    if (typeof id !== "string" || !id || !q || typeof q !== "object") return null;
+    const kind = q.type;
+    if (!(nativeOpenAI ? ["predicate", "choice", "score"] : ["noul", "choice", "score"]).includes(kind)) return null;
+    let answer;
+    if (refused) answer = { type: "refusal" };
+    else if (kind === "noul" || kind === "predicate") {
+      answer = { type: kind, [nativeOpenAI ? "probability" : "noul"]: passed ? 0.9 : 0.1 };
+    } else {
+      const score = kind === "score";
+      const options = nativeOpenAI ? (score ? q.levels : q.choices) : q.criteria;
+      if (!options || typeof options !== "object" || ((nativeOpenAI || score) && !Array.isArray(options))) return null;
+      if (nativeOpenAI && options.some((option) => !option || typeof option !== "object")) return null;
+      const labels = nativeOpenAI ? options.map((option, index) => score ? String(index) : option.value)
+        : score ? options.map((_, index) => String(index)) : Object.keys(options);
+      if (!labels.length || labels.length > 255 || (score && (labels.length < 2 || labels.length > 10)) ||
+          !labels.every((label) => typeof label === "string") || new Set(labels).size !== labels.length) return null;
+      const chosen = passed ? labels.length - 1 : 0;
+      const distribution = Object.fromEntries(labels.map((label, index) => [label, index === chosen ? 1 : 0]));
+      answer = { type: kind, confidence: 1 };
+      if (score) {
+        answer.score = chosen;
+        if (!nativeOpenAI) answer.legend = Object.fromEntries(options.map((level, index) => [String(index), level]));
+      } else answer.choice = labels[chosen];
+      answer.probabilities = nativeOpenAI ? labels.map((label, index) => ({
+        value: score ? index : label, ...(score ? { label: options[index].label } : {}),
+        probability: distribution[label],
+      })) : distribution;
+    }
+    answers.push([id, { ...answer, ...(nativeOpenAI ? { name: id } : {}) }]);
+  }
+  return {
+    model: body.model === "~typesafe/jev-latest" ? "typesafe/jev-1.14" : body.model,
+    answers: nativeOpenAI ? answers.map(([, answer]) => answer) : Object.fromEntries(answers),
+    usage: { input_tokens: 37, output_tokens: 0 },
+  };
+}
+
 // Import-safe for socket-free unit tests. The Compose command below still starts
 // the same listener; the new serving contract is text-only transport coverage.
 export function handleRequest(req, res) {
   const path = req.url.split("?")[0];
   const serving = path.startsWith("/model/v1/");
+  const decision = ["/v1/systemone", "/v1/decisions", "/api/alpha/decisions"].includes(path);
   let raw = "";
   let bytes = 0;
   let tooLarge = false;
   req.on("data", (c) => {
     if (tooLarge) return;
     bytes += Buffer.byteLength(c);
-    if (serving && bytes > 262144) {
+    if ((serving || decision) && bytes > 262144) {
       tooLarge = true;
       raw = "";
       return json(res, 413, { error: { message: "serving body exceeds 256 KiB" } });
@@ -56,6 +116,24 @@ export function handleRequest(req, res) {
       return json(res, 400, {
         error: { message: "invalid JSON body", type: "invalid_request_error" },
       });
+    }
+    if (decision) {
+      if (req.method !== "POST") return json(res, 405, { error: { message: "method not allowed" } });
+      const nativeOpenAI = path === "/v1/decisions" && Array.isArray(body.questions);
+      const connection = path === "/api/alpha/decisions" ? "openrouter"
+        : path === "/v1/systemone" ? "typesafe" : nativeOpenAI ? "openai" : "perplexity";
+      const auth = req.headers?.authorization;
+      if (auth !== "Bearer e2e-mock" && auth !== `Bearer e2e-decision-${connection}-key`) {
+        return json(res, 401, { error: { message: "synthetic decision credential required" } });
+      }
+      // The gateway's OpenRouter policy: one model (no "models"/"route"), same-model
+      // host failover allowed, and every parameter supported.
+      if (connection === "openrouter" && (body.provider?.allow_fallbacks !== true || body.provider?.require_parameters !== true || body.models || body.route)) {
+        return json(res, 400, { error: { message: "gateway decision routing policy required" } });
+      }
+      const response = decisions(body, nativeOpenAI);
+      if (!response) return json(res, 400, { error: { message: "invalid synthetic decision request" } });
+      return json(res, 200, response);
     }
     if (path === "/model/v1/models") {
       return json(res, 200, { models: ["text_embedding"] });

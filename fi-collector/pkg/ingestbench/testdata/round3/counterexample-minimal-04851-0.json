@@ -1,0 +1,1082 @@
+{
+  "schema_version": "fi.otlpbench.v4",
+  "status": "measured-profile-complete",
+  "config": {
+    "run_id": "0123456789abcdef",
+    "endpoint": "http://127.0.0.1:56793/v1/traces",
+    "clickhouse_url": "http://127.0.0.1:56792",
+    "database": "default",
+    "table": "spans",
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "project_name": "isolated-benchmark",
+    "profile": "smoke",
+    "payload": "mixed",
+    "target_spans_per_second": 12,
+    "duration_ns": 1000000000,
+    "max_duration_ns": 60000000000,
+    "max_otlp_bytes": 16777216,
+    "batch_size": 4,
+    "concurrency": 2,
+    "spans_per_trace": 8,
+    "traces_per_session": 4,
+    "request_timeout_ns": 10000000000,
+    "settle_ns": 220000000,
+    "poll_interval_ns": 100000000,
+    "verification_chunk_spans": 5,
+    "execute": true,
+    "allow_hosts": null,
+    "allow_unauthenticated_fixture": true,
+    "environment": "mock-ClickHouse-real-collector",
+    "topology": "single-node",
+    "revision": "in-process-test-build",
+    "encoding": "protobuf",
+    "gzip": false,
+    "seed": 8687,
+    "error_rate": 0.01,
+    "tree_depth": 4,
+    "fan_out": 4,
+    "cohort_variant_fraction": 0.5,
+    "bytes_per_token": 4,
+    "text_pool_blocks": 1024,
+    "verify_timeout_ns": 0,
+    "durable_lag_timeout_ns": 0,
+    "verify_query_timeout_ns": 0,
+    "verify_query_retries": 2,
+    "verify_query_max_memory_bytes": 0,
+    "collector_poll_interval_ns": 1000000000,
+    "max_sentinels": 40960,
+    "durable_lag": true,
+    "direct_probes": {
+      "enabled": true,
+      "interval_ns": 500000000,
+      "min_age_ns": 0,
+      "after_settle_samples": 2,
+      "query_timeout_ns": 2000000000
+    },
+    "generator_revision": "64b4a62bbc12b2d70a83b6b713b04ff47b27ac91"
+  },
+  "provenance": {
+    "command_line": [],
+    "generator_build": {
+      "go_version": "go1.24.3",
+      "module": "github.com/future-agi/future-agi/fi-collector",
+      "declared_revision": "64b4a62bbc12b2d70a83b6b713b04ff47b27ac91",
+      "result_schema": "fi.otlpbench.v4",
+      "executable": "go-test-binary"
+    },
+    "generator_host": {
+      "os": "darwin",
+      "arch": "arm64",
+      "kernel": "25.6.0",
+      "cpu_model": "Apple M2 Pro",
+      "logical_cpus": 10,
+      "gomaxprocs": 2,
+      "memory_bytes": 17179869184,
+      "scope": "load-generator-host-not-collector"
+    },
+    "clickhouse": {
+      "version": "mock",
+      "timezone": "UTC",
+      "uptime_seconds": 1,
+      "table_engine": "MockMergeTree",
+      "sorting_key": "trace_id, id",
+      "primary_key": "trace_id",
+      "clusters": [],
+      "declared_topology": "single-node",
+      "server_hardware": {
+        "scope": "the ClickHouse server answering the verification connection (one node of a cluster)",
+        "os_memory_total_bytes": 8589934592,
+        "max_threads_setting": "auto(4)"
+      },
+      "create_table_query_sha256": "dacff294e07d5342bf08af9e42fdbd7e068611a22e75773e96ad520129cad698",
+      "session_insert_settings": {
+        "async_insert": "0",
+        "insert_quorum": "0",
+        "wait_for_async_insert": "1"
+      },
+      "merge_tree_settings": {
+        "fsync_after_insert": "0",
+        "non_replicated_deduplication_window": "0"
+      },
+      "table_storage_before_load": {
+        "scope": "active parts of the whole table on the queried server, including data of other runs",
+        "rows": 12,
+        "bytes_on_disk": 1200,
+        "data_uncompressed_bytes": 4800,
+        "active_parts": 1
+      },
+      "table_storage_after_verification": {
+        "scope": "active parts of the whole table on the queried server, including data of other runs",
+        "rows": 12,
+        "bytes_on_disk": 1200,
+        "data_uncompressed_bytes": 4800,
+        "active_parts": 1
+      }
+    },
+    "collector": {
+      "budget_check": {
+        "method": "heuristic: min(batch_max_rows, rate*batch_max_age) + rate*2s insert allowance + concurrency*batch_size",
+        "required_pending_rows": 92,
+        "available_pending_rows": 0,
+        "available_source": "collector default (NOT observed; pass --collector-health-url)",
+        "sufficient": true,
+        "batch_fits_budget": true,
+        "recommended_setting": "FI_MAX_PENDING_ROWS=92 (server.max_pending_rows)"
+      }
+    },
+    "system_under_test": {
+      "revision": "in-process-test-build",
+      "revision_source": "declared by operator (--revision); not reported by the collector",
+      "declared_revision": "in-process-test-build",
+      "notes": "Operator fixture: in-process mock storage, not live ClickHouse or capacity evidence."
+    }
+  },
+  "started_at": "2026-10-25T01:45:57.077164Z",
+  "load_elapsed_seconds": 1.001933,
+  "stop_reason": "planned-span-count",
+  "planned_spans": 12,
+  "counters": {
+    "generated_spans": 12,
+    "attempted_spans": 12,
+    "success_status_spans": 12,
+    "accepted_spans": 12,
+    "acknowledged_spans": 12,
+    "otlp_partial_rejected_spans": 0,
+    "otlp_partial_responses": 0,
+    "whole_request_rejected_spans": 0,
+    "whole_request_rejected_retryable_spans": 0,
+    "whole_request_rejected_non_retryable_spans": 0,
+    "ambiguous_spans": 0,
+    "unacknowledged_spans": 0,
+    "requests": 3,
+    "request_outcomes": {
+      "acknowledged": 3,
+      "partial_rejection": 0,
+      "whole_request_rejected_retryable": 0,
+      "whole_request_rejected_with_retry_hint": 0,
+      "whole_request_rejected_non_retryable": 0,
+      "ambiguous": 0
+    },
+    "request_errors": 0,
+    "attempted_wire_body_bytes": 45514,
+    "attempted_uncompressed_body_bytes": 45514
+  },
+  "response_statuses": {
+    "http:200": 3
+  },
+  "retry_hints": {
+    "requests_with_retry_hint": 0,
+    "requested_delay": {
+      "count": 0,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0,
+      "p999_ms": 0,
+      "max_ms": 0
+    }
+  },
+  "otlp_request_latency": {
+    "count": 3,
+    "p50_ms": 1.52,
+    "p95_ms": 2.080375,
+    "p99_ms": 2.080375,
+    "p999_ms": 2.080375,
+    "max_ms": 2.080375
+  },
+  "otlp_request_latency_from_scheduled_send": {
+    "count": 3,
+    "p50_ms": 2,
+    "p95_ms": 3.169458,
+    "p99_ms": 3.169458,
+    "p999_ms": 3.169458,
+    "max_ms": 3.169458
+  },
+  "schedule": {
+    "method": "open-loop: request k is due at load start + k*batch_size/rate; delays are measured from that due time",
+    "scheduled_spans": 12,
+    "scheduled_but_not_started_spans": 0,
+    "late_start_threshold_ms": 10,
+    "late_start_requests": 0,
+    "late_start_requests_over_1s": 0,
+    "start_delay_after_scheduled_send": {
+      "count": 3,
+      "p50_ms": 0.796,
+      "p95_ms": 0.839083,
+      "p99_ms": 0.839083,
+      "p999_ms": 0.839083,
+      "max_ms": 0.839083
+    }
+  },
+  "workload": {
+    "spans": 12,
+    "traces_touched": 2,
+    "sessions_touched": 1,
+    "spans_by_kind": {
+      "AGENT": 2,
+      "CHAIN": 2,
+      "LLM": 5,
+      "RETRIEVER": 1,
+      "TOOL": 2
+    },
+    "spans_by_payload_class": {
+      "large": 1,
+      "medium": 2,
+      "small": 9
+    },
+    "spans_by_depth": {
+      "0": 2,
+      "1": 7,
+      "2": 3
+    },
+    "error_spans": 0,
+    "error_fraction": 0,
+    "variant_cohort_spans": 0,
+    "variant_cohort_fraction": 0,
+    "input_text_bytes": {
+      "count": 12,
+      "min": 188,
+      "mean": 2679.5833333333335,
+      "p50_upper_bound": 431,
+      "p95_upper_bound": 23715,
+      "p99_upper_bound": 23715,
+      "max": 23715
+    },
+    "output_text_bytes": {
+      "count": 12,
+      "min": 68,
+      "mean": 612.0833333333334,
+      "p50_upper_bound": 115,
+      "p95_upper_bound": 3612,
+      "p99_upper_bound": 3612,
+      "max": 3612
+    },
+    "llm_input_tokens": {
+      "count": 5,
+      "min": 65,
+      "mean": 224.4,
+      "p50_upper_bound": 87,
+      "p95_upper_bound": 796,
+      "p99_upper_bound": 796,
+      "max": 796
+    },
+    "llm_output_tokens": {
+      "count": 5,
+      "min": 17,
+      "mean": 91.2,
+      "p50_upper_bound": 26,
+      "p95_upper_bound": 339,
+      "p99_upper_bound": 339,
+      "max": 339
+    },
+    "span_duration_ms": {
+      "count": 12,
+      "min": 78,
+      "mean": 975.5833333333334,
+      "p50_upper_bound": 959,
+      "p95_upper_bound": 2006,
+      "p99_upper_bound": 2006,
+      "max": 2006
+    },
+    "request_uncompressed_body_bytes": {
+      "count": 3,
+      "min": 6304,
+      "mean": 15171.333333333334,
+      "p50_upper_bound": 8191,
+      "p95_upper_bound": 31054,
+      "p99_upper_bound": 31054,
+      "max": 31054
+    },
+    "request_wire_body_bytes": {
+      "count": 3,
+      "min": 6304,
+      "mean": 15171.333333333334,
+      "p50_upper_bound": 8191,
+      "p95_upper_bound": 31054,
+      "p99_upper_bound": 31054,
+      "max": 31054
+    },
+    "text_pool_blocks": 1024,
+    "text_pool_distinct_bytes": 574880,
+    "generator_build_workers": 2,
+    "generator_request_build_latency": {
+      "count": 3,
+      "p50_ms": 0.207,
+      "p95_ms": 0.213625,
+      "p99_ms": 0.213625,
+      "p999_ms": 0.213625,
+      "max_ms": 0.213625
+    },
+    "dispatch_delay_behind_schedule": {
+      "count": 3,
+      "p50_ms": 0.796,
+      "p95_ms": 0.839083,
+      "p99_ms": 0.839083,
+      "p999_ms": 0.839083,
+      "max_ms": 0.839083
+    }
+  },
+  "verification": {
+    "complete": true,
+    "method": "chunked-exact-id-per-request-outcome",
+    "scanned_run_rows": 12,
+    "persisted_distinct_attempted_spans": 12,
+    "duplicate_expected_rows_visible": 0,
+    "unexpected_rows": 0,
+    "run_rows_outside_trace_namespace": 0,
+    "missing_attempted_spans": 0,
+    "missing_attempted_fraction": 0,
+    "scanned_attempted_spans": 12,
+    "unscanned_attempted_spans": 0,
+    "missing_by_acknowledgement": {
+      "acknowledged_but_missing_spans": 0,
+      "partial_requests_missing_beyond_rejected_spans": 0,
+      "partial_rejected_and_missing_spans": 0,
+      "whole_request_rejected_and_missing_spans": 0,
+      "ambiguous_and_missing_spans": 0
+    },
+    "persisted_without_acknowledgement": {
+      "whole_request_rejected_but_persisted_spans": 0,
+      "partial_requests_persisted_beyond_acknowledged_spans": 0,
+      "ambiguous_but_persisted_spans": 0
+    },
+    "data_loss_detected": false,
+    "rejection_contract_violation": false,
+    "verified_chunks": 2,
+    "planned_chunks": 2,
+    "chunk_spans": 8,
+    "verified_namespace_windows": 1,
+    "rechecked_chunks": 1,
+    "resumed_at_chunk": 0,
+    "queries": 6,
+    "query_retries": 0,
+    "timeout_seconds": 600,
+    "durable_lag_timeout_seconds": 600,
+    "durable_lag_elapsed_seconds": 0.002640583,
+    "query_timeout_seconds": 30,
+    "query_max_memory_bytes": 1073741824,
+    "elapsed_seconds": 0.005445792,
+    "preexisting_run_rows": 0,
+    "missing_ranges": [],
+    "missing_ranges_omitted": 0,
+    "missing_ranges_omitted_spans": 0,
+    "durable_lag": {
+      "status": "measured",
+      "method": "per distinct stored span: first created_at (server, DEFAULT now64(6)) minus the scheduled send of its request, corrected by the measured clock offset",
+      "stored_spans_measured": 12,
+      "spans_inserted_before_scheduled_send": 0,
+      "insert_lag_from_scheduled_send": {
+        "count": 12,
+        "p50_ms": 18.208,
+        "p95_ms": 21.248,
+        "p99_ms": 21.248,
+        "p999_ms": 21.248,
+        "max_ms": 21.365
+      },
+      "insert_lag_buckets": [
+        {
+          "lower_ms": 12.032,
+          "upper_ms": 12.096,
+          "count": 1
+        },
+        {
+          "lower_ms": 12.288,
+          "upper_ms": 12.352,
+          "count": 1
+        },
+        {
+          "lower_ms": 12.544,
+          "upper_ms": 12.608,
+          "count": 1
+        },
+        {
+          "lower_ms": 12.8,
+          "upper_ms": 12.864,
+          "count": 1
+        },
+        {
+          "lower_ms": 14.912,
+          "upper_ms": 14.976,
+          "count": 1
+        },
+        {
+          "lower_ms": 15.168,
+          "upper_ms": 15.232,
+          "count": 1
+        },
+        {
+          "lower_ms": 15.488,
+          "upper_ms": 15.552,
+          "count": 1
+        },
+        {
+          "lower_ms": 15.744,
+          "upper_ms": 15.808,
+          "count": 1
+        },
+        {
+          "lower_ms": 19.84,
+          "upper_ms": 19.968,
+          "count": 1
+        },
+        {
+          "lower_ms": 20.096,
+          "upper_ms": 20.224,
+          "count": 1
+        },
+        {
+          "lower_ms": 20.352,
+          "upper_ms": 20.48,
+          "count": 1
+        },
+        {
+          "lower_ms": 21.248,
+          "upper_ms": 21.376,
+          "count": 1
+        }
+      ],
+      "clock_offset_applied_ms": 0.069,
+      "clock_offset_uncertainty_ms": 0.167,
+      "clock_offset_measured": true
+    }
+  },
+  "lag": {
+    "method": "sentinel_write_then_poll_acknowledged_only",
+    "registered_sentinels": 3,
+    "dropped_not_acknowledged_sentinels": 0,
+    "sampled_spans": 3,
+    "unseen_sampled_spans": 0,
+    "query_errors": 0,
+    "sentinel_request_stride": 1,
+    "max_sentinels": 40960,
+    "poll_interval_ms": 100,
+    "visibility_lag_upper_bound": {
+      "count": 3,
+      "p50_ms": 70.144,
+      "p95_ms": 101.193709,
+      "p99_ms": 101.193709,
+      "p999_ms": 101.193709,
+      "max_ms": 101.193709
+    },
+    "read_visible_lag_upper_bound_from_scheduled_send": {
+      "count": 3,
+      "p50_ms": 70.656,
+      "p95_ms": 102.282792,
+      "p99_ms": 102.282792,
+      "p999_ms": 102.282792,
+      "max_ms": 102.282792
+    },
+    "read_visible_lag_lower_bound_from_scheduled_send": {
+      "count": 3,
+      "p50_ms": 0.856,
+      "p95_ms": 1.088,
+      "p99_ms": 1.088,
+      "p999_ms": 1.088,
+      "max_ms": 1.089083
+    },
+    "upper_bound_from_scheduled_buckets": [
+      {
+        "lower_ms": 34.816,
+        "upper_ms": 35.072,
+        "count": 1
+      },
+      {
+        "lower_ms": 70.144,
+        "upper_ms": 70.656,
+        "count": 1
+      },
+      {
+        "lower_ms": 101.888,
+        "upper_ms": 102.4,
+        "count": 1
+      }
+    ],
+    "poll_query_latency": {
+      "count": 3,
+      "p50_ms": 0.788,
+      "p95_ms": 1.750666,
+      "p99_ms": 1.750666,
+      "p999_ms": 1.750666,
+      "max_ms": 1.750666
+    },
+    "window_seconds": 10,
+    "windows": [
+      {
+        "start_offset_seconds": 0,
+        "end_offset_seconds": 10,
+        "seen": 3,
+        "unseen": 0,
+        "upper_bound_from_scheduled": {
+          "count": 3,
+          "p50_ms": 70.656,
+          "p95_ms": 102.282792,
+          "p99_ms": 102.282792,
+          "p999_ms": 102.282792,
+          "max_ms": 102.282792
+        }
+      }
+    ]
+  },
+  "collector_backlog": {
+    "status": "not-configured",
+    "method": "pass --collector-health-url to sample the collector backlog",
+    "poll_interval_ms": 0,
+    "samples": 0,
+    "failed_samples": 0,
+    "samples_kept_in_memory": 0,
+    "max_pending_rows": 0,
+    "buffered_rows_during_load": {
+      "count": 0,
+      "min": 0,
+      "mean": 0,
+      "p50_upper_bound": 0,
+      "p95_upper_bound": 0,
+      "p99_upper_bound": 0,
+      "max": 0
+    },
+    "max_buffered_rows": 0,
+    "buffered_rows_slope_rows_per_second": 0,
+    "slope_samples": 0,
+    "second_half_slope_rows_per_second": 0,
+    "second_half_samples": 0,
+    "at_budget_samples": 0,
+    "drained_after_load": false,
+    "drain_seconds_after_load": 0,
+    "final_buffered_rows": 0,
+    "collector_rows_inserted": 0,
+    "collector_rows_dead_lettered": 0,
+    "collector_batches_retried": 0,
+    "collector_batches_failed": 0,
+    "collector_insert_rows_per_second_during_load": 0,
+    "collector_counter_resets_observed": 0,
+    "unreachable_windows": null,
+    "insert_stall_windows": null,
+    "insert_stall_threshold_seconds": 0
+  },
+  "clock": {
+    "method": "server now64(6) over the verification connection minus the generator's mid-request time; best of 5 probes by round trip; uncertainty = half the round trip",
+    "before_load": {
+      "measured": true,
+      "server_minus_generator_ms": 0.068854,
+      "best_round_trip_ms": 0.332292,
+      "uncertainty_ms": 0.166146,
+      "probes": 5
+    },
+    "after_settle": {
+      "measured": true,
+      "server_minus_generator_ms": 0.013521,
+      "best_round_trip_ms": 0.294959,
+      "uncertainty_ms": 0.1474795,
+      "probes": 5
+    },
+    "offset_or_uncertainty_exceeds_10ms": false
+  },
+  "latency_histogram": {
+    "method": "log-linear over whole microseconds: exact below 0.256 ms, then 128 sub-buckets per power of two through 2^37 us (38 h)",
+    "max_relative_bucket_width": 0.0078125,
+    "exact_microsecond_buckets_below_ms": 0.256,
+    "quantile_of_measured_and_upper_bound_series": "upper edge of the quantile's bucket, capped at the exact maximum: never below the true value",
+    "quantile_of_lower_bound_series": "lower edge of the quantile's bucket: never above the true value",
+    "lower_bound_series": [
+      "lag.read_visible_lag_lower_bound_from_scheduled_send",
+      "verification.durable_lag.insert_lag_from_scheduled_send",
+      "direct_clickhouse_reads[].censored_query_elapsed_lower_bound",
+      "application_reads[].censored_response_elapsed_lower_bound"
+    ]
+  },
+  "application_reads": [
+    {
+      "name": "trace-list",
+      "kind": "authenticated_application_http",
+      "status": "not-configured",
+      "successes": 0,
+      "window_censored_requests": 0,
+      "censored_response_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "errors": 0,
+      "http_statuses": {},
+      "successful_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "failed_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "response_bytes": 0
+    },
+    {
+      "name": "attribute-filter",
+      "kind": "authenticated_application_http",
+      "status": "not-configured",
+      "successes": 0,
+      "window_censored_requests": 0,
+      "censored_response_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "errors": 0,
+      "http_statuses": {},
+      "successful_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "failed_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "response_bytes": 0
+    },
+    {
+      "name": "session-view",
+      "kind": "authenticated_application_http",
+      "status": "not-configured",
+      "successes": 0,
+      "window_censored_requests": 0,
+      "censored_response_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "errors": 0,
+      "http_statuses": {},
+      "successful_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "failed_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "response_bytes": 0
+    },
+    {
+      "name": "dashboard",
+      "kind": "authenticated_application_http",
+      "status": "not-configured",
+      "successes": 0,
+      "window_censored_requests": 0,
+      "censored_response_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "errors": 0,
+      "http_statuses": {},
+      "successful_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "failed_response_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "response_bytes": 0
+    }
+  ],
+  "direct_clickhouse_reads": [
+    {
+      "name": "trace-by-id",
+      "phase": "during-load",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM `default`.`spans` WHERE project_id = {project:UUID} AND trace_id = {trace:String}",
+      "successes": 1,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 1,
+      "successful_query_latency": {
+        "count": 1,
+        "p50_ms": 0.78375,
+        "p95_ms": 0.78375,
+        "p99_ms": 0.78375,
+        "p999_ms": 0.78375,
+        "max_ms": 0.78375
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 1,
+        "min": 8,
+        "mean": 8,
+        "p50_upper_bound": 8,
+        "p95_upper_bound": 8,
+        "p99_upper_bound": 8,
+        "max": 8
+      },
+      "payload_text_bytes_read": {
+        "count": 1,
+        "min": 10169,
+        "mean": 10169,
+        "p50_upper_bound": 10169,
+        "p95_upper_bound": 10169,
+        "p99_upper_bound": 10169,
+        "max": 10169
+      }
+    },
+    {
+      "name": "session-by-id",
+      "phase": "during-load",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM `default`.`spans` WHERE project_id = {project:UUID} AND trace_session_id = {session:UUID}",
+      "successes": 1,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 1,
+      "successful_query_latency": {
+        "count": 1,
+        "p50_ms": 0.340791,
+        "p95_ms": 0.340791,
+        "p99_ms": 0.340791,
+        "p999_ms": 0.340791,
+        "max_ms": 0.340791
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 1,
+        "min": 8,
+        "mean": 8,
+        "p50_upper_bound": 8,
+        "p95_upper_bound": 8,
+        "p99_upper_bound": 8,
+        "max": 8
+      },
+      "payload_text_bytes_read": {
+        "count": 1,
+        "min": 10169,
+        "mean": 10169,
+        "p50_upper_bound": 10169,
+        "p95_upper_bound": 10169,
+        "p99_upper_bound": 10169,
+        "max": 10169
+      }
+    },
+    {
+      "name": "attribute-filter",
+      "phase": "during-load",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows FROM `default`.`spans` WHERE project_id = {project:UUID} AND start_time >= {from:DateTime64(6, 'UTC')} AND attrs_string['benchmark.cohort'] = 'variant' AND status = 'ERROR'",
+      "successes": 1,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 0,
+      "successful_query_latency": {
+        "count": 1,
+        "p50_ms": 0.282791,
+        "p95_ms": 0.282791,
+        "p99_ms": 0.282791,
+        "p999_ms": 0.282791,
+        "max_ms": 0.282791
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 1,
+        "min": 0,
+        "mean": 0,
+        "p50_upper_bound": 0,
+        "p95_upper_bound": 0,
+        "p99_upper_bound": 0,
+        "max": 0
+      }
+    },
+    {
+      "name": "trace-by-id",
+      "phase": "after-settle",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM `default`.`spans` WHERE project_id = {project:UUID} AND trace_id = {trace:String}",
+      "successes": 2,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 2,
+      "successful_query_latency": {
+        "count": 2,
+        "p50_ms": 0.268,
+        "p95_ms": 0.883042,
+        "p99_ms": 0.883042,
+        "p999_ms": 0.883042,
+        "max_ms": 0.883042
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 2,
+        "min": 8,
+        "mean": 8,
+        "p50_upper_bound": 8,
+        "p95_upper_bound": 8,
+        "p99_upper_bound": 8,
+        "max": 8
+      },
+      "payload_text_bytes_read": {
+        "count": 2,
+        "min": 10169,
+        "mean": 10169,
+        "p50_upper_bound": 10169,
+        "p95_upper_bound": 10169,
+        "p99_upper_bound": 10169,
+        "max": 10169
+      }
+    },
+    {
+      "name": "session-by-id",
+      "phase": "after-settle",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM `default`.`spans` WHERE project_id = {project:UUID} AND trace_session_id = {session:UUID}",
+      "successes": 2,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 2,
+      "successful_query_latency": {
+        "count": 2,
+        "p50_ms": 0.516,
+        "p95_ms": 1.079625,
+        "p99_ms": 1.079625,
+        "p999_ms": 1.079625,
+        "max_ms": 1.079625
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 2,
+        "min": 12,
+        "mean": 12,
+        "p50_upper_bound": 12,
+        "p95_upper_bound": 12,
+        "p99_upper_bound": 12,
+        "max": 12
+      },
+      "payload_text_bytes_read": {
+        "count": 2,
+        "min": 39500,
+        "mean": 39500,
+        "p50_upper_bound": 39500,
+        "p95_upper_bound": 39500,
+        "p99_upper_bound": 39500,
+        "max": 39500
+      }
+    },
+    {
+      "name": "attribute-filter",
+      "phase": "after-settle",
+      "kind": "direct_clickhouse_sql",
+      "status": "measured",
+      "query": "SELECT count() AS rows FROM `default`.`spans` WHERE project_id = {project:UUID} AND start_time >= {from:DateTime64(6, 'UTC')} AND attrs_string['benchmark.cohort'] = 'variant' AND status = 'ERROR'",
+      "successes": 2,
+      "errors": 0,
+      "skipped_no_candidate": 0,
+      "window_censored_queries": 0,
+      "censored_query_elapsed_lower_bound": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "non_empty_results": 0,
+      "successful_query_latency": {
+        "count": 2,
+        "p50_ms": 0.286,
+        "p95_ms": 0.439,
+        "p99_ms": 0.439,
+        "p999_ms": 0.439,
+        "max_ms": 0.439
+      },
+      "failed_query_latency": {
+        "count": 0,
+        "p50_ms": 0,
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "p999_ms": 0,
+        "max_ms": 0
+      },
+      "rows_returned": {
+        "count": 2,
+        "min": 0,
+        "mean": 0,
+        "p50_upper_bound": 0,
+        "p95_upper_bound": 0,
+        "p99_upper_bound": 0,
+        "max": 0
+      }
+    }
+  ],
+  "resources": [
+    {
+      "at": "2026-10-25T01:45:57.070885Z",
+      "source": "load-generator-host-not-collector",
+      "values": {
+        "arch": "arm64",
+        "generator_heap_bytes": 1980608,
+        "generator_peak_rss_bytes": 52887552,
+        "generator_runtime_reserved_bytes": 12600584,
+        "generator_system_cpu_seconds": 0.021617,
+        "generator_user_cpu_seconds": 0.029345,
+        "go_version": "go1.24.3",
+        "logical_cpus": 10,
+        "os": "darwin",
+        "working_filesystem_available_bytes": 3228953022464,
+        "working_filesystem_total_bytes": 4096595902464
+      }
+    },
+    {
+      "at": "2026-10-25T01:45:58.307992Z",
+      "source": "load-generator-host-not-collector",
+      "values": {
+        "arch": "arm64",
+        "generator_heap_bytes": 2628344,
+        "generator_peak_rss_bytes": 68042752,
+        "generator_runtime_reserved_bytes": 13780232,
+        "generator_system_cpu_seconds": 0.031896,
+        "generator_user_cpu_seconds": 0.060329,
+        "go_version": "go1.24.3",
+        "logical_cpus": 10,
+        "os": "darwin",
+        "working_filesystem_available_bytes": 3228953108480,
+        "working_filesystem_total_bytes": 4096595902464
+      }
+    }
+  ],
+  "warnings": [
+    "collector row admission is disabled (collector default (NOT observed; pass --collector-health-url)): retained rows and crash loss have no configured bound. For an isolated capacity run, provision and explicitly set FI_MAX_PENDING_ROWS=92 (server.max_pending_rows) or higher; this heuristic does not bound process memory"
+  ],
+  "limitations": [
+    "Synthetic payload profiles are a seeded model, not measured customer payload distributions.",
+    "Accepted/acknowledged means the collector's OTLP response claims acceptance; neither means durable storage.",
+    "No client retries. Ambiguous exports may still be persisted; partial success does not identify rejected IDs, so loss inside partial-success requests is a lower bound.",
+    "Read-visible lag is measured on sentinel spans of the load (the first span of every k-th acknowledged request) and bracketed by the polls around it; its upper bound includes polling/query delay. It is not storage commit latency.",
+    "Durable lag uses ClickHouse's created_at, evaluated when the server processes the INSERT and before the part is committed, corrected by a measured clock offset: a lower bound on commit latency.",
+    "Duplicate counts cover rows visible during verification, not duplicates already removed by MergeTree merges.",
+    "Verification is chunked by trace range and time window, not a transactional cross-shard snapshot; quiesce the run and record replica routing/consistency.",
+    "Direct ClickHouse reads measure database latency for fixed probe queries, not application API or browser latency.",
+    "A target profile is not evidence of reaching that rate; full-scale sustained and burst acceptance remain pending until measured."
+  ]
+}

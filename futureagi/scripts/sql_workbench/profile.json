@@ -1,0 +1,9 @@
+{
+  "name": "bounded-join-on-billion-span-project",
+  "required_project_spans": 1000000000,
+  "duration_seconds": 86400,
+  "interval_seconds": 60,
+  "window_hours": 1,
+  "sql": "SELECT s.locale, count() AS evaluations, avg(e.score) AS mean_score FROM eval_results AS e JOIN sessions AS s ON e.session_id = s.id GROUP BY s.locale ORDER BY s.locale",
+  "scope_note": "The project has at least one billion spans; each query intentionally reads only a one-hour window under the normal SQL resource caps. This is not a whole-billion-row scan claim. Use a dedicated environment, not a shared development stack."
+}

@@ -5,8 +5,7 @@
 // its messages + events into the BuilderConsole turn/step model, and posts user
 // turns back through POST …/conversation/messages/. Poll parity, not streaming:
 // assistant_delta is ignored; a whole assistant_message renders on the next poll,
-// with a "working" cue in between (the projector's heartbeat step + the brief
-// mutation-pending pulse).
+// with a "working" cue in between (the orbit around the composer's Stop button).
 //
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
@@ -34,6 +33,7 @@ import { useNudgeActions } from "./nudgeActions";
 import {
   projectConversation,
   conversationInFlight,
+  conversationStopping,
   conversationWaiting,
   draftsBlocked,
   turnAwaitingAnswer,
@@ -385,8 +385,7 @@ export function useWorkspaceChat(env, { source } = {}) {
   }, [turns, pending, retry]);
 
   // `running` blocks the composer only for the brief POST round-trip, so the user
-  // can still interject while the agent works autonomously (the heartbeat step is
-  // the persistent cue).
+  // can still interject while the agent works autonomously.
   const running = mutation.isPending;
 
   // A live job always accepts messages (they queue until its sandbox can run chat), so
@@ -414,8 +413,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     // The working indicator: a turn in flight or a running rebuild, not one
     // that only waits.
     working: (inFlight && !awaiting) || activeRunning,
-    // A Stop for the rebuild is on its way.
-    stopping: nudgeActions.stopping,
+    // A Stop is on its way, for the rebuild or for the builder's turn.
+    stopping: nudgeActions.stopping || conversationStopping(conversation),
     // A queued or running rebuild holds the drafts' Save and Discard.
     rebuildHold: Boolean(active),
     // A question or confirmation is open and the user can still answer it. A

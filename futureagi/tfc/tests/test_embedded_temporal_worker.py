@@ -79,6 +79,7 @@ def fake_registry(monkeypatch):
             "tasks_s",
             "default",
             "exact_aggregation",
+            "sql_workbench",
             "simulation_runner",
             "trace_ingestion",
         ],
@@ -101,19 +102,25 @@ def test_plans_poll_generic_queues_and_a_single_slot_exact_queue(fake_registry):
         "tasks_s",
         "trace_ingestion",
         "exact_aggregation",
+        "sql_workbench",
     ]
     generic = plans[0]
     assert generic.workflows == ["AllWorkflows"]
     assert generic.activities == ["all_activities"]
     assert (generic.max_activities, generic.max_workflow_tasks) == (8, 8)
-    exact = plans[-1]
+    exact = next(plan for plan in plans if plan.queue == "exact_aggregation")
     assert exact.workflows == ["exact_aggregation-workflow"]
     assert exact.activities == ["exact_aggregation-activity"]
     assert (exact.max_activities, exact.max_workflow_tasks) == (1, 1)
+    sql = next(plan for plan in plans if plan.queue == "sql_workbench")
+    assert sql.workflows == [] and sql.activities == ["sql_workbench-activity"]
+    assert (sql.max_activities, sql.max_workflow_tasks) == (2, 2)
 
 
 def test_plans_honour_excluded_queues_and_slot_env(fake_registry, monkeypatch):
-    monkeypatch.setenv("TEMPORAL_EXCLUDED_QUEUES", "exact_aggregation, tasks_s")
+    monkeypatch.setenv(
+        "TEMPORAL_EXCLUDED_QUEUES", "exact_aggregation, tasks_s, sql_workbench"
+    )
     monkeypatch.setenv("TEMPORAL_MAX_CONCURRENT_ACTIVITIES", "3")
 
     plans = embedded._worker_plans()
@@ -136,7 +143,11 @@ def test_own_slot_settings_win_over_full_install_ones(fake_registry, monkeypatch
 
     plans = embedded._worker_plans()
 
-    generic = [plan for plan in plans if plan.queue != "exact_aggregation"]
+    generic = [
+        plan
+        for plan in plans
+        if plan.queue not in {"exact_aggregation", "sql_workbench"}
+    ]
     assert {(p.max_activities, p.max_workflow_tasks) for p in generic} == {(12, 2)}
     exact = next(plan for plan in plans if plan.queue == "exact_aggregation")
     assert (exact.max_activities, exact.max_workflow_tasks) == (1, 1)
