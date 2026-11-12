@@ -593,6 +593,56 @@ class GitEvidenceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.release(version="v1.2.0", sha=self.git("rev-parse", "HEAD").strip())
 
+    def decoy(self, name, commit):
+        """A tag spelled like a remote-tracking branch, as any writer can push one."""
+        self.git("tag", name, commit)
+        self.assertEqual(self.git("rev-parse", f"refs/tags/{name}").strip(), commit)
+        if name.startswith("origin/"):
+            # The trap is armed: Git resolves the short name to the tag, not the branch.
+            self.assertEqual(self.git("rev-parse", name).strip(), commit)
+
+    def test_a_tag_named_like_main_on_an_old_commit_does_not_block_a_release_from_main(self):
+        old = self.git("rev-parse", "v1.0.0").strip()
+        for name in ("origin/main", "remotes/origin/main", "refs/remotes/origin/main"):
+            with self.subTest(tag=name):
+                self.decoy(name, old)
+                try:
+                    self.assertIn("environment=production-auto\n", self.release())
+                    self.assertEqual(self.guard_count(), ("v1.0.0", "0"))
+                finally:
+                    self.git("tag", "-d", name)
+        # A prerelease cut from dev passes even when origin/dev names an older commit.
+        with self.subTest(tag="origin/dev"):
+            self.git("checkout", "-b", "dev")
+            self.write("dev.txt")
+            self.commit()
+            self.git("update-ref", "refs/remotes/origin/dev", "HEAD")
+            self.git("tag", "v1.2.0-rc.1")
+            self.decoy("origin/dev", old)
+            self.assertIn("environment=Production\n",
+                          self.release(version="v1.2.0-rc.1", sha=self.git("rev-parse", "HEAD").strip()))
+
+    def test_a_tag_named_like_main_on_an_unreviewed_commit_does_not_admit_it(self):
+        self.git("checkout", "-b", "unreviewed")
+        self.write("unreviewed.txt")
+        self.commit()
+        unreviewed = self.git("rev-parse", "HEAD").strip()
+        self.git("tag", "v1.2.0")
+        self.git("tag", "v1.2.0-rc.1")
+        for name in ("origin/main", "remotes/origin/main", "refs/remotes/origin/main", "origin/dev"):
+            with self.subTest(tag=name):
+                self.decoy(name, unreviewed)
+                try:
+                    for version in ("v1.2.0", "v1.2.0-rc.1"):
+                        (self.root / "summary").unlink(missing_ok=True)
+                        with self.assertRaises(RuntimeError):
+                            self.release(version=version, sha=unreviewed)
+                        summary = (self.root / "summary").read_text()
+                        self.assertIn("could not be proved", summary)
+                        self.assertNotIn("The tag commit is on a reviewed branch", summary)
+                finally:
+                    self.git("tag", "-d", name)
+
     def test_event_sha_and_approval_sha_must_not_drift(self):
         prior = self.git("rev-parse", "v1.0.0").strip()
         with self.assertRaises(RuntimeError):

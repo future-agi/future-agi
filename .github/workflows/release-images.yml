@@ -214,7 +214,8 @@ jobs:
           echo "components: $components"
 
       # Run policy code from reviewed main, never from the proposed tag. Full
-      # history supplies origin/main ancestry and the previous stable baseline.
+      # history supplies refs/remotes/origin/main ancestry and the previous
+      # stable baseline.
       - uses: actions/checkout@v4
         with:
           ref: main

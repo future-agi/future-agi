@@ -807,8 +807,11 @@ def release_environment(version, expected_sha=None, approved_environment=None):
     # dispatch. A valid tag spelling alone does not prove the code was reviewed.
     # Stable tags must be on main. Prerelease tags may be cut from dev; they
     # always keep human review (environment_decision), but still must come
-    # from a reviewed branch.
-    branches = ["origin/main"] if version_tuple(version) else ["origin/main", "origin/dev"]
+    # from a reviewed branch. The remote-tracking refs are spelled in full: Git
+    # reads a short name such as origin/main as a tag first, and any writer can
+    # push a tag named origin/main.
+    main, dev = "refs/remotes/origin/main", "refs/remotes/origin/dev"
+    branches = [main] if version_tuple(version) else [main, dev]
     if not any(reachable(sha, branch) for branch in branches):
         summary("Release refused: tag commit reachability from " + " or ".join(branches) + " could not be proved.")
         raise RuntimeError("tag commit is not on a reviewed branch")

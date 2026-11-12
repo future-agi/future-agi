@@ -464,9 +464,13 @@ The existing component/version guard still runs verbatim both before and after
 approval. New steps then fetch full history and execute the policy from `main`:
 
 1. Resolve the requested tag to a commit, including annotated tags. Refuse it if
-   it is not reachable from `origin/main`. On a push, require that it still
-   resolves to the triggering event commit. After an approval wait, require the
-   same commit observed by the first guard.
+   it is not reachable from `refs/remotes/origin/main` (a prerelease tag may
+   also be reachable from `refs/remotes/origin/dev`). The check reads these
+   remote-tracking refs by their full names. Git reads a short name such as
+   `origin/main` as a tag first, and any writer can push a tag named
+   `origin/main`. On a push, require that the tag still resolves to the
+   triggering event commit. After an approval wait, require the same commit
+   observed by the first guard.
 2. Select the highest-version **stable** tag below the requested version that is
    reachable from that commit. Exclude the current release, beta, rc, dev and
    unrelated-history tags. This is the previous stable baseline; a newer tag
