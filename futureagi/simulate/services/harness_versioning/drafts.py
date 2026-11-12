@@ -64,6 +64,7 @@ from simulate.services.harness_versioning.draft_pieces import (
     version_error,
 )
 from simulate.services.harness_versioning.review import any_decision, apply_review
+from simulate.services.harness_versioning.review_items import index_in_step
 from simulate.services.harness_versioning.review_saved import name_saved, record_sources
 from simulate.services.harness_versioning.versions import (
     SEALED_MANIFEST,
@@ -513,7 +514,7 @@ def record_draft(
 
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
     checked = wanted | set(checked or ())
-    published = archives.read_archive(body)
+    published = index_in_step(archives.read_archive(body))
     split, prepared = prepare_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
     hashes = {

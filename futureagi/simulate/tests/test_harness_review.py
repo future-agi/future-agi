@@ -10,6 +10,7 @@ from simulate.services.harness_versioning.review_compose import (
 )
 from simulate.services.harness_versioning.review_items import (
     compute_changes,
+    index_mismatch,
     item_index,
 )
 
@@ -709,3 +710,49 @@ def test_a_scenario_saved_with_a_suite_entry_its_document_disagrees_with_is_refu
         digest_required=True,
         environment=object(),
     )
+
+
+def test_a_draft_write_takes_the_suite_entry_from_an_edit_to_the_scenario_s_own_file(
+    monkeypatch,
+):
+    from simulate.services.harness_versioning import archives, drafts
+
+    fault = [{"action": "get_order", "mode": "timeout_before_commit", "on_call": 1}]
+    files = _tree(
+        **{
+            "scenarios/s/scenario.json": {"name": "s", "faults": fault},
+            "scenarios/t/scenario.json": {"name": "t", "faults": []},
+            "scenarios.json": [
+                {"name": "s", "faults": [], "listed_only": 1},
+                {"name": "t", "faults": []},
+            ],
+        }
+    )
+    seen = {}
+
+    def _stop(environment, tree):
+        seen.update(tree)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(drafts, "prepare_tree", _stop)
+    with pytest.raises(RuntimeError):
+        drafts.record_draft(object(), archives.pack_archive(files), origin="chat")
+
+    assert json.loads(seen["scenarios.json"]) == [
+        {"name": "s", "faults": fault, "listed_only": 1},
+        {"name": "t", "faults": []},
+    ]
+    items = item_index(seen)
+    assert not index_mismatch(items["scenario:s"].value)
+
+
+def test_an_index_already_in_step_is_left_byte_for_byte():
+    from simulate.services.harness_versioning.review_items import index_in_step
+
+    files = _tree(
+        **{
+            "scenarios/s/scenario.json": {"name": "s", "faults": []},
+            "scenarios.json": b'[{"name":"s","faults":[]}]',
+        }
+    )
+    assert index_in_step(files)["scenarios.json"] == b'[{"name":"s","faults":[]}]'
