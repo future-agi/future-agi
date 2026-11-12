@@ -280,9 +280,10 @@ def delete_agents(organization, agent_ids) -> tuple[int, int]:
             .order_by("id")
         )
         counts = environment_counts([agent.id for agent in agents])
+        requested = {str(agent_id): place for place, agent_id in enumerate(agent_ids)}
         in_use = [
             (agent.agent_name, counts[agent.id])
-            for agent in agents
+            for agent in sorted(agents, key=lambda agent: requested[str(agent.id)])
             if counts.get(agent.id)
         ]
         if in_use:
