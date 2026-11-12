@@ -27,21 +27,20 @@ config:
         import json
         import ast
         def _parse(val):
-            if val is None:
-                return []
-            if isinstance(val, list):
-                return val
             if isinstance(val, str):
                 try:
-                    return json.loads(val)
+                    val = json.loads(val)
                 except (json.JSONDecodeError, ValueError):
-                    pass
-                try:
-                    return ast.literal_eval(val)
-                except (ValueError, SyntaxError):
-                    pass
-                return [val]
-            return list(val)
+                    try:
+                        val = ast.literal_eval(val)
+                    except (ValueError, SyntaxError):
+                        pass
+            if val is None:
+                return []
+            # Preserve dictionary key handling; scalar IDs are single items.
+            if isinstance(val, (list, tuple, set, dict)):
+                return list(val)
+            return [val]
         reference = _parse(kwargs.get("reference", expected))
         hypothesis = _parse(kwargs.get("hypothesis", output))
         if not reference or not hypothesis:
