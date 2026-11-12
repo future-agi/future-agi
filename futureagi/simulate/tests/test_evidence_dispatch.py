@@ -157,8 +157,9 @@ class TestStart:
 
         assert refused.value.code == "evidence_drafting_busy"
 
-    def test_only_waiting_cases_can_be_drafted(self, cases, user, scheduled):
-        EvidenceImportCase.objects.filter(id=cases[0].id).update(status="blocked")
+    @pytest.mark.parametrize("state", ["blocked", "discarded"])
+    def test_only_waiting_cases_can_be_drafted(self, cases, user, scheduled, state):
+        EvidenceImportCase.objects.filter(id=cases[0].id).update(status=state)
 
         with pytest.raises(HostedHarnessError) as refused:
             _start(cases, user)

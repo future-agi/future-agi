@@ -14,7 +14,7 @@ import hashlib
 import json
 from dataclasses import asdict, replace
 
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
@@ -48,6 +48,13 @@ MAX_IMPORT_CHARS = 60_000
 MAX_FINDINGS = 1000
 # The longest line of the evidence document a builder reads.
 DOCUMENT_LINE_CHARS = 1000
+# Unfinished imports an environment lists, newest first.
+MAX_OPEN_IMPORTS = 50
+# Cases a person can still draft or add.
+OPEN_CASE_STATUSES = (
+    EvidenceImportCase.Status.PENDING,
+    EvidenceImportCase.Status.DRAFTED,
+)
 
 STATE_MISSING = (
     "Observe does not record the records the agent's tools read before the "
@@ -162,6 +169,57 @@ def environment_evidence_import(
         .prefetch_related("cases")
         .first()
     )
+
+
+def open_evidence_imports(environment: HostedHarnessJob) -> list[dict]:
+    """The environment's imports a person can still finish, newest first: those
+    with a case to draft or add, or being drafted. Read from what the import
+    stores only: no source is read again and nothing is redacted."""
+    imports = (
+        EvidenceImport.no_workspace_objects.filter(
+            environment=environment, deleted=False
+        )
+        .annotate(
+            case_count=Count("cases"),
+            open_count=Count("cases", filter=Q(cases__status__in=OPEN_CASE_STATUSES)),
+            added_count=Count(
+                "cases", filter=Q(cases__status=EvidenceImportCase.Status.ADDED)
+            ),
+            drafted_count=Count(
+                "cases", filter=Q(cases__status=EvidenceImportCase.Status.DRAFTED)
+            ),
+        )
+        .filter(Q(open_count__gt=0) | Q(drafting_job__isnull=False))
+        .select_related("project", "dataset")
+        .order_by("-created_at")[:MAX_OPEN_IMPORTS]
+    )
+    return [
+        {
+            "id": one.id,
+            "source_kind": one.source_kind,
+            "source_name": source.name
+            if (source := one.project or one.dataset)
+            else None,
+            # A transcript's text is stored, so it never goes missing.
+            "source_available": source is None or not source.deleted,
+            "case_count": one.case_count,
+            "added_count": one.added_count,
+            "status": _open_status(one),
+            "created_at": one.created_at,
+            "can_discard": one.drafting_job_id is None,
+        }
+        for one in imports
+    ]
+
+
+def _open_status(evidence_import) -> str:
+    if evidence_import.drafting_job_id is not None:
+        return "drafting"
+    if evidence_import.added_count:
+        return "partly_added"
+    if evidence_import.drafted_count:
+        return "drafted"
+    return "waiting"
 
 
 def import_evidence(

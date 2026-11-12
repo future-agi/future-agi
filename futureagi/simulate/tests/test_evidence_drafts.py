@@ -659,3 +659,55 @@ def test_a_transcript_case_lands_and_is_added_like_an_observe_one(
     )
     assert scenario_key in keys
     assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
+
+
+def test_discarding_a_partly_added_import_keeps_its_added_scenario(
+    environment, storage, user
+):
+    from simulate.selectors.evidence_import import open_evidence_imports
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+        discard_evidence_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput("kept", "text", "User: Refund me\nAgent: Done twice."),
+            TranscriptInput("dropped", "text", "User: Where is it?\nAgent: Lost."),
+        ],
+        production=True,
+        user=user,
+    )
+    kept, dropped = list(made.cases.order_by("position"))
+    conversation, command = _command(environment, [kept], 71)
+    scenario_key = evidence_drafts.scenario_key_for(kept)
+    key, digest = _save(conversation, command, storage, [scenario_key])
+    _end_turn(conversation, command)
+    _promote(conversation, command, key, digest, 71)
+    with _certifies():
+        add_to_suite(
+            made, [str(kept.id)], expected={}, idempotency_key="add-k", user=user
+        )
+    assert [one["status"] for one in open_evidence_imports(environment)] == [
+        "partly_added"
+    ]
+
+    assert discard_evidence_import(made) is False
+
+    environment.refresh_from_db()
+    keys = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    assert scenario_key in keys
+    kept.refresh_from_db()
+    dropped.refresh_from_db()
+    assert (kept.status, dropped.status) == ("added", "discarded")
+    # Its provenance stays: the import and the added case's stored text.
+    made.refresh_from_db()
+    assert made.deleted is False
+    assert kept.transcript is not None
+    assert open_evidence_imports(environment) == []

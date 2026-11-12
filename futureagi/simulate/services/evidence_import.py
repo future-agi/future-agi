@@ -18,6 +18,7 @@ from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.selectors.dataset_evidence import MEDIA_TYPES, dataset_columns
 from simulate.selectors.evidence_import import (
+    OPEN_CASE_STATUSES,
     ROW_NOT_FOUND,
     SOURCE_NOT_FOUND,
     evidence_digest,
@@ -225,6 +226,32 @@ def _case(
         source_id=source_id,
         digest=evidence_digest(evidence),
     )
+
+
+def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
+    """Discard what a person no longer wants of ``evidence_import``. Nothing of
+    it added: the import is deleted, and a transcript's stored text with it.
+    Some of it added: only its cases not added are discarded, so the added
+    scenarios keep their provenance, and the import counts as finished. Refused
+    while the builder drafts its cases. Returns whether the import was deleted."""
+    with transaction.atomic():
+        locked = EvidenceImport.no_workspace_objects.select_for_update().get(
+            id=evidence_import.id
+        )
+        if locked.drafting_job_id is not None:
+            raise HostedHarnessError(
+                "evidence_drafting_busy",
+                "This import's cases are being drafted; discard it once drafting ends",
+                status_code=409,
+            )
+        cases = EvidenceImportCase.objects.filter(evidence_import=locked)
+        if not cases.filter(status=EvidenceImportCase.Status.ADDED).exists():
+            locked.delete()
+            return True
+        cases.filter(status__in=OPEN_CASE_STATUSES).update(
+            status=EvidenceImportCase.Status.DISCARDED, updated_at=timezone.now()
+        )
+        return False
 
 
 def add_to_suite(

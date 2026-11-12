@@ -16,6 +16,7 @@ from simulate.selectors.evidence_import import (
     evidence_dataset,
     evidence_project,
     import_bundle,
+    open_evidence_imports,
 )
 from simulate.selectors.held_back import (
     coding_agent_key,
@@ -30,6 +31,7 @@ from simulate.serializers.evidence_import import (
     EvidenceImportAddSerializer,
     EvidenceImportCreateSerializer,
     EvidenceImportDraftSerializer,
+    EvidenceImportListItemSerializer,
     EvidenceImportSerializer,
 )
 from simulate.serializers.harness_environment import (
@@ -76,6 +78,7 @@ from simulate.services.evidence_import import (
     create_dataset_import,
     create_evidence_import,
     create_transcript_import,
+    discard_evidence_import,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -567,6 +570,22 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @validated_request(
+        responses={200: EvidenceImportListItemSerializer(many=True)},
+        request_methods=["GET"],
+        operation_id="simulate_api_harness-environments_list_evidence_imports",
+    )
+    @evidence_imports.mapping.get
+    def list_evidence_imports(self, request, pk=None):
+        """This environment's imports a person can still finish, newest first.
+        Read from what each import stores: no source is read again."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            EvidenceImportListItemSerializer(open_evidence_imports(job), many=True).data
+        )
+
     @validated_request(responses={200: EvidenceImportSerializer})
     @action(
         detail=True,
@@ -584,6 +603,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if evidence_import is None:
             raise NotFound("Evidence import not found")
         return Response(EvidenceImportSerializer(import_bundle(evidence_import)).data)
+
+    @swagger_auto_schema(
+        responses={204: "Discarded"},
+        operation_id="simulate_api_harness-environments_discard_evidence_import",
+    )
+    @evidence_import.mapping.delete
+    def discard_import(self, request, pk=None, import_id=None):
+        """Discard an import never added, and a transcript's stored text with it.
+        Of an import with added cases, only the cases not added are discarded."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        discard_evidence_import(evidence_import)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
         request_serializer=EvidenceImportDraftSerializer,

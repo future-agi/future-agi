@@ -316,6 +316,34 @@ class EvidenceImportSerializer(serializers.Serializer):
     redaction = EvidenceRedactionSerializer()
 
 
+class EvidenceImportListItemSerializer(serializers.Serializer):
+    """One import of an environment a person can still finish."""
+
+    id = serializers.UUIDField()
+    source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
+    source_name = serializers.CharField(
+        allow_null=True,
+        help_text="The Observe project's or dataset's name; null for transcripts.",
+    )
+    source_available = serializers.BooleanField(
+        help_text="False once the Observe project or dataset was deleted."
+    )
+    case_count = serializers.IntegerField(min_value=0)
+    added_count = serializers.IntegerField(
+        min_value=0, help_text="Cases already added to the suite."
+    )
+    status = serializers.ChoiceField(
+        choices=("waiting", "drafting", "drafted", "partly_added"),
+        help_text="drafting: the builder is drafting its cases now. partly_added: "
+        "some cases were added and some can still be.",
+    )
+    created_at = serializers.DateTimeField()
+    can_discard = serializers.BooleanField(
+        help_text="False while the builder drafts its cases. Discarding an import "
+        "with added cases discards only the cases not added."
+    )
+
+
 class EvidenceDraftRefSerializer(serializers.Serializer):
     id = serializers.UUIDField(allow_null=True)
     revision = serializers.IntegerField(min_value=0)

@@ -140,6 +140,8 @@ class EvidenceImportCase(BaseModel):
         DRAFTED = "drafted", "Drafted"
         BLOCKED = "blocked", "Blocked"
         ADDED = "added", "Added to the suite"
+        # A person discarded it, keeping the cases of the import already added.
+        DISCARDED = "discarded", "Discarded"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     evidence_import = models.ForeignKey(
