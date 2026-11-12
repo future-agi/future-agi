@@ -2,10 +2,13 @@
 
 The Temporal server and activity/executor boundary are real. Billing side effects
 are synthetic; the optional cloud case retains the actual private service loop
-but substitutes subscription queries and invoice calculation (no charges/writes).
+but substitutes subscription queries, invoice calculation and its per-organization
+transactions (no charges, writes or database).
 """
 
 import asyncio
+import contextlib
+import inspect
 import os
 import sys
 import threading
@@ -53,7 +56,13 @@ class BillingCancellationWorkflow:
 
 
 def _cloud_invoice_loop(monkeypatch, do_work):
-    """Pin the real service's before-org callback/except-Exception contract."""
+    """Pin the real service's before-org callback/except-Exception contract.
+
+    Only data access is substituted: subscription and invoice queries, the
+    engine's calculation and the service's own per-organization transactions
+    (this test has no database). The calculation accepts exactly the arguments
+    the real engine accepts, so the service's call to it stays checked.
+    """
     module = pytest.importorskip("ee.cloud.billing.invoice_generation")
     from ee.cloud.billing.billing_engine import BillingEngine
     from ee.usage.models.usage import Invoice, OrganizationSubscription, PlanChoices
@@ -74,13 +83,24 @@ def _cloud_invoice_loop(monkeypatch, do_work):
     invoices.values_list.return_value = []
     monkeypatch.setattr(Invoice.objects, "filter", Mock(return_value=invoices))
 
-    def calculate(org_id, period):
+    engine_call = inspect.signature(BillingEngine.generate_invoice)
+
+    def calculate(*args, **kwargs):
+        org_id, period = engine_call.bind(*args, **kwargs).args[:2]
         assert period == "2026-09"
         do_work(org_id)
         # Exercise the real loop without creating invoices or contacting Stripe.
         return {"total": 0, "line_items": []}
 
-    monkeypatch.setattr(BillingEngine, "generate_invoice", calculate)
+    monkeypatch.setattr(BillingEngine, "generate_invoice", staticmethod(calculate))
+    # Module-local, so django.db.transaction itself is untouched and any other
+    # database use by the service still trips pytest-django's blocker.
+    monkeypatch.setattr(
+        module,
+        "transaction",
+        SimpleNamespace(atomic=lambda *args, **kwargs: contextlib.nullcontext()),
+        raising=False,
+    )
     return module, module.InvoiceGenerationService.run_for_period
 
 
@@ -174,9 +194,19 @@ async def test_cancellation_stops_before_next_organization(
         invoice_module.InvoiceGenerationService = SimpleNamespace()
         monkeypatch.setitem(sys.modules, invoice_module.__name__, invoice_module)
 
+    service_output = []
+
     def generate(**kwargs):
+        # Keep the service's lines for failure messages. Its swallowed
+        # per-organization errors go to stdout when no stderr is given.
+        activity_log = kwargs["stdout"]
+
+        def stdout(line):
+            service_output.append(line)
+            activity_log(line)
+
         try:
-            return run_for_period(**kwargs)
+            return run_for_period(**{**kwargs, "stdout": stdout})
         finally:
             record("executor_finished")
             loop.call_soon_threadsafe(finished.set)
@@ -216,7 +246,22 @@ async def test_cancellation_stops_before_next_organization(
                     task_queue=queue,
                 )
                 try:
-                    await asyncio.wait_for(started.wait(), 10)
+                    # Fail fast, with the service's own output, if it ends
+                    # without reaching the first organization's work.
+                    waiters = [
+                        asyncio.ensure_future(event.wait())
+                        for event in (started, finished)
+                    ]
+                    await asyncio.wait(
+                        waiters, timeout=10, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for waiter in waiters:
+                        waiter.cancel()
+                    if not started.is_set():
+                        pytest.fail(
+                            "billing never started the first organization; "
+                            f"service output: {service_output}"
+                        )
                     # First verify that progress reached the real server. The same
                     # heartbeat channel delivers the subsequent cancellation.
                     async with asyncio.timeout(10):
