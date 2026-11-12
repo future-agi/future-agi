@@ -2,9 +2,9 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +12,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Plugin is a pipeline plugin that caches non-streaming chat completion responses.
@@ -89,11 +90,12 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// Build cache key.
+	scope := orgScope(rc)
 	namespace := rc.Metadata["cache_namespace"]
 	if namespace == "" {
 		namespace = "default"
 	}
-	key := BuildCacheKey(namespace, rc.Request)
+	key := BuildCacheKey(scope, namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
 
 	// Edge cache: check conditional request (If-None-Match → 304).
@@ -140,7 +142,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Request.Model); result != nil {
+			if result := p.semanticStore.Search(scope, vec, rc.Request.Model); result != nil {
 				rc.Response = result.Response
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
@@ -194,7 +196,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			p.semanticStore.Set(key, vec, rc.Request.Model, rc.Response, ttl)
+			p.semanticStore.Set(orgScope(rc), key, vec, rc.Request.Model, rc.Response, ttl)
 		}
 	}
 
@@ -204,6 +206,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// orgScope returns the cache partition for the request's org. The org is the
+// authenticated key's metadata org_id, which the auth plugin (priority 20, so
+// before this one) and Handlers.peekKeyOrgID copy into key_org_id. Callers
+// cannot write key_* metadata (isBlockedMetadataKey), so this is never caller
+// input. A key without an org lands in cache.NoOrgScope.
+func orgScope(rc *models.RequestContext) string {
+	return cache.OrgScope(rc.Metadata[tenant.MetadataKeyOrgID])
 }
 
 // resolveTTL returns the TTL for the cache entry.
@@ -259,9 +270,20 @@ func extractLastUserMessage(req *models.ChatCompletionRequest) string {
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
-// Uses FNV-1a 128-bit for speed (no crypto needed, just collision resistance).
-func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
-	h := fnv.New128a()
+//
+// scope is the tenant partition from cache.OrgScope and is hashed first. Its
+// tokens are fixed-format and contain no separator, so no namespace, model or
+// message content can make one org's key equal another's.
+//
+// The hash is SHA-256 truncated to 128 bits, rendered as 32 hex digits (the
+// shape vector stores such as Qdrant accept as a point id). It used to be
+// FNV-1a, which is fast but not collision-resistant against a caller who
+// chooses the input; with the key as the tenant boundary that matters.
+func BuildCacheKey(scope, namespace string, req *models.ChatCompletionRequest) string {
+	h := sha256.New()
+	h.Write([]byte("v2|"))
+	h.Write([]byte(scope))
+	h.Write([]byte("|"))
 	h.Write([]byte(namespace))
 	h.Write([]byte("|"))
 	h.Write([]byte(req.Model))
@@ -307,5 +329,5 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 		h.Write([]byte(strconv.Itoa(*req.Seed)))
 	}
 
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
