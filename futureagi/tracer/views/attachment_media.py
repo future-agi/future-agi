@@ -8,6 +8,7 @@ before any status or metadata is sent, and open streams re-authorize before and
 after every bounded read. Bytes are charged to the viewer's egress budget first.
 """
 
+import contextlib
 import re
 import time
 from urllib.parse import urlsplit
@@ -26,11 +27,16 @@ CHUNK_BYTES = 64 * 1024
 MAX_RESPONSE_SECONDS = 30
 
 
+CSP = "default-src 'none'; frame-ancestors 'none'"
+# Anything that is not image/audio/video is inert and opens in an opaque origin.
+SANDBOX_CSP = f"sandbox; {CSP}"
+
+
 def private(response):
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     response["Cross-Origin-Resource-Policy"] = "same-origin"
-    response["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    response["Content-Security-Policy"] = CSP
     response["Referrer-Policy"] = "no-referrer"
     response["Vary"] = "Cookie, Origin"
     return response
@@ -168,7 +174,7 @@ class RevocableBody:
             return chunk
         except StopIteration:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - storage stream boundary; ends the stream
             # No raw storage errors, signed URLs or source details in WSGI logs.
             self.close()
             raise StopIteration from None
@@ -177,10 +183,9 @@ class RevocableBody:
         self.closed = True
         if self.body is not None:
             body, self.body = self.body, None
-            try:
+            # A close exception must not leak storage credentials.
+            with contextlib.suppress(Exception):
                 body.close()
-            except Exception:
-                pass  # A close exception must not leak storage credentials.
 
 
 def media_response(request, *, occurrence_id, grant_token, authority, storage, origin):
@@ -195,6 +200,10 @@ def media_response(request, *, occurrence_id, grant_token, authority, storage, o
         same_origin(request, origin)
         grant, blob, viewer = check()
     except AttachmentError:
+        return private(HttpResponse(status=404))
+    # The validated type from the server-probed blob, never the declaration.
+    served = playback.servable(blob, grant.representation)
+    if served is None:
         return private(HttpResponse(status=404))
     principal = str(viewer.user_id)
     try:
@@ -217,8 +226,13 @@ def media_response(request, *, occurrence_id, grant_token, authority, storage, o
         response["ETag"] = etag
         return response
     try:
-        # Range only applies to GET; HEAD reports the full selected representation.
-        value = request.headers.get("Range") if request.method == "GET" else None
+        # Range applies to GET of audio/video only; HEAD, images and documents
+        # report and send the full selected representation.
+        value = (
+            request.headers.get("Range")
+            if request.method == "GET" and served.media
+            else None
+        )
         if request.headers.get("If-Range") not in {None, etag}:
             value = None
         start, end, partial = byte_range(value, blob.byte_length)
@@ -242,9 +256,12 @@ def media_response(request, *, occurrence_id, grant_token, authority, storage, o
         )
     )
     private(response)
-    response["Content-Type"] = "audio/wav"
-    response["Content-Disposition"] = 'inline; filename="recording.wav"'
-    response["Accept-Ranges"] = "bytes"
+    response["Content-Type"] = blob.mime_type
+    disposition = "inline" if served.inline else "attachment"
+    response["Content-Disposition"] = f'{disposition}; filename="{served.filename}"'
+    if not served.inline:
+        response["Content-Security-Policy"] = SANDBOX_CSP
+    response["Accept-Ranges"] = "bytes" if served.media else "none"
     response["ETag"] = etag
     response["Content-Length"] = str(end - start + 1)
     if partial:

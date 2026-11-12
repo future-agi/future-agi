@@ -121,7 +121,7 @@ class LiveAuthority:
     def source(self, viewer, scope, parent):
         try:
             span = self.span_reader(scope.project_id, parent.span_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - ClickHouse boundary; logged, fails closed
             logger.warning(
                 "attachment_source_unavailable", project_id=str(scope.project_id)
             )

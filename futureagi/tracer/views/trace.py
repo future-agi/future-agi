@@ -1203,6 +1203,10 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.attachments.retention import tombstone_deleted_traces
+
+    # Tombstone the traces' attachment occurrences; the erase drain removes bytes.
+    tombstone_deleted_traces(traces)
     from tracer.services.analysis_retention import retire_analysis_sources
 
     for project_id in sorted({trace.project_id for trace in traces}):

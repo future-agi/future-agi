@@ -29,6 +29,7 @@ from tracer.models.attachment import (
 from tracer.models.project import Project
 from tracer.services.attachments.bootstrap import session_policy
 from tracer.services.attachments.contract import (
+    PLACEMENT_FIELDS,
     AttachmentError,
     admit_audio,
     span_id,
@@ -216,6 +217,10 @@ def metadata(row, scope, expires_at):
     }
     if row.purpose:
         reference["purpose"] = row.purpose
+    for name in PLACEMENT_FIELDS:
+        value = getattr(row, name)
+        if value is not None:
+            reference[name] = value
     document = {
         "reference": reference,
         "scope": {
@@ -369,6 +374,9 @@ def link(viewer, authority, body):
                     span_id=target_parent.span_id,
                     direction=row.direction,
                     purpose=row.purpose,
+                    # LinkRequest carries no placement: the new occurrence is the
+                    # same content in the same role, so it inherits the source's.
+                    **{name: getattr(row, name) for name in PLACEMENT_FIELDS},
                     policy_version=scope.policy_version,
                     deletion_generation=scope.deletion_generation,
                     bound_at=timezone.now(),

@@ -95,6 +95,14 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
                 deleted=True, deleted_at=now
             )
         Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
+        from tracer.services.attachments.retention import (
+            fence_projects,
+            run_deletion_hook,
+        )
+
+        # Deny attachment reads now; the lifecycle sweep then tombstones the
+        # project's occurrences and the erase drain removes the bytes.
+        run_deletion_hook(fence_projects, project_ids=project_ids)
         ObservationSpan.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
         )

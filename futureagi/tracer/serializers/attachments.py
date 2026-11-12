@@ -238,6 +238,17 @@ class AttachmentReferenceSerializer(serializers.Serializer):
     modality = serializers.ChoiceField(choices=MODALITIES)
     mime_type = serializers.ChoiceField(choices=MIME_TYPES)
     purpose = serializers.ChoiceField(choices=PURPOSES, required=False)
+    message_index = serializers.IntegerField(
+        min_value=0, max_value=65535, required=False
+    )
+    part_index = serializers.IntegerField(min_value=0, max_value=65535, required=False)
+    role = serializers.ChoiceField(
+        choices=("user", "assistant", "tool", "system", "unknown"), required=False
+    )
+    channel = serializers.IntegerField(min_value=0, max_value=31, required=False)
+    conversation_id = serializers.CharField(max_length=128, required=False)
+    turn_id = serializers.CharField(max_length=128, required=False)
+    tool_call_id = serializers.CharField(max_length=128, required=False)
 
 
 class AttachmentOccurrenceSerializer(serializers.Serializer):
