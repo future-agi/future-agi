@@ -432,9 +432,16 @@ class ExplanationAgent:
 
         if len(texts) < 5:
             # Dataset collection filters blank reasons, but keeps every evaluation
-            # value. Use that original count so missing reasons do not look like a
-            # genuinely small run. Other callers may only supply explanations.
-            input_count = max(len(explanation or []), len(eval_values or []))
+            # cell. Count only graded values so missing reasons do not look like a
+            # genuinely small run, while the blank/None placeholders of a still
+            # running evaluation do not count as samples that lost their reasons.
+            # Other callers may only supply explanations.
+            graded_count = sum(
+                1
+                for value in eval_values or []
+                if value is not None and str(value).strip()
+            )
+            input_count = max(len(explanation or []), graded_count)
             if input_count >= 5:
                 # A sufficiently sized run losing its reasons is not a small run.
                 logger.error(
