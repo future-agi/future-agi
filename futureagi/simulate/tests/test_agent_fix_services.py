@@ -47,6 +47,7 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
+    VERDICT_TIERS,
     _record,
     check_failure,
     check_run_status,
@@ -59,6 +60,7 @@ from simulate.selectors.agent_fix import (
     ran_at,
 )
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_runs import (
     HELD_BACK_MIN_CASES,
     close_fix_run,
@@ -2997,8 +2999,6 @@ class TestPullRequestDescription:
         evidence=None,
         patch_body=_PATCH,
     ):
-        from simulate.services import agent_fix_github
-
         fix_run = _fix_run(source_run, diagnosis=diagnosis, report=report, plan=plan)
         request = {
             **fix_run.request,
@@ -3044,11 +3044,16 @@ class TestPullRequestDescription:
             " they corrected to (+1 more) · 3 files"
         )
         assert (
-            "Proven by Fix my agent: held-back cases 25% → 75%, target cases 0% → 63%;"
-            " passed every tier" in body
+            "Proven by Fix my agent: held-back cases 25% → 75%, target cases 0% → 63%"
+            "\n\n### Verdict" in body
         )
+        # The engine's own reason is not product text: the checks say it in words.
+        assert "passed every tier" not in body
         assert "### Verdict: Verified" in body
-        assert "| target | passed | 0/8 → 5/8 \\| 2 repeats |" in body
+        # The fix page's words for each check and its result, never the engine's ids.
+        assert "| Target cases | Passed | 0/8 → 5/8 \\| 2 repeats |" in body
+        assert "| Held-back set | Passed | 1/4 → 3/4 |" in body
+        assert "| target |" not in body and "| passed |" not in body
         assert "### What changed" in body
         assert "| `concierge/agents.py` | +12 | −3 |" in body
         assert "| `prompts/booking.md` | +4 | −1 |" in body
@@ -3066,23 +3071,85 @@ class TestPullRequestDescription:
     def test_a_limited_fix_without_a_diagnosis_is_titled_by_the_files_it_changes(
         self, source_run
     ):
-        flaky = {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3}
+        flaky = [
+            {"key": "case-2", "sub_goal": "refunded", "passed": 2, "runs": 3},
+            {
+                "key": "case-4",
+                "name": "Refund a late order",
+                "sub_goal": "apologised",
+                "passed": 1,
+                "runs": 3,
+            },
+        ]
+        ceilings = {
+            "name": "ceilings",
+            "status": "skipped",
+            "detail": "Cost not measured.",
+            "parts": [
+                {
+                    "name": "reply latency",
+                    "status": "passed",
+                    "detail": "1.2 s of 1.5 s",
+                },
+                {"name": "agent cost", "status": "skipped"},
+            ],
+        }
+        verdict = {
+            "accepted": True,
+            "reason": "passed every tier",
+            "target_pass_rate": [0, 0.625],
+            "tiers": [
+                *_TIERS[:-1],
+                ceilings,
+                {"name": "model-lock", "status": "skipped"},
+            ],
+        }
         _, title, body = self._described(
-            source_run, held_back=0, report={"flaky_protected": [flaky]}
+            source_run,
+            held_back=0,
+            report={"flaky_protected": flaky},
+            verdict=verdict,
         )
 
+        # The fix page's words for what a fix may change: instructions and settings.
         assert title == (
-            "Fix my agent (limited validation): change code, prompts and config in"
-            " 3 files"
+            "Fix my agent (limited validation): change code, instructions and settings"
+            " in 3 files"
         )
         assert body.startswith("**Limited validation.**")
         assert "Checked by Fix my agent" in body and "Proven by" not in body
         assert "### Verdict: Limited validation" in body
         assert "### Why" not in body
+        # A check that could not measure says so, and an untraced agent's cost says why.
+        assert "| Cost and latency | Couldn't measure | Cost not measured. |" in body
+        assert "| ↳ Reply time | Passed | 1.2 s of 1.5 s |" in body
         assert (
-            "- Protected case `case-2` (refunded) is not held: the current version"
-            " passes it 2 of 3 times." in body
+            "| ↳ Agent's cost | Cost unknown | This agent isn't traced, so its cost"
+            " isn't measured. |" in body
         )
+        assert "| Model unchanged | Couldn't measure |  |" in body
+        # A protected case reads by its name, and by its key only when it has none.
+        assert (
+            "- Protected case “case-2” is flaky on the current version, so this fix"
+            " wasn't held to it: its “refunded” check passed 2 of 3 runs." in body
+        )
+        assert "- Protected case “Refund a late order” is flaky" in body
+        assert "case-4" not in body
+
+    def test_every_check_the_engine_records_reads_as_the_fix_page_names_it(self):
+        _check_label = agent_fix_github._check_label
+
+        assert set(VERDICT_TIERS) - {"model-lock"} == set(
+            agent_fix_github._CHECK_LABELS
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a"]}) == (
+            "Model unchanged"
+        )
+        assert _check_label("model-lock", {"allowed_models": ["a", "b"]}) == (
+            "Approved models"
+        )
+        # A check a newer engine adds still reads as words.
+        assert _check_label("tool_budget", {}) == "Tool budget"
 
     def test_an_overridden_fix_names_its_regression_and_the_users_reason(
         self, source_run
@@ -3112,16 +3179,16 @@ class TestPullRequestDescription:
             " first said, not the one they corrected to · 3 files"
         )
         assert body.startswith("**Known regression.**")
-        assert "- `case-1: refunded`" in body
+        assert "- “case-1: refunded”" in body
         assert "> The regression is a test we are retiring." in body
         assert "### Verdict: Known regression" in body
-        assert "| must-pass | failed | All 6 held. |" in body
+        assert "| Must-pass set | Failed | All 6 held. |" in body
         assert (
-            "- Must-pass check `case-3: polite` dropped, within the current version's"
-            " own noise." in body
+            "- Must-pass check “case-3: polite” dropped, within normal noise, so it was"
+            " not counted." in body
         )
 
-    def test_a_fix_from_evidence_names_each_import_by_kind_and_id_only(
+    def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
         self, source_run
     ):
         evidence = [
@@ -3130,17 +3197,28 @@ class TestPullRequestDescription:
                 "source_kind": "session",
                 "source_ids": ["session-with-a-customer-name"],
                 "scenario_keys": ["evidence-0a1b2c3d4e5f", "evidence-0a1b2c3d4e60"],
-            }
+            },
+            {
+                "import_id": "7e2f0b52-0b7a-4c4e-9a43-2b1a8f0c1d12",
+                "source_kind": "dataset",
+                "source_ids": ["row-1", "row-2", "row-3"],
+                "scenario_keys": ["evidence-1", "evidence-2", "evidence-3"],
+            },
+            {"source_kind": "a-kind-from-later", "scenario_keys": ["evidence-4"]},
         ]
         _, _, body = self._described(
             source_run, diagnosis={"causes": _CAUSES}, evidence=evidence
         )
 
+        # The import page's words for each kind of source.
         assert (
-            "### Evidence\n\nThis fix started from evidence imported into the suite:"
-            "\n\n- session import `6d1f0b52-0b7a-4c4e-9a43-2b1a8f0c1d11`: 2 cases"
+            "### Evidence\n\nThis fix started from imported evidence:\n\n"
+            "- 1 session from Observe, added as 2 scenarios\n"
+            "- 3 dataset rows, added as 3 scenarios\n"
+            "- Imported evidence, added as 1 scenario"
         ) in body
-        # Only the kind and the id: never the sources themselves.
+        # Never an import's id, nor its sources.
+        assert "6d1f0b52" not in body and "row-1" not in body
         assert "session-with-a-customer-name" not in body
 
 

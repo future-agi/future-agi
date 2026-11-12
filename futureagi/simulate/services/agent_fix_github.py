@@ -171,7 +171,7 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
 
 def _override_note(candidate: AgentFixCandidate) -> str:
     """What a candidate the must-pass check refused ships with, and the user's reason."""
-    checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
+    checks = "\n".join(f"- “{check}”" for check in overridable_regressions(candidate))
     reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
     return (
         "**Known regression.** Fix my agent did not accept this change: these must-pass"
@@ -198,7 +198,8 @@ def _changed_files(patch: bytes) -> list[tuple[str, int, int]]:
     return [(name, added, removed) for name, (added, removed) in files.items()]
 
 
-# What a title calls the files a change touches when no diagnosed cause names what it fixes.
+# What a title calls the files a change touches when no diagnosed cause names what it
+# fixes: the fix page's words for what a fix may change (fixRunView.js SURFACE_LABEL).
 _PROMPT_SUFFIXES = (".md", ".txt", ".prompt", ".j2", ".jinja", ".jinja2")
 _CONFIG_SUFFIXES = (".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env")
 
@@ -209,9 +210,9 @@ def _kind(path: str) -> str:
         return "tests"
     suffix = Path(path).suffix.lower()
     if suffix in _PROMPT_SUFFIXES:
-        return "prompts"
+        return "instructions"
     if suffix in _CONFIG_SUFFIXES:
-        return "config"
+        return "settings"
     return "code"
 
 
@@ -262,18 +263,62 @@ def _cell(text: Any) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
 
 
-def _verdict_section(verdict: dict, standing: str) -> str:
+# The fix page's words for a check and for the parts of the cost and latency check
+# (fixRunView.js: CHECK_LABELS, checkLabel, describePart). The engine's ids are never shown.
+_CHECK_LABELS = {
+    "static": "Static checks",
+    "target": "Target cases",
+    "held-back": "Held-back set",
+    "must-pass": "Must-pass set",
+    "repeats": "Repeat runs",
+    "ceilings": "Cost and latency",
+}
+_PART_LABELS = {"reply latency": "Reply time", "agent cost": "Agent's cost"}
+_UNKNOWN_PARTS = {"reply latency": "Reply time unknown", "agent cost": "Cost unknown"}
+_UNTRACED_COST = "This agent isn't traced, so its cost isn't measured."
+
+
+def _check_label(name: str, request: dict) -> str:
+    if name == "model-lock":
+        many = len(request.get("allowed_models") or []) > 1
+        return "Approved models" if many else "Model unchanged"
+    if name in _CHECK_LABELS:
+        return _CHECK_LABELS[name]
+    words = re.sub(r"[-_]+", " ", name)
+    return words[:1].upper() + words[1:]
+
+
+def _result(status: str) -> str:
+    # A shipped candidate failed no check but must-pass, and ran every check after it,
+    # so a skipped check here ran and could not measure.
+    return "Couldn't measure" if status == "skipped" else status.capitalize()
+
+
+def _part_row(part: dict, request: dict) -> str:
+    name, status = str(part.get("name", "")), str(part.get("status", ""))
+    result, detail = _result(status), part.get("detail", "")
+    if status == "skipped":
+        result = _UNKNOWN_PARTS.get(name, result)
+        if name == "agent cost" and not request.get("meters_agent_cost"):
+            detail = _UNTRACED_COST
+    return f"| ↳ {_cell(_PART_LABELS.get(name, name))} | {result} | {_cell(detail)} |"
+
+
+def _verdict_section(verdict: dict, standing: str, request: dict) -> str:
+    """The verdict's checks as the fix page names them, each part of one on its own row."""
     tiers = verdict.get("tiers") or []
     if not tiers:
         return f"### Verdict: {standing}"
-    rows = "\n".join(
-        f"| {_cell(tier.get('name', ''))} | {_cell(tier.get('status', ''))}"
-        f" | {_cell(tier.get('detail', ''))} |"
-        for tier in tiers
-    )
-    return (
-        f"### Verdict: {standing}\n\n| Check | Result | Detail |\n|---|---|---|\n{rows}"
-    )
+    rows = []
+    for tier in tiers:
+        rows.append(
+            f"| {_cell(_check_label(str(tier.get('name', '')), request))}"
+            f" | {_result(str(tier.get('status', '')))}"
+            f" | {_cell(tier.get('detail', ''))} |"
+        )
+        rows += [_part_row(part, request) for part in tier.get("parts") or []]
+    listed = "\n".join(rows)
+    return f"### Verdict: {standing}\n\n| Check | Result | Detail |\n|---|---|---|\n{listed}"
 
 
 def _files_section(files: list[tuple[str, int, int]]) -> str:
@@ -290,19 +335,24 @@ def _why_section(candidate: AgentFixCandidate) -> str:
     if not causes:
         return ""
     listed = "\n".join(f"- {' '.join(cause.split())}" for cause in causes)
-    return f"### Why\n\nWhat the diagnosis found the failing cases fail on:\n\n{listed}"
+    return (
+        f"### Why\n\nThe diagnosis found these causes of the failing cases:\n\n{listed}"
+    )
 
 
 def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
     """What the checks could not hold this change to, or flagged without refusing it."""
+    # The fix page's words for both (FixVerdict.jsx MustPassBreaks, flakyProtectedText).
     lines = [
-        f"- Must-pass check `{check}` dropped, within the current version's own noise."
+        f"- Must-pass check “{check}” dropped, within normal noise, so it was not"
+        " counted."
         for check in verdict.get("must_pass_within_noise") or []
     ]
     lines += [
-        f"- Protected case `{case.get('key')}` ({case.get('sub_goal')}) is not held:"
-        f" the current version passes it {case.get('passed')} of {case.get('runs')}"
-        " times."
+        f"- Protected case “{case.get('name') or case.get('key')}” is flaky on the"
+        " current version, so this fix wasn't held to it: its"
+        f" “{case.get('sub_goal')}” check passed {case.get('passed')} of"
+        f" {case.get('runs')} runs."
         for case in (candidate.fix_run.report or {}).get("flaky_protected") or []
     ]
     evals = _evals_note(candidate)
@@ -315,18 +365,40 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
     )
 
 
+# The evidence-import page's words for each kind of source: one, many, and where from.
+_EVIDENCE_SOURCES = {
+    "session": ("session", "sessions", " from Observe"),
+    "call": ("call", "calls", " from Observe"),
+    "transcript": ("transcript", "transcripts", ""),
+    "dataset": ("dataset row", "dataset rows", ""),
+}
+
+
+def _plural(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
 def _evidence_origin(candidate: AgentFixCandidate) -> str:
-    """The evidence imports the fix started from: each one's kind and id, never its content."""
+    """The evidence the fix started from: how many sources of each import's kind, and the
+    scenarios they became. Never an id, a source's name or its content."""
     imports = (candidate.fix_run.request or {}).get("evidence") or []
     if not imports:
         return ""
-    listed = "\n".join(
-        f"- {one.get('source_kind')} import `{one.get('import_id')}`:"
-        f" {len(one.get('scenario_keys') or [])} case"
-        f"{'' if len(one.get('scenario_keys') or []) == 1 else 's'}"
-        for one in imports
-    )
-    return f"### Evidence\n\nThis fix started from evidence imported into the suite:\n\n{listed}"
+    lines = []
+    for one in imports:
+        sources = len(one.get("source_ids") or [])
+        kind = _EVIDENCE_SOURCES.get(str(one.get("source_kind")))
+        what = (
+            f"{_plural(sources, kind[0], kind[1])}{kind[2]}"
+            if kind and sources
+            else "Imported evidence"
+        )
+        scenarios = _plural(
+            len(one.get("scenario_keys") or []), "scenario", "scenarios"
+        )
+        lines.append(f"- {what}, added as {scenarios}")
+    listed = "\n".join(lines)
+    return f"### Evidence\n\nThis fix started from imported evidence:\n\n{listed}"
 
 
 def _notes_section(summary: str) -> str:
@@ -357,9 +429,8 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     too few cases were held back to verify it, and when it ships with a known regression
     on the user's reason."""
     verdict = candidate.verdict or {}
-    reason = "; ".join(
-        part for part in (_evidence(verdict), verdict.get("reason")) if part
-    )
+    # Not the engine's own reason: the checks below say the same in the page's words.
+    rates = _evidence(verdict)
     limited = limited_validation(candidate.fix_run)
     overridden = bool(candidate.override_reason)
     proof = "Checked" if limited or overridden else "Proven"
@@ -376,8 +447,8 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
         for part in (
             _override_note(candidate) if overridden else "",
             _LIMITED_NOTE if limited else "",
-            f"{proof} by Fix my agent: {reason}" if reason else "",
-            _verdict_section(verdict, standing),
+            f"{proof} by Fix my agent: {rates}" if rates else "",
+            _verdict_section(verdict, standing, candidate.fix_run.request or {}),
             _files_section(files),
             _why_section(candidate),
             _risks_section(candidate, verdict),

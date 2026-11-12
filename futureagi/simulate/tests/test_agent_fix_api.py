@@ -1640,8 +1640,8 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
-            "passed every tier" in sent["json"]["body"]
+            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%\n"
+            in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
         assert sent["json"]["title"] == "Fix my agent: change agent.py"
@@ -1877,7 +1877,7 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Fix my agent (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        assert f"- `{self.REGRESSED}`" in pull["body"]
+        assert f"- “{self.REGRESSED}”" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Proven by" not in pull["body"]
         after = self._override(auth_client, fix_run)
