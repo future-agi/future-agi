@@ -35481,6 +35481,10 @@ export const SimulateAgentsConnectCreateResponse = zod.object({
   exists: zod.boolean().optional(),
 });
 
+export const SimulateAgentsConnectAvailabilityListResponse = zod.object({
+  reading_enabled: zod.boolean().optional(),
+});
+
 /**
  * POST /agents/scan/: find the agents in a source; the drawer polls the result.
  */

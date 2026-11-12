@@ -49307,6 +49307,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -49453,6 +49459,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -49824,12 +49836,6 @@
                     }
                 ],
                 "responses": {
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ViewerReadOnlyError"
-                        }
-                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -50073,6 +50079,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -50184,6 +50196,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -50318,6 +50336,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
@@ -50379,6 +50403,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -50418,6 +50448,32 @@
             },
             "parameters": []
         },
+        "/simulate/agents/connect/availability/": {
+            "get": {
+                "operationId": "simulate_agents_connect_availability_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentConnectAvailabilityResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/simulate/agents/scan/": {
             "post": {
                 "operationId": "simulate_agents_scan_create",
@@ -50433,6 +50489,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
@@ -52738,6 +52800,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "200": {
                         "description": "",
                         "schema": {
@@ -52745,12 +52813,6 @@
                         }
                     },
                     "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
-                        }
-                    },
-                    "403": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -138901,6 +138963,16 @@
                 },
                 "exists": {
                     "title": "Exists",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentConnectAvailabilityResponse": {
+            "type": "object",
+            "properties": {
+                "reading_enabled": {
+                    "title": "Reading enabled",
                     "type": "boolean",
                     "readOnly": true
                 }

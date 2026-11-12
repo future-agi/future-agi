@@ -18154,6 +18154,10 @@ export interface AgentConnectResponseApi {
   readonly exists?: boolean;
 }
 
+export interface AgentConnectAvailabilityResponseApi {
+  readonly reading_enabled?: boolean;
+}
+
 export type AgentSourceRequestApiKind =
   (typeof AgentSourceRequestApiKind)[keyof typeof AgentSourceRequestApiKind];
 
