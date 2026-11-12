@@ -358,7 +358,7 @@ class LinkAcceptance(unittest.TestCase):
                 for target in node.targets
             )
         ]
-        self.assertEqual(versions, [29])
+        self.assertEqual(versions, [30])
 
 
 if __name__ == "__main__":
