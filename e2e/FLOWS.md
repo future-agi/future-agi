@@ -2567,3 +2567,26 @@
 - the bundle read again shows the first row as the dataset holds it now, a transcript finding that replaces the minted email with <EMAIL_ADDRESS>, the intent label on the row, the minted expected text as the expected outcome, and is not production
 - after the cell edit the bundle says only the edited row changed since import, and shows its new expected text
 - the review shows two cards marked "Dataset row", each with its expected outcome, "2 rows from a dataset" and that they are not marked production; after the reload only the edited card says the source changed
+
+### SIM-E2E-006 — a person finds two imports they never drafted under Draft imports, resumes one and discards the other
+
+**Goal:** A person finds two imports they never drafted under Draft imports on an environment's Scenarios tab, resumes one, and discards the other
+
+**Spec:** `flows/simulate/evidence-import-resume.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and two transcript imports, A then B, through the create route
+2. open the environment's Scenarios tab and read the Draft imports strip
+3. resume A: its review opens
+4. close the review
+5. discard B and confirm
+
+**Backend state verified:**
+
+- the strip rows are exactly B then A, newest first, each "1 transcript · waiting to be drafted", and equal the list route's answer
+- Resume sends no mutating /simulate/ request, puts import=<A> in the URL, and the review shows A's name
+- from the confirm on, the only mutating /simulate/ request is DELETE on B, answered 204; B is deleted with its redaction and its case's stored transcript cleared, and A is untouched
+- afterwards the list route answers exactly [A] and the strip shows only A
