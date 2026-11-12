@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +30,12 @@ func TestHuggingFacePresetChat(t *testing.T) {
 		wantHost   string
 		wantPath   string
 		stream     bool
+		// fromFile loads a type-only provider through config.Load, the path an
+		// operator's config file takes, instead of building ProviderConfig in code.
+		fromFile bool
 	}{
-		{name: "default", wantHost: "router.huggingface.co", wantPath: "/v1/chat/completions"},
-		{name: "default_stream", wantHost: "router.huggingface.co", wantPath: "/v1/chat/completions", stream: true},
+		{name: "default", fromFile: true, wantHost: "router.huggingface.co", wantPath: "/v1/chat/completions"},
+		{name: "default_stream", fromFile: true, wantHost: "router.huggingface.co", wantPath: "/v1/chat/completions", stream: true},
 		{name: "explicit_endpoint", baseURL: "https://dedicated.example.test", wantHost: "dedicated.example.test", wantPath: "/v1/chat/completions"},
 		{name: "explicit_prefix", baseURL: "https://dedicated.example.test", pathPrefix: testStrPtr("/custom"), wantHost: "dedicated.example.test", wantPath: "/custom/chat/completions"},
 		{name: "explicit_empty_prefix", baseURL: "https://dedicated.example.test", pathPrefix: testStrPtr(""), wantHost: "dedicated.example.test", wantPath: "/chat/completions"},
@@ -81,18 +86,33 @@ func TestHuggingFacePresetChat(t *testing.T) {
 			defer upstream.Close()
 
 			cfg := config.DefaultConfig()
-			cfg.Providers["huggingface"] = config.ProviderConfig{
+			provider := config.ProviderConfig{
 				Type:          "huggingface",
 				BaseURL:       tc.baseURL,
 				APIPathPrefix: tc.pathPrefix,
 				APIKey:        "synthetic-provider-credential",
 				Models:        []string{model},
-				SkipTLS:       true, // Only the in-process test server's self-signed certificate.
-				// Keep the preset URL intact; intercept only the network connection.
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
-				},
 			}
+			if tc.fromFile {
+				// Only type and api_key: base_url and api_format must come from the preset.
+				path := filepath.Join(t.TempDir(), "config.yaml")
+				file := "providers:\n  huggingface:\n    type: huggingface\n    api_key: synthetic-provider-credential\n"
+				if err := os.WriteFile(path, []byte(file), 0600); err != nil {
+					t.Fatal(err)
+				}
+				loaded, err := config.Load(path)
+				if err != nil {
+					t.Fatalf("load type-only config: %v", err)
+				}
+				cfg = loaded
+				provider = cfg.Providers["huggingface"]
+			}
+			provider.SkipTLS = true // Only the in-process test server's self-signed certificate.
+			// Keep the preset URL intact; intercept only the network connection.
+			provider.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
+			}
+			cfg.Providers["huggingface"] = provider
 			registry, err := providers.NewRegistry(cfg)
 			if err != nil {
 				t.Fatalf("create registry: %v", err)
