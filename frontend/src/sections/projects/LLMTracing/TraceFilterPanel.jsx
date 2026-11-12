@@ -180,7 +180,7 @@ const apiColTypeForFilterField = (field, category) => {
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
 // ---------------------------------------------------------------------------
-export const TAG_FILTER_OPERATORS = ["in", "not_in", "is_null", "is_not_null"];
+const TAG_FILTER_OPERATORS = ["in", "not_in", "is_null", "is_not_null"];
 // Ids of the effective tag field. The Sessions list cannot filter by it.
 const TAG_FIELD_IDS = new Set(["tag", "tags"]);
 

@@ -33,7 +33,6 @@ import TraceFilterPanel, {
   PropertyPickerPaginationControl,
   shouldUseRetainedAttributePages,
   supplementCatalogSearchCategoryCounts,
-  TAG_FILTER_OPERATORS,
   toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
@@ -1476,7 +1475,6 @@ describe("Tag filter operators and surfaces (TH-7275)", () => {
   });
 
   it("offers only exact membership for the Tag field", () => {
-    expect(TAG_FILTER_OPERATORS).toEqual(TAG_OPS);
     for (const tab of ["trace", "spans"]) {
       const tag = mergeTraceFilterProperties({ tab, source: "traces" }).find(
         (property) => property.id === "tag",
