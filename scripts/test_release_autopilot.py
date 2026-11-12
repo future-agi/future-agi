@@ -2209,7 +2209,7 @@ class PythonIsolationTests(unittest.TestCase):
         ours = {target for _, _, target in self.INVENTORY if not target.startswith("-")} - self.OTHER_REPOSITORIES
         self.assertEqual({Path(target).name for target in ours}, set(self.SCRIPT_CALLS))
 
-    def test_the_scan_finds_calls_without_isolation_and_reports_words_it_cannot_read(self):
+    def test_the_scan_finds_calls_without_isolation_and_ignores_other_words(self):
         script = "\n".join([
             "python3 -m pip install x",
             'count=$(cd platform && python3 scripts/a.py --to "$V") || count=unknown',
@@ -2227,7 +2227,11 @@ class PythonIsolationTests(unittest.TestCase):
                           ("python3", "scripts/b.py", False), ("python3", "scripts/c.py", False),
                           ("python3", "scripts/d.py", True)])
         self.assertEqual(self.calls("git diff --quiet -- python typescript"), [])
-        self.assertEqual(self.unread(script), ["if git diff --quiet -- python typescript; then"])
+
+    def test_the_scan_reads_wrapped_calls_and_reports_words_it_cannot_read(self):
+        # A word that names Python outside a call is reported; NOT_CALLS lists the real one.
+        self.assertEqual(self.unread("python3 -I x.py\nif git diff --quiet -- python typescript; then"),
+                         ["if git diff --quiet -- python typescript; then"])
         # Wrapped and versioned calls are read as calls and held to -I.
         wrapped = "\n".join(["timeout 60 python3 x.py", "env FOO=1 python3 x.py", "exec python3 x.py",
                              "sudo python3 -m pip install z", "python3.12 x.py", "nohup python3 -I x.py"])
