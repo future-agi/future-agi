@@ -22,6 +22,7 @@ from django.db import DatabaseError
 from django.utils import timezone
 
 import tfc.routers as routers
+from model_hub.models.error_localizer_model import ErrorLocalizerTask
 from tfc.tests.lagging_replica import lagging_replica  # noqa: F401  (fixture)
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
@@ -42,6 +43,7 @@ from tracer.services.eval_tasks import reconciler as reconciler_module
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import materialize_pending
 from tracer.services.eval_tasks.reconciler import reconcile
+from tracer.tests._ch_seed import seed_ch_span
 from tracer.tests.eval_task_factories import make_config, make_template
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -862,6 +864,100 @@ def test_e01_run_entry_runs_and_stamps_config_edited_after_freeze(
     assert stored.config_hash == resolved_config_hash(edited)
     assert [request.runtime_config for request in stub_run_eval.requests] == [
         {"threshold": 0.3}
+    ]
+
+
+def _localized_entry(project, span, eval_template, eval_task):
+    """A RUNNING entry, written in bulk as materialize_pending writes it, whose
+    config has the error localizer on."""
+    config = CustomEvalConfig.objects.create(
+        name="e01-localized",
+        project=project,
+        eval_template=eval_template,
+        config={"threshold": 0.8},
+        mapping={"input": "input", "output": "output"},
+        filters={},
+        error_localizer=True,
+    )
+    (entry,) = EvalLogger.objects.bulk_create(
+        [
+            EvalLogger(
+                target_type=EvalTargetType.SPAN,
+                observation_span=span,
+                trace=span.trace,
+                custom_eval_config=config,
+                eval_task_id=str(eval_task.id),
+                status=EvalEntryStatus.RUNNING,
+            )
+        ]
+    )
+    return entry
+
+
+def _localizer_tasks(entry):
+    return ErrorLocalizerTask.no_workspace_objects.filter(source_id=entry.id)
+
+
+def test_e01_run_entry_localizes_result_of_entry_written_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    observation_span,
+    eval_template,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """The engine hands the entry it just wrote its result onto to the error
+    localizer. Re-read from a replica that has not applied the entry, that is
+    nothing: the localizer logs an error and no task is ever created."""
+
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    lagging_replica.freeze()
+    entry = _localized_entry(project, observation_span, eval_template, eval_task)
+
+    assert run_entry(entry) == EvalEntryStatus.COMPLETED
+
+    assert [task.organization_id for task in _localizer_tasks(entry)] == [
+        project.organization_id
+    ]
+
+
+def test_e01_run_entry_localizes_result_for_span_ingested_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    trace,
+    eval_template,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """A span ingested moments ago is evaluated straight away. The localizer
+    reads the result's span to find its project: from a replica that has not
+    applied the span, that read fails and no task is created."""
+
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    lagging_replica.freeze()
+    # A second batch of the trace, ingested after the replica froze.
+    span = ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="replica span",
+        observation_type="llm",
+        start_time=timezone.now() - timedelta(seconds=5),
+        end_time=timezone.now(),
+        input={"messages": [{"role": "user", "content": "Hello"}]},
+        output={"choices": [{"message": {"content": "Hi there"}}]},
+    )
+    seed_ch_span(span)
+    entry = _localized_entry(project, span, eval_template, eval_task)
+
+    assert run_entry(entry) == EvalEntryStatus.COMPLETED
+
+    assert [task.organization_id for task in _localizer_tasks(entry)] == [
+        project.organization_id
     ]
 
 

@@ -166,7 +166,9 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     if epoch is not None:
         fence["updated_at"] = epoch
     EvalLogger.objects.filter(**fence).update(**fields)
-    return EvalLogger.objects.filter(id=entry_id).first()
+    # Primary: the entry was materialized and claimed moments ago, and the
+    # caller hands this row to the error localizer.
+    return EvalLogger.objects.using("default").filter(id=entry_id).first()
 
 
 def materialize_pending(

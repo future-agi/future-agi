@@ -30,7 +30,7 @@ from sdk.utils.helpers import (
 )
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.ee_gates import jev_error_message
-from tfc.routers import primary_required
+from tfc.routers import force_primary, primary_required
 from tfc.temporal import temporal_activity
 from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -1918,15 +1918,19 @@ def _execute_evaluation(
                 trigger_error_localization_for_span,
             )
 
-            trigger_error_localization_for_span(
-                eval_template=eval_model,
-                eval_logger=eval_log,
-                mapping=raw_mapping,
-                eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                value=value,
-                log_id=str(log_id),
-                eval_config=getattr(custom_eval_config, "config", None),
-            )
+            # Primary: the localizer reads the result's span, which may have
+            # been ingested moments ago. The non-engine branch above already
+            # loaded it from the primary; the engine's entry loads it lazily.
+            with force_primary():
+                trigger_error_localization_for_span(
+                    eval_template=eval_model,
+                    eval_logger=eval_log,
+                    mapping=raw_mapping,
+                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                    value=value,
+                    log_id=str(log_id),
+                    eval_config=getattr(custom_eval_config, "config", None),
+                )
 
         if type == EXPERIMENT:
             # updating project version config
