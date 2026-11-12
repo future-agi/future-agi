@@ -40,6 +40,18 @@ VIEWER_REFUSALS = [
     ("put", f"{AGENT}edit/", "edit an agent"),
     ("post", f"{AGENT}versions/create/", "create an agent version"),
     ("post", f"{AGENT}versions/{OTHER}/activate/", "change the production version"),
+    ("post", f"{AGENT}versions/change/", "create an agent version"),
+    ("post", f"{AGENT}versions/{OTHER}/production/", "change the production version"),
+    ("post", f"{AGENT}versions/{OTHER}/retry/", "retry an agent version check"),
+    ("post", f"{AGENT}versions/{OTHER}/discard/", "discard an agent version"),
+    ("post", f"{AGENT}found-check/", "confirm what a reading found"),
+    ("post", "/simulate/agents/scan/", "scan a source for agents"),
+    ("post", "/simulate/agents/connect/", "connect an agent"),
+    (
+        "post",
+        f"{ENVIRONMENT}agent-policy/",
+        "change whether an environment follows production",
+    ),
 ]
 
 LABELS_WITHOUT_A_ROUTE_CASE = {
@@ -53,13 +65,10 @@ LABELS_WITHOUT_A_ROUTE_CASE = {
     "create a test run",
     "delete agents",
     "delete an agent",
-    "delete an agent version",
-    "discard an agent version",
     "discard environment drafts",
     "dismiss a rebuild prompt",
     "extend a build",
     "restore an agent version",
-    "retry an agent version check",
     "run evaluations",
     "save environment drafts",
     "upload agent code",

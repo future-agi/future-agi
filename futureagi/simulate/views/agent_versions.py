@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.requests.agent_version import (
     AgentVersionChangeRequestSerializer,
@@ -79,6 +80,7 @@ class _AgentVersionView(APIView):
 class AgentVersionChangeView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/change/: a new version by kind."""
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=AgentVersionChangeRequestSerializer,
         responses={
@@ -110,6 +112,7 @@ class AgentVersionChangeView(_AgentVersionView):
 class AgentVersionProductionView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/{vid}/production/."""
 
+    @viewer_denied("change the production version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -133,6 +136,7 @@ class AgentVersionProductionView(_AgentVersionView):
 class AgentVersionRetryView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/{vid}/retry/."""
 
+    @viewer_denied("retry an agent version check")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -153,6 +157,7 @@ class AgentVersionRetryView(_AgentVersionView):
 class AgentVersionDiscardView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/{vid}/discard/."""
 
+    @viewer_denied("discard an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={

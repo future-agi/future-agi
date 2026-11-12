@@ -364,6 +364,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @viewer_denied("change whether an environment follows production")
     @validated_request(
         request_serializer=HarnessAgentPolicySerializer,
         responses={

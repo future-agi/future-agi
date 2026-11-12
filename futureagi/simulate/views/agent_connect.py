@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, AgentScan
 from simulate.serializers.requests.agent_connect import (
     AgentConnectRequestSerializer,
@@ -83,6 +84,7 @@ def _scan_body(scan: AgentScan) -> dict:
 class AgentScanView(_ConnectView):
     """POST /agents/scan/: find the agents in a source; the drawer polls the result."""
 
+    @viewer_denied("scan a source for agents")
     @validated_request(
         request_serializer=AgentSourceRequestSerializer,
         responses={
@@ -131,6 +133,7 @@ class AgentScanDetailView(_ConnectView):
 class AgentConnectView(_ConnectView):
     """POST /agents/connect/: the agent and its first version, read on their own."""
 
+    @viewer_denied("connect an agent")
     @validated_request(
         request_serializer=AgentConnectRequestSerializer,
         responses={
@@ -169,6 +172,7 @@ class AgentFoundCheckView(_ConnectView):
     """POST /agent-definitions/{id}/found-check/: what the first reading found is
     confirmed; the agent can be built from now."""
 
+    @viewer_denied("confirm what a reading found")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
