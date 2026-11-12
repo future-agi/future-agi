@@ -370,7 +370,6 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         responses={
             200: HarnessAgentPolicyResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
-            403: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             409: ApiErrorWithDetailsResponseSerializer,
             502: ApiErrorWithDetailsResponseSerializer,
