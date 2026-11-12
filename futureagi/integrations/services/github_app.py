@@ -1,3 +1,4 @@
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -45,6 +46,10 @@ PAGE_SIZE = 50
 SUSPENDED_MESSAGE = "The GitHub App installation is suspended on GitHub."
 _GITHUB_PER_PAGE = 100
 _GITHUB_MAX_PAGES = 10
+_READ_TOKEN_SECONDS = 55 * 60
+_READ_TOKEN_RETRY_SECONDS = 60
+_read_tokens: dict[str, tuple[str, float]] = {}
+_read_tokens_lock = threading.Lock()
 
 InstallOutcome = Literal["connected", "requested", "already_connected"]
 
@@ -177,6 +182,35 @@ def installation_credential(installation_id: str) -> Iterator[str]:
         yield token
     finally:
         revoke_installation_token(token)
+
+
+def fallback_read_token() -> str | None:
+    """A token of Future AGI's own installation for reading public repositories,
+    held in this process only and replaced before GitHub's hour runs out; None when
+    no fallback installation is configured or GitHub refuses one."""
+    installation_id = _setting("GITHUB_APP_FALLBACK_INSTALLATION_ID")
+    if not installation_id:
+        return None
+    with _read_tokens_lock:
+        held = _read_tokens.get(installation_id)
+        if held is not None and held[1] > time.monotonic():
+            return held[0] or None
+        try:
+            token = installation_token(installation_id)
+        except GitHubAppError as exc:
+            logger.warning("github_fallback_token_unavailable", code=exc.code)
+            _read_tokens[installation_id] = (
+                "",
+                time.monotonic() + _READ_TOKEN_RETRY_SECONDS,
+            )
+            return None
+        _read_tokens[installation_id] = (token, time.monotonic() + _READ_TOKEN_SECONDS)
+        return token
+
+
+def forget_fallback_read_token() -> None:
+    with _read_tokens_lock:
+        _read_tokens.clear()
 
 
 def start_github_install(
