@@ -11,9 +11,51 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  ModelHubDevelopsAddRunPromptColumnCreateBody,
+  ModelHubDevelopsEditRunPromptColumnCreateBody,
+  ModelHubDevelopsPreviewRunPromptColumnCreateBody,
   ModelHubExperimentsV2CreateBody,
   ModelHubExperimentsV2UpdateBody,
+  ModelHubTestEvaluationCreateBody,
 } from "src/generated/api-contracts/api.zod";
+
+describe.each([
+  ["add", ModelHubDevelopsAddRunPromptColumnCreateBody],
+  ["edit", ModelHubDevelopsEditRunPromptColumnCreateBody],
+  ["preview", ModelHubDevelopsPreviewRunPromptColumnCreateBody],
+])("generated %s run-prompt config", (_name, schema) => {
+  it("accepts the serializer's null defaults without weakening scalar validation", () => {
+    const config = schema.shape.config;
+    expect(config.parse(undefined)).toEqual({
+      temperature: null,
+      frequency_penalty: null,
+      presence_penalty: null,
+      max_tokens: null,
+      top_p: null,
+      response_format: null,
+      tool_choice: null,
+      tools: null,
+      output_format: null,
+      concurrency: null,
+    });
+    expect(config.safeParse({ temperature: "hot" }).success).toBe(false);
+    expect(config.safeParse({ temperature: 3 }).success).toBe(false);
+    expect(config.safeParse({ tool_choice: "invalid" }).success).toBe(false);
+    expect(config.parse({ response_format: "text" }).response_format).toBe("text");
+  });
+});
+
+describe("generated evaluation variable keys", () => {
+  it("retains the declared JSON-value contract and empty-array default", () => {
+    const schema = ModelHubTestEvaluationCreateBody.shape.variable_keys;
+    expect(schema.parse(undefined)).toEqual([]);
+    expect(schema.parse(["input", { nested: [true, null, 1] }])).toEqual([
+      "input",
+      { nested: [true, null, 1] },
+    ]);
+    expect(schema.safeParse(() => "not JSON").success).toBe(false);
+  });
+});
 
 const MINIMAL_PAYLOAD = {
   name: "my experiment",
