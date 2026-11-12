@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -12,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import axios from "src/utils/axios";
 import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 import SpanAttachments from "../SpanAttachments";
+import useAttachmentGrants from "../useAttachmentGrants";
 import { AttachmentUnavailable, resolveAttachments } from "../client";
 import {
   grant,
@@ -147,4 +149,51 @@ describe("span attachments with the resolver mocked", () => {
       );
     },
   );
+});
+
+describe("grant results belong to the request they answer", () => {
+  it("never exposes the previous request's grant after the request changes", async () => {
+    const a = {
+      occurrence_id: occurrenceId,
+      parent,
+      representation: "original",
+    };
+    const b = {
+      occurrence_id: "d0000000-0000-0000-0000-000000000006",
+      parent,
+      representation: "original",
+    };
+    let release;
+    resolveAttachments.mockImplementation((_, items) =>
+      items[0].occurrence_id === a.occurrence_id
+        ? Promise.resolve([readyGrant(a.occurrence_id)])
+        : new Promise((done) => {
+            release = () => done([readyGrant(b.occurrence_id)]);
+          }),
+    );
+    const seen = [];
+    const { result, rerender } = renderHook(
+      ({ request }) => {
+        const value = useAttachmentGrants(projectId, [request]);
+        seen.push([request.occurrence_id, value.status, value.results]);
+        return value;
+      },
+      { initialProps: { request: a } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.results[0].occurrence_id).toBe(a.occurrence_id);
+    seen.length = 0;
+    rerender({ request: b });
+    expect(result.current.status).toBe("loading");
+    expect(result.current.results).toEqual([]);
+    // Not even the first render for request B may carry A's ready grant.
+    expect(seen.length).toBeGreaterThan(0);
+    for (const [, status, results] of seen) {
+      expect(status).not.toBe("ready");
+      expect(results).toEqual([]);
+    }
+    release();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.results[0].occurrence_id).toBe(b.occurrence_id);
+  });
 });

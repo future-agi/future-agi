@@ -22,13 +22,21 @@ export default function useAttachmentGrants(
   { enabled = true, renew = false } = {},
 ) {
   const requestKey = JSON.stringify(requests);
-  const [state, setState] = useState({ status: "idle", results: [] });
+  const stateKey = `${projectId}|${enabled}|${requestKey}`;
+  // Results are tagged with the request they answer, so a changed request
+  // never renders the previous request's grants (or refetches its bytes)
+  // during the render before the effect below marks it loading.
+  const [state, setState] = useState({
+    key: null,
+    status: "idle",
+    results: [],
+  });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const items = JSON.parse(requestKey);
     if (!enabled || !items.length) {
-      setState({ status: "idle", results: [] });
+      setState({ key: stateKey, status: "idle", results: [] });
       return undefined;
     }
     const controller = new AbortController();
@@ -42,7 +50,7 @@ export default function useAttachmentGrants(
           controller.signal,
         );
         if (stopped) return;
-        setState({ status: "ready", results });
+        setState({ key: stateKey, status: "ready", results });
         const expiries = results
           .filter((item) => item.status === "ready")
           .map((item) => Date.parse(item.expires_at));
@@ -50,7 +58,7 @@ export default function useAttachmentGrants(
         const remaining = Math.min(...expiries) - Date.now();
         // Never spin on a grant that is already about to expire.
         if (remaining < MIN_USABLE_MS) {
-          setState({ status: "unavailable", results: [] });
+          setState({ key: stateKey, status: "unavailable", results: [] });
           return;
         }
         timer = setTimeout(
@@ -58,18 +66,23 @@ export default function useAttachmentGrants(
           Math.min(2147483647, Math.max(1000, remaining - RENEW_BEFORE_MS)),
         );
       } catch {
-        if (!stopped) setState({ status: "unavailable", results: [] });
+        if (!stopped)
+          setState({ key: stateKey, status: "unavailable", results: [] });
       }
     };
-    setState({ status: "loading", results: [] });
+    setState({ key: stateKey, status: "loading", results: [] });
     void load();
     return () => {
       stopped = true;
       clearTimeout(timer);
       controller.abort();
     };
-  }, [projectId, requestKey, enabled, renew, attempt]);
+  }, [stateKey, projectId, requestKey, enabled, renew, attempt]);
 
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
-  return { ...state, retry };
+  if (state.key !== stateKey) {
+    const active = enabled && requests.length > 0;
+    return { status: active ? "loading" : "idle", results: [], retry };
+  }
+  return { status: state.status, results: state.results, retry };
 }
