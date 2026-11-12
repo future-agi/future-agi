@@ -12,13 +12,28 @@ and depends on which token endpoint issued the token:
 
 A token naming a client that neither store knows is refused: no endpoint
 issues tokens to unregistered clients, so its client must have been removed.
+
+Access tokens also name the refresh-token family issued with them
+(``refresh_family_id``). Both token endpoints revoke a family when one of its
+rotated refresh tokens is replayed, and the SDK ``/revoke`` revokes the family
+of a refresh token it is given; the family's access tokens end at the same
+time. A family that was only superseded by a new authorization keeps its
+access tokens. Tokens minted before families were named carry no family and
+keep their remaining (at most one hour) lifetime.
 """
 
 import structlog
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 
 from mcp_server.models.oauth_client import MCPOAuthClient
-from mcp_server.oauth_provider import ACCESS_PREFIX, CLIENT_PREFIX
+from mcp_server.models.oauth_refresh_token import MCPOAuthRefreshFamily
+from mcp_server.oauth_provider import (
+    ACCESS_PREFIX,
+    CLIENT_PREFIX,
+    REFRESH_FAMILY_REVOKED_PREFIX,
+)
+from mcp_server.refresh_tokens import family_revocation_ends_access_tokens
 
 logger = structlog.get_logger(__name__)
 
@@ -35,7 +50,9 @@ def access_token_revocation_reason(token: str, payload: dict) -> str | None:
         .first()
     )
     if django_client_active is not None:
-        return None if django_client_active else "client_inactive"
+        if not django_client_active:
+            return "client_inactive"
+        return _django_family_revocation_reason(payload)
 
     if cache.get(f"{CLIENT_PREFIX}{client_id}") is None:
         return "client_unknown"
@@ -47,4 +64,29 @@ def access_token_revocation_reason(token: str, payload: dict) -> str | None:
         payload.get("user_id")
     ):
         return "token_mismatch"
+    family_id = payload.get("refresh_family_id")
+    if family_id and cache.get(f"{REFRESH_FAMILY_REVOKED_PREFIX}{family_id}"):
+        return "refresh_family_revoked"
+    return None
+
+
+def _django_family_revocation_reason(payload: dict) -> str | None:
+    family_id = payload.get("refresh_family_id")
+    if not family_id:
+        return None
+    try:
+        family = (
+            MCPOAuthRefreshFamily.objects.filter(pk=family_id)
+            .values("revoked_at", "revoked_reason")
+            .first()
+        )
+    except (ValueError, ValidationError):
+        family = None
+    if family is None:
+        # Families are removed only with their connection.
+        return "refresh_family_unknown"
+    if family["revoked_at"] is not None and family_revocation_ends_access_tokens(
+        family["revoked_reason"]
+    ):
+        return "refresh_family_revoked"
     return None

@@ -435,15 +435,6 @@ class MCPOAuthTokenView(APIView):
         auth_code.save(update_fields=["used"])
         clear_invalid_token_attempts(request)
 
-        # Generate tokens
-        access_token, expires_at = generate_oauth_token(
-            user_id=auth_code.user.id,
-            org_id=auth_code.organization.id,
-            workspace_id=auth_code.workspace.id if auth_code.workspace else None,
-            client_id=client_id,
-            scope=auth_code.scope,
-        )
-
         # Store tokens on MCPConnection
         connection, created = MCPConnection.no_workspace_objects.get_or_create(
             user=auth_code.user,
@@ -454,12 +445,23 @@ class MCPOAuthTokenView(APIView):
                 "is_active": True,
             },
         )
-        refresh_token = issue_refresh_token(
+        # Generate tokens. The access token names the refresh-token family,
+        # so revoking the family (e.g. on reuse) also ends the access token.
+        issued_refresh = issue_refresh_token(
             connection,
             client_id=client_id,
             user_id=auth_code.user.id,
             org_id=auth_code.organization.id,
             scope=auth_code.scope,
+        )
+        refresh_token = issued_refresh.token
+        access_token, expires_at = generate_oauth_token(
+            user_id=auth_code.user.id,
+            org_id=auth_code.organization.id,
+            workspace_id=auth_code.workspace.id if auth_code.workspace else None,
+            client_id=client_id,
+            scope=auth_code.scope,
+            refresh_family_id=issued_refresh.family_id,
         )
         connection.oauth_token_encrypted = access_token
         connection.oauth_refresh_token_encrypted = refresh_token
@@ -563,6 +565,7 @@ class MCPOAuthTokenView(APIView):
             ),
             client_id=client_id,
             scope=scope,
+            refresh_family_id=rotation.family_id,
         )
 
         # Update stored tokens

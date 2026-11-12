@@ -27,9 +27,20 @@ def generate_authorization_code() -> str:
 
 
 def generate_oauth_token(
-    user_id, org_id, workspace_id, client_id, scope, expires_in=3600
+    user_id,
+    org_id,
+    workspace_id,
+    client_id,
+    scope,
+    expires_in=3600,
+    refresh_family_id=None,
 ):
-    """Generate encrypted OAuth access token. Returns (token_str, expires_at)."""
+    """Generate encrypted OAuth access token. Returns (token_str, expires_at).
+
+    ``refresh_family_id`` names the refresh-token family issued with this
+    token, so revoking that family also ends this token (see
+    mcp_server.oauth_revocation).
+    """
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     payload = {
         "type": "mcp_oauth",
@@ -40,6 +51,8 @@ def generate_oauth_token(
         "scope": scope,
         "expires_at": expires_at.isoformat(),
     }
+    if refresh_family_id:
+        payload["refresh_family_id"] = str(refresh_family_id)
     f = _get_fernet()
     encrypted = f.encrypt(json.dumps(payload, sort_keys=True).encode())
     return encrypted.decode(), expires_at

@@ -294,6 +294,10 @@ class FutureAGIOAuthProvider:
         # Delete used code
         await sync_to_async(cache.delete)(f"{CODE_PREFIX}{authorization_code.code}")
 
+        # This grant starts a new refresh-token family. The access token names
+        # it, so revoking the family also ends the access token.
+        family_id = uuid.uuid4().hex
+
         # Generate access token
         access_token_str, expires_at = await sync_to_async(generate_oauth_token)(
             user_id=authorization_code.user_id,
@@ -301,6 +305,7 @@ class FutureAGIOAuthProvider:
             workspace_id=authorization_code.workspace_id,
             client_id=authorization_code.client_id,
             scope=authorization_code.scopes,
+            refresh_family_id=family_id,
         )
 
         # Store access token metadata in cache
@@ -327,7 +332,7 @@ class FutureAGIOAuthProvider:
             user_id=authorization_code.user_id,
             organization_id=authorization_code.organization_id,
             workspace_id=authorization_code.workspace_id,
-            family_id=uuid.uuid4().hex,
+            family_id=family_id,
         )
 
         logger.info(
@@ -466,6 +471,7 @@ class FutureAGIOAuthProvider:
             workspace_id=refresh_token.workspace_id,
             client_id=refresh_token.client_id,
             scope=effective_scopes,
+            refresh_family_id=family_id,
         )
 
         # Store new access token

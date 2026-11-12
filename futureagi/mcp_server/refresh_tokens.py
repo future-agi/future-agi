@@ -12,6 +12,10 @@ both succeed.
 Each family records the scope (tool groups) the user consented to. An access
 token issued by a refresh carries that scope narrowed to the connection's
 currently enabled groups, never more (RFC 6749 section 6).
+
+Access tokens name the family they were issued with. When a family is revoked
+for any reason other than being superseded by a new authorization, its access
+tokens stop working too (see ``family_revocation_ends_access_tokens``).
 """
 
 from dataclasses import dataclass
@@ -35,10 +39,30 @@ from mcp_server.oauth_utils import (
 logger = structlog.get_logger(__name__)
 
 
+# A new authorization of the same client replaces its previous family. That is
+# routine re-connection, not a compromise, so the previous family's access
+# tokens keep their remaining lifetime, as before families existed.
+SUPERSEDED = "superseded"
+REUSE = "refresh_token_reuse"
+
+
+def family_revocation_ends_access_tokens(revoked_reason: str) -> bool:
+    """Whether a family revoked for ``revoked_reason`` also ends the access
+    tokens issued from it."""
+    return revoked_reason != SUPERSEDED
+
+
+@dataclass(frozen=True)
+class IssuedRefreshToken:
+    token: str
+    family_id: str
+
+
 @dataclass(frozen=True)
 class RefreshRotation:
     connection: MCPConnection | None = None
     refresh_token: str | None = None
+    family_id: str | None = None
     # Tool groups the user consented to for this authorization.
     consented_scope: tuple[str, ...] = ()
     error_reason: str | None = None
@@ -67,7 +91,9 @@ def revoke_family(family, reason: str, now=None) -> None:
     )
 
 
-def issue_refresh_token(connection, *, client_id, user_id, org_id, scope) -> str:
+def issue_refresh_token(
+    connection, *, client_id, user_id, org_id, scope
+) -> IssuedRefreshToken:
     """Start a new family for a fresh authorization of ``client_id``.
 
     ``scope`` is the list of tool groups the user consented to; refreshes in
@@ -81,13 +107,14 @@ def issue_refresh_token(connection, *, client_id, user_id, org_id, scope) -> str
     with transaction.atomic():
         MCPOAuthRefreshFamily.objects.filter(
             connection=connection, client_id=client_id, revoked_at__isnull=True
-        ).update(revoked_at=now, revoked_reason="superseded")
+        ).update(revoked_at=now, revoked_reason=SUPERSEDED)
         family = MCPOAuthRefreshFamily.objects.create(
             connection=connection, client_id=client_id, scope=list(scope)
         )
-        return _mint(
+        token = _mint(
             family, user_id=user_id, org_id=org_id, client_id=client_id, now=now
         )
+    return IssuedRefreshToken(token=token, family_id=str(family.pk))
 
 
 def _adopt_legacy_token(token, token_hash, *, client_id, user_id):
@@ -195,9 +222,22 @@ def rotate_refresh_token(token, *, client_id, user_id, org_id) -> RefreshRotatio
         if family.client_id != client_id:
             return RefreshRotation(error_reason="refresh_token_client_mismatch")
         if family.revoked_at is not None:
+            if record.used_at is not None and family.revoked_reason == SUPERSEDED:
+                # A rotated token of a superseded family is still a replay:
+                # someone else rotated it. Escalate, so the family's access
+                # tokens end as well.
+                MCPOAuthRefreshFamily.objects.filter(pk=family.pk).update(
+                    revoked_reason=REUSE
+                )
+                logger.warning(
+                    "oauth_refresh_token_reuse_detected",
+                    client_id=client_id,
+                    user_id=str(user_id),
+                    family_id=str(family.pk),
+                )
             return RefreshRotation(error_reason="refresh_token_revoked")
         if record.used_at is not None:
-            revoke_family(family, "refresh_token_reuse", now)
+            revoke_family(family, REUSE, now)
             logger.warning(
                 "oauth_refresh_token_reuse_detected",
                 client_id=client_id,
@@ -226,5 +266,6 @@ def rotate_refresh_token(token, *, client_id, user_id, org_id) -> RefreshRotatio
     return RefreshRotation(
         connection=connection,
         refresh_token=new_token,
+        family_id=str(family.pk),
         consented_scope=tuple(family.scope),
     )
