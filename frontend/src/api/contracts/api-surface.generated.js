@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1139,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1265,6 +1265,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/replay-session/eval-configs/": ["get"],
       "/tracer/replay-session/{id}/": ["get"],
       "/tracer/replay-session/{id}/generate-scenario/": ["post"],
+      "/tracer/saved-sql-query/": ["get", "post"],
+      "/tracer/saved-sql-query/{id}/": ["delete", "get", "patch"],
+      "/tracer/saved-sql-query/{id}/add-widget/": ["post"],
       "/tracer/saved-views/": ["get", "post"],
       "/tracer/saved-views/reorder/": ["post"],
       "/tracer/saved-views/{id}/": ["delete", "get", "patch", "put"],
@@ -1276,6 +1279,14 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/shared/{token}/": ["get"],
       "/tracer/shared/{token}/sidebar/": ["get"],
       "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
+      "/tracer/sql-query/": ["get"],
+      "/tracer/sql-query/catalog/": ["get"],
+      "/tracer/sql-query/estimate/": ["post"],
+      "/tracer/sql-query/run-saved/": ["post"],
+      "/tracer/sql-query/run/": ["post"],
+      "/tracer/sql-query/{id}/": ["get"],
+      "/tracer/sql-query/{id}/cancel/": ["post"],
+      "/tracer/sql-query/{id}/download/": ["get"],
       "/tracer/trace-annotation/get_annotation_values/": ["get"],
       "/tracer/trace-error-analysis/{trace_id}/": ["get"],
       "/tracer/trace-error-task/{project_id}/": ["get", "post"],
@@ -1319,32 +1330,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/user-alerts/{id}/graph/": ["get"],
       "/tracer/users/": ["get", "post"],
       "/tracer/users/get_code_example/": ["get"],
-      "/tracer/v1/attachment-media-sessions": ["post"],
-      "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
-      "/tracer/v1/attachment-sessions": ["post"],
       "/tracer/v1/health": ["get"],
-      "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],
-      "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": [
-        "get",
-      ],
-      "/tracer/v1/projects/{project_id}/attachments/occurrences": [
-        "get",
-        "post",
-      ],
-      "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}":
-        ["delete"],
-      "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
-        ["get", "put"],
-      "/tracer/v1/projects/{project_id}/attachments/resolve": ["post"],
-      "/tracer/v1/projects/{project_id}/attachments/uploads": ["post"],
-      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort":
-        ["post"],
-      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete":
-        ["post"],
-      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content":
-        ["put"],
-      "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status":
-        ["get"],
     },
     usage: {
       "/usage/admin/custom-plan/": ["get", "post", "put"],
@@ -2639,6 +2625,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/replay-session/eval-configs/": ["get"],
   "/tracer/replay-session/{id}/": ["get"],
   "/tracer/replay-session/{id}/generate-scenario/": ["post"],
+  "/tracer/saved-sql-query/": ["get", "post"],
+  "/tracer/saved-sql-query/{id}/": ["delete", "get", "patch"],
+  "/tracer/saved-sql-query/{id}/add-widget/": ["post"],
   "/tracer/saved-views/": ["get", "post"],
   "/tracer/saved-views/reorder/": ["post"],
   "/tracer/saved-views/{id}/": ["delete", "get", "patch", "put"],
@@ -2650,6 +2639,14 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/shared/{token}/": ["get"],
   "/tracer/shared/{token}/sidebar/": ["get"],
   "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
+  "/tracer/sql-query/": ["get"],
+  "/tracer/sql-query/catalog/": ["get"],
+  "/tracer/sql-query/estimate/": ["post"],
+  "/tracer/sql-query/run-saved/": ["post"],
+  "/tracer/sql-query/run/": ["post"],
+  "/tracer/sql-query/{id}/": ["get"],
+  "/tracer/sql-query/{id}/cancel/": ["post"],
+  "/tracer/sql-query/{id}/download/": ["get"],
   "/tracer/trace-annotation/get_annotation_values/": ["get"],
   "/tracer/trace-error-analysis/{trace_id}/": ["get"],
   "/tracer/trace-error-task/{project_id}/": ["get", "post"],
@@ -2693,34 +2690,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/user-alerts/{id}/graph/": ["get"],
   "/tracer/users/": ["get", "post"],
   "/tracer/users/get_code_example/": ["get"],
-  "/tracer/v1/attachment-media-sessions": ["post"],
-  "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": ["get"],
-  "/tracer/v1/attachment-sessions": ["post"],
   "/tracer/v1/health": ["get"],
-  "/tracer/v1/projects/{project_id}/attachments/imports": ["post"],
-  "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": [
-    "get",
-  ],
-  "/tracer/v1/projects/{project_id}/attachments/occurrences": ["get", "post"],
-  "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}": [
-    "delete",
-  ],
-  "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
-    ["get", "put"],
-  "/tracer/v1/projects/{project_id}/attachments/resolve": ["post"],
-  "/tracer/v1/projects/{project_id}/attachments/uploads": ["post"],
-  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort": [
-    "post",
-  ],
-  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete": [
-    "post",
-  ],
-  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content": [
-    "put",
-  ],
-  "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status": [
-    "get",
-  ],
   "/usage/admin/custom-plan/": ["get", "post", "put"],
   "/usage/admin/entitlements/": ["delete", "get", "post"],
   "/usage/admin/invoice/generate/": ["post"],

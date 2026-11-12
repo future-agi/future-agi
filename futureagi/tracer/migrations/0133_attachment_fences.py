@@ -1,11 +1,11 @@
 """Database fences also cover QuerySet.update and concurrent service workers.
 
 Rollback: disable attachment admission, drain/abort transfers, erase private
-objects via the deletion outbox, then reverse 0132 and 0131. Reversing 0131 drops
+objects via the deletion outbox, then reverse 0133 and 0132. Reversing 0132 drops
 control records, not object storage; never use it as a physical-erasure shortcut.
 
 This is the LAST attachment migration on purpose: every table it fences is
-created by 0131, so the triggers attach to final table shapes. Each upload
+created by 0132, so the triggers attach to final table shapes. Each upload
 names its own parent, so occurrences are not tied to a per-session parent.
 
 Why this is RunSQL and not Django schema operations: every fence here compares a
@@ -144,5 +144,5 @@ REVERSE += "\nDROP FUNCTION attachment_record_fence(); DROP TRIGGER attachment_s
 
 
 class Migration(migrations.Migration):
-    dependencies = [("tracer", "0131_attachment_control_records")]
+    dependencies = [("tracer", "0132_attachment_control_records")]
     operations = [migrations.RunSQL(FORWARD, REVERSE)]
