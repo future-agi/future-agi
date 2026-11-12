@@ -1640,11 +1640,11 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Verified by Fix my agent: held-back pass rate 0% → 61%, target pass rate"
+            "Verified by Epoch: held-back pass rate 0% → 61%, target pass rate"
             " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
-        assert sent["json"]["title"] == "Fix my agent: change agent.py"
+        assert sent["json"]["title"] == "Epoch: change agent.py"
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
@@ -1875,7 +1875,7 @@ class TestUserApi:
         )
         pull = sent["json"]
         assert pull["draft"] is True
-        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
         key, check = self.REGRESSED.split(": ")
         assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]

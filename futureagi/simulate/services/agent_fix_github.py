@@ -143,7 +143,7 @@ def _evidence(verdict: dict) -> str:
 
 # The FE says the same where the user ships.
 _EVALS_INCOMPLETE = (
-    "The evals could not finish grading this trial; it was not checked by them."
+    "The evals could not finish grading this candidate; it was not checked by them."
 )
 
 
@@ -201,7 +201,7 @@ def _override_note(candidate: AgentFixCandidate) -> str:
     )
     reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
     return (
-        "**Known regression.** Fix my agent did not accept this change: it broke these"
+        "**Known regression.** Epoch did not accept this change: it broke these"
         f" must-pass checks.\n\n{checks}\n\nIt was opened anyway, for this reason:"
         f"\n\n{reason}"
     )
@@ -274,7 +274,7 @@ def _title(
 ) -> str:
     """What the change does across its whole diff: the cause it fixes, else the files it
     changes. Cut only at a word, never mid-word, to fit."""
-    name = f"Fix my agent ({marks})" if marks else "Fix my agent"
+    name = f"Epoch ({marks})" if marks else "Epoch"
     budget = _TITLE_CHARS - len(name) - len(": ")
     causes = _causes(candidate)
     if not causes:
@@ -336,6 +336,29 @@ def _part_row(part: dict, request: dict) -> str:
     return f"| ↳ {_cell(_PART_LABELS.get(name, name))} | {result} | {_cell(detail)} |"
 
 
+# What measuring an agent's cost reads, said wherever a measured cost is shown.
+_MEASURED = (
+    "Measured automatically: model, tokens and timing only. Prompts and replies are"
+    " never recorded."
+)
+
+
+def _cost_measured(tiers: list[dict]) -> bool:
+    """Whether the cost and latency check shows a cost it measured: its agent cost part,
+    or the whole check when an older engine sent no parts."""
+    for tier in tiers:
+        if tier.get("name") != "ceilings":
+            continue
+        parts = tier.get("parts") or []
+        if not parts:
+            return tier.get("status") != "skipped"
+        return any(
+            part.get("name") == "agent cost" and part.get("status") != "skipped"
+            for part in parts
+        )
+    return False
+
+
 def _verdict_section(verdict: dict, standing: str, request: dict) -> str:
     """The verdict's checks as the fix page names them, each part of one on its own row."""
     tiers = verdict.get("tiers") or []
@@ -350,7 +373,9 @@ def _verdict_section(verdict: dict, standing: str, request: dict) -> str:
         )
         rows += [_part_row(part, request) for part in tier.get("parts") or []]
     listed = "\n".join(rows)
-    return f"### Verdict: {standing}\n\n| Check | Result | Detail |\n|---|---|---|\n{listed}"
+    table = f"| Check | Result | Detail |\n|---|---|---|\n{listed}"
+    measured = f"\n\n{_MEASURED}" if _cost_measured(tiers) else ""
+    return f"### Verdict: {standing}\n\n{table}{measured}"
 
 
 def _files_section(files: list[tuple[str, int, int]]) -> str:
@@ -438,12 +463,12 @@ def _evidence_origin(candidate: AgentFixCandidate) -> str:
 
 
 def _notes_section(candidate: AgentFixCandidate) -> str:
-    """The engine's own summary, labelled: it describes only the trial's last change."""
+    """The engine's own summary, labelled: it describes only the candidate's last change."""
     summary = candidate.summary.strip()
     if not summary:
         return ""
     return (
-        "<details><summary>Notes from Fix my agent on the last change of Trial"
+        "<details><summary>Notes from Epoch on the last change of Candidate"
         f" {candidate.attempt}</summary>\n\n{summary}\n\n</details>"
     )
 
@@ -456,7 +481,7 @@ def _fix_link(candidate: AgentFixCandidate) -> str:
     # frontend/src/routes/sections/dashboard.jsx: simulate → environments/:envId →
     # improvements/:fixId, the fix run's page.
     return (
-        f"[Open this fix on Future AGI]({base}/dashboard/simulate/environments/"
+        f"[Open this fix in Epoch on Future AGI]({base}/dashboard/simulate/environments/"
         f"{run.environment_id}/improvements/{run.id})"
     )
 
@@ -485,7 +510,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
         for part in (
             _override_note(candidate) if overridden else "",
             _limited_note(candidate) if limited else "",
-            f"{proof} by Fix my agent: {rates}" if rates else "",
+            f"{proof} by Epoch: {rates}" if rates else "",
             _verdict_section(verdict, standing, candidate.fix_run.request or {}),
             _files_section(files),
             _why_section(candidate),
@@ -493,7 +518,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
             _evidence_origin(candidate),
             _notes_section(candidate),
             _fix_link(candidate),
-            "Opened by Future AGI Fix my agent.",
+            "Opened by Epoch on Future AGI.",
         )
         if part
     )

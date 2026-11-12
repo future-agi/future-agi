@@ -2930,7 +2930,7 @@ class TestPullRequestEvals:
             source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
         )
         assert (
-            "The evals could not finish grading this trial; it was not checked by them."
+            "The evals could not finish grading this candidate; it was not checked by them."
             in self._body(
                 source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
             )
@@ -3040,12 +3040,12 @@ class TestPullRequestDescription:
 
         # The last revision's summary ("only prompts") is not what the change does.
         assert title == (
-            "Fix my agent: The agent books the date the caller first said, not the one"
+            "Epoch: The agent books the date the caller first said, not the one"
             " they corrected to (+1 more cause) · 3 files"
         )
         # The fix page's headline: the pass rates and the must-pass cases it broke.
         assert (
-            "Verified by Fix my agent: held-back pass rate 25% → 75%, target pass rate"
+            "Verified by Epoch: held-back pass rate 25% → 75%, target pass rate"
             " 0% → 63%, broke none\n\n### Verdict" in body
         )
         # The engine's own reason is not product text: the checks say it in words.
@@ -3055,6 +3055,14 @@ class TestPullRequestDescription:
         assert "| Target cases | Passed | 0/8 → 5/8 \\| 2 repeats |" in body
         assert "| Held-back set | Passed | 1/4 → 3/4 |" in body
         assert "| target |" not in body and "| passed |" not in body
+        # A measured cost says what measuring it reads.
+        assert (
+            "| Cost and latency | Passed | Within the limits. |\n\nMeasured"
+            " automatically: model, tokens and timing only. Prompts and replies are"
+            " never recorded." in body
+        )
+        # The feature is Epoch wherever the user reads it.
+        assert "Fix my agent" not in title + body
         assert "### What changed" in body
         assert "| `concierge/agents.py` | +12 | −3 |" in body
         assert "| `prompts/booking.md` | +4 | −1 |" in body
@@ -3063,12 +3071,12 @@ class TestPullRequestDescription:
         assert "### Evidence" not in body
         # The engine's summary is labelled as its own, on the trial the page names.
         assert (
-            "<details><summary>Notes from Fix my agent on the last change of Trial 1"
+            "<details><summary>Notes from Epoch on the last change of Candidate 1"
             "</summary>" in body
         )
         run = candidate.fix_run
         assert (
-            "[Open this fix on Future AGI](https://app.example/dashboard/simulate/"
+            "[Open this fix in Epoch on Future AGI](https://app.example/dashboard/simulate/"
             f"environments/{run.environment_id}/improvements/{run.id})" in body
         )
         assert len(title) <= 120
@@ -3119,7 +3127,7 @@ class TestPullRequestDescription:
 
         # The fix page's words for what a fix may change: instructions and settings.
         assert title == (
-            "Fix my agent (limited validation): change code, instructions and settings"
+            "Epoch (limited validation): change code, instructions and settings"
             " in 3 files"
         )
         # How many were held back, and how many it takes.
@@ -3127,7 +3135,7 @@ class TestPullRequestDescription:
             "**Limited validation.** Only 2 failing cases were held back from the fix to"
             " verify it; it takes 4 or more."
         )
-        assert "Checked by Fix my agent" in body and "Verified by" not in body
+        assert "Checked by Epoch" in body and "Verified by" not in body
         assert "### Verdict: Limited validation" in body
         assert "### Why" not in body
         # A check that could not measure says so, and an untraced agent's cost says why.
@@ -3139,6 +3147,8 @@ class TestPullRequestDescription:
             in body
         )
         assert "| Model unchanged | Couldn't measure |  |" in body
+        # No cost was measured, so nothing says how one is.
+        assert "Measured automatically" not in body
         # A protected case reads once, by its name, and by its key only without one.
         assert (
             "- Protected case “case-2” is flaky on the current version, so this fix"
@@ -3190,7 +3200,7 @@ class TestPullRequestDescription:
         )
 
         assert title == (
-            "Fix my agent (known regression): The agent books the date the caller"
+            "Epoch (known regression): The agent books the date the caller"
             " first said, not the one they corrected to · 3 files"
         )
         assert body.startswith("**Known regression.**")
@@ -3198,7 +3208,7 @@ class TestPullRequestDescription:
         assert "- Must-pass case “case-1”: its “refunded” check" in body
         assert "It was opened anyway, for this reason:" in body
         assert "> The regression is a test we are retiring." in body
-        assert "Checked by Fix my agent: target pass rate 0% → 63%, broke 1" in body
+        assert "Checked by Epoch: target pass rate 0% → 63%, broke 1" in body
         assert "### Verdict: Known regression" in body
         assert "| Must-pass set | Failed | 1 of 6 regressed. |" in body
         assert (
