@@ -153,3 +153,88 @@ async def test_logged_and_rethrown_activity_has_one_envelope_per_attempt(
         with pytest.raises(ValueError, match="activity failed"):
             await interceptor.execute_activity(activity_input)
         assert len(transport.events) == attempt + 1
+
+
+def test_invalid_host_header_is_not_an_issue_but_other_security_failures_are(
+    transport,
+):
+    from django.core.exceptions import DisallowedHost, SuspiciousFileOperation
+    from django.core.handlers.exception import response_for_exception
+    from django.test import RequestFactory, override_settings
+
+    with override_settings(DEBUG=False, ALLOWED_HOSTS=["testserver"]):
+        request = RequestFactory().get("/", HTTP_HOST="scanner.example.invalid")
+        with pytest.raises(DisallowedHost) as raised:
+            request.get_host()
+        # The exact path Django takes for a request with an invalid Host header.
+        assert response_for_exception(request, raised.value).status_code == 400
+        assert transport.events == []
+
+        response = response_for_exception(
+            request, SuspiciousFileOperation("synthetic path traversal")
+        )
+    assert response.status_code == 400
+    assert [event["logger"] for event in transport.events] == [
+        "django.security.SuspiciousFileOperation"
+    ]
+
+
+def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
+    transport,
+):
+    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
+    try:
+        raise ValueError("Could not deserialize key data.")
+    except ValueError as error:
+        logging.getLogger("LiteLLM").exception(
+            "Failed to load vertex credentials. Error: %s", error
+        )
+    assert transport.events == []
+
+    # Separate exception objects, so Dedupe cannot merge the two records.
+    try:
+        raise ValueError("Could not deserialize key data.")
+    except ValueError:
+        logging.getLogger("model_hub.utils.utils").exception("model_check_failed")
+    sentry_sdk.capture_exception(RuntimeError("synthetic genuine fault"))
+
+    assert [event.get("logger") for event in transport.events] == [
+        "model_hub.utils.utils",
+        None,
+    ]
+    crumbs = transport.events[-1]["breadcrumbs"]["values"]
+    assert any(
+        crumb.get("category") == "LiteLLM"
+        and "Failed to load vertex credentials" in crumb.get("message", "")
+        for crumb in crumbs
+    )
+
+
+def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):
+    pytest.importorskip("litellm")
+    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
+    from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
+
+    service_account = {
+        "type": "service_account",
+        "project_id": "synthetic-project",
+        "private_key_id": "0",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nMIIBsynthetic\n"
+        "-----END PRIVATE KEY-----\n",
+        "client_email": "qa@synthetic.example.invalid",
+        "client_id": "0",
+        "token_uri": "http://127.0.0.1:9/token",
+    }
+    # LiteLLM logs "Failed to load vertex credentials" on its own logger at
+    # ERROR, then raises the key-parsing error to the caller.
+    with pytest.raises(ValueError):
+        VertexBase().get_access_token(
+            credentials=json.dumps(service_account), project_id="synthetic-project"
+        )
+    assert transport.events == []
+    # The record is still there as context for the next genuine event.
+    sentry_sdk.capture_message("after vertex validation")
+    [event] = transport.events
+    assert "LiteLLM" in {
+        crumb.get("category") for crumb in event["breadcrumbs"]["values"]
+    }
