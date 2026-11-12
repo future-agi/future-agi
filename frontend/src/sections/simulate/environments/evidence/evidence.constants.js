@@ -1,8 +1,12 @@
-import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
+import {
+  MAX_EVIDENCE_SOURCES,
+  MAX_TRANSCRIPT_CHARS,
+} from "src/api/simulate-environments/evidenceImports";
 
 // What the import review says. One term per thing: an "import" holds "cases",
-// each from one Observe session or call; the builder "drafts" a scenario for a
-// case; a person "adds" drafted cases to the suite.
+// each from one Observe session or call, or one transcript a person added; the
+// builder "drafts" a scenario for a case; a person "adds" drafted cases to the
+// suite.
 
 export const IMPORT_PARAM = "import";
 
@@ -26,11 +30,41 @@ export const EVIDENCE_COPY = {
   importButton: "Import evidence",
   importHintTitle: "Import evidence",
   importHint:
-    "Pick sessions or calls in Observe, then choose Create environment test. The import opens here for review.",
+    "Pick sessions or calls in Observe, then choose Create environment test. Or add a transcript you have: paste it or upload files. The import opens here for review.",
   openObserve: "Open Observe",
+  addTranscript: "Add a transcript",
+  transcriptTitle: "Add a transcript",
+  transcriptBody:
+    'Paste a transcript or upload files: JSON messages, lines that start "User:" or "Agent:", or CSV with a role and a text column. Personal data is replaced with tokens before anything is stored, and only what fits the import\'s size is kept.',
+  pasteLabel: "Transcript",
+  nameLabel: "Name",
+  pastedName: "Pasted transcript",
+  formatLabel: "Format",
+  formats: {
+    json: "JSON messages",
+    text: "User: / Agent: lines",
+    csv: "CSV with role and text",
+  },
+  uploadFiles: "Upload files",
+  usePaste: "Paste instead",
+  production: "These transcripts come from production",
+  productionHelp:
+    "Leave it off for a transcript you wrote or one from testing: its scenarios then never claim a customer did this.",
+  transcriptTooLong: (name) =>
+    `${name} is longer than ${MAX_TRANSCRIPT_CHARS.toLocaleString("en-US")} characters.`,
+  transcriptsTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} files.`,
   title: "Review imported evidence",
   subtitle: (count, kind) =>
-    `${count} ${kind}${count === 1 ? "" : "s"} from Observe`,
+    kind === "transcript"
+      ? `${count} transcript${count === 1 ? "" : "s"} you added`
+      : `${count} ${kind}${count === 1 ? "" : "s"} from Observe`,
+  // A transcript is the person's, never a recording Observe made.
+  yourTranscript: (production) =>
+    production ? "Your transcript, from production" : "Your transcript",
+  transcriptNotice: (production) =>
+    production
+      ? "You said these transcripts come from production, so each case is regression evidence. They are your transcripts, not recordings Observe made."
+      : "You did not mark these transcripts as production: their scenarios are tests, and never claim a customer did this.",
   // A Simulator project's sources are our own simulations, never production evidence.
   simulated: (kind) => `Simulated ${kind}, not production`,
   simulatedNotice: (kind) =>
@@ -45,15 +79,19 @@ export const EVIDENCE_COPY = {
     total
       ? `${total} value${total === 1 ? "" : "s"} of personal data will be replaced with tokens before anything becomes scenario text.`
       : "No personal data was found.",
+  redactionStored: (total) =>
+    total
+      ? `${total} value${total === 1 ? "" : "s"} of personal data ${total === 1 ? "was" : "were"} replaced with tokens when the transcripts were stored.`
+      : "No personal data was found when the transcripts were stored.",
   shows: "What should the new scenarios be?",
   showsOptions: {
     failure: "Reproduce the failure as a regression test",
     success: "Keep this success as a regression test",
     partial: "A regression test from partial evidence",
   },
-  // A Simulator project's sources are not production: they make tests, never
-  // regression tests.
-  showsOptionsSimulated: {
+  // Evidence that is not production (a Simulator project's, or transcripts
+  // nobody marked as production) makes tests, never regression tests.
+  showsOptionsNotProduction: {
     failure: "Reproduce the failure as a test",
     success: "Keep this success as a test",
     partial: "A test from partial evidence",
@@ -69,6 +107,8 @@ export const EVIDENCE_COPY = {
   },
   startingState:
     "Observe never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+  startingStateTranscript:
+    "A transcript never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the transcript shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
   draft: (n) => `Draft ${n} scenario${n === 1 ? "" : "s"}`,
   drafting: (n) => `Drafting ${n} imported case${n === 1 ? "" : "s"}`,
   draftingBody:
@@ -137,6 +177,21 @@ export const CASE_ROLE = {
   added: "success",
   blocked: "danger",
   unavailable: "neutral",
+};
+
+// A transcript's format from its file's extension, else from how it starts (a
+// byte-order mark is whitespace to trimStart). The person can change it; the
+// backend names the line it cannot read.
+export const guessFormat = (name, text) => {
+  const extension = /\.([a-z]+)$/i.exec(name ?? "")?.[1]?.toLowerCase();
+  if (extension === "json") return "json";
+  if (extension === "csv") return "csv";
+  if (extension === "txt") return "text";
+  const start = (text ?? "").trimStart();
+  if (start.startsWith("[") || start.startsWith("{")) return "json";
+  const header = start.split(/\r?\n/, 1)[0].toLowerCase();
+  if (header.includes(",") && /\b(role|speaker)\b/.test(header)) return "csv";
+  return "text";
 };
 
 export const errorText = (error) =>

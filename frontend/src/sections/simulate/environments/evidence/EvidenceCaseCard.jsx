@@ -19,11 +19,13 @@ const clip = (text) =>
 
 // One imported case: what its source holds and lacks, what became of it, and —
 // while it waits — what the person wants its new scenario to be. A simulated
-// source (a Simulator project's) says so; production sources are regression evidence.
+// source (a Simulator project's) says so, and a transcript is labelled the
+// person's; only production evidence makes regression tests.
 export default function EvidenceCaseCard({
   item,
   kind,
   simulated,
+  production,
   shows,
   onShowsChange,
 }) {
@@ -37,12 +39,20 @@ export default function EvidenceCaseCard({
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
         <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {item.source_id}
+          {item.name || item.source_id}
         </Typography>
         {simulated ? (
           <StatusBadge
             role="neutral"
             label={EVIDENCE_COPY.simulated(kind)}
+            size="sm"
+            variant="badge"
+          />
+        ) : null}
+        {kind === "transcript" ? (
+          <StatusBadge
+            role="neutral"
+            label={EVIDENCE_COPY.yourTranscript(production)}
             size="sm"
             variant="badge"
           />
@@ -121,9 +131,9 @@ export default function EvidenceCaseCard({
           sx={{ mt: 1.5 }}
         >
           {Object.entries(
-            simulated
-              ? EVIDENCE_COPY.showsOptionsSimulated
-              : EVIDENCE_COPY.showsOptions,
+            production
+              ? EVIDENCE_COPY.showsOptions
+              : EVIDENCE_COPY.showsOptionsNotProduction,
           ).map(([value, label]) => (
             <MenuItem key={value} value={value}>
               {label}
@@ -137,8 +147,9 @@ export default function EvidenceCaseCard({
 
 EvidenceCaseCard.propTypes = {
   item: PropTypes.object.isRequired,
-  kind: PropTypes.oneOf(["session", "call"]),
+  kind: PropTypes.oneOf(["session", "call", "transcript"]),
   simulated: PropTypes.bool,
+  production: PropTypes.bool,
   shows: PropTypes.string,
   onShowsChange: PropTypes.func,
 };

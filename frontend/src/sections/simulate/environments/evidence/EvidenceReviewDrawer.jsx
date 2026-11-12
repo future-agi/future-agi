@@ -31,7 +31,7 @@ function Section({ title, children }) {
 Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
 
 // The import review: what each case's source holds and lacks and what
-// redaction replaces; the starting state Observe never records; the builder's
+// redaction replaces; the starting state no source records; the builder's
 // drafts; and adding them to the suite. Nothing runs from here.
 export default function EvidenceReviewDrawer({
   envId,
@@ -54,6 +54,7 @@ export default function EvidenceReviewDrawer({
   const drafted = cases.filter(isEvidenceCaseDrafted);
   const beside = Boolean(drafts?.any);
   const kind = data?.source_kind ?? "session";
+  const transcript = kind === "transcript";
 
   const onDraft = () =>
     draft.mutate({
@@ -109,12 +110,19 @@ export default function EvidenceReviewDrawer({
                 <Alert severity="warning">{data.redaction.reason}</Alert>
               ) : (
                 <Alert severity="info">
-                  {EVIDENCE_COPY.redactionReady(data.redaction?.total ?? 0)}
+                  {(transcript
+                    ? EVIDENCE_COPY.redactionStored
+                    : EVIDENCE_COPY.redactionReady)(data.redaction?.total ?? 0)}
                 </Alert>
               )}
               {data.simulated ? (
                 <Alert severity="info" data-testid="evidence-simulated">
                   {EVIDENCE_COPY.simulatedNotice(kind)}
+                </Alert>
+              ) : null}
+              {transcript ? (
+                <Alert severity="info" data-testid="evidence-transcript">
+                  {EVIDENCE_COPY.transcriptNotice(Boolean(data.production))}
                 </Alert>
               ) : null}
               {cases.map((one) => (
@@ -123,6 +131,7 @@ export default function EvidenceReviewDrawer({
                   item={one}
                   kind={kind}
                   simulated={Boolean(data.simulated)}
+                  production={Boolean(data.production)}
                   shows={shows[one.id] || "failure"}
                   onShowsChange={
                     data.drafting
@@ -138,7 +147,11 @@ export default function EvidenceReviewDrawer({
             </Section>
 
             <Section title={EVIDENCE_COPY.stepState}>
-              <Alert severity="info">{EVIDENCE_COPY.startingState}</Alert>
+              <Alert severity="info">
+                {transcript
+                  ? EVIDENCE_COPY.startingStateTranscript
+                  : EVIDENCE_COPY.startingState}
+              </Alert>
             </Section>
 
             <Section title={EVIDENCE_COPY.stepDraft}>

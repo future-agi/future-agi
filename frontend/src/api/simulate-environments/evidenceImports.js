@@ -5,11 +5,15 @@ import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { refreshDrafts, refreshFollowers } from "./versions";
 
-// Observe sessions or calls frozen as evidence for an environment's tests, and
-// the review that drafts and adds them (simulate/serializers/evidence_import.py).
+// Observe sessions or calls frozen as evidence for an environment's tests, or
+// transcripts a person added, and the review that drafts and adds them
+// (simulate/serializers/evidence_import.py).
 
 // The backend takes 1 to 20 sources per import.
 export const MAX_EVIDENCE_SOURCES = 20;
+// The longest transcript the backend reads, in characters.
+export const MAX_TRANSCRIPT_CHARS = 500_000;
+export const TRANSCRIPT_NAME_CHARS = 120;
 // How often the review asks again while the builder drafts.
 const DRAFTING_POLL_MS = 10_000;
 
@@ -42,16 +46,20 @@ export const evidenceImportKey = (envId, importId) => [
   importId,
 ];
 
+// An Observe import names its project and ids; a transcript import carries its
+// transcripts ({name, format, text}) and whether the person says they come
+// from production.
 export const createEvidenceImport = async (
   envId,
-  { projectId, sourceKind, ids },
+  { projectId, sourceKind, ids, transcripts, production },
 ) =>
   (
-    await axios.post(importsPath(envId), {
-      project_id: projectId,
-      source_kind: sourceKind,
-      ids,
-    })
+    await axios.post(
+      importsPath(envId),
+      sourceKind === "transcript"
+        ? { source_kind: sourceKind, transcripts, production }
+        : { project_id: projectId, source_kind: sourceKind, ids },
+    )
   ).data;
 
 export const getEvidenceImport = async (envId, importId) =>

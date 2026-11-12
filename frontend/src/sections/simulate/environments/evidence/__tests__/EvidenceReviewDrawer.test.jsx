@@ -52,6 +52,8 @@ const item = (overrides = {}) => ({
 const bundle = (overrides = {}) => ({
   id: IMPORT,
   source_kind: "session",
+  simulated: false,
+  production: true,
   drafting: false,
   cases: [item()],
   redaction: { method: "presidio", reason: "", findings: [], total: 2 },
@@ -177,6 +179,7 @@ describe("EvidenceReviewDrawer", () => {
     evidence = bundle({
       source_kind: "call",
       simulated: true,
+      production: false,
       cases: [item(), item({ id: "c2", source_id: "call-2" })],
     });
     renderDrawer();
@@ -204,6 +207,67 @@ describe("EvidenceReviewDrawer", () => {
       "Keep this success as a test",
       "A test from partial evidence",
     ]);
+  });
+
+  it("labels a transcript as the person's, never as Observe's, and makes tests", async () => {
+    evidence = bundle({
+      source_kind: "transcript",
+      production: false,
+      redaction: { method: "presidio", reason: "", findings: [], total: 1 },
+      cases: [
+        item({
+          source_id: "transcript-1",
+          name: "Escalation <EMAIL_ADDRESS>",
+          tool_calls: part("missing", "A transcript carries no tool calls."),
+        }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(
+      within(card).getByText("Escalation <EMAIL_ADDRESS>"),
+    ).toBeInTheDocument();
+    expect(within(card).getByText("Your transcript")).toBeInTheDocument();
+    expect(within(card).queryByText(/^Simulated /)).toBeNull();
+    expect(screen.getByText("1 transcript you added")).toBeInTheDocument();
+    expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
+      "You did not mark these transcripts as production",
+    );
+    expect(
+      screen.getByText(
+        "1 value of personal data was replaced with tokens when the transcripts were stored.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^A transcript never records the records/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Observe never records/)).toBeNull();
+    expect(
+      screen.getByRole("combobox", {
+        name: /^What should the new scenarios be\?/,
+      }),
+    ).toHaveTextContent("Reproduce the failure as a test");
+  });
+
+  it("a transcript said to be from production makes regression tests", async () => {
+    evidence = bundle({
+      source_kind: "transcript",
+      production: true,
+      cases: [item({ source_id: "transcript-1", name: "Escalation 7" })],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(
+      within(card).getByText("Your transcript, from production"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("evidence-transcript")).toHaveTextContent(
+      "They are your transcripts, not recordings Observe made.",
+    );
+    expect(
+      screen.getByRole("combobox", {
+        name: /^What should the new scenarios be\?/,
+      }),
+    ).toHaveTextContent("Reproduce the failure as a regression test");
   });
 
   it("while drafting: says so, takes no draft or add, and locks the record choice", async () => {
