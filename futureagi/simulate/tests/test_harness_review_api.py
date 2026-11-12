@@ -268,3 +268,32 @@ def test_with_no_draft_the_review_is_empty_and_deciding_is_refused(
 
 
 AUDITOR = {**MANAGER, "id": "auditor", "name": "Sam Ortiz", "role": "reads refunds"}
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {},
+        {"remaining": False},
+        {"id": "actor:manager", "kind": "actor"},
+        {"kind": "actor", "remaining": True},
+    ],
+)
+def test_a_decision_must_name_exactly_one_change_kind_or_the_remaining_ones(
+    user, workspace, storage, auth_client, selector
+):
+    environment = _with_world(user, workspace, "review-one-selector", storage)
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    review = _review(auth_client, environment)
+
+    decided = _decide(
+        auth_client,
+        environment,
+        [{**selector, "decision": "rejected"}],
+        {"environment": review["drafts"]["environment"]["revision"]},
+    )
+    assert decided.status_code == 400, decided.content
+    assert decided.json()["error"] == "decision_selector_invalid"
+    assert [
+        one["decision"] for one in _review(auth_client, environment)["changes"]
+    ] == [None]

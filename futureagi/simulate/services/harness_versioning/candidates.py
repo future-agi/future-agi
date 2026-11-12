@@ -224,7 +224,9 @@ def validate_drafts(
         require_chat_idle(locked)
         _require_fresh(locked, opened)
         reviewed = review.draft_review(locked)
-        review.check_review(reviewed, expected_review_digest, digest_required=True)
+        review.check_review(
+            reviewed, expected_review_digest, digest_required=True, environment=locked
+        )
         for piece, draft in opened.items():
             if expected_revisions.get(piece) != draft.revision:
                 raise edits_moved(piece)

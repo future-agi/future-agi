@@ -12,10 +12,14 @@ import jsonpatch
 from simulate.services.harness_versioning.review_items import (
     LISTED,
     canonical,
+    index_key,
     item_index,
     read_json,
     rule_key,
 )
+
+# The keyed documents a review may show as one file when they cannot be split into items.
+WHOLE_CANDIDATES = frozenset({"contract.json", "scenarios.json", *LISTED})
 
 
 class ReviewRefused(Exception):
@@ -106,7 +110,13 @@ def compose_accepted(
         raise ReviewRefused(
             "review_undecided", "Every change needs a decision before Save.", undecided
         )
-    current = item_index(default)
+    # Documents reviewed as one file stay one file here, so the items match the ones the person decided.
+    whole = {
+        one["key"]
+        for one in changes
+        if one["kind"] in ("file", "world_state") and one["key"] in WHOLE_CANDIDATES
+    }
+    current = item_index(default, whole)
     moved = [
         one["id"]
         for one in changes
@@ -147,8 +157,10 @@ def compose_accepted(
                 f"{change['id']} changed after the review: {exc}",
                 [change["id"]],
             ) from exc
-    _carry_amendments(default, draft, files, changes, decisions)
-    _compose_suite_index(default, draft, files, changes, decisions)
+    if "contract.json" not in whole:
+        _carry_amendments(default, draft, files, changes, decisions)
+    if "scenarios.json" not in whole:
+        _compose_suite_index(default, draft, files, changes, decisions)
     return files
 
 
@@ -173,13 +185,13 @@ def _compose_suite_index(
         return
     after = read_json(draft.get("scenarios.json", b"null"))
     drafted = {
-        str(one.get("name")): one
+        index_key(one): one
         for one in (after if isinstance(after, list) else [])
         if isinstance(one, dict)
     }
     index, listed = [], set()
     for one in before:
-        name = str(one.get("name")) if isinstance(one, dict) else ""
+        name = index_key(one)
         listed.add(name)
         if name not in accepted:
             index.append(one)
@@ -190,7 +202,7 @@ def _compose_suite_index(
     ]
     # An entry whose scenario folder is not in the composed tree names a scenario the version does not have.
     index = [
-        one for one in index if f"scenarios/{one.get('name')}/scenario.json" in files
+        one for one in index if f"scenarios/{index_key(one)}/scenario.json" in files
     ]
     _put(files, "scenarios.json", index)
 
@@ -226,8 +238,9 @@ def _carry_amendments(
     changes: list[dict[str, Any]],
     decisions: Mapping[str, str],
 ) -> None:
-    """The contract's amendment log keeps the lines the draft added for accepted changes, and lines that record no
-    change under review, and drops the lines of rejected ones."""
+    """The contract's amendment log keeps the lines the draft added for accepted changes, and drops the lines of
+    rejected ones. A line that names no change under review is kept only while every contract change was accepted,
+    since it may record a rejected one in words the log does not parse."""
     if "contract.json" not in files:
         return
     contract = read_json(files["contract.json"])
@@ -237,11 +250,18 @@ def _carry_amendments(
     kept = list(
         (read_json(default.get("contract.json", b"null")) or {}).get("amendments") or []
     )
+    all_accepted = all(
+        decisions.get(one["id"]) == "accepted"
+        for one in changes
+        if one["document"] == "contract.json"
+    )
     for entry in edited.get("amendments") or []:
         if entry in kept:
             continue
         owner = _amendment_owner(str(entry), changes)
-        if owner is None or decisions.get(owner) == "accepted":
+        if (owner is None and all_accepted) or (
+            owner is not None and decisions.get(owner) == "accepted"
+        ):
             kept.append(entry)
     if kept == list(contract.get("amendments") or []):
         return

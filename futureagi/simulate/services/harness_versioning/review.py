@@ -26,6 +26,7 @@ from simulate.services.harness_versioning.review_compose import (
 from simulate.services.harness_versioning.review_items import (
     compute_changes,
     graded,
+    index_mismatch,
     item_index,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -63,10 +64,17 @@ def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, A
     return [{**change, "piece": piece} for change in compute_changes(before, after)]
 
 
-def _scenarios(environment: Any) -> dict[str, dict[str, Any]]:
-    """The scenarios as the drafts would leave them (the suite draft, else the saved suite), by key."""
+def _scenarios(environment: Any, *, base: bool = False) -> dict[str, dict[str, Any]]:
+    """The scenarios by key, as the drafts would leave them (the suite draft, else the saved suite), or with ``base``
+    as the saved suite has them."""
 
-    version = open_draft(environment, "suite") or environment.suite_version
+    draft = open_draft(environment, "suite")
+    if base:
+        version = (draft.parent if draft is not None and draft.parent_id else None) or (
+            environment.suite_version if draft is None else None
+        )
+    else:
+        version = draft or environment.suite_version
     if version is None:
         return {}
     files = piece_files(environment, "suite", version)
@@ -113,9 +121,10 @@ def draft_review(environment: Any) -> dict[str, Any]:
                 decided[change["id"]] = decision
             changes.append(change)
     scenarios = _scenarios(environment)
+    base = _scenarios(environment, base=True)
     for change in changes:
-        change["affects"] = affects(change, scenarios)
-        change["depends_on"] = depends_on(change, changes, scenarios)
+        change["affects"] = affects(change, scenarios, base)
+        change["depends_on"] = depends_on(change, changes, scenarios, base)
         change["graded"] = graded(change)
         touched = sorted(scenarios) if change["affects"] == ALL else change["affects"]
         change["revalidate"] = touched if change["graded"] else []
@@ -172,6 +181,16 @@ def record_decisions(
                 raise version_error(
                     "decision_invalid", "A decision is accepted or rejected", 400
                 )
+            if [
+                bool(item.get("id")),
+                bool(item.get("kind")),
+                item.get("remaining") is True,
+            ].count(True) != 1:
+                raise version_error(
+                    "decision_selector_invalid",
+                    "Name one change, one kind, or every remaining change",
+                    400,
+                )
             if item.get("id"):
                 if item["id"] not in by_id:
                     raise version_error(
@@ -221,15 +240,33 @@ def review_stale() -> HostedHarnessError:
     )
 
 
+def _index_mismatches(environment: Any, changes: list[dict[str, Any]]) -> list[str]:
+    """The scenario changes about to be saved whose suite index entry disagrees with their scenario document."""
+    draft = open_draft(environment, "suite")
+    if draft is None:
+        return []
+    items = item_index(piece_files(environment, "suite", draft))
+    return [
+        one["id"]
+        for one in changes
+        if one["kind"] == "scenario"
+        and one["action"] != "removed"
+        and one["decision"] != "rejected"
+        and one["id"] in items
+        and index_mismatch(items[one["id"]].value)
+    ]
+
+
 def check_review(
     review: Mapping[str, Any],
     expected_review_digest: str | None,
     *,
     digest_required: bool,
+    environment: Any = None,
 ) -> None:
-    """Refuse a review that cannot be saved as decided. Once any change is decided: the digest the person saw must be
-    current (required when ``digest_required``), no change may be left undecided, and no accepted change may need a
-    rejected one."""
+    """Refuse a review that cannot be saved as decided. A scenario saved with a suite index entry its own document
+    disagrees with is refused. Once any change is decided: the digest the person saw must be current (required when
+    ``digest_required``), no change may be left undecided, and no accepted change may need a rejected one."""
 
     changes = review["changes"]
     decided = any(one["decision"] for one in changes)
@@ -237,6 +274,15 @@ def check_review(
         expected_review_digest or (decided and digest_required)
     ):
         raise review_stale()
+    if environment is not None and (
+        mismatched := _index_mismatches(environment, changes)
+    ):
+        raise version_error(
+            "scenario_index_mismatch",
+            "A scenario's suite entry differs from the scenario itself; rebuild the suite",
+            409,
+            changes=mismatched,
+        )
     if not decided:
         return
     refused = {one["id"] for one in changes if one["decision"] == "rejected"}
@@ -324,7 +370,9 @@ def apply_review(
     """
 
     review = draft_review(locked)
-    check_review(review, expected_review_digest, digest_required=False)
+    check_review(
+        review, expected_review_digest, digest_required=False, environment=locked
+    )
     if not any(one["decision"] for one in review["changes"]):
         return
     rejected = {

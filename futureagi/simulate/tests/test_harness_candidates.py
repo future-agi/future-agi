@@ -118,7 +118,7 @@ def _certify(environment, *, state=HarnessAssembledBundle.State.READY, error=Non
 
 
 def _save(
-    auth_client, environment, candidates, *, digest=None, name=None, key="save-1"
+    auth_client, environment, candidates, *, digest=None, name="v2", key="save-1"
 ):
     return auth_client.post(
         f"{BASE}/{environment.id}/drafts/save/",
@@ -126,7 +126,7 @@ def _save(
             "candidates": candidates,
             "idempotency_key": key,
             **({"expected_review_digest": digest} if digest else {}),
-            **({"name": name} if name else {}),
+            **({"name": name} if name is not None else {}),
         },
         format="json",
     )
@@ -840,7 +840,13 @@ def test_promotion_order_and_tail(user, workspace, storage, auth_client):
     )
     assert "draft_validation" not in metadata
     assert (
-        _save(auth_client, environment, candidates, digest=digest).json()
+        _save(
+            auth_client,
+            environment,
+            candidates,
+            digest=digest,
+            name="Manager approves discounts",
+        ).json()
         == saved.json()
     )
 
@@ -1051,7 +1057,9 @@ def test_a_change_touching_one_scenario_drops_only_its_proof_and_one_touching_al
     # A change names the scenario by its folder, the proof by its key: still the same scenario.
     HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version=suite, environment_version=parent
-    ).update(proofs={"duplicate-refund": {"holds": True}, "other-case": {"holds": True}})
+    ).update(
+        proofs={"duplicate-refund": {"holds": True}, "other-case": {"holds": True}}
+    )
     third = HarnessEnvironmentVersion.no_workspace_objects.create(
         job=environment,
         organization_id=environment.organization_id,
@@ -1064,7 +1072,10 @@ def test_a_change_touching_one_scenario_drops_only_its_proof_and_one_touching_al
         parent=parent,
     )
     carry_untouched_proofs(
-        parent, third, suite, [{"decision": "accepted", "affects": ["duplicate_refund"]}]
+        parent,
+        third,
+        suite,
+        [{"decision": "accepted", "affects": ["duplicate_refund"]}],
     )
     assert sorted(
         HarnessSuiteValidation.no_workspace_objects.get(
@@ -1478,13 +1489,16 @@ def test_a_check_unavailable_on_our_side_lets_the_validated_changes_save_uncerti
     first = _result(_validate(auth_client, environment, digest))
     _check_unavailable_on_our_side(environment, monkeypatch)
     # The set says so at once: no second Validate only to learn the check could not run.
-    assert _drafts(auth_client, environment)["validation"]["state"] == "check_unavailable"
+    assert (
+        _drafts(auth_client, environment)["validation"]["state"] == "check_unavailable"
+    )
 
     saved = _save(auth_client, environment, first["candidates"], digest=digest)
     assert saved.status_code == 200, saved.content
     environment.refresh_from_db()
-    assert str(environment.environment_version_id) == (
-        first["candidates"]["environment_version_id"]
+    assert (
+        str(environment.environment_version_id)
+        == (first["candidates"]["environment_version_id"])
     )
 
 
@@ -1504,3 +1518,87 @@ def test_a_check_that_failed_on_our_side_under_an_older_template_still_reads_ret
     refused = _save(auth_client, environment, first["candidates"])
     assert refused.status_code == 409, refused.content
     assert refused.json()["error"] == "not_validated"
+
+
+def test_a_save_key_used_for_one_candidate_set_is_refused_for_another(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-key-bound", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    assert _save(auth_client, environment, candidates, digest=digest).status_code == 200
+
+    other = {**candidates, "environment_version_id": str(uuid.uuid4())}
+    reused = _save(auth_client, environment, other, digest=digest)
+    assert reused.status_code == 409, reused.content
+    assert reused.json()["error"] == "idempotency_key_reused"
+
+
+def test_a_candidate_save_needs_a_name(user, workspace, storage, auth_client):
+    environment = _with_world(user, workspace, "cand-name-needed", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+
+    for name in ("", "   "):
+        refused = _save(auth_client, environment, candidates, digest=digest, name=name)
+        assert refused.status_code == 400, refused.content
+        assert refused.json()["error"] == "name_required"
+    assert drafts.open_draft(environment, "environment") is not None
+
+
+def test_a_repeated_save_answers_the_same_even_while_chat_works(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services.harness_versioning import candidate_promotion
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    environment = _with_world(user, workspace, "cand-replay-first", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    saved = _save(auth_client, environment, candidates, digest=digest)
+    assert saved.status_code == 200, saved.content
+
+    def working(_):
+        raise HostedHarnessError("chat_working", "busy", status_code=409)
+
+    monkeypatch.setattr(candidate_promotion, "require_chat_idle", working)
+    again = _save(auth_client, environment, candidates, digest=digest)
+    assert (again.status_code, again.json()) == (200, saved.json())
+
+
+def test_the_sweep_drops_an_old_set_that_named_only_active_versions(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.candidate_promotion import (
+        discard_expired_candidates,
+    )
+    from simulate.services.harness_versioning.candidate_sets import (
+        VALIDATION_KEY,
+        store_set,
+    )
+
+    environment = _with_world(user, workspace, "cand-sweep-active", storage)
+    store_set(
+        environment,
+        {
+            "environment_version_id": str(environment.environment_version_id),
+            "suite_version_id": str(environment.suite_version_id),
+            "at": (timezone.now() - timedelta(days=8)).isoformat(),
+        },
+    )
+
+    discard_expired_candidates()
+    environment.refresh_from_db()
+    assert VALIDATION_KEY not in environment.payload["metadata"]
