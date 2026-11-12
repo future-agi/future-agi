@@ -4,8 +4,11 @@ Implements the OAuthAuthorizationServerProvider protocol using Django cache
 (Redis-backed) for storage of clients, codes, and tokens.
 """
 
+import hashlib
 import secrets
 import time
+import uuid
+from datetime import UTC, datetime
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -15,6 +18,7 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
@@ -28,12 +32,15 @@ CODE_PREFIX = "mcp_oauth_code:"
 APPROVE_PREFIX = "mcp_oauth_approve:"
 ACCESS_PREFIX = "mcp_oauth_access:"
 REFRESH_PREFIX = "mcp_oauth_refresh:"
+# Rotated refresh tokens, kept so a replay can be recognised (value: family id).
+REFRESH_USED_PREFIX = "mcp_oauth_refresh_used:"
+# Revoked refresh-token families.
+REFRESH_FAMILY_REVOKED_PREFIX = "mcp_oauth_refresh_family_revoked:"
 
 # TTLs (seconds)
 CLIENT_TTL = 30 * 24 * 3600  # 30 days
 CODE_TTL = 10 * 60  # 10 minutes
 ACCESS_TTL = 3600  # 1 hour
-REFRESH_TTL = 30 * 24 * 3600  # 30 days
 APPROVE_TTL = 10 * 60  # 10 minutes
 
 
@@ -58,6 +65,8 @@ class FutureAGIRefreshToken(RefreshToken):
 
     user_id: str
     organization_id: str
+    # Tokens issued before rotation tracking have no family.
+    family_id: str | None = None
     workspace_id: str | None = None
 
 
@@ -67,6 +76,56 @@ def _frontend_base_url() -> str:
     from django.conf import settings
 
     return settings.FRONTEND_BASE_URL or "http://localhost:3031"
+
+
+def _refresh_ttl() -> int:
+    from mcp_server.oauth_utils import refresh_token_ttl_seconds
+
+    return refresh_token_ttl_seconds()
+
+
+async def _revoke_refresh_family(family_id: str | None, reason: str) -> None:
+    if not family_id:
+        return
+    await sync_to_async(cache.set)(
+        f"{REFRESH_FAMILY_REVOKED_PREFIX}{family_id}", reason, _refresh_ttl()
+    )
+    logger.warning("oauth_refresh_family_revoked", family_id=family_id, reason=reason)
+
+
+async def _store_refresh_token(
+    *,
+    client_id: str,
+    scopes: list[str],
+    user_id: str,
+    organization_id: str,
+    workspace_id: str | None,
+    family_id: str,
+) -> str:
+    from mcp_server.oauth_utils import generate_refresh_token
+
+    ttl = _refresh_ttl()
+    expires_at = int(time.time()) + ttl
+    token = await sync_to_async(generate_refresh_token)(
+        user_id=user_id,
+        org_id=organization_id,
+        client_id=client_id,
+        expires_at=datetime.fromtimestamp(expires_at, tz=UTC),
+    )
+    data = FutureAGIRefreshToken(
+        token=token,
+        client_id=client_id,
+        scopes=scopes,
+        expires_at=expires_at,
+        user_id=user_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        family_id=family_id,
+    )
+    await sync_to_async(cache.set)(
+        f"{REFRESH_PREFIX}{token}", data.model_dump(mode="json"), ttl
+    )
+    return token
 
 
 class FutureAGIOAuthProvider:
@@ -230,7 +289,7 @@ class FutureAGIOAuthProvider:
         client: OAuthClientInformationFull,
         authorization_code: FutureAGIAuthorizationCode,
     ) -> OAuthToken:
-        from mcp_server.oauth_utils import generate_oauth_token, generate_refresh_token
+        from mcp_server.oauth_utils import generate_oauth_token
 
         # Delete used code
         await sync_to_async(cache.delete)(f"{CODE_PREFIX}{authorization_code.code}")
@@ -242,13 +301,6 @@ class FutureAGIOAuthProvider:
             workspace_id=authorization_code.workspace_id,
             client_id=authorization_code.client_id,
             scope=authorization_code.scopes,
-        )
-
-        # Generate refresh token
-        refresh_token_str = await sync_to_async(generate_refresh_token)(
-            user_id=authorization_code.user_id,
-            org_id=authorization_code.organization_id,
-            client_id=authorization_code.client_id,
         )
 
         # Store access token metadata in cache
@@ -268,19 +320,14 @@ class FutureAGIOAuthProvider:
             ACCESS_TTL,
         )
 
-        # Store refresh token metadata in cache
-        refresh_data = FutureAGIRefreshToken(
-            token=refresh_token_str,
+        # Issue a refresh token that starts a new rotation family
+        refresh_token_str = await _store_refresh_token(
             client_id=authorization_code.client_id,
             scopes=authorization_code.scopes,
             user_id=authorization_code.user_id,
             organization_id=authorization_code.organization_id,
             workspace_id=authorization_code.workspace_id,
-        )
-        await sync_to_async(cache.set)(
-            f"{REFRESH_PREFIX}{refresh_token_str}",
-            refresh_data.model_dump(mode="json"),
-            REFRESH_TTL,
+            family_id=uuid.uuid4().hex,
         )
 
         logger.info(
@@ -350,15 +397,25 @@ class FutureAGIOAuthProvider:
     ) -> FutureAGIRefreshToken | None:
         data = await sync_to_async(cache.get)(f"{REFRESH_PREFIX}{refresh_token}")
         if data is None:
+            # A rotated token presented again: revoke its family (reuse detection).
+            used_family = await sync_to_async(cache.get)(
+                f"{REFRESH_USED_PREFIX}{refresh_token}"
+            )
+            if used_family:
+                await _revoke_refresh_family(used_family, "refresh_token_reuse")
             return None
         try:
             rt = FutureAGIRefreshToken.model_validate(data)
-            if rt.client_id != client.client_id:
-                return None
-            return rt
         except Exception:
             logger.exception("oauth_load_refresh_failed")
             return None
+        if rt.client_id != client.client_id:
+            return None
+        if rt.family_id and await sync_to_async(cache.get)(
+            f"{REFRESH_FAMILY_REVOKED_PREFIX}{rt.family_id}"
+        ):
+            return None
+        return rt
 
     async def exchange_refresh_token(
         self,
@@ -366,10 +423,38 @@ class FutureAGIOAuthProvider:
         refresh_token: FutureAGIRefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        from mcp_server.oauth_utils import generate_oauth_token, generate_refresh_token
+        from mcp_server.oauth_utils import generate_oauth_token
 
-        # Delete old refresh token
-        await sync_to_async(cache.delete)(f"{REFRESH_PREFIX}{refresh_token.token}")
+        # Tokens cached before families existed get a family id derived from
+        # the token, so concurrent consumers of one legacy token agree on it.
+        family_id = (
+            refresh_token.family_id
+            or hashlib.sha256(refresh_token.token.encode()).hexdigest()[:32]
+        )
+        # Remember the token as used before consuming it, so a concurrent or
+        # later replay is recognised as reuse rather than as an unknown token.
+        await sync_to_async(cache.set)(
+            f"{REFRESH_USED_PREFIX}{refresh_token.token}", family_id, _refresh_ttl()
+        )
+        # Consume the old token. The delete is atomic and reports whether this
+        # caller removed it; a caller that did not lost a race with another
+        # use of the same token, which is treated as reuse.
+        consumed = await sync_to_async(cache.delete)(
+            f"{REFRESH_PREFIX}{refresh_token.token}"
+        )
+        if not consumed:
+            await _revoke_refresh_family(family_id, "refresh_token_reuse")
+            raise TokenError(
+                error="invalid_grant",
+                error_description="refresh token already used",
+            )
+        if await sync_to_async(cache.get)(
+            f"{REFRESH_FAMILY_REVOKED_PREFIX}{family_id}"
+        ):
+            raise TokenError(
+                error="invalid_grant",
+                error_description="refresh token revoked",
+            )
 
         effective_scopes = scopes if scopes else refresh_token.scopes
 
@@ -380,13 +465,6 @@ class FutureAGIOAuthProvider:
             workspace_id=refresh_token.workspace_id,
             client_id=refresh_token.client_id,
             scope=effective_scopes,
-        )
-
-        # Generate new refresh token (rotation)
-        new_refresh_str = await sync_to_async(generate_refresh_token)(
-            user_id=refresh_token.user_id,
-            org_id=refresh_token.organization_id,
-            client_id=refresh_token.client_id,
         )
 
         # Store new access token
@@ -405,19 +483,14 @@ class FutureAGIOAuthProvider:
             ACCESS_TTL,
         )
 
-        # Store new refresh token
-        new_refresh_data = FutureAGIRefreshToken(
-            token=new_refresh_str,
+        # Rotate: issue the successor in the same family with a fresh lifetime
+        new_refresh_str = await _store_refresh_token(
             client_id=refresh_token.client_id,
             scopes=effective_scopes,
             user_id=refresh_token.user_id,
             organization_id=refresh_token.organization_id,
             workspace_id=refresh_token.workspace_id,
-        )
-        await sync_to_async(cache.set)(
-            f"{REFRESH_PREFIX}{new_refresh_str}",
-            new_refresh_data.model_dump(mode="json"),
-            REFRESH_TTL,
+            family_id=family_id,
         )
 
         logger.info(
@@ -444,4 +517,5 @@ class FutureAGIOAuthProvider:
             await sync_to_async(cache.delete)(f"{ACCESS_PREFIX}{token.token}")
         elif isinstance(token, FutureAGIRefreshToken):
             await sync_to_async(cache.delete)(f"{REFRESH_PREFIX}{token.token}")
+            await _revoke_refresh_family(token.family_id, "revoked_by_client")
         logger.info("oauth_token_revoked", client_id=token.client_id)

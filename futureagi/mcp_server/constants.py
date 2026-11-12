@@ -93,6 +93,11 @@ DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT = 5
 DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS = 300
 DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS = 300
 
+# Lifetime of an MCP OAuth refresh token (overridable via the
+# MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS Django setting / env var). Each refresh
+# rotates the token and starts a new lifetime; an unused token expires.
+DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600
+
 SESSION_STATUS_CHOICES = [
     ("active", "Active"),
     ("idle", "Idle"),

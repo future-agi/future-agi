@@ -21,8 +21,12 @@ from mcp_server.oauth_utils import (
     decrypt_oauth_token,
     generate_authorization_code,
     generate_oauth_token,
-    generate_refresh_token,
     verify_client_secret,
+)
+from mcp_server.refresh_tokens import (
+    issue_refresh_token,
+    refreshed_scope,
+    rotate_refresh_token,
 )
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
@@ -439,11 +443,6 @@ class MCPOAuthTokenView(APIView):
             client_id=client_id,
             scope=auth_code.scope,
         )
-        refresh_token = generate_refresh_token(
-            user_id=auth_code.user.id,
-            org_id=auth_code.organization.id,
-            client_id=client_id,
-        )
 
         # Store tokens on MCPConnection
         connection, created = MCPConnection.no_workspace_objects.get_or_create(
@@ -454,6 +453,13 @@ class MCPOAuthTokenView(APIView):
                 "organization": auth_code.organization,
                 "is_active": True,
             },
+        )
+        refresh_token = issue_refresh_token(
+            connection,
+            client_id=client_id,
+            user_id=auth_code.user.id,
+            org_id=auth_code.organization.id,
+            scope=auth_code.scope,
         )
         connection.oauth_token_encrypted = access_token
         connection.oauth_refresh_token_encrypted = refresh_token
@@ -525,29 +531,28 @@ class MCPOAuthTokenView(APIView):
         user_id = payload["user_id"]
         org_id = payload["org_id"]
 
-        # Find the connection to get workspace and scope
-        try:
-            connection = MCPConnection.no_workspace_objects.get(
-                user_id=user_id,
-                oauth_refresh_token_encrypted=refresh_token,
-                deleted=False,
-            )
-        except MCPConnection.DoesNotExist:
+        # Rotate: the presented token is consumed and a successor issued.
+        # Expired, revoked, unknown and reused tokens are refused; reuse
+        # revokes the token's whole family.
+        rotation = rotate_refresh_token(
+            refresh_token, client_id=client_id, user_id=user_id, org_id=org_id
+        )
+        if not rotation.ok:
             return self._invalid_token_response(
                 request,
                 error="invalid_grant",
                 status=400,
-                reason="refresh_connection_not_found",
+                reason=rotation.error_reason,
             )
+        connection = rotation.connection
+        new_refresh_token = rotation.refresh_token
 
         clear_invalid_token_attempts(request)
 
-        # Get current scope from tool config
-        try:
-            config = connection.tool_config
-            scope = config.enabled_groups
-        except MCPToolGroupConfig.DoesNotExist:
-            scope = []
+        # The consented scope, narrowed to the groups still enabled on the
+        # connection. Enabling more groups later (or another client's wider
+        # consent) never widens a refreshed token (RFC 6749 section 6).
+        scope = refreshed_scope(rotation.consented_scope, connection)
 
         # Generate new access token
         access_token, expires_at = generate_oauth_token(
@@ -560,11 +565,16 @@ class MCPOAuthTokenView(APIView):
             scope=scope,
         )
 
-        # Update stored token
+        # Update stored tokens
         connection.oauth_token_encrypted = access_token
+        connection.oauth_refresh_token_encrypted = new_refresh_token
         connection.oauth_token_expires_at = expires_at
         connection.save(
-            update_fields=["oauth_token_encrypted", "oauth_token_expires_at"]
+            update_fields=[
+                "oauth_token_encrypted",
+                "oauth_refresh_token_encrypted",
+                "oauth_token_expires_at",
+            ]
         )
 
         logger.info(
@@ -579,6 +589,7 @@ class MCPOAuthTokenView(APIView):
                 "access_token": access_token,
                 "token_type": "Bearer",
                 "expires_in": 3600,
+                "refresh_token": new_refresh_token,
                 "scope": ",".join(scope),
             }
         )
