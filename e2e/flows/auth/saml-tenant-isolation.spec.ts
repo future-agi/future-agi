@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { APIRequestContext, BrowserContext, Page, Request, Response } from '@playwright/test';
+import type { APIRequestContext, BrowserContext, Page, Response, TestInfo } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -10,6 +10,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 import { provisionActor, type TestActor } from '../../lib/provisioning';
 import { startLocalSamlIdp, type LocalSamlIdp } from '../../lib/saml-idp';
 import { StateProbe } from '../../lib/state-probe';
+import { redactReceipts, withSamlRecorders, type RequestReceipt } from '../../lib/saml-request-recorder';
 
 const RESULTS = path.join(
   path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))),
@@ -18,23 +19,8 @@ const RESULTS = path.join(
 );
 // Browser waits: the IdP round trip plus the SPA's first render.
 const UI_READY = 30_000;
-const SAML_PATHS = new Set(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']);
-const receipts: RequestReceipt[] = [];
-const pendingReceipts: Promise<void>[] = [];
-
-interface RequestReceipt {
-  flow: string;
-  // Test-process clock when the request was sent; orders it against responses.
-  at: number;
-  method: string;
-  path: string;
-  cookieNames: string[];
-  cookieHeader: string | null;
-  authorizationPrefix: string | null;
-  authorizationValue: string | null;
-  hasOrganizationHeader: boolean;
-  hasWorkspaceHeader: boolean;
-}
+// Only fully settled, redacted per-test snapshots cross the test boundary.
+const redactedReceipts: RequestReceipt[] = [];
 
 interface SamlTokenRow {
   auth_origin: string;
@@ -42,47 +28,23 @@ interface SamlTokenRow {
   state: string;
 }
 
-function recordRequests(page: Page, flow: string): void {
-  page.on('request', (request: Request) => {
-    const url = new URL(request.url());
-    if (!SAML_PATHS.has(url.pathname)) return;
-    const at = Date.now();
-    // headers() leaves out Cookie; allHeaders() has the cookies the browser
-    // actually sent, which is what the binder checks are about.
-    pendingReceipts.push(request.allHeaders().then(headers => {
-      const cookieNames = (headers.cookie ?? '')
-        .split(';')
-        .map(cookie => cookie.trim().split('=', 1)[0])
-        .filter(Boolean)
-        .sort();
-      const authorization = headers.authorization;
-      receipts.push({
-        flow,
-        at,
-        method: request.method(),
-        path: url.pathname,
-        cookieNames,
-        cookieHeader: headers.cookie ?? null,
-        authorizationPrefix: authorization ? authorization.split(' ', 1)[0] : null,
-        authorizationValue: authorization?.split(' ', 2)[1] ?? null,
-        hasOrganizationHeader: 'x-organization-id' in headers,
-        hasWorkspaceHeader: 'x-workspace-id' in headers,
+function recordingOptions(testInfo: TestInfo, actors: TestActor[], idp: LocalSamlIdp, probe: StateProbe) {
+  return {
+    report: async (evidence: { receipts: RequestReceipt[]; errors: string[] }) => {
+      redactedReceipts.push(...evidence.receipts);
+      await testInfo.attach('saml-requests.json', {
+        contentType: 'application/json',
+        body: Buffer.from(JSON.stringify({
+          actors: actors.map(({ email, organizationId, workspaceId }) => ({ email, organizationId, workspaceId })),
+          ...evidence,
+        }, null, 2)),
       });
-    }));
-  });
-}
-
-async function settledReceipts(): Promise<RequestReceipt[]> {
-  await Promise.allSettled(pendingReceipts);
-  return receipts;
-}
-
-function redactReceipts(receiptsToRedact: RequestReceipt[]): object[] {
-  return receiptsToRedact.map(({ cookieHeader, authorizationValue, ...receipt }) => ({
-    ...receipt,
-    cookieHeader: cookieHeader ? '[REDACTED]' : null,
-    authorizationValue: authorizationValue ? '[REDACTED]' : null,
-  }));
+    },
+    release: [
+      { name: 'IdP', run: () => idp.stop() },
+      { name: 'probe', run: () => probe.dispose() },
+    ],
+  };
 }
 
 async function uploadIdp(
@@ -177,7 +139,7 @@ test.describe('SAML tenant isolation', () => {
 
   test.afterAll(async () => {
     await mkdir(path.dirname(RESULTS), { recursive: true });
-    await writeFile(RESULTS, `${JSON.stringify(redactReceipts(await settledReceipts()), null, 2)}\n`);
+    await writeFile(RESULTS, `${JSON.stringify(redactedReceipts, null, 2)}\n`);
   });
 
   test('SAML-E2E-001: signed login issues one organization-scoped session', {
@@ -188,10 +150,10 @@ test.describe('SAML tenant isolation', () => {
       steps: ['provision an organization member and its local IdP metadata', 'initiate from the browser', 'complete the cross-site signed response', 'render the authenticated dashboard'],
       backendChecks: ['the AuthToken row has auth_origin=saml and the actor organization scope', 'the shared login attempt reaches consumed', 'redacted callback request receipts contain no secret values'],
     }),
-  }, async ({ page, request }) => {
+  }, async ({ page, request }, testInfo) => {
     const { actor, idp, probe } = await setupSamlActor(request, 'saml-happy');
-    try {
-      recordRequests(page, 'SAML-E2E-001');
+    await withSamlRecorders(recordingOptions(testInfo, [actor], idp, probe), async record => {
+      const recorder = record(page, 'SAML-E2E-001');
       const token = await completeBrowserLogin(page, idp, actor.email);
       expect(token).not.toBe('');
       expect(new URL(page.url()).search).toBe('');
@@ -208,12 +170,11 @@ test.describe('SAML tenant isolation', () => {
         auth_origin: 'saml', scoped_organization_id: actor.organizationId, state: 'consumed',
       }]);
       // The dashboard asks for user-info after the barrier has stripped the URL.
-      await expect.poll(async () => (await settledReceipts())
-        .filter(receipt => receipt.flow === 'SAML-E2E-001')
+      await expect.poll(async () => (await recorder.drain())
         .map(receipt => receipt.path), { timeout: UI_READY }).toEqual(
         expect.arrayContaining(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']),
       );
-      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-001');
+      const flowReceipts = await recorder.drain();
       const secretValues = flowReceipts.flatMap(receipt =>
         [receipt.cookieHeader, receipt.authorizationValue].filter(
           (value): value is string => Boolean(value),
@@ -224,9 +185,7 @@ test.describe('SAML tenant isolation', () => {
         expect(redacted).not.toContain(secret);
       }
       expect(redacted).not.toContain(token);
-    } finally {
-      await dispose(idp, probe);
-    }
+    });
   });
 
   test('SAML-E2E-002: another browser cannot consume the initiating browser candidate', {
@@ -237,17 +196,22 @@ test.describe('SAML tenant isolation', () => {
       steps: ['start SSO in browser X', 'let browser Y post the signed response', 'observe Y fail without the binder', 'complete the same candidate in X'],
       backendChecks: ['no SAML token exists after Y fails', 'X consumes the pending attempt and receives exactly one token'],
     }),
-  }, async ({ browser, request }) => {
+  }, async ({ browser, request }, testInfo) => {
     const { actor, idp, probe } = await setupSamlActor(request, 'saml-binding');
     let x: BrowserContext | undefined;
     let y: BrowserContext | undefined;
-    try {
+    const options = recordingOptions(testInfo, [actor], idp, probe);
+    options.release.push(
+      { name: 'browser X', run: async () => { await x?.close(); } },
+      { name: 'browser Y', run: async () => { await y?.close(); } },
+    );
+    await withSamlRecorders(options, async record => {
       x = await browser.newContext({ baseURL: E2E.appUrl });
       y = await browser.newContext({ baseURL: E2E.appUrl });
       const pageX = await x.newPage();
       const pageY = await y.newPage();
-      recordRequests(pageX, 'SAML-E2E-002-X');
-      recordRequests(pageY, 'SAML-E2E-002-Y');
+      record(pageX, 'SAML-E2E-002-X');
+      record(pageY, 'SAML-E2E-002-Y');
       await pageX.goto('/auth/jwt/login', { waitUntil: 'domcontentloaded' });
       await pageY.goto('/auth/jwt/login', { waitUntil: 'domcontentloaded' });
       await idp.setIdentity(actor.email);
@@ -285,9 +249,7 @@ test.describe('SAML tenant isolation', () => {
         `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON u.id = t.user_id
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
       )).toHaveLength(1);
-    } finally {
-      await Promise.all([x?.close(), y?.close(), dispose(idp, probe)]);
-    }
+    });
   });
 
   test('SAML-E2E-003: the cross-site ACS post omits the binder and completion carries it', {
@@ -298,19 +260,17 @@ test.describe('SAML tenant isolation', () => {
       steps: ['initiate SSO from localhost', 'navigate to the 127.0.0.1 IdP', 'inspect ACS and completion requests'],
       backendChecks: ['ACS has no fai_saml_b cookie', 'completion has exactly one fai_saml_b cookie'],
     }),
-  }, async ({ page, request }) => {
+  }, async ({ page, request }, testInfo) => {
     const { actor, idp, probe } = await setupSamlActor(request, 'saml-lax');
-    try {
-      recordRequests(page, 'SAML-E2E-003');
+    await withSamlRecorders(recordingOptions(testInfo, [actor], idp, probe), async record => {
+      const recorder = record(page, 'SAML-E2E-003');
       await completeBrowserLogin(page, idp, actor.email);
-      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-003');
+      const flowReceipts = await recorder.drain();
       const acs = flowReceipts.find(receipt => receipt.path === '/saml2_auth/acs/');
       const completion = flowReceipts.find(receipt => receipt.path === '/saml2_auth/complete/');
       expect(acs?.cookieNames.filter(name => name.startsWith('fai_saml_b_'))).toEqual([]);
       expect(completion?.cookieNames.filter(name => name.startsWith('fai_saml_b_'))).toHaveLength(1);
-    } finally {
-      await dispose(idp, probe);
-    }
+    });
   });
 
   test('SAML-E2E-004: safe next survives the binding while external next values do not', {
@@ -384,10 +344,12 @@ test.describe('SAML tenant isolation', () => {
       steps: ['render a live password session for another organization', 'open the SAML callback in the same tab', 'inspect the first protected request and browser storage', 'try an explicit old organization selector'],
       backendChecks: ['the first user-info request uses the SAML bearer and no organization or workspace header', 'refresh and stale selector state are absent after the barrier', 'a forced old organization selector is denied'],
     }),
-  }, async ({ page, request }) => {
+  }, async ({ page, request }, testInfo) => {
     const { actor: samlActor, idp, probe } = await setupSamlActor(request, 'saml-replace');
-    const passwordActor = await provisionActor(request, 'password-replace');
-    try {
+    const actors = [samlActor];
+    await withSamlRecorders(recordingOptions(testInfo, actors, idp, probe), async record => {
+      const passwordActor = await provisionActor(request, 'password-replace');
+      actors.push(passwordActor);
       await page.goto('/auth/jwt/login', { waitUntil: 'domcontentloaded' });
       await page.evaluate(authInitScript, {
         access: passwordActor.tokens.access,
@@ -397,7 +359,7 @@ test.describe('SAML tenant isolation', () => {
       });
       await page.evaluate(orgId => sessionStorage.setItem('workspaceOrgId', orgId), passwordActor.organizationId);
       await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-      recordRequests(page, 'SAML-E2E-006');
+      const recorder = record(page, 'SAML-E2E-006');
       await idp.setIdentity(samlActor.email);
       const idpUrl = await initiate(page, samlActor.email);
       // The tab already shows /dashboard/develop under the password session,
@@ -417,9 +379,9 @@ test.describe('SAML tenant isolation', () => {
       expect(samlToken).not.toBe(passwordActor.tokens.access);
       const isSamlUserInfo = (receipt: RequestReceipt) => receipt.flow === 'SAML-E2E-006'
         && receipt.path === '/accounts/user-info/' && receipt.at >= completedAt;
-      await expect.poll(async () => (await settledReceipts()).filter(isSamlUserInfo).length,
+      await expect.poll(async () => (await recorder.drain()).filter(isSamlUserInfo).length,
         { timeout: UI_READY }).toBeGreaterThan(0);
-      const firstUserInfo = (await settledReceipts())
+      const firstUserInfo = (await recorder.drain())
         .filter(isSamlUserInfo)
         .sort((a, b) => a.at - b.at)[0];
       expect(firstUserInfo).toMatchObject({
@@ -451,8 +413,6 @@ test.describe('SAML tenant isolation', () => {
       });
       expect(forced.status).toBe(403);
       expect(JSON.stringify(forced.body)).toContain('saml_scope_conflict');
-    } finally {
-      await dispose(idp, probe);
-    }
+    });
   });
 });
