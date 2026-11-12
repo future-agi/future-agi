@@ -221,6 +221,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(summary, r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$")
         self.assertRegex(summary, r"(?m)^          RUFF: \$\{\{ needs\.ruff-delta\.result \}\}\s*$")
 
+    def test_nothing_turns_a_failure_into_a_pass(self):
+        # continue-on-error on any job or step can report a real failure as
+        # success to the summary, or make the summary itself green regardless.
+        self.assertNotIn("continue-on-error", self.text)
+        # The gate's exit status is the check: nothing may swallow it.
+        self.assertNotRegex(self.text, r"\|\|\s*(true\b|:(?=\s|$))")
+        self.assertNotRegex(self.text, r"(?m)^\s*set \+e\b")
+
     def test_the_summary_fails_closed(self):
         script = run_script(job_block(self.text, "python-lint-pass"))
         cases = [
@@ -259,7 +267,7 @@ class WorkflowTests(unittest.TestCase):
                         self.assertIn("::error::", proc.stdout)
 
 
-BASE_MOD =textwrap.dedent(
+BASE_MOD = textwrap.dedent(
     """\
     def first():
         try:
