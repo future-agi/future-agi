@@ -1995,7 +1995,7 @@ class TestReport:
                 ),
                 {
                     "code": "fix_engine_failed",
-                    "message": "the improvement engine hit an error it could not recover from",
+                    "message": "the engine hit an error it could not recover from",
                 },
             ),
         ],
@@ -2757,11 +2757,34 @@ class TestWinnerGrading:
         assert committed_usd(fix_run) == Decimal("0.01") + 2 * Decimal("0.75")
         assert eval_review(fix_run).grading == EvalGrading.PENDING
 
+    def test_a_winner_is_graded_on_every_billed_eval_not_only_the_first(
+        self, source_run
+    ):
+        # Queueing one config reopens a call's eval side, so grading config by config
+        # left every config but the first skipped as "pending" (proof 3, 12 Nov).
+        fix_run, candidate, runs, first = self._fix(source_run)
+        second = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        assert {(call.args[0], call.args[1]) for call in dispatched.call_args_list} == {
+            (call_id, str(config.id))
+            for call_id in graded
+            for config in (first, second)
+        }
+
     def test_a_fix_with_no_winner_pays_for_no_evals(self, source_run):
         fix_run, candidate, _, _ = self._fix(source_run)
 
         with patch(
-            "simulate.services.agent_fix_engine.queue_eval_for_finished_calls"
+            "simulate.services.agent_fix_engine.queue_evals_for_finished_calls"
         ) as queue:
             engine.apply_report(
                 fix_run,
@@ -2918,7 +2941,7 @@ class TestPullRequestEvals:
             EvalReview(grading=EvalGrading.DONE, warnings=[warning], compared=1),
         )
         assert "**Platform evals this change does worse on.**" in body
-        assert "They do not decide the epoch's verdict" in body
+        assert "They do not pick the winner" in body
         assert (
             "- Politeness: 25% passed (12 trials), 100% on the current version (12 trials)"
             in body

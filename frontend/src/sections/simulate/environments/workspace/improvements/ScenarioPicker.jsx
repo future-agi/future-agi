@@ -227,7 +227,7 @@ export default function ScenarioPicker({
       <ScenarioList
         testId="cases-fix"
         title="Cases to fix"
-        note="The failing cases this improvement works on. Some are held back to prove the fix; it never sees them."
+        note="The failing cases this epoch works on. Some are held back to prove the change; it never sees them."
         items={fixable}
         chosen={targets}
         suggested={options.suggested.target_scenario_keys}

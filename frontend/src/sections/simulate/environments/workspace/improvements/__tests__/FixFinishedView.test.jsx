@@ -137,7 +137,7 @@ describe("FixVerdict", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks a check the fix could not measure as Couldn't measure, with its own icon", () => {
+  it("marks a check the fix could not measure as Unknown, with its own icon", () => {
     const fix = fixOf("fix-ready-archive");
     const winner = fix.candidates.find((c) => c.outcome === "winner");
     winner.verdict.tiers = [
@@ -151,12 +151,12 @@ describe("FixVerdict", () => {
     renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
 
     expect(
-      screen.getByText("Checks · 5 of 5 passed · 1 couldn't measure"),
+      screen.getByText("Checks · 5 of 5 passed · 1 unknown"),
     ).toBeInTheDocument();
     const row = screen.getByText("Model unchanged").parentElement;
-    expect(within(row).getByText("Couldn't measure")).toBeInTheDocument();
+    expect(within(row).getByText("Unknown")).toBeInTheDocument();
     expect(row.getAttribute("data-check")).toBe("unmeasured");
-    expect(screen.getAllByText("Couldn't measure")).toHaveLength(1);
+    expect(screen.getAllByText("Unknown")).toHaveLength(1);
     expect(screen.queryByText("model-lock")).toBeNull();
   });
 
@@ -196,14 +196,12 @@ describe("FixVerdict", () => {
     const latency = screen.getByText("Reply time").parentElement;
     const cost = screen.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
-    expect(
-      within(latency).getByText("median 1.1 s, baseline 1 s: within"),
-    ).toBeInTheDocument();
+    expect(within(latency).getByText("Within the limit.")).toBeInTheDocument();
     // An untraced agent's cost is unknown, said plainly, never "not verified".
     expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
     expect(
       within(cost).getByText(
-        "This agent isn't traced, so its cost isn't measured.",
+        "This agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
       ),
     ).toBeInTheDocument();
   });
@@ -236,12 +234,10 @@ describe("FixVerdict", () => {
     const latency = screen.getByText("Reply time").parentElement;
     const cost = screen.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
-    expect(
-      within(latency).getByText("median 1.1 s, baseline 1 s: within"),
-    ).toBeInTheDocument();
+    expect(within(latency).getByText("Within the limit.")).toBeInTheDocument();
     expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
-    // Only the tier reads Couldn't measure; its unmeasured cost says it is unknown.
-    expect(screen.getAllByText("Couldn't measure")).toHaveLength(1);
+    // Only the tier reads Unknown; its unmeasured cost says Cost unknown and why.
+    expect(screen.getAllByText("Unknown")).toHaveLength(1);
   });
 
   it("renders a verdict without tiers, here and in the decision drawer", () => {
@@ -330,7 +326,7 @@ describe("FixFinishedView, no safe improvement", () => {
 
     expect(
       screen.getByText(
-        "No safe improvement: neither trial improved the target cases.",
+        "No safe improvement: neither candidate improved the target scenarios.",
       ),
     ).toBeInTheDocument();
     // The engine's summary is not the headline any more.
@@ -342,18 +338,19 @@ describe("FixFinishedView, no safe improvement", () => {
 
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Show the numbers" }));
+      .click(
+        screen.getByRole("button", { name: "Show each candidate's result" }),
+      );
     const numbers = within(screen.getByTestId("no-safe-numbers"));
+    // Each trial's result in plain words from its own numbers; the engine's text is never shown.
     expect(
       numbers.getByText(
-        "Trial 1 · Target cases: 0 of 1 target scenarios passed",
+        "Candidate 1 · Target scenarios: 0% → 0%, not a clear gain.",
       ),
     ).toBeInTheDocument();
     expect(
-      numbers.getByText(
-        "Engine's note: No safe improvement: every candidate broke a must-pass scenario.",
-      ),
-    ).toBeInTheDocument();
+      numbers.queryByText(/Engine's note|target scenarios passed/),
+    ).toBeNull();
   });
 });
 
@@ -375,11 +372,11 @@ describe("FixFinishedView, what to try next", () => {
     const next = within(screen.getByTestId("what-to-try-next"));
     expect(
       next.getByText(
-        "Keep the current version. This fix changed nothing: your agent changes only when you ship a fix.",
+        "Keep the current version. This epoch changed nothing: your agent changes only when you ship a candidate.",
       ),
     ).toBeInTheDocument();
 
-    await user.click(next.getByRole("button", { name: "See the trials" }));
+    await user.click(next.getByRole("button", { name: "See the candidates" }));
     expect(onTab).toHaveBeenCalledWith("trials");
     await user.click(next.getByRole("button", { name: "How it was decided" }));
     expect(await screen.findByTestId("fix-decision")).toBeInTheDocument();
@@ -391,7 +388,7 @@ describe("FixFinishedView, what to try next", () => {
 
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Start a new fix" }));
+      .click(screen.getByRole("button", { name: "Run a new epoch" }));
     const dialog = screen.getByTestId("launch-fix-dialog");
     expect(dialog).toHaveAttribute("data-env", "env-1");
     expect(dialog).toHaveAttribute("data-source", "te-source-run-1");
@@ -401,7 +398,7 @@ describe("FixFinishedView, what to try next", () => {
     view(fixOf("fix-no-improvement", { source_run_id: null }));
     expect(screen.getByTestId("what-to-try-next")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Start a new fix" }),
+      screen.queryByRole("button", { name: "Run a new epoch" }),
     ).toBeNull();
   });
 
@@ -443,7 +440,7 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
       />,
     );
     expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
-      "1 protected case is flaky on the current version, so this fix wasn't held to it: “Escalate a large order”.",
+      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
     );
     unmount();
 
@@ -463,7 +460,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
   const checkNames = (trial) =>
     trial
       .getAllByText(
-        /^(Static checks|Target cases|Held-back set|Must-pass set)$/,
+        /^(Change is valid|Target scenarios|Held-back scenarios|Must-pass scenarios)$/,
       )
       .map((el) => el.textContent);
 
@@ -476,18 +473,17 @@ describe("FixDecisionDrawer without a kept trial", () => {
       />,
     );
 
-    expect(screen.getByText("Rejected trials")).toBeInTheDocument();
+    expect(screen.getByText("Rejected candidates")).toBeInTheDocument();
     for (const attempt of [1, 2]) {
       const trial = within(screen.getByTestId(`rejected-${attempt}`));
-      expect(trial.getByText(`Trial ${attempt}`)).toBeInTheDocument();
+      expect(trial.getByText(`Candidate ${attempt}`)).toBeInTheDocument();
       expect(checkNames(trial)).toEqual([
-        "Target cases",
-        "Static checks",
-        "Must-pass set",
+        "Target scenarios",
+        "Change is valid",
+        "Must-pass scenarios",
       ]);
-      expect(
-        trial.getByText("0 of 1 target scenarios passed"),
-      ).toBeInTheDocument();
+      // The rejecting check in plain words, from the trial's own numbers.
+      expect(trial.getByText("0% → 0%, not a clear gain.")).toBeInTheDocument();
     }
   });
 
@@ -501,12 +497,14 @@ describe("FixDecisionDrawer without a kept trial", () => {
     );
 
     const trial = within(screen.getByTestId("rejected-1"));
-    const row = trial.getByText("Must-pass set").parentElement;
+    const row = trial.getByText("Must-pass scenarios").parentElement;
     expect(
-      within(row).getByText("not run — an earlier check failed: Target cases"),
+      within(row).getByText(
+        "not run — an earlier check failed: Target scenarios",
+      ),
     ).toBeInTheDocument();
     expect(row.getAttribute("data-check")).toBe("not-run");
-    expect(trial.queryByText("Couldn't measure")).toBeNull();
+    expect(trial.queryByText("Unknown")).toBeNull();
     expect(within(row).queryByText(/passed|held/)).toBeNull();
   });
 
@@ -519,7 +517,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
       />,
     );
 
-    expect(screen.queryByText("Rejected trials")).toBeNull();
+    expect(screen.queryByText("Rejected candidates")).toBeNull();
     expect(screen.queryByTestId("rejected-1")).toBeNull();
     expect(screen.getByText("Checks · 5 of 5 passed")).toBeInTheDocument();
   });
@@ -531,10 +529,10 @@ describe("FixDecisionDrawer without a kept trial", () => {
 
     const trial = within(screen.getByTestId("rejected-1"));
     expect(
-      trial.getByText("target: 0 of 1 target scenarios passed"),
+      trial.getByText("Rejected. Target scenarios 0% → 0%."),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("rejected-2")).getByText("Target cases"),
+      within(screen.getByTestId("rejected-2")).getByText("Target scenarios"),
     ).toBeInTheDocument();
   });
 });
@@ -558,7 +556,7 @@ describe("FixFinishedView", () => {
     );
     expect(
       screen.getByText(
-        "The engine stopped: the model provider refused the key.",
+        "This epoch stopped on something only you can change: The engine stopped: the model provider refused the key.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
@@ -595,7 +593,7 @@ describe("Ship, while the evals grade the winner", () => {
     renderPage("fix-ready-github");
     expect(await shipButton()).toBeDisabled();
     expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "The evals are still grading this trial. Ship it once they finish.",
+      "Platform evals are still scoring this candidate. You can ship it once they finish.",
     );
   });
 
@@ -607,7 +605,7 @@ describe("Ship, while the evals grade the winner", () => {
     renderPage("fix-ready-archive");
     expect(await shipButton()).toBeEnabled();
     expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "The evals could not finish grading this trial; it was not checked by them.",
+      "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.",
     );
   });
 
@@ -656,7 +654,7 @@ describe("Ship", () => {
     renderPage("fix-ready-archive");
     ({ dialog, confirm } = await confirmShip(user, "Make default"));
     expect(
-      within(dialog).getByText("Make Trial 3's version the default?"),
+      within(dialog).getByText("Make Candidate 3's version the default?"),
     ).toBeInTheDocument();
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);

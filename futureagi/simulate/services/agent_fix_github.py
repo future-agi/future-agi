@@ -157,8 +157,8 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
     lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
     if review.warnings:
         lines.append(
-            "**Platform evals this change does worse on.** They do not decide the"
-            " epoch's verdict; review them before you merge."
+            "**Platform evals this change does worse on.** They do not pick the winner;"
+            " review them before you merge."
         )
         lines += [
             f"- {one.name}: {_percent(one.pass_rate)} passed ({one.trials} trials),"

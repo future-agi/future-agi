@@ -14,7 +14,12 @@ function Row({ label, children }) {
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Typography
-        sx={{ typography: "s2", color: "text.subtitle", width: 64, flexShrink: 0 }}
+        sx={{
+          typography: "s2",
+          color: "text.subtitle",
+          width: 64,
+          flexShrink: 0,
+        }}
       >
         {label}
       </Typography>
@@ -22,7 +27,10 @@ function Row({ label, children }) {
     </Stack>
   );
 }
-Row.propTypes = { label: PropTypes.string.isRequired, children: PropTypes.node };
+Row.propTypes = {
+  label: PropTypes.string.isRequired,
+  children: PropTypes.node,
+};
 
 function ChangeSummary({ fix, winner }) {
   // Same key and staleness as the Changes tab, so a patch is read once. A
@@ -57,7 +65,9 @@ function ChangeSummary({ fix, winner }) {
             <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>
               {f.file}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.secondary", ...num }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", ...num }}
+            >
               {`+${added} −${removed}`}
             </Typography>
           </Stack>
@@ -92,8 +102,8 @@ export default function ShipConfirmDialog({
       closeDisabled={busy}
       title={
         github
-          ? `Open a pull request for Trial ${winner.attempt}?`
-          : `Make Trial ${winner.attempt}'s version the default?`
+          ? `Open a pull request for Candidate ${winner.attempt}?`
+          : `Make Candidate ${winner.attempt}'s version the default?`
       }
       content={
         <Stack spacing={1.25}>
@@ -108,7 +118,9 @@ export default function ShipConfirmDialog({
               )}
               {fix.agent?.ref && (
                 <Row label="Into">
-                  <Typography sx={{ typography: "s2" }}>{fix.agent.ref}</Typography>
+                  <Typography sx={{ typography: "s2" }}>
+                    {fix.agent.ref}
+                  </Typography>
                 </Row>
               )}
             </>

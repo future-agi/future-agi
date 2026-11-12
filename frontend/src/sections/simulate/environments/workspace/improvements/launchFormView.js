@@ -27,7 +27,7 @@ export function countsLine(picked, protectedCount, limits) {
 // does: it ends with Limited validation, and a GitHub agent's pull request is a draft.
 export function variationsNote(picked, limits, agentKind) {
   if (!needsVariations(picked, limits)) return null;
-  const note = `A fix needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each, then fixes the ones the current version also fails.`;
+  const note = `An epoch needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each, then fixes the ones the current version also fails.`;
   if (picked >= limits.verified_cases_min) return note;
   const draft = agentKind === "github" ? " and opens a draft pull request" : "";
   return `${note} With fewer than ${limits.verified_cases_min} failing cases it can only end with Limited validation${draft}.`;
@@ -113,7 +113,7 @@ export const isTraced = (options) =>
   seesModels(options) || options.defaults.agent_cost_metered;
 
 export const UNTRACED_NOTE =
-  "This agent is not traced, so a fix cannot see the models it calls or what they cost. The model lock and the cost limit will show “Couldn't measure”.";
+  "This agent is not traced, so an epoch cannot see the models it calls or what they cost. The model lock and the cost limit will show “Unknown”.";
 
 // Shown when the platform could not read the run's traces: the launch is refused
 // until it can, so the form does not call the agent untraced.
@@ -121,7 +121,7 @@ export const tracesUnreadable = (options) =>
   options.blocked?.code === "fix_traces_unreadable";
 
 export const NO_MODELS_NOTE =
-  "This agent's traces name no model, so the model lock will show “Couldn't measure”. Its cost is still checked.";
+  "This agent's traces name no model, so the model lock will show “Unknown”. Its cost is still checked.";
 
 // The limit on the agent's spend per conversation, in US dollars: null when
 // left empty, NaN when it is not a number above 0.
@@ -143,7 +143,7 @@ export function launchError({
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
   if (targets.length < limits.scenarios_min) {
-    return `Needs at least ${limits.scenarios_min} failing cases: with ${limits.variations_per_case} variations of each, they can reach the ${limits.cases_min} a fix needs.`;
+    return `Needs at least ${limits.scenarios_min} failing cases: with ${limits.variations_per_case} variations of each, they can reach the ${limits.cases_min} an epoch needs.`;
   }
   if (targets.length > limits.scenarios_max) {
     return `Pick at most ${limits.scenarios_max} cases to fix.`;

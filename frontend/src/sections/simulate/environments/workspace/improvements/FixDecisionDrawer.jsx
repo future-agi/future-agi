@@ -13,6 +13,7 @@ import {
   pct,
   pts,
   describeChecks,
+  oldVerdictLine,
   rejectionChecks,
   winnerOf,
 } from "./fixRunView";
@@ -107,7 +108,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 2 }}>
           {winner
-            ? `${fixName(fix)} · Trial ${winner.attempt} kept`
+            ? `${fixName(fix)} · Candidate ${winner.attempt} kept`
             : fixName(fix)}
         </Typography>
         <Box sx={{ ...table, p: 1.5, mb: 2 }}>
@@ -183,7 +184,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 >
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600 }}
-                  >{`Trial ${c.attempt}`}</Typography>
+                  >{`Candidate ${c.attempt}`}</Typography>
                   <Typography sx={{ typography: "s3", ...num }}>
                     {c.verdict.target_pass_rate
                       ? `${pct(c.verdict.target_pass_rate[1])}%`
@@ -216,7 +217,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   {checksLine(v.tiers)}
                 </Typography>
               </Box>
-              {describeChecks(v.tiers, fix.request).map((t, i) => (
+              {describeChecks(v.tiers, fix.request, v, fix.plan).map((t, i) => (
                 <Box key={t.name} sx={rowSx(i + 1)}>
                   <CheckRows check={t} />
                 </Box>
@@ -226,7 +227,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
         )}
         {rejected.length > 0 && (
           <Box>
-            <Typography sx={sectionTitle}>Rejected trials</Typography>
+            <Typography sx={sectionTitle}>Rejected candidates</Typography>
             <Box sx={table}>
               {rejected.map((c, i) => (
                 <Box
@@ -236,17 +237,22 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                 >
                   <Typography
                     sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
-                  >{`Trial ${c.attempt}`}</Typography>
+                  >{`Candidate ${c.attempt}`}</Typography>
                   {c.verdict.tiers?.length > 0 ? (
-                    rejectionChecks(c.verdict.tiers, fix.request).map((t) => (
+                    rejectionChecks(
+                      c.verdict.tiers,
+                      fix.request,
+                      c.verdict,
+                      fix.plan,
+                    ).map((t) => (
                       <CheckRows key={t.name} check={t} sx={{ mt: 0.25 }} />
                     ))
                   ) : (
-                    // A verdict from before checks were recorded: its reason alone.
+                    // A verdict from before checks were recorded: its numbers in words.
                     <Typography
                       sx={{ typography: "s3", color: "text.secondary" }}
                     >
-                      {c.verdict.reason}
+                      {oldVerdictLine(c.verdict)}
                     </Typography>
                   )}
                 </Box>

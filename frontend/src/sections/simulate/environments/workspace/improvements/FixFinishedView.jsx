@@ -44,7 +44,7 @@ export function FinishedActions({ fix, onReview }) {
           endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
           onClick={() => onReview(winner.id)}
         >
-          {`Review Trial ${winner.attempt}`}
+          {`Review Candidate ${winner.attempt}`}
         </Button>
       )}
       <ShipButton fix={fix} />
@@ -70,34 +70,31 @@ const TABS_SX = {
 };
 
 const TABS = [
-  { id: "trials", label: "Trials" },
+  { id: "trials", label: "Candidates" },
   { id: "changes", label: "Changes" },
   { id: "scenarios", label: "Per scenario" },
   { id: "cost", label: "Cost" },
 ];
 
-// What the no-safe headline rests on, behind a toggle: each trial's rejecting check as
-// measured, and the engine's own summary word for word.
+// What the no-safe headline rests on, behind a toggle: each trial's rejecting check in
+// plain words.
 function NoSafeNumbers({ fix }) {
   const [open, setOpen] = useState(false);
-  const { trials, engineNote } = noSafeNumbers(fix);
-  if (!trials.length && !engineNote) return null;
+  const { trials } = noSafeNumbers(fix);
+  if (!trials.length) return null;
   const line = { typography: "s3", color: "text.secondary" };
   return (
     <Box sx={{ mt: 0.5 }}>
       <Button size="small" onClick={() => setOpen((o) => !o)} sx={{ px: 0 }}>
-        {open ? "Hide the numbers" : "Show the numbers"}
+        {open ? "Hide each candidate's result" : "Show each candidate's result"}
       </Button>
       {open && (
         <Stack spacing={0.5} sx={{ mt: 0.5 }} data-testid="no-safe-numbers">
           {trials.map((t) => (
             <Typography key={t.attempt} sx={line}>
-              {`Trial ${t.attempt} · ${t.label}: ${t.detail}`}
+              {`Candidate ${t.attempt} · ${t.label}: ${t.detail}`}
             </Typography>
           ))}
-          {engineNote && (
-            <Typography sx={line}>{`Engine's note: ${engineNote}`}</Typography>
-          )}
         </Stack>
       )}
     </Box>
@@ -120,14 +117,16 @@ function WhatToTryNext({ fix, onTab }) {
       </Typography>
       <Stack spacing={0.5}>
         <Typography sx={line}>
-          Keep the current version. This fix changed nothing: your agent changes
-          only when you ship a fix.
+          Keep the current version. This epoch changed nothing: your agent
+          changes only when you ship a candidate.
         </Typography>
         {tried && (
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography sx={line}>Read why each trial was rejected.</Typography>
+            <Typography sx={line}>
+              Read why each candidate was rejected.
+            </Typography>
             <Button size="small" onClick={() => onTab?.("trials")}>
-              See the trials
+              See the candidates
             </Button>
             <Button size="small" onClick={() => setDeciding(true)}>
               How it was decided
@@ -137,11 +136,11 @@ function WhatToTryNext({ fix, onTab }) {
         {fix.source_run_id && (
           <Stack direction="row" alignItems="center" spacing={1}>
             <Typography sx={line}>
-              Pick other failing cases, or let a fix change other parts of the
-              agent.
+              Pick other failing cases, or let an epoch change other parts of
+              the agent.
             </Typography>
             <Button size="small" onClick={() => setLaunching(true)}>
-              Start a new fix
+              Run a new epoch
             </Button>
           </Stack>
         )}
@@ -175,9 +174,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
   const noSafe = fix.state === "no_improvement";
-  const ending = noSafe
-    ? headline(fix)
-    : fix.failure?.message || fix.report?.summary;
+  const ending = headline(fix);
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
@@ -233,7 +230,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           </>
         ) : (
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            No trials ran.
+            No candidates ran.
           </Typography>
         )
       ) : (

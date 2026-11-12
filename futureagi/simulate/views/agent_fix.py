@@ -70,8 +70,19 @@ def _error_response(exc):
     if isinstance(exc, HostedHarnessError):
         return Response(exc.as_dict(), status=exc.status_code)
     if isinstance(exc, PydanticValidationError):
+        # The fields stay in the details for a machine; the message is for a person.
         return _error_response(
-            HostedHarnessError("validation_error", str(exc), status_code=400)
+            HostedHarnessError(
+                "validation_error",
+                "Some settings are not valid. Check them and try again.",
+                status_code=400,
+                details={
+                    "fields": [
+                        ".".join(str(part) for part in error["loc"])
+                        for error in exc.errors()
+                    ]
+                },
+            )
         )
     return _usage_limit_response(exc)
 
