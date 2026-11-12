@@ -166,6 +166,10 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await page.getByRole('button', { name: 'Approve exact packet', exact: true }).click();
     expect((await decided).ok()).toBe(true);
     // Attestation of an unchanged revision survives the approval refresh.
+    // Wait for that server-backed refresh to settle before the environment
+    // injects the next race, so the race lands after the approved state is
+    // shown (as in the registered driver), not inside the refresh itself.
+    await expect(page.getByRole('button', { name: 'Release approved packet', exact: true })).toBeEnabled();
     await expect(ack).toBeChecked();
   };
   const renewals: unknown[] = [];
