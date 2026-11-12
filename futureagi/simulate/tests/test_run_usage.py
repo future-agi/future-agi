@@ -59,10 +59,12 @@ def spans(ch_database, monkeypatch):
             project=PROJECT,
             job=JOB,
             at=START + timedelta(minutes=5),
+            extra=None,
         ):
             attrs = {
                 **({"fi.simulator.call_execution_id": call} if call else {}),
                 **({"gen_ai.request.model": model} if model else {}),
+                **(extra or {}),
             }
             column = model_column or ""
             pairs = ", ".join(f"'{key}', '{value}'" for key, value in attrs.items())
@@ -122,7 +124,32 @@ def test_each_call_s_models_spans_and_cost_come_from_its_traces(spans, monkeypat
     assert usage[priced].models == ["m1", "m2", "m3"]
     assert usage[priced].llm_spans == 4
     assert usage[priced].cost_usd == pytest.approx(0.038)
-    assert usage[unpriced] == CallUsage(models=["m1"], llm_spans=2, cost_usd=None)
+    assert usage[priced].unpriced_models == []
+    assert usage[unpriced] == CallUsage(
+        models=["m1"], llm_spans=2, cost_usd=None, unpriced_models=["m1"]
+    )
+
+
+@pytest.mark.integration
+def test_a_call_the_sandbox_could_not_wholly_measure_has_no_known_cost(
+    spans, monkeypatch
+):
+    _traced(monkeypatch)
+    measured, marker_only = str(uuid.uuid4()), str(uuid.uuid4())
+    one, two = str(uuid.uuid4()), str(uuid.uuid4())
+    partial = {run_traces_v3.UNMEASURED_KEY: "partial"}
+    # A priced LLM call, then a model call nothing measured: the sandbox's marker span.
+    spans(one, call=measured)
+    spans(one, kind="llm", model="m1", cost=0.01)
+    spans(one, extra=partial)
+    # A call whose only model call went unmeasured sends the marker alone.
+    spans(two, call=marker_only, extra=partial)
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert usage[measured] == CallUsage(models=["m1"], llm_spans=1, cost_usd=None)
+    # No LLM or embedding span: the call is missing, so it reads unmeasured as before.
+    assert marker_only not in usage
 
 
 @pytest.mark.integration

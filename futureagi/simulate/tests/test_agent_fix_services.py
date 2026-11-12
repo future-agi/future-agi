@@ -2353,16 +2353,23 @@ class TestMeasuredConversations:
         )
         usage = {
             str(priced.id): CallUsage(models=["m1", "m2"], llm_spans=3, cost_usd=0.03),
-            str(unpriced.id): CallUsage(models=["m1"], llm_spans=1, cost_usd=None),
+            str(unpriced.id): CallUsage(
+                models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
+            ),
         }
 
         with patch(TRACED, _usage(usage)):
-            records = check_run_status(run).records
+            status = check_run_status(run)
 
         assert [
-            (one.models, one.spans_seen, one.agent_cost_usd)
-            for one in sorted(records, key=lambda one: one.trial)
-        ] == [(["m1", "m2"], 3, 0.03), (["m1"], 1, None), ([], 0, None)]
+            (one.models, one.spans_seen, one.agent_cost_usd, one.unpriced_models)
+            for one in sorted(status.records, key=lambda one: one.trial)
+        ] == [
+            (["m1", "m2"], 3, 0.03, []),
+            (["m1"], 1, None, ["m1"]),
+            ([], 0, None, []),
+        ]
+        assert status.usage_unreadable is False
 
     def test_a_run_still_going_reads_no_span(self, source_run):
         run, [call] = _finished_trials(source_run, traced=True)
@@ -2384,12 +2391,16 @@ class TestMeasuredConversations:
         read.assert_not_called()
         assert (record.models, record.spans_seen) == ([], 0)
 
-    def test_a_span_read_that_fails_leaves_the_calls_unmeasured(self, source_run):
+    def test_a_span_read_that_fails_says_so_so_the_engine_never_reads_it_untraced(
+        self, source_run
+    ):
         run, [call] = _finished_trials(source_run, traced=True)
 
         with patch(TRACED, side_effect=CHError("down")):
-            [record] = check_run_status(run).records
+            status = check_run_status(run)
 
+        assert status.usage_unreadable is True
+        [record] = status.records
         assert (record.models, record.spans_seen, record.agent_cost_usd) == (
             [],
             0,

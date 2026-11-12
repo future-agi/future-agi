@@ -188,6 +188,8 @@ class CheckRecord(BaseModel):
     models: list[str] = Field(default_factory=list)
     spans_seen: int = 0
     agent_cost_usd: float | None = None
+    # The models of its spans that carried no cost: an unpriced model leaves the cost none.
+    unpriced_models: list[str] = Field(default_factory=list)
     # The median time from a user turn to the agent's first reply to it; for a voice call,
     # the agent's average latency. None when the conversation does not say.
     reply_latency_ms: float | None = None
@@ -206,6 +208,9 @@ class CheckRunStatus(BaseModel):
     # What the fix's limit is held against now, check runs included, so the engine's own
     # budget follows what the platform counts.
     committed_usd: float | None = None
+    # The run's spans could not be read: its calls carry no model, cost or span count, and
+    # the engine reads the run again before it fails the fix as ours.
+    usage_unreadable: bool = False
 
 
 class VerdictTierPart(BaseModel):

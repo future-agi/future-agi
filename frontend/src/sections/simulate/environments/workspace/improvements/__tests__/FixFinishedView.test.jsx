@@ -193,13 +193,19 @@ describe("FixVerdict", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Show all" }));
 
-    const latency = screen.getByText("reply latency").parentElement;
-    const cost = screen.getByText("agent cost").parentElement;
-    expect(within(latency).queryByText("Couldn't measure")).toBeNull();
+    const latency = screen.getByText("Reply time").parentElement;
+    const cost = screen.getByText("Agent's cost").parentElement;
+    expect(within(latency).queryByText("Reply time unknown")).toBeNull();
     expect(
       within(latency).getByText("median 1.1 s, baseline 1 s: within"),
     ).toBeInTheDocument();
-    expect(within(cost).getByText("Couldn't measure")).toBeInTheDocument();
+    // An untraced agent's cost is unknown, said plainly, never "not verified".
+    expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
+    expect(
+      within(cost).getByText(
+        "This agent isn't traced, so its cost isn't measured.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows each ceiling's own status in the decision drawer", () => {
@@ -227,15 +233,15 @@ describe("FixVerdict", () => {
     ];
     renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
 
-    const latency = screen.getByText("reply latency").parentElement;
-    const cost = screen.getByText("agent cost").parentElement;
-    expect(within(latency).queryByText("Couldn't measure")).toBeNull();
+    const latency = screen.getByText("Reply time").parentElement;
+    const cost = screen.getByText("Agent's cost").parentElement;
+    expect(within(latency).queryByText("Reply time unknown")).toBeNull();
     expect(
       within(latency).getByText("median 1.1 s, baseline 1 s: within"),
     ).toBeInTheDocument();
-    expect(within(cost).getByText("Couldn't measure")).toBeInTheDocument();
-    // The tier and its unmeasured cost; the measured latency reads verified.
-    expect(screen.getAllByText("Couldn't measure")).toHaveLength(2);
+    expect(within(cost).getByText("Cost unknown")).toBeInTheDocument();
+    // Only the tier reads Couldn't measure; its unmeasured cost says it is unknown.
+    expect(screen.getAllByText("Couldn't measure")).toHaveLength(1);
   });
 
   it("renders a verdict without tiers, here and in the decision drawer", () => {

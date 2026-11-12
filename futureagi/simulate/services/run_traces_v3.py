@@ -10,7 +10,7 @@ mark, scoped to that project and to the job's own time window.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +24,8 @@ from tracer.services.simulation_project import agent_of_run, simulation_project_
 
 RUN_MARK_KEY = "fi.simulation.job_id"
 CALL_MARK_KEY = "fi.simulator.call_execution_id"
+# The sandbox stamps a call some of whose model calls it could not measure.
+UNMEASURED_KEY = "fi.simulation.instrumentation"
 READ_TIMEOUT_MS = 2000
 MAX_TRACES = 200
 TRACED_AGENT_KIND = "source"
@@ -59,6 +61,8 @@ class CallUsage:
     llm_spans: int
     # None when an LLM or embedding span carried no cost.
     cost_usd: float | None
+    # The models named by its spans that carried no cost, so had no price.
+    unpriced_models: list[str] = field(default_factory=list)
 
 
 def run_traces_source(execution: TestExecution) -> RunTracesSource | None:
@@ -182,13 +186,17 @@ def run_usage_sql() -> str:
         "countIf(is_llm) AS llm_spans, "
         "countIf(is_billed) AS billed_spans, "
         "sumIf(span_cost, is_billed) AS cost, "
-        "countIf(is_billed AND NOT span_cost > 0) AS unpriced "
+        "countIf(is_billed AND NOT span_cost > 0) AS unpriced, "
+        "groupUniqArrayIf(span_model, is_billed AND NOT span_cost > 0 "
+        "AND span_model != '') AS unpriced_models, "
+        "countIf(is_partial) AS partial "
         "FROM ("
         f"SELECT if({has_call_mark}, {call_mark}, "
         f"argMinIf({call_mark}, start_time, {has_call_mark}) "
         "OVER (PARTITION BY trace_id)) AS call_execution_id, "
         "observation_type = 'llm' AS is_llm, "
         "observation_type IN ('llm', 'embedding') AS is_billed, "
+        f"{cols.ATTRS_STRING}['{UNMEASURED_KEY}'] = 'partial' AS is_partial, "
         f"{model} AS span_model, "
         "cost AS span_cost "
         "FROM spans FINAL "
@@ -203,7 +211,9 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
     """Each call's model calls in a run, by call id; a call that exported no LLM or
     embedding span is missing. None when the run's agent is not traced, so none of its
     calls can be seen. A span with no cost leaves its call's cost unknown: it may be an
-    unpriced model, and an unpriced model is not free."""
+    unpriced model, and an unpriced model is not free. A call the sandbox could not wholly
+    measure (a span stamped partial) reads unknown too: some of its model calls sent no
+    span."""
     source = run_traces_source(execution)
     if source is None:
         return None
@@ -214,9 +224,19 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
         str(call_id): CallUsage(
             models=sorted(models),
             llm_spans=int(llm_spans),
-            cost_usd=None if unpriced else float(cost),
+            cost_usd=None if unpriced or partial else float(cost),
+            unpriced_models=sorted(unpriced_models),
         )
-        for call_id, models, llm_spans, billed_spans, cost, unpriced in rows
+        for (
+            call_id,
+            models,
+            llm_spans,
+            billed_spans,
+            cost,
+            unpriced,
+            unpriced_models,
+            partial,
+        ) in rows
         if billed_spans
     }
 

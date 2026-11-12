@@ -344,7 +344,13 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     # Only a fix whose source run exported the agent's model calls reads its runs' spans.
     request = FixRequest.model_validate(run.fix_run.request)
     traced = request.observes_models or request.meters_agent_cost
-    usage = call_usage(run) if finished and traced else {}
+    usage, unreadable = {}, False
+    if finished and traced:
+        try:
+            usage = _read_usage(run)
+        except CHError:
+            logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
+            unreadable = True
     latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
@@ -376,6 +382,7 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         records=records,
         parallelism=ran_at(run, len(executions)) if finished else None,
         committed_usd=float(committed_usd(run.fix_run)),
+        usage_unreadable=unreadable,
     )
 
 
@@ -480,6 +487,7 @@ def _record(
         models=usage.models if usage else [],
         spans_seen=usage.llm_spans if usage else 0,
         agent_cost_usd=usage.cost_usd if usage else None,
+        unpriced_models=usage.unpriced_models if usage else [],
         reply_latency_ms=reply_latency_ms,
     )
 
@@ -490,19 +498,8 @@ def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
     return run_usage(run.test_execution) or {}
 
 
-def call_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
-    """Each call's model calls in a run, from the spans its agent exported, by call id.
-    Empty when the agent is not traced, and when the read fails: the calls then read as
-    unmeasured, and what depends on them as not verified."""
-    try:
-        return _read_usage(run)
-    except CHError:
-        logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
-        return {}
-
-
 def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
-    """``call_usage`` for the run a fix starts from, whose spans set what the fix can
+    """``_read_usage`` for the run a fix starts from, whose spans set what the fix can
     check for good. A read that fails refuses the launch, to be tried again: a fix
     frozen as untraced would never check what it could have."""
     try:

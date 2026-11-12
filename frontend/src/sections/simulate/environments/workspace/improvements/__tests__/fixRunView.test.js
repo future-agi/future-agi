@@ -281,6 +281,60 @@ describe("verdict", () => {
     ]);
   });
 
+  it("says a ceiling it could not measure is unknown, and why for an untraced agent", () => {
+    const ceilings = (cost) => [
+      {
+        name: "ceilings",
+        status: "skipped",
+        parts: [
+          { name: "reply latency", status: "passed", detail: "within" },
+          cost,
+        ],
+      },
+    ];
+    const unmeasured = {
+      name: "agent cost",
+      status: "skipped",
+      detail:
+        "median agent cost per conversation not verified: the agent's model calls are not traced",
+    };
+    const parts = (request, cost = unmeasured) =>
+      describeChecks(ceilings(cost), request)[0].parts.map((p) => [
+        p.label,
+        p.unknown,
+        p.detail,
+      ]);
+
+    // Never traced: the cost is unknown and the line says the agent isn't traced.
+    expect(parts({ meters_agent_cost: false })).toEqual([
+      ["Reply time", undefined, "within"],
+      [
+        "Agent's cost",
+        "Cost unknown",
+        "This agent isn't traced, so its cost isn't measured.",
+      ],
+    ]);
+    // Traced, but this cost did not come through: the engine's reason stays.
+    expect(parts({ meters_agent_cost: true })[1]).toEqual([
+      "Agent's cost",
+      "Cost unknown",
+      unmeasured.detail,
+    ]);
+    // A reply time the conversations did not carry is unknown too.
+    expect(
+      describeChecks(
+        [
+          {
+            name: "ceilings",
+            status: "skipped",
+            parts: [{ name: "reply latency", status: "skipped", detail: "x" }],
+          },
+        ],
+        { meters_agent_cost: true },
+      )[0].parts[0].unknown,
+    ).toBe("Reply time unknown");
+  });
+
   it("puts the check that rejected a trial first and keeps the rest in order", () => {
     const tiers = [
       { name: "static", status: "passed" },

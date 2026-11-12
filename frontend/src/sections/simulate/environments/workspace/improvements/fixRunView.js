@@ -179,6 +179,30 @@ export function checkLabel(name, request) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+const PART_LABELS = {
+  "reply latency": "Reply time",
+  "agent cost": "Agent's cost",
+};
+const UNKNOWN_PARTS = {
+  "reply latency": "Reply time unknown",
+  "agent cost": "Cost unknown",
+};
+const UNTRACED_COST = "This agent isn't traced, so its cost isn't measured.";
+
+// One ceiling of the ceilings tier. A number that could not be measured is said to be
+// unknown, and an agent that isn't traced says so: the fix never fails on it.
+function describePart(part, request) {
+  const label = PART_LABELS[part.name] || part.name;
+  if (part.status !== "skipped") return { ...part, label };
+  const untraced = part.name === "agent cost" && !request?.meters_agent_cost;
+  return {
+    ...part,
+    label,
+    unknown: UNKNOWN_PARTS[part.name],
+    ...(untraced && { detail: UNTRACED_COST }),
+  };
+}
+
 // Each check with its label, and `notRun` with the check that stopped it when it was
 // skipped because an earlier one failed. The verdict marks both kinds of skip the same
 // way, so the order tells them apart, as in checksLine.
@@ -193,6 +217,7 @@ export function describeChecks(tiers = [], request = null) {
       ...(notRun && {
         notRunBecause: checkLabel(tiers[failed].name, request),
       }),
+      ...(t.parts && { parts: t.parts.map((p) => describePart(p, request)) }),
     };
   });
 }
