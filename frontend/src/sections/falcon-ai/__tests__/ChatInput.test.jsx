@@ -69,7 +69,9 @@ describe("ChatInput", () => {
           <ChatInput onSend={vi.fn()} />
         </SnackbarProvider>,
       );
-      const file = new File(["Synthetic notes"], "notes.txt", { type: "text/plain" });
+      const file = new File(["Synthetic notes"], "notes.txt", {
+        type: "text/plain",
+      });
       const select = () => {
         if (method === "picker") {
           fireEvent.change(container.querySelector('input[type="file"]'), {
@@ -91,7 +93,9 @@ describe("ChatInput", () => {
         result: { id: "synthetic-file", name: file.name, size: file.size },
       });
       select();
-      await waitFor(() => expect(useFalconStore.getState().attachedFiles).toHaveLength(1));
+      await waitFor(() =>
+        expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+      );
       expect(uploadFile).toHaveBeenCalledTimes(2);
     },
   );
@@ -104,9 +108,13 @@ describe("ChatInput", () => {
       </SnackbarProvider>,
     );
     fireEvent.change(container.querySelector('input[type="file"]'), {
-      target: { files: [new File(["notes"], "notes.txt", { type: "text/plain" })] },
+      target: {
+        files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+      },
     });
-    expect(await screen.findByRole("alert")).toHaveTextContent("File upload failed. Please try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "File upload failed. Please try again.",
+    );
     expect(useFalconStore.getState().attachedFiles).toEqual([]);
   });
 
