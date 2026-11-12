@@ -1156,3 +1156,70 @@ class TestIdleContinuousRecovery:
         monkeypatch.setattr(cache, "set", unavailable)
         result = sweeper.sweep_stranded_eval_tasks._original_func()
         assert result["restarted"] == 1
+
+
+@pytest.mark.django_db
+class TestCreateDispatchFailure:
+    """A create reported as failed must leave nothing the sweep can activate."""
+
+    NAME = "dispatch-failed create"
+
+    def _create(self, auth_client, project, config):
+        return auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": self.NAME,
+                "run_type": RunType.CONTINUOUS,
+                "row_type": RowType.SPANS,
+                "sampling_rate": 100,
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+
+    def test_a_retry_after_a_failed_create_is_the_only_task_evaluated(
+        self,
+        auth_client,
+        sweep_project,
+        sweep_config,
+        make_entry,
+        temporal,
+        monkeypatch,
+    ):
+        landed = []
+
+        def dispatch_outage(task, **kwargs):
+            # A start can reach Temporal and materialize before the client
+            # sees the error; whatever it wrote is withdrawn too.
+            landed.append(make_entry(task))
+            raise RuntimeError("synthetic Temporal outage")
+
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync", dispatch_outage
+        )
+        failed = self._create(auth_client, sweep_project, sweep_config)
+
+        assert failed.status_code == 400
+        assert failed.json()["message"] == "Evaluation task could not be created"
+        [ghost] = EvalTask.all_objects.filter(project=sweep_project, name=self.NAME)
+        assert (ghost.deleted, ghost.status) == (True, EvalTaskStatus.DELETED)
+        assert EvalLogger.all_objects.get(id=landed[0].id).deleted
+
+        temporal["verdict"] = eval_task_client.WF_ABSENT
+        result = sweeper.sweep_stranded_eval_tasks._original_func()
+        assert result["candidates"] == 0, result
+        assert temporal["started"] == []
+
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync",
+            lambda task, **kwargs: f"eval-task-{task.id}",
+        )
+        retry = self._create(auth_client, sweep_project, sweep_config)
+
+        assert retry.status_code == 200, retry.content
+        retried = str(retry.json()["result"]["id"])
+        live = EvalTask.objects.filter(project=sweep_project, name=self.NAME)
+        assert [str(task.id) for task in live] == [retried]
+        sweeper.sweep_stranded_eval_tasks._original_func()
+        assert temporal["started"] == [(retried, _SWEEP_RESTART)]

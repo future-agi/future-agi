@@ -1919,7 +1919,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             # The workflow's first step materializes entries, so create returns
             # immediately even for large tasks.
-            start_eval_task_workflow_sync(eval_task)
+            try:
+                start_eval_task_workflow_sync(eval_task)
+            except Exception:
+                self._withdraw_undispatched_task(eval_task)
+                raise
 
             return self._gm.success_response({"id": eval_task.id})
 
@@ -1933,6 +1937,34 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request("Evaluation task could not be created")
+
+    @staticmethod
+    def _withdraw_undispatched_task(eval_task):
+        """Delete a task whose create is about to be reported as failed.
+
+        The caller is told the task was not created, so it must not exist. The
+        stranded sweep activates idle continuous tasks, so a leftover PENDING
+        row would start running beside the task a retry creates, and every span
+        would be evaluated, and billed, twice. Withdrawn as a list delete
+        withdraws, so neither the Tasks list nor the sweep sees it. A start
+        that did reach Temporal fails at its first task read (reconcile or
+        claim), which never returns a deleted row.
+        """
+        now = timezone.now()
+        try:
+            EvalTask.no_workspace_objects.filter(id=eval_task.id).update(
+                deleted=True, deleted_at=now, status=EvalTaskStatus.DELETED
+            )
+            EvalTaskLogger.objects.filter(eval_task_id=eval_task.id).update(
+                deleted=True, deleted_at=now
+            )
+            soft_delete_eval_results(
+                EvalLogger.objects.filter(eval_task_id=str(eval_task.id))
+            )
+        except Exception:
+            logger.exception(
+                "eval_task.create_withdraw_failed", eval_task_id=str(eval_task.id)
+            )
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
