@@ -329,8 +329,9 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    decision](#trust-boundary-and-merge-decision)) stops one person from
    merging the new commits on that approval. Then confirm that the same
    token can dismiss it (`PUT .../pulls/<n>/reviews/<id>/dismissals`, HTTP
-   200) and that a second dismissal answers 422. A rule that limits who can
-   dismiss reviews must allow the App.
+   200) and that a second dismissal answers 422. The controller counts only
+   422 as already dismissed; any other answer posts a note asking a person to
+   dismiss it. A rule that limits who can dismiss reviews must allow the App.
 8. **Keep "Allow auto-merge" off** for this repository. It is off today
    (read-only check, 12 Nov 2026). With it on, a writer could enable
    auto-merge on a LOW PR, and GitHub would merge it the moment the App
@@ -459,11 +460,14 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    read and the approval. If the recheck after the approval, or the merge
    call, then fails, the controller re-reads the PR. When the head is no
    longer the reviewed head, it dismisses the approval this run posted, as the
-   App, with a fixed message. An answer of 422 or 404 counts as done: usually
+   App, with a fixed message. An answer of 422 counts as done: usually
    GitHub's stale-approval rule already dismissed it, because the push came
-   after the approval. Any other failure posts one note asking a person to dismiss the
-   App's approval, and the run still fails with its original error. A failed
-   re-read, or the same head, keeps the approval, so the next run reuses it.
+   after the approval. Any other answer, including 404, posts one note asking
+   a person to dismiss the App's approval. A dismissed review still exists, so
+   a 404 means GitHub did not find the review or route, and the approval may
+   still count. In every case the run still fails with its original error.
+   A failed re-read, or the same head, keeps the approval, so the next run
+   reuses it.
    An approval from an earlier run is never withdrawn: it was posted while its
    head was current, so the stale-approval rule covers later pushes. This
    matches the bot autopilot in `future-agi/deployment` (#438), which also

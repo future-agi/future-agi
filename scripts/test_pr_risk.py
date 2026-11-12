@@ -2584,20 +2584,23 @@ class ControllerTests(unittest.TestCase):
 
     def test_an_already_dismissed_approval_counts_as_withdrawn(self):
         # The push came after the approval, so GitHub's stale-approval rule
-        # dismissed it first and refuses a second dismissal.
-        for status in (422, 404):
-            with self.subTest(status=status):
-                self.api = FakeGitHub()
-                context = self.passing_review()
-                self.api.refuse_dismissal = status
-                self.api.after_approval = lambda api: api.pr["head"].update(sha=OTHER)
-                with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
-                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
-                self.assertEqual(len(self.api.approver.dismissals()), 1)
-                self.assertFalse(self.not_withdrawn_notes())
+        # dismissed it first, and the second dismissal answers 422.
+        def push_after_approval(api):
+            api.pr["head"]["sha"] = OTHER
+            api.reviews[-1]["state"] = "DISMISSED"
+
+        context = self.passing_review()
+        self.api.after_approval = push_after_approval
+        with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertEqual(len(self.api.approver.dismissals()), 1)
+        self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
+        self.assertFalse(self.not_withdrawn_notes())
 
     def test_a_failed_withdrawal_keeps_the_original_error_and_asks_a_person(self):
-        for status in (403, 502, "no answer"):
+        # A 404 is a failure too: GitHub still finds a dismissed review by its
+        # ID, so a 404 means the dismissal did not reach the approval.
+        for status in (403, 404, 502, "no answer"):
             with self.subTest(status=status):
                 self.api = FakeGitHub()
                 context = self.passing_review()
@@ -2606,7 +2609,7 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
                     risk.merge(self.api, POLICY, settings(), context, self.api.approver)
                 # A refusal is tried once; no answer or a server error three times.
-                self.assertEqual(len(self.api.approver.dismissals()), 1 if status == 403 else 3)
+                self.assertEqual(len(self.api.approver.dismissals()), 3 if status in (502, "no answer") else 1)
                 self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
                 [note] = self.not_withdrawn_notes()
                 self.assertIn(f"Head: `{HEAD}`.", note)

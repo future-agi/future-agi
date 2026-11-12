@@ -1904,9 +1904,11 @@ def withdraw_if_moved(api, approver, context, review_id):
         summary(f"The head moved after review; the App's approval of `{head}` was withdrawn.")
         return
     except ApiError as exc:
-        if exc.status in (404, 422):
+        if exc.status == 422:
             # Usually the push came after the approval, and GitHub's
-            # stale-approval rule has already dismissed it.
+            # stale-approval rule has already dismissed it. A 404 is not that:
+            # a dismissed review still exists, so a 404 means the review or
+            # route was not found and the approval may still count.
             summary("The App's approval was already dismissed; nothing to withdraw.")
             return
     except PolicyError:
