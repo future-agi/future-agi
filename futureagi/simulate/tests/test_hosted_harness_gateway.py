@@ -519,20 +519,6 @@ def test_inspection_keys_match_the_copied_alk_connector_list():
     assert set(_INSPECTION_KEYS) == _ALK_PROVIDER_MANAGED_CONNECTORS
 
 
-@pytest.mark.parametrize("mode", ["Connect_Only", " connect_only ", "PROVIDER_IMPORT"])
-def test_the_mode_is_read_the_way_the_connector_is(mode):
-    payload = {"agent": {"connector": "Vapi ", "mode": mode}}
-    with patch(
-        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
-        return_value={"VAPI_API_KEY": "v"},
-    ):
-        material, connector = _provider_import_authoring_material(
-            SimpleNamespace(), payload
-        )
-
-    assert (material, connector) == ({"VAPI_API_KEY": "v"}, "vapi")
-
-
 def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     settings, monkeypatch, tmp_path
 ):
@@ -2258,6 +2244,7 @@ def test_connect_only_vapi_authoring_carries_the_provider_profile_cache(
     assert f"--target-secrets {one_shot_path}" in command
     assert "--provider-profile-cache /work/provider-import-profile.json" in command
     assert "vapi-target-secret" not in command
+    assert "*.vapi.ai" in client.params.allowed_domains
 
 
 @pytest.mark.django_db

@@ -5130,8 +5130,9 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
 
 
 # The provider key each inspected target needs. Connect-only targets of these connectors are
-# inspected before authoring; must match ALK's PROVIDER_MANAGED_CONNECTORS, whose builder
-# waits for the provider profile cache (pinned by a test in test_hosted_harness_gateway.py).
+# inspected before authoring; keep in step with ALK's PROVIDER_MANAGED_CONNECTORS, whose builder
+# waits for the provider profile cache (held to a hand-kept copy of that list in
+# test_hosted_harness_gateway.py; a connector ALK adds is not caught there).
 _INSPECTION_KEYS = {
     "vapi": "VAPI_API_KEY",
     "retell": "RETELL_API_KEY",
