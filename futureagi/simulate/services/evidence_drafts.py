@@ -79,6 +79,15 @@ SHOWN = {
     "partial": "a regression test from partial evidence: test only what the record "
     "shows",
 }
+# A Simulator project's sources are not production: they make tests, never
+# regression tests.
+SHOWN_SIMULATED = {
+    "failure": "reproduce the failure as a test: the record shows a failure the "
+    "agent must stop making",
+    "success": "keep this success as a test: the record shows a correct path the "
+    "agent must keep taking",
+    "partial": "a test from partial evidence: test only what the record shows",
+}
 
 
 def turn_message(
@@ -93,12 +102,13 @@ def turn_message(
     ``shows`` is what the person asks each case to become; ``simulated`` sources
     come from a Simulator project and are never called production evidence."""
     shows = shows or {}
+    asks = SHOWN_SIMULATED if simulated else SHOWN
     listed = "\n".join(
         f"- case {case.id}: write it under scenario_key {scenario_key_for(case)} "
         f"(the {source_kind} {case.source_id} in the evidence)"
         + (
-            f"; the person asks: {SHOWN[shows[str(case.id)]]}"
-            if shows.get(str(case.id)) in SHOWN
+            f"; the person asks: {asks[shows[str(case.id)]]}"
+            if shows.get(str(case.id)) in asks
             else ""
         )
         for case in cases

@@ -120,7 +120,11 @@ export default function EvidenceCaseCard({
           fullWidth
           sx={{ mt: 1.5 }}
         >
-          {Object.entries(EVIDENCE_COPY.showsOptions).map(([value, label]) => (
+          {Object.entries(
+            simulated
+              ? EVIDENCE_COPY.showsOptionsSimulated
+              : EVIDENCE_COPY.showsOptions,
+          ).map(([value, label]) => (
             <MenuItem key={value} value={value}>
               {label}
             </MenuItem>

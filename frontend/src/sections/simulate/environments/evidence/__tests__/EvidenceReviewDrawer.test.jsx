@@ -190,6 +190,20 @@ describe("EvidenceReviewDrawer", () => {
         ),
       ).toBeInTheDocument();
     }
+    // Simulated evidence makes tests, never regression tests.
+    const [choice] = screen.getAllByRole("combobox", {
+      name: /^What should the new scenarios be\?/,
+    });
+    expect(choice).toHaveTextContent("Reproduce the failure as a test");
+    await userEvent.click(choice);
+    const options = screen
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(options).toEqual([
+      "Reproduce the failure as a test",
+      "Keep this success as a test",
+      "A test from partial evidence",
+    ]);
   });
 
   it("while drafting: says so, takes no draft or add, and locks the record choice", async () => {

@@ -546,13 +546,22 @@ def test_a_simulator_projects_calls_are_never_called_production(cases, user, sch
     )
     assert "production calls" not in simulated_text
 
-    # The builder is told the same.
+    # The builder is told the same, and asked for tests, never regression tests.
     cases[0].evidence_import.refresh_from_db()
-    conversation = _start(cases, user)
+    conversation = evidence_drafts.start_drafting(
+        cases[0].evidence_import,
+        case_ids,
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(cases[0].id): "failure", str(cases[1].id): "success"},
+    )
     content = _command(conversation).content
     assert "from the simulated calls" in content
     assert "not production" in content
     assert "production evidence" not in content
+    assert evidence_drafts.SHOWN_SIMULATED["failure"] in content
+    assert evidence_drafts.SHOWN_SIMULATED["success"] in content
+    assert "regression" not in content
 
 
 def test_the_bundle_says_while_drafting_runs(cases, user, scheduled):

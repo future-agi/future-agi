@@ -51,6 +51,13 @@ export const EVIDENCE_COPY = {
     success: "Keep this success as a regression test",
     partial: "A regression test from partial evidence",
   },
+  // A Simulator project's sources are not production: they make tests, never
+  // regression tests.
+  showsOptionsSimulated: {
+    failure: "Reproduce the failure as a test",
+    success: "Keep this success as a test",
+    partial: "A test from partial evidence",
+  },
   // What each choice keeps from the evidence, and what the builder makes up.
   showsDetail: {
     failure:
