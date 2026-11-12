@@ -900,3 +900,16 @@ def test_an_edit_to_the_suite_index_alone_gives_way_to_the_scenario_s_own_file()
     assert json.loads(index_in_step(files)["scenarios.json"]) == [
         {"name": "s", "faults": [], "extra": 1}
     ]
+
+
+def test_the_older_scenario_folder_is_read_only_when_the_suite_has_no_scenarios_folder():
+    files = _tree(
+        **{
+            "scenarios/s1/scenario.json": {"name": "s1"},
+            "scenario/old/scenario.json": {"name": "old"},
+        }
+    )
+    # Like the suite hash and ALK: `scenarios/` wins, so a stray `scenario/` folder is not a scenario.
+    assert [key for key in item_index(files) if key.startswith("scenario:")] == [
+        "scenario:s1"
+    ]
