@@ -19,6 +19,8 @@ import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 
 const initial = {
@@ -99,6 +101,7 @@ FolderInput.propTypes = { onPick: PropTypes.func.isRequired };
 export default function PanelCodeUpload() {
   const [form, dispatch] = useReducer(reducer, initial);
   const build = usePanelBuild();
+  const { canEdit } = useSimulationAccess();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
     dispatch({ type: "set", field, value });
@@ -296,7 +299,8 @@ export default function PanelCodeUpload() {
       />
       <RuntimePreflight
         status={build.status}
-        canRun={canGo}
+        canRun={canEdit && canGo}
+        blockedReason={!canEdit ? WORKSPACE_COPY.viewer.create : null}
         onRun={() => build.runPreflight(buildSource())}
         result={build.result}
         error={build.error}
@@ -307,9 +311,9 @@ export default function PanelCodeUpload() {
         onDismiss={build.creditExhaustion.onDismiss}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        disabled={!canEdit || !build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
       />
     </Stack>

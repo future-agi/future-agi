@@ -15,7 +15,7 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import APIKeyAuthentication, workspace_write_denied
 from mcp_server.generated_registry import GeneratedTool
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
@@ -182,7 +182,7 @@ class DjangoAPIExecutor:
                     context.user, request.workspace
                 )
             ):
-                raise PermissionDenied("Write access denied to this workspace")
+                raise workspace_write_denied(request)
         except APIException as exc:
             raise APIExecutionError(
                 str(exc.detail), status_code=exc.status_code, data=exc.detail

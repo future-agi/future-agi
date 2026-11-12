@@ -1599,6 +1599,7 @@ import type {
   VerifyApiKeyRequestApi,
   VerifyAssistantIdRequestApi,
   VerifyResponseApi,
+  ViewerReadOnlyErrorApi,
   WalletBalanceResponseApi,
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
@@ -56371,6 +56372,11 @@ export type simulateAgentDefinitionsDeleteResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56378,7 +56384,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56387,6 +56393,7 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
+  | simulateAgentDefinitionsDeleteResponse403
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {
@@ -56429,6 +56436,11 @@ export type simulateAgentDefinitionsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsCreateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56441,7 +56453,7 @@ export type simulateAgentDefinitionsCreateCreateResponse500 = {
 
 export type simulateAgentDefinitionsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsCreateCreateResponseSuccess =
@@ -56450,6 +56462,7 @@ export type simulateAgentDefinitionsCreateCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsCreateCreateResponseError = (
   | simulateAgentDefinitionsCreateCreateResponse400
+  | simulateAgentDefinitionsCreateCreateResponse403
   | simulateAgentDefinitionsCreateCreateResponse404
   | simulateAgentDefinitionsCreateCreateResponse500
   | simulateAgentDefinitionsCreateCreateResponseDefault
@@ -56544,6 +56557,11 @@ export type simulateAgentDefinitionsDeleteDeleteResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsDeleteDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56556,7 +56574,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
@@ -56564,6 +56582,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsDeleteDeleteResponseError = (
+  | simulateAgentDefinitionsDeleteDeleteResponse403
   | simulateAgentDefinitionsDeleteDeleteResponse404
   | simulateAgentDefinitionsDeleteDeleteResponse500
   | simulateAgentDefinitionsDeleteDeleteResponseDefault
@@ -56605,6 +56624,11 @@ export type simulateAgentDefinitionsEditUpdateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsEditUpdateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsEditUpdateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56617,7 +56641,7 @@ export type simulateAgentDefinitionsEditUpdateResponse500 = {
 
 export type simulateAgentDefinitionsEditUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsEditUpdateResponseSuccess =
@@ -56626,6 +56650,7 @@ export type simulateAgentDefinitionsEditUpdateResponseSuccess =
   };
 export type simulateAgentDefinitionsEditUpdateResponseError = (
   | simulateAgentDefinitionsEditUpdateResponse400
+  | simulateAgentDefinitionsEditUpdateResponse403
   | simulateAgentDefinitionsEditUpdateResponse404
   | simulateAgentDefinitionsEditUpdateResponse500
   | simulateAgentDefinitionsEditUpdateResponseDefault
@@ -56793,6 +56818,11 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsVersionsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsCreateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56805,7 +56835,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
@@ -56814,6 +56844,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (
   | simulateAgentDefinitionsVersionsCreateCreateResponse400
+  | simulateAgentDefinitionsVersionsCreateCreateResponse403
   | simulateAgentDefinitionsVersionsCreateCreateResponse404
   | simulateAgentDefinitionsVersionsCreateCreateResponse500
   | simulateAgentDefinitionsVersionsCreateCreateResponseDefault
@@ -56915,6 +56946,11 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsVersionsActivateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsActivateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56927,7 +56963,7 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
@@ -56935,6 +56971,7 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsActivateCreateResponseError = (
+  | simulateAgentDefinitionsVersionsActivateCreateResponse403
   | simulateAgentDefinitionsVersionsActivateCreateResponse404
   | simulateAgentDefinitionsVersionsActivateCreateResponse500
   | simulateAgentDefinitionsVersionsActivateCreateResponseDefault
@@ -57104,6 +57141,11 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -57116,7 +57158,7 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponse500 = {
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
@@ -57125,6 +57167,7 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse400
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponse403
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse404
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse500
   | simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault
@@ -57230,6 +57273,11 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -57242,7 +57290,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess =
@@ -57251,6 +57299,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseError = (
   | simulateAgentDefinitionsVersionsRestoreCreateResponse400
+  | simulateAgentDefinitionsVersionsRestoreCreateResponse403
   | simulateAgentDefinitionsVersionsRestoreCreateResponse404
   | simulateAgentDefinitionsVersionsRestoreCreateResponse500
   | simulateAgentDefinitionsVersionsRestoreCreateResponseDefault
@@ -59876,19 +59925,26 @@ export type simulateApiHarnessEnvironmentsPartialUpdateResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
   simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
-  simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseError = (
+  | simulateApiHarnessEnvironmentsPartialUpdateResponse403
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
   | simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess
@@ -59927,19 +59983,26 @@ export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   simulateApiHarnessEnvironmentsDeleteResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDeleteResponseError =
-  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDeleteResponseError = (
+  | simulateApiHarnessEnvironmentsDeleteResponse403
+  | simulateApiHarnessEnvironmentsDeleteResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDeleteResponse =
   | simulateApiHarnessEnvironmentsDeleteResponseSuccess
@@ -60083,19 +60146,26 @@ export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError =
-  simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError = (
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess
@@ -60132,19 +60202,26 @@ export type simulateApiHarnessEnvironmentsDiscardDraftResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsDiscardDraftResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess =
   simulateApiHarnessEnvironmentsDiscardDraftResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDiscardDraftResponseError =
-  simulateApiHarnessEnvironmentsDiscardDraftResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDiscardDraftResponseError = (
+  | simulateApiHarnessEnvironmentsDiscardDraftResponse403
+  | simulateApiHarnessEnvironmentsDiscardDraftResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponse =
   | simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess
@@ -60179,19 +60256,26 @@ export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
-  simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsAddEvaluationResponse403
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
   | simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess
@@ -60284,10 +60368,16 @@ export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespon
     status: 200;
   };
 
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
@@ -60295,7 +60385,10 @@ export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespon
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
-  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse403
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -60334,19 +60427,26 @@ export type simulateApiHarnessEnvironmentsEditEvaluationResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsEditEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsEditEvaluationResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsEditEvaluationResponseError =
-  simulateApiHarnessEnvironmentsEditEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsEditEvaluationResponse403
+  | simulateApiHarnessEnvironmentsEditEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponse =
   | simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess
@@ -60384,19 +60484,26 @@ export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
-  simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponse403
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
   | simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess
@@ -60500,19 +60607,26 @@ export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError =
-  simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError = (
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse403
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse =
   | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess
@@ -60550,19 +60664,26 @@ export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError =
-  simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError = (
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponse403
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse =
   | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess
@@ -60664,19 +60785,26 @@ export type simulateApiHarnessEnvironmentsRunResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentsRunResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRunResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsRunResponseSuccess =
   simulateApiHarnessEnvironmentsRunResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRunResponseError =
-  simulateApiHarnessEnvironmentsRunResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRunResponseError = (
+  | simulateApiHarnessEnvironmentsRunResponse403
+  | simulateApiHarnessEnvironmentsRunResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRunResponse =
   | simulateApiHarnessEnvironmentsRunResponseSuccess
@@ -60710,20 +60838,27 @@ export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
-  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse403
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
   | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess
@@ -60762,10 +60897,16 @@ export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse2
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseSuccess =
@@ -60773,7 +60914,10 @@ export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseS
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseError =
-  simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse403
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -60955,10 +61099,16 @@ export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse202 
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSuccess =
@@ -60966,7 +61116,10 @@ export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSucc
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -61007,10 +61160,16 @@ export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespon
     status: 200;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuccess =
@@ -61018,7 +61177,10 @@ export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespon
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -61062,10 +61224,16 @@ export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseSuccess =
@@ -61073,7 +61241,10 @@ export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -61169,19 +61340,26 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
-  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse403
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
   | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess
@@ -61343,19 +61521,26 @@ export type simulateApiHarnessJobsCreateResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsCreateResponseSuccess =
   simulateApiHarnessJobsCreateResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsCreateResponseError =
-  simulateApiHarnessJobsCreateResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsCreateResponseError = (
+  | simulateApiHarnessJobsCreateResponse403
+  | simulateApiHarnessJobsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsCreateResponse =
   | simulateApiHarnessJobsCreateResponseSuccess
@@ -61436,19 +61621,26 @@ export type simulateApiHarnessJobsPreflightResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessJobsPreflightResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsPreflightResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessJobsPreflightResponseSuccess =
   simulateApiHarnessJobsPreflightResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsPreflightResponseError =
-  simulateApiHarnessJobsPreflightResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsPreflightResponseError = (
+  | simulateApiHarnessJobsPreflightResponse403
+  | simulateApiHarnessJobsPreflightResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsPreflightResponse =
   | simulateApiHarnessJobsPreflightResponseSuccess
@@ -61484,19 +61676,26 @@ export type simulateApiHarnessJobsSecretFileUploadResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsSecretFileUploadResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSecretFileUploadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsSecretFileUploadResponseSuccess =
   simulateApiHarnessJobsSecretFileUploadResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSecretFileUploadResponseError =
-  simulateApiHarnessJobsSecretFileUploadResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSecretFileUploadResponseError = (
+  | simulateApiHarnessJobsSecretFileUploadResponse403
+  | simulateApiHarnessJobsSecretFileUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSecretFileUploadResponse =
   | simulateApiHarnessJobsSecretFileUploadResponseSuccess
@@ -61544,19 +61743,26 @@ export type simulateApiHarnessJobsSecretValuesResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsSecretValuesResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSecretValuesResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsSecretValuesResponseSuccess =
   simulateApiHarnessJobsSecretValuesResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSecretValuesResponseError =
-  simulateApiHarnessJobsSecretValuesResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSecretValuesResponseError = (
+  | simulateApiHarnessJobsSecretValuesResponse403
+  | simulateApiHarnessJobsSecretValuesResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSecretValuesResponse =
   | simulateApiHarnessJobsSecretValuesResponseSuccess
@@ -61591,19 +61797,26 @@ export type simulateApiHarnessJobsSourceUploadResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsSourceUploadResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSourceUploadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsSourceUploadResponseSuccess =
   simulateApiHarnessJobsSourceUploadResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSourceUploadResponseError =
-  simulateApiHarnessJobsSourceUploadResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSourceUploadResponseError = (
+  | simulateApiHarnessJobsSourceUploadResponse403
+  | simulateApiHarnessJobsSourceUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSourceUploadResponse =
   | simulateApiHarnessJobsSourceUploadResponseSuccess
@@ -61696,19 +61909,26 @@ export type simulateApiHarnessJobsAdjustResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsAdjustResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsAdjustResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsAdjustResponseSuccess =
   simulateApiHarnessJobsAdjustResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsAdjustResponseError =
-  simulateApiHarnessJobsAdjustResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsAdjustResponseError = (
+  | simulateApiHarnessJobsAdjustResponse403
+  | simulateApiHarnessJobsAdjustResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsAdjustResponse =
   | simulateApiHarnessJobsAdjustResponseSuccess
@@ -61745,19 +61965,26 @@ export type simulateApiHarnessJobsCancelResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessJobsCancelResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsCancelResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessJobsCancelResponseSuccess =
   simulateApiHarnessJobsCancelResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsCancelResponseError =
-  simulateApiHarnessJobsCancelResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsCancelResponseError = (
+  | simulateApiHarnessJobsCancelResponse403
+  | simulateApiHarnessJobsCancelResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsCancelResponse =
   | simulateApiHarnessJobsCancelResponseSuccess
@@ -61794,6 +62021,11 @@ export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsConversationConversationMessageResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
   data: ApiTextErrorResponseApi;
   status: 409;
@@ -61802,7 +62034,7 @@ export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
 export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202 | 409>;
+    status: Exclude<HTTPStatusCodes, 202 | 403 | 409>;
   };
 
 export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
@@ -61811,6 +62043,7 @@ export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess
   };
 export type simulateApiHarnessJobsConversationConversationMessageResponseError =
   (
+    | simulateApiHarnessJobsConversationConversationMessageResponse403
     | simulateApiHarnessJobsConversationConversationMessageResponse409
     | simulateApiHarnessJobsConversationConversationMessageResponseDefault
   ) & {
@@ -61854,19 +62087,26 @@ export type simulateApiHarnessJobsExtendResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsExtendResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsExtendResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsExtendResponseSuccess =
   simulateApiHarnessJobsExtendResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsExtendResponseError =
-  simulateApiHarnessJobsExtendResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsExtendResponseError = (
+  | simulateApiHarnessJobsExtendResponse403
+  | simulateApiHarnessJobsExtendResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsExtendResponse =
   | simulateApiHarnessJobsExtendResponseSuccess
@@ -61903,19 +62143,26 @@ export type simulateApiHarnessJobsRunsResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsRunsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsRunsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsRunsResponseSuccess =
   simulateApiHarnessJobsRunsResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsRunsResponseError =
-  simulateApiHarnessJobsRunsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsRunsResponseError = (
+  | simulateApiHarnessJobsRunsResponse403
+  | simulateApiHarnessJobsRunsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsRunsResponse =
   | simulateApiHarnessJobsRunsResponseSuccess
@@ -61998,19 +62245,26 @@ export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
   simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
-  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError = (
+  | simulateApiHarnessJobsScenariosAmendScenariosResponse403
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
   | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
@@ -65997,6 +66251,11 @@ export type simulateRunTestsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateRunTestsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateRunTestsCreateCreateResponse404 = {
   data: RunTestErrorResponseApi;
   status: 404;
@@ -66009,7 +66268,7 @@ export type simulateRunTestsCreateCreateResponse500 = {
 
 export type simulateRunTestsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateRunTestsCreateCreateResponseSuccess =
@@ -66018,6 +66277,7 @@ export type simulateRunTestsCreateCreateResponseSuccess =
   };
 export type simulateRunTestsCreateCreateResponseError = (
   | simulateRunTestsCreateCreateResponse400
+  | simulateRunTestsCreateCreateResponse403
   | simulateRunTestsCreateCreateResponse404
   | simulateRunTestsCreateCreateResponse500
   | simulateRunTestsCreateCreateResponseDefault
@@ -67131,6 +67391,11 @@ export type simulateRunTestsExecuteCreateResponse400 = {
   status: 400;
 };
 
+export type simulateRunTestsExecuteCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateRunTestsExecuteCreateResponse404 = {
   data: RunTestErrorResponseApi;
   status: 404;
@@ -67143,7 +67408,7 @@ export type simulateRunTestsExecuteCreateResponse500 = {
 
 export type simulateRunTestsExecuteCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateRunTestsExecuteCreateResponseSuccess =
@@ -67152,6 +67417,7 @@ export type simulateRunTestsExecuteCreateResponseSuccess =
   };
 export type simulateRunTestsExecuteCreateResponseError = (
   | simulateRunTestsExecuteCreateResponse400
+  | simulateRunTestsExecuteCreateResponse403
   | simulateRunTestsExecuteCreateResponse404
   | simulateRunTestsExecuteCreateResponse500
   | simulateRunTestsExecuteCreateResponseDefault
@@ -68661,6 +68927,11 @@ export type simulateTestExecutionsCancelCreateResponse400 = {
   status: 400;
 };
 
+export type simulateTestExecutionsCancelCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateTestExecutionsCancelCreateResponse404 = {
   data: ErrorResponseApi;
   status: 404;
@@ -68678,7 +68949,7 @@ export type simulateTestExecutionsCancelCreateResponse500 = {
 
 export type simulateTestExecutionsCancelCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type simulateTestExecutionsCancelCreateResponseSuccess =
@@ -68687,6 +68958,7 @@ export type simulateTestExecutionsCancelCreateResponseSuccess =
   };
 export type simulateTestExecutionsCancelCreateResponseError = (
   | simulateTestExecutionsCancelCreateResponse400
+  | simulateTestExecutionsCancelCreateResponse403
   | simulateTestExecutionsCancelCreateResponse404
   | simulateTestExecutionsCancelCreateResponse409
   | simulateTestExecutionsCancelCreateResponse500
@@ -82337,11 +82609,11 @@ export type tracerSavedSqlQueryListResponseDefault = {
 
 export type tracerSavedSqlQueryListResponseSuccess =
   tracerSavedSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryListResponseError =
   tracerSavedSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryListResponse =
@@ -82395,11 +82667,11 @@ export type tracerSavedSqlQueryCreateResponseDefault = {
 
 export type tracerSavedSqlQueryCreateResponseSuccess =
   tracerSavedSqlQueryCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryCreateResponseError =
   tracerSavedSqlQueryCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryCreateResponse =
@@ -82437,11 +82709,11 @@ export type tracerSavedSqlQueryReadResponseDefault = {
 
 export type tracerSavedSqlQueryReadResponseSuccess =
   tracerSavedSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryReadResponseError =
   tracerSavedSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryReadResponse =
@@ -82497,11 +82769,11 @@ export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
 
 export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
   tracerSavedSqlQueryPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryPartialUpdateResponseError =
   tracerSavedSqlQueryPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryPartialUpdateResponse =
@@ -82540,11 +82812,11 @@ export type tracerSavedSqlQueryDeleteResponseDefault = {
 
 export type tracerSavedSqlQueryDeleteResponseSuccess =
   tracerSavedSqlQueryDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryDeleteResponseError =
   tracerSavedSqlQueryDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryDeleteResponse =
@@ -82600,11 +82872,11 @@ export type tracerSavedSqlQueryAddWidgetResponseDefault = {
 
 export type tracerSavedSqlQueryAddWidgetResponseSuccess =
   tracerSavedSqlQueryAddWidgetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryAddWidgetResponseError =
   tracerSavedSqlQueryAddWidgetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryAddWidgetResponse =
@@ -83600,11 +83872,11 @@ export type tracerSqlQueryListResponseDefault = {
 
 export type tracerSqlQueryListResponseSuccess =
   tracerSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryListResponseError =
   tracerSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryListResponse =
@@ -83659,11 +83931,11 @@ export type tracerSqlQueryCatalogResponseDefault = {
 
 export type tracerSqlQueryCatalogResponseSuccess =
   tracerSqlQueryCatalogResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCatalogResponseError =
   tracerSqlQueryCatalogResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCatalogResponse =
@@ -83720,11 +83992,11 @@ export type tracerSqlQueryEstimateResponseDefault = {
 
 export type tracerSqlQueryEstimateResponseSuccess =
   tracerSqlQueryEstimateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryEstimateResponseError =
   tracerSqlQueryEstimateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryEstimateResponse =
@@ -83765,11 +84037,11 @@ export type tracerSqlQueryRunSavedResponseDefault = {
 
 export type tracerSqlQueryRunSavedResponseSuccess =
   tracerSqlQueryRunSavedResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryRunSavedResponseError =
   tracerSqlQueryRunSavedResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunSavedResponse =
@@ -83809,11 +84081,11 @@ export type tracerSqlQueryRunResponseDefault = {
 };
 
 export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerSqlQueryRunResponseError =
   tracerSqlQueryRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunResponse =
@@ -83851,11 +84123,11 @@ export type tracerSqlQueryReadResponseDefault = {
 
 export type tracerSqlQueryReadResponseSuccess =
   tracerSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryReadResponseError =
   tracerSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryReadResponse =
@@ -83914,11 +84186,11 @@ export type tracerSqlQueryCancelResponseDefault = {
 
 export type tracerSqlQueryCancelResponseSuccess =
   tracerSqlQueryCancelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCancelResponseError =
   tracerSqlQueryCancelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCancelResponse =
@@ -83975,7 +84247,7 @@ export type tracerSqlQueryDownloadResponseDefault = {
 
 export type tracerSqlQueryDownloadResponseSuccess =
   tracerSqlQueryDownloadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse409
@@ -83983,7 +84255,7 @@ export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse503
   | tracerSqlQueryDownloadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSqlQueryDownloadResponse =

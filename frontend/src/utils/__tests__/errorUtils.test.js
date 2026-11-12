@@ -75,6 +75,30 @@ describe("getSafeActionErrorMessage for typed user-facing refusals", () => {
     ).toBe(retry);
   });
 
+  it("shows why a Viewer's simulation write was refused", () => {
+    const reason =
+      "Viewers can't start a paid run. Ask a workspace admin for the Member role.";
+    expect(
+      getSafeActionErrorMessage(
+        { statusCode: 403, code: "viewer_read_only", result: reason },
+        fallback,
+      ),
+    ).toBe(reason);
+  });
+
+  it("still hides an ordinary 403", () => {
+    expect(
+      getSafeActionErrorMessage(
+        {
+          statusCode: 403,
+          code: "permission_denied",
+          result: "Write access denied to this workspace",
+        },
+        fallback,
+      ),
+    ).toBe(fallback);
+  });
+
   it("still hides a 503 without a user-facing code", () => {
     expect(
       getSafeActionErrorMessage(

@@ -27,7 +27,9 @@ import {
   useSuiteMembers,
   useVersionDiff,
 } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY } from "../workspace.constants";
+import { VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { refusalText } from "../evals/refusalText";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { PreflightReport } from "../agents/PreflightStatus";
@@ -188,6 +190,7 @@ const isFirst = (version, siblings) =>
 
 function MakeDefault({ move, piece, version, defaultId }) {
   const [confirming, setConfirming] = useState(false);
+  const { canEdit } = useSimulationAccess();
   const { makeDefault } = VERSIONS_COPY;
   const confirm = () =>
     move.mutate(
@@ -196,16 +199,18 @@ function MakeDefault({ move, piece, version, defaultId }) {
     );
   return (
     <>
-      <Button
-        size="small"
-        variant="outlined"
-        color="inherit"
-        disabled={move.isPending}
-        onClick={() => setConfirming(true)}
-        sx={{ flexShrink: 0 }}
-      >
-        {makeDefault.action}
-      </Button>
+      <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.versions}>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          disabled={!canEdit || move.isPending}
+          onClick={() => setConfirming(true)}
+          sx={{ flexShrink: 0 }}
+        >
+          {makeDefault.action}
+        </Button>
+      </ViewerLock>
       <MakeDefaultConfirm
         piece={piece}
         version={confirming ? version : null}
