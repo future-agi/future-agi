@@ -52,6 +52,10 @@ from tracer.models.external_eval_config import (
 
 logger = structlog.get_logger(__name__)
 
+# Upper bound on eval_ids in one POST /sdk/api/v1/eval/ request. Each eval runs
+# (and is billed) sequentially inside the request.
+MAX_STANDALONE_EVALS_PER_REQUEST = 20
+
 
 # Define a Choices class
 class RequiredKeys:
@@ -182,42 +186,48 @@ class StandaloneEvalView(APIView):
             if not config:
                 return self._gm.bad_request("config is required.")
 
-            eval_id = None
-            new_config = None
+            # Every key in config is an eval_id; the gateway guardrail sends all
+            # of its configured eval_ids in one request and blocks if any of the
+            # returned evaluations failed, so each one must run.
+            if len(config) > MAX_STANDALONE_EVALS_PER_REQUEST:
+                return self._gm.bad_request(
+                    f"Too many eval_ids in config: {len(config)}. "
+                    f"At most {MAX_STANDALONE_EVALS_PER_REQUEST} are allowed."
+                )
+            requested_evals = []
             for key, value in config.items():
                 try:
                     eval_id = int(key)
-                except ValueError:
+                except (TypeError, ValueError):
                     return self._gm.bad_request(
                         f"Invalid eval_id: {key}. Must be a numeric value."
                     )
-                new_config = value
+                requested_evals.append((eval_id, value))
 
             output_entries = [{"evaluations": []}]
-            properties = get_mixpanel_properties(
-                user=request.user,
-                count=1,
-                eval_id=eval_id,
-                source=MixpanelSources.SDK.value,
-            )
-            track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
-            response = _run_protect(
-                inputs,
-                new_config,
-                protect_flash,
-                eval_id,
-                request.user,
-                sdk_uuid,
-                workspace=request.workspace,
-            )
-            output_entries[0]["evaluations"].append(response)
-            properties = get_mixpanel_properties(
-                user=request.user,
-                count=len(output_entries[0].get("evaluations", [])),
-                eval_id=eval_id,
-                source=MixpanelSources.SDK.value,
-            )
-            track_mixpanel_event(MixpanelEvents.EVAL_RUN_COMPLETED.value, properties)
+            # Any eval that raises fails the whole request (500, no partial
+            # result), so an errored guardrail is never reported as passing.
+            for eval_id, eval_config in requested_evals:
+                properties = get_mixpanel_properties(
+                    user=request.user,
+                    count=1,
+                    eval_id=eval_id,
+                    source=MixpanelSources.SDK.value,
+                )
+                track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
+                response = _run_protect(
+                    inputs,
+                    eval_config,
+                    protect_flash,
+                    eval_id,
+                    request.user,
+                    sdk_uuid,
+                    workspace=request.workspace,
+                )
+                output_entries[0]["evaluations"].append(response)
+                track_mixpanel_event(
+                    MixpanelEvents.EVAL_RUN_COMPLETED.value, properties
+                )
 
             logger.info("Successfully completed all evaluations")
             return self._gm.success_response(output_entries)
