@@ -10,7 +10,11 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.request import Request
 from rest_framework.test import APIClient
 
-from accounts.authentication import APIKeyAuthentication, ViewerReadOnly
+from accounts.authentication import (
+    NO_ORGANIZATION_WRITE_DENIED,
+    APIKeyAuthentication,
+    ViewerReadOnly,
+)
 from accounts.models import OrgApiKey
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
@@ -243,3 +247,31 @@ def test_the_migration_keeps_an_admin_membership_someone_granted(
 
     row.refresh_from_db()
     assert row.role == "workspace_admin"
+
+
+def _client_without_an_organization(organization, workspace):
+    user = _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER)
+    client = _jwt_client(user, organization, workspace)
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(
+        is_active=False
+    )
+    return client
+
+
+def test_a_user_with_no_organization_cannot_write(organization, workspace):
+    response = _client_without_an_organization(organization, workspace).post(
+        "/simulate/run-tests/create/", {}, format="json"
+    )
+
+    assert response.status_code == 403, response.content
+    assert response.data["detail"] == NO_ORGANIZATION_WRITE_DENIED
+
+
+def test_a_user_with_no_organization_still_manages_their_second_factor(
+    organization, workspace
+):
+    response = _client_without_an_organization(organization, workspace).post(
+        "/accounts/2fa/totp/setup/", {}, format="json"
+    )
+
+    assert response.status_code != 403, response.content

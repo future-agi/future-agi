@@ -389,6 +389,15 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
+            if _is_workspace_write(request):
+                logger.info(
+                    "access_denied",
+                    reason="no_organization",
+                    user_id=str(user.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                raise PermissionDenied(NO_ORGANIZATION_WRITE_DENIED)
             request.workspace = None
             request.organization = None
             return
