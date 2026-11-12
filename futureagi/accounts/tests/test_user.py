@@ -681,6 +681,91 @@ class TestManageRedisKeyAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_manage_redis_key_compares_secret_in_constant_time(
+        self, auth_client, clear_cache
+    ):
+        """The shared secret is checked with a constant-time digest, not ``!=``.
+
+        ``str.__ne__`` returns at the first differing character, so response
+        time leaks how long a correct prefix the caller guessed. Django's
+        ``constant_time_compare`` delegates to ``secrets.compare_digest``;
+        spying on it proves the view's check runs through that path.
+        """
+        import secrets as secrets_module
+        from unittest import mock
+
+        near_miss = settings.SECRET_KEY[:-1] + (
+            "x" if settings.SECRET_KEY[-1] != "x" else "y"
+        )
+        with mock.patch(
+            "django.utils.crypto.secrets.compare_digest",
+            wraps=secrets_module.compare_digest,
+        ) as compare_digest:
+            response = auth_client.post(
+                "/accounts/redis-key/",
+                {
+                    "access_token_id": near_miss,
+                    "key": "timing_probe_key",
+                    "value": "attacker_value",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("timing_probe_key") is None
+        compare_digest.assert_any_call(
+            near_miss.encode(), settings.SECRET_KEY.encode()
+        )
+
+    @pytest.mark.parametrize(
+        "make_token",
+        [
+            pytest.param(lambda secret: secret[:-1], id="prefix"),
+            pytest.param(lambda secret: secret + "x", id="secret-plus-suffix"),
+            pytest.param(
+                lambda secret: secret[:-1] + ("x" if secret[-1] != "x" else "y"),
+                id="same-length-last-char-differs",
+            ),
+            pytest.param(lambda secret: secret.upper() + "!", id="case-variant"),
+        ],
+    )
+    def test_manage_redis_key_rejects_near_miss_secrets(
+        self, auth_client, clear_cache, make_token
+    ):
+        """Tokens that only partially match the secret never reach the cache."""
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": make_token(settings.SECRET_KEY),
+                "key": "near_miss_key",
+                "value": "attacker_value",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("near_miss_key") is None
+
+    def test_manage_redis_key_delete_requires_secret(self, auth_client, clear_cache):
+        """DELETE with a wrong secret leaves the key; the real secret removes it."""
+        cache.set("delete_probe_key", "kept")
+
+        rejected = auth_client.delete(
+            "/accounts/redis-key/",
+            {"access_token_id": "invalid-token", "key": "delete_probe_key"},
+            format="json",
+        )
+        assert rejected.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("delete_probe_key") == "kept"
+
+        accepted = auth_client.delete(
+            "/accounts/redis-key/",
+            {"access_token_id": settings.SECRET_KEY, "key": "delete_probe_key"},
+            format="json",
+        )
+        assert accepted.status_code == status.HTTP_200_OK
+        assert cache.get("delete_probe_key") is None
+
 
 @pytest.mark.integration
 @pytest.mark.api
