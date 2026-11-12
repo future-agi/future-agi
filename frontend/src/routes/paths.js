@@ -51,6 +51,7 @@ export const paths = {
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
       pricing: `${ROOTS.DASHBOARD}/settings/pricing`,
       eeLicenses: `${ROOTS.DASHBOARD}/settings/ee-licenses`,
+      updates: `${ROOTS.DASHBOARD}/settings/updates`,
     },
     performance: `${ROOTS.DASHBOARD}/performance`,
     data: `${ROOTS.DASHBOARD}/data`,
@@ -103,6 +104,8 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        improvement: (envId, fixId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

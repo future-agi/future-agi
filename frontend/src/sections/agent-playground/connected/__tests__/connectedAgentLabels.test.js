@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   deleteResultMessage,
+  filtersToRows,
   modalityIcon,
   humanize,
   modalityLabel,
+  rowsToFilters,
   sourceLabel,
   usedInLabel,
   versionsParts,
@@ -152,5 +154,44 @@ describe("deleteResultMessage", () => {
     expect(deleteResultMessage({ deleted: 0, skipped: 2 })).toBe(
       "2 agents skipped: still used in environments.",
     );
+  });
+});
+
+describe("filter panel rows", () => {
+  it("turns panel rows into the list's query filters", () => {
+    expect(
+      rowsToFilters([
+        { field: "source", operator: "in", value: ["vapi", "retell"] },
+        { field: "source", operator: "in", value: ["vapi", "bland"] },
+        { field: "environments", operator: "in", value: "without" },
+        { field: "observe", operator: "in", value: [] },
+        { field: "owner", operator: "in", value: ["me"] },
+      ]),
+    ).toEqual({
+      source: ["vapi", "retell", "bland"],
+      environments: ["without"],
+    });
+    expect(rowsToFilters(null)).toBeNull();
+    expect(rowsToFilters([{ field: "source", value: [""] }])).toBeNull();
+  });
+
+  it("shows the query filters back as panel rows", () => {
+    expect(
+      filtersToRows({ agent_type: ["voice"], source: [], observe: ["linked"] }),
+    ).toEqual([
+      {
+        field: "agent_type",
+        fieldType: "string",
+        operator: "in",
+        value: ["voice"],
+      },
+      {
+        field: "observe",
+        fieldType: "string",
+        operator: "in",
+        value: ["linked"],
+      },
+    ]);
+    expect(filtersToRows(null)).toEqual([]);
   });
 });

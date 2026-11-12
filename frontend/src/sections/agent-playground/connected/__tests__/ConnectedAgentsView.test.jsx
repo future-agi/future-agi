@@ -82,6 +82,7 @@ describe("ConnectedAgentsView", () => {
     );
     expect(screen.getByText("7 environments")).toBeInTheDocument();
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
+    // One-line rows: the description isn't a second line.
     expect(
       screen.queryByText("Inbound phone support for an online storefront"),
     ).toBeNull();

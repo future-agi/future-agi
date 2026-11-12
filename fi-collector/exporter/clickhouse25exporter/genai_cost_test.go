@@ -16,11 +16,13 @@ import (
 const orSenderTotalCost = 0.0001275
 
 // recordingPricer is the production pricer over the embedded litellm table,
-// without per-org custom pricing, and records every model it is asked about.
+// without per-org custom pricing, and records every model it is asked about,
+// and which of those it was asked to price as OpenRouter traffic.
 type recordingPricer struct {
-	table  *pricing.Table
-	inner  *pricing.Pricer
-	models []string
+	table            *pricing.Table
+	inner            *pricing.Pricer
+	models           []string
+	openRouterModels []string
 }
 
 func newRecordingPricer(t *testing.T) *recordingPricer {
@@ -35,6 +37,21 @@ func newRecordingPricer(t *testing.T) *recordingPricer {
 func (r *recordingPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
 	r.models = append(r.models, model)
 	return r.inner.TokenCost(ctx, orgID, model, p, c)
+}
+
+func (r *recordingPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	r.models = append(r.models, model)
+	r.openRouterModels = append(r.openRouterModels, model)
+	return r.inner.OpenRouterTokenCost(ctx, orgID, model, p, c)
+}
+
+func (r *recordingPricer) askedAsOpenRouter(model string) bool {
+	for _, m := range r.openRouterModels {
+		if m == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *recordingPricer) asked(model string) bool {

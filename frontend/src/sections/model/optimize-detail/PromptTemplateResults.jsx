@@ -68,8 +68,8 @@ const PromptTemplateResults = ({ selectedOptimization }) => {
         <TemplateAccordion templates={allTemplates} />
       )}
       <Box sx={{ display: "flex", alignItems: "center", gap: "14px" }}>
-        <Iconify icon="material-symbols:credit-score-rounded" />
-        <Typography fontWeight={700} fontSize="14px">
+        <Iconify icon="solar:card-linear" />
+        <Typography fontWeight={600} fontSize="13px">
           Template Score
         </Typography>
       </Box>
@@ -101,7 +101,7 @@ const PromptTemplateResults = ({ selectedOptimization }) => {
                         textAlign: "center",
                         marginX: "2px",
                         marginY: "4px",
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                       }}
                     >
                       {getScorePercentage(templates?.[idx]).toFixed(0)}%
@@ -116,7 +116,7 @@ const PromptTemplateResults = ({ selectedOptimization }) => {
                         interpolateColorBasedOnScore(oldTemplate),
                       textAlign: "center",
                       margin: "2px",
-                      borderRadius: "2px",
+                      borderRadius: "4px",
                     }}
                   >
                     {getScorePercentage(oldTemplate).toFixed(0)}%

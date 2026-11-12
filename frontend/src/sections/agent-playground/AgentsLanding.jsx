@@ -1,19 +1,12 @@
 import React, { Suspense } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useMatch, useNavigate } from "react-router-dom";
-import {
-  Box,
-  CircularProgress,
-  Stack,
-  Tab,
-  Tabs,
-  Typography,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { Box, Tab, Tabs } from "@mui/material";
+import PageHeader from "src/components/page-header";
 import CreateAgentsButton from "./components/CreateAgentsButton";
 import useCanEditAgent from "./hooks/useCanEditAgent";
 import { agentsTabPath, resolveAgentsTab } from "./agentsTabs";
+import ContentSkeleton from "src/components/content-skeleton";
 
 /**
  * Agents — the ones built here in the Playground, and the ones that live
@@ -36,52 +29,33 @@ export default function AgentsLanding() {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          px: 3,
-          pt: 2,
-          pb: 2,
-          gap: 1.5,
           minHeight: 0,
           overflow: "hidden",
         }}
       >
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-        >
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Typography
-              typography="m2"
-              fontWeight="fontWeightMedium"
-              color="text.primary"
-            >
-              Agents
-            </Typography>
-            <CustomTooltip
-              show
-              arrow
-              size="small"
-              title="Build agents in the Playground, or connect agents that already run somewhere else to test them in simulations."
-            >
-              <Box sx={{ display: "flex", color: "text.subtitle" }}>
-                <Iconify icon="solar:info-circle-linear" width={16} />
-              </Box>
-            </CustomTooltip>
-          </Stack>
-          <CreateAgentsButton canCreatePlayground={canCreate} />
-        </Stack>
+        <Box sx={{ px: 3, pt: 2, flexShrink: 0 }}>
+          <PageHeader
+            title="Agents"
+            description="Build agents in the Playground or connect the ones you already run, then test them in simulations."
+            actions={<CreateAgentsButton canCreatePlayground={canCreate} />}
+            sx={{ mb: 0 }}
+          />
+        </Box>
 
-        <Tabs
-          value={tab}
-          onChange={(_, v) => navigate(agentsTabPath(v))}
-          TabIndicatorProps={{
-            sx: { height: 2, borderRadius: 1, bgcolor: "primary.light" },
-          }}
-          sx={{ borderBottom: "1px solid", borderColor: "divider" }}
-        >
-          <Tab value="connected" label="Connected agents" disableRipple />
-          <Tab value="playground" label="Agent Playground" disableRipple />
-        </Tabs>
+        <Box sx={{ flexShrink: 0, px: 3, mt: 1.5 }}>
+          <Tabs
+            value={tab}
+            onChange={(_, v) => navigate(agentsTabPath(v))}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Tab value="connected" label="Connected agents" disableRipple />
+            <Tab value="playground" label="Agent Playground" disableRipple />
+          </Tabs>
+        </Box>
 
         <Box
           sx={{
@@ -89,12 +63,13 @@ export default function AgentsLanding() {
             minHeight: 0,
             display: "flex",
             flexDirection: "column",
+            px: 3,
           }}
         >
           <Suspense
             fallback={
               <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
-                <CircularProgress size={24} />
+                <ContentSkeleton variant="panel" />
               </Box>
             }
           >

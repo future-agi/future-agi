@@ -278,7 +278,7 @@ def _provision_agent_definition(
     )
     if agent_definition_id:
         try:
-            agent_definition = AgentDefinition.objects.get(
+            agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id,
                 organization=organization,
                 workspace=workspace,
@@ -681,6 +681,7 @@ def create_alk_sim_test_execution(
     scenario_selectors: list[dict[str, str]] | None = None,
     simulator_agent: SimulatorAgent | None = None,
     harness_job_id: str | None = None,
+    agent_version: AgentVersion | None = None,
 ) -> TestExecution:
     """Create a TestExecution shell for an ALK-owned run.
 
@@ -745,7 +746,7 @@ def create_alk_sim_test_execution(
         picked_up_by_executor=True,
         simulator_agent=simulator_agent or run_test.simulator_agent,
         agent_definition=run_test.agent_definition,
-        agent_version=resolved_agent_version(run_test),
+        agent_version=agent_version or resolved_agent_version(run_test),
         execution_metadata=(
             {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
         ),
@@ -1166,6 +1167,47 @@ def _build_expected_call_executions(
     return expected_calls
 
 
+def _pinned_agent_prompt(test_execution: TestExecution) -> str:
+    """The prompt the agent version a run is pinned to stands for.
+
+    A version with a credential set of its own records its prompt. A legacy one is
+    shared by every environment on its definition and runs the run's own payload, as
+    its other facts do, so the prompt that payload configures is its prompt. Without
+    one, as for an unpinned run, the definition's is read.
+    """
+    from simulate.models import HarnessAgentVersionRuntime, HostedHarnessJob
+    from simulate.services.harness_agent_versions import (
+        configured_prompt,
+        own_credential_set,
+    )
+
+    version = test_execution.agent_version
+    job_id = (test_execution.execution_metadata or {}).get("harness_job_id")
+    payload = (
+        HostedHarnessJob._base_manager.filter(id=job_id)
+        .values_list("payload", flat=True)
+        .first()
+        if job_id
+        else None
+    ) or {}
+    pins = (payload.get("metadata") or {}).get("version_pins") or {}
+    if version is None or not pins.get("agent_version_id"):
+        # Not pinned by its run, as with versioning off: the definition's, as before.
+        return ""
+    runtime = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=version.id
+        )
+        .only("id", "preflight_status", "credential_blob")
+        .first()
+    )
+    if runtime is not None and own_credential_set(runtime):
+        return version.description or ""
+    # TODO: a legacy version's own recorded prompt, once legacy versions record
+    # their payload.
+    return configured_prompt(payload)
+
+
 def _build_manifest_call_executions(
     test_execution: TestExecution,
     execution_manifest: list[dict[str, Any]],
@@ -1175,6 +1217,9 @@ def _build_manifest_call_executions(
     run_test = test_execution.run_test
     agent_definition = run_test.agent_definition
     selected_version = test_execution.agent_version or agent_definition.latest_version
+    agent_description = (
+        _pinned_agent_prompt(test_execution) or agent_definition.description
+    )
     call_type = (
         getattr(agent_definition, "agent_type", None)
         or CallExecution.SimulationCallType.VOICE
@@ -1221,6 +1266,7 @@ def _build_manifest_call_executions(
             row_id=row_id,
             row_data_info=row_data_info,
             call_type=call_type,
+            agent_description=agent_description,
         )
         call.call_metadata.update(
             {
@@ -1276,6 +1322,33 @@ def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorA
     return simulator_agent
 
 
+# What a harness call carries from preallocation (`_build_call_execution` plus the
+# manifest identity added in `_build_manifest_call_executions`). Grading and the results
+# grid read these, so a call re-run in place keeps them while its result is cleared.
+PREALLOCATED_CALL_METADATA_KEYS = (
+    "call_channel",
+    "external_runner",
+    "row_data",
+    "dataset_id",
+    "base_prompt",
+    "agent_description",
+    "agent_prompt",
+    "dynamic_prompt",
+    "language",
+    "initial_message",
+    "voice_name",
+    "conversation_speed",
+    "interrupt_sensitivity",
+    "finished_speaking_sensitivity",
+    "max_call_duration_in_minutes",
+    "initial_message_delay",
+    "system_prompt",
+    "harness_execution_key",
+    "harness_scenario_key",
+    "harness_trial_index",
+)
+
+
 def _build_call_execution(
     *,
     test_execution: TestExecution,
@@ -1287,8 +1360,11 @@ def _build_call_execution(
     row_id: str | None,
     row_data_info: dict | None,
     call_type: str = CallExecution.SimulationCallType.VOICE,
+    agent_description: str | None = None,
 ) -> CallExecution:
     row_data_info = row_data_info or {}
+    if agent_description is None:
+        agent_description = agent_definition.description
     system_prompt = row_data_info.get("dynamic_prompt", base_prompt)
     is_text = call_type == CallExecution.SimulationCallType.TEXT
     return CallExecution(
@@ -1306,8 +1382,8 @@ def _build_call_execution(
             "row_data": row_data_info.get("row_data", {}),
             "dataset_id": row_data_info.get("dataset_id"),
             "base_prompt": base_prompt,
-            "agent_description": agent_definition.description,
-            "agent_prompt": agent_definition.description,
+            "agent_description": agent_description,
+            "agent_prompt": agent_description,
             "dynamic_prompt": row_data_info.get("dynamic_prompt"),
             "language": "en",
             "initial_message": simulator_agent.initial_message,

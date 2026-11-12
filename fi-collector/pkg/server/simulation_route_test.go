@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -375,15 +376,43 @@ func TestAuthenticatorIsTheDefaultRouterOfSandboxKeys(t *testing.T) {
 		t.Fatalf("the request was dropped for want of a router: %s", s.logs.String())
 	}
 
-	// An option still replaces the default.
+	// An option still replaces the default. The key is authenticated first,
+	// as the middleware would: the stamp after routing needs the key's live
+	// cache entry.
 	fake := &routeFake{}
-	replaced := newServerOn(t, &auth.Authenticator{}, WithSimulationRouter(fake))
-	if _, err := replaced.export(sandboxKey(), routeRequest("customer-prod")); err != nil {
+	a, err := auth.NewWithResolver(auth.Config{CacheTTL: time.Minute, WarmTTL: time.Hour},
+		sandboxKeyResolver{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.Authenticate(context.Background(), "k", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := newServerOn(t, a, WithSimulationRouter(fake))
+	ctx := auth.WithResolvedContext(context.Background(), result, auth.CacheKey("k", "s"))
+	if _, err := (&otlpHandler{s: replaced.Server}).Export(ctx, routeRequest("customer-prod")); err != nil {
 		t.Fatal(err)
 	}
 	if fake.callCount() != 1 {
 		t.Fatalf("the replacement router was called %d times", fake.callCount())
 	}
+}
+
+// sandboxKeyResolver validates every key as sandboxKey and knows no other
+// project.
+type sandboxKeyResolver struct{}
+
+func (sandboxKeyResolver) ValidateKey(context.Context, string, string) (*auth.ResolveResult, error) {
+	return sandboxKey(), nil
+}
+
+func (sandboxKeyResolver) ResolveProjects(context.Context, string, string, []string) (map[string]string, error) {
+	return nil, nil
+}
+
+func (sandboxKeyResolver) GetOrCreateProject(context.Context, string, string, string, string) (string, error) {
+	return "", errors.New("no project is made in this test")
 }
 
 func TestHiddenProjectNamedByAnotherKeyReachesNeitherCatalogNorNotifier(t *testing.T) {

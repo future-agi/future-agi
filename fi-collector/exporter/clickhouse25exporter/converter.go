@@ -21,6 +21,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/adapter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -67,7 +68,7 @@ const (
 var knownObservationTypes = map[string]struct{}{
 	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
 	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
-	"conversation": {}, "unknown": {},
+	"conversation": {}, "unknown": {}, "internal": {},
 }
 
 // Pricer computes token-based cost for spans that carried no user cost
@@ -75,6 +76,66 @@ var knownObservationTypes = map[string]struct{}{
 // (cost falls back to the user-provided value or 0).
 type Pricer interface {
 	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	// OpenRouterTokenCost prices a span that came through OpenRouter, whose
+	// model is an OpenRouter slug: like TokenCost, but OpenRouter's own rate
+	// for the slug (the price table's "openrouter/<slug>" entry) is tried
+	// before the bare provider entry.
+	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+}
+
+// OpenRouter Broadcast detection. OpenRouter's OTLP export names its resource
+// service.name "openrouter" and namespaces its own attributes under
+// trace.metadata.openrouter* (root) and span.metadata.openrouter*
+// (generation). Its provider attempt spans, and a generation exported without
+// cost metadata, carry none of those keys, so the signal is per resource.
+const (
+	openRouterName = "openrouter"
+
+	// openRouterUntypedSpanType is the observation type of an OpenRouter span
+	// that names no kind: the root (one per request), the span_name grouping
+	// span, and the provider attempt and timing spans. Each wraps or serves
+	// the one generation span (gen_ai.operation.name "chat" → "llm"). They
+	// must not be "llm": LLM-call counts and monitors count that type, and an
+	// attempt is a retry of the same call.
+	openRouterUntypedSpanType = "chain"
+)
+
+var openRouterAttrPrefixes = []string{
+	"trace.metadata.openrouter", // root span: openrouter.*, openrouter_generation.*, openrouter_cost_allocation.*
+	"span.metadata.openrouter",  // generation span
+}
+
+// isOpenRouterResource reports whether a ResourceSpans is an OpenRouter
+// Broadcast export: its service.name is "openrouter", or any of its spans
+// carries an OpenRouter-namespaced attribute.
+func isOpenRouterResource(rs ptrace.ResourceSpans, serviceName string) bool {
+	if strings.EqualFold(serviceName, openRouterName) {
+		return true
+	}
+	sss := rs.ScopeSpans()
+	for j := 0; j < sss.Len(); j++ {
+		ss := sss.At(j).Spans()
+		for k := 0; k < ss.Len(); k++ {
+			found := false
+			ss.At(k).Attributes().Range(func(key string, _ pcommon.Value) bool {
+				found = hasOpenRouterAttrPrefix(key)
+				return !found
+			})
+			if found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasOpenRouterAttrPrefix(key string) bool {
+	for _, p := range openRouterAttrPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // spanKindAttrKeys mirrors AttributeAliases.SPAN_KIND: attribute keys a span
@@ -101,6 +162,7 @@ var spanKindSynonyms = map[string]string{
 	"embeddings":       "embedding",
 	"execute_tool":     "tool",
 	"invoke":           "chain",
+	"invoke_agent":     "agent",
 }
 
 // resolveObservationType mirrors Python get_observation_type ∘ normalize_span_kind:
@@ -167,6 +229,10 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
+	if reason := normalization.IngestionHold(traces); reason != "" {
+		return nil, nil, fmt.Errorf("%s", reason)
+	}
+	normalization.Prepare(traces)
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
 
@@ -187,6 +253,7 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 		// "observe"` gate (create_otel_span.py). Empty when the producer
 		// didn't tag it (legacy SDKs) — see the gating note in spanToRow.
 		projectType := stringAttr(rs.Resource().Attributes(), resAttrProjectTy, "")
+		fromOpenRouter := isOpenRouterResource(rs, serviceName)
 
 		sss := rs.ScopeSpans()
 		for j := 0; j < sss.Len(); j++ {
@@ -194,7 +261,7 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 			ss := scope.Spans()
 			for k := 0; k < ss.Len(); k++ {
 				span := ss.At(k)
-				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, pricer)
+				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, fromOpenRouter, pricer)
 				if err != nil {
 					return nil, nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
 				}
@@ -273,6 +340,7 @@ func spanToRow(
 	span ptrace.Span,
 	projectID, orgID, serviceName, semconv, projectType string,
 	resourceAttrs map[string]any,
+	fromOpenRouter bool,
 	pricer Pricer,
 ) (map[string]any, spanIdentity, error) {
 	// Pre-allocate destination maps. Sizing is a heuristic — typical LLM
@@ -292,11 +360,54 @@ func spanToRow(
 	// gen_ai.usage.*_cost (OpenRouter Broadcast) counts as user-supplied when
 	// no gen_ai.cost.*/llm.cost.* key is present. Each span is priced on its
 	// own attributes only, so a root that carries no cost or usage keys adds
-	// nothing to the trace total.
+	// nothing to the trace total. OpenRouter traffic (a Broadcast export, or
+	// any span whose provider is "openrouter", such as traceAI calling
+	// OpenRouter) is priced with OpenRouter's own rate for its model slug
+	// when that slug has no exact key.
 	cost := hot.Cost
-	if !hot.CostUserSet && pricer != nil {
-		if c, ok := pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens); ok {
+	nonAdditive := normalization.NonAdditive(span.Attributes())
+	trackCost := nonAdditive || attrsStr["fi.normalization.profile"] != ""
+	if nonAdditive {
+		cost = 0
+	}
+	// Two-count pricing cannot account for separately billed cache or reasoning
+	// units. For qualified native producers, retain the observed usage but mark
+	// monetary coverage unknown rather than manufacturing an uncached USD price.
+	// Explicit reported USD (including zero) still takes precedence. Unqualified
+	// legacy producers keep their existing compatibility path.
+	unknownDetailedCost := false
+	if trackCost && !nonAdditive && !hot.CostUserSet {
+		for _, key := range []string{
+			"gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
+			"gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+			"gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
+		} {
+			if _, exists := attrsNum[key]; exists {
+				unknownDetailedCost = true
+				break
+			}
+		}
+	}
+	if !nonAdditive && !hot.CostUserSet && !unknownDetailedCost && pricer != nil {
+		var c float64
+		var ok bool
+		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
+			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+		} else {
+			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+		}
+		if ok {
 			cost = c
+			if trackCost {
+				attrsStr["fi.cost.kind"] = "estimated"
+			}
+		}
+	}
+	if trackCost {
+		if nonAdditive || (!hot.CostUserSet && attrsStr["fi.cost.kind"] != "estimated") {
+			attrsStr["fi.cost.kind"] = "unknown"
+		} else if hot.CostUserSet && attrsStr["fi.cost.kind"] == "" {
+			attrsStr["fi.cost.kind"] = "provider_reported"
 		}
 	}
 
@@ -337,8 +448,13 @@ func spanToRow(
 	}
 
 	// observation_type: resolved across SDK conventions, lowercased + validated
-	// (the read layer filters lowercase, so uppercasing would hide spans).
+	// (the read layer filters lowercase, so uppercasing would hide spans). An
+	// OpenRouter Broadcast span that names no kind is a "chain"; any other
+	// sender's stays "unknown".
 	observationType := resolveObservationType(attrsStr)
+	if observationType == observationTypeUnknown && fromOpenRouter {
+		observationType = openRouterUntypedSpanType
+	}
 
 	// Inputs/outputs: the first non-empty content key in inputContentKeys /
 	// outputContentKeys. OpenInference `input.value` / `output.value` still
@@ -817,23 +933,16 @@ func statusString(c ptrace.StatusCode) string {
 // string (not []any) because the CH `span_events String` column stores it
 // verbatim — saves a re-serialise on the writer side.
 func spanEventsJSON(events ptrace.SpanEventSlice) string {
-	if events.Len() == 0 {
-		return "[]"
-	}
-	var b strings.Builder
-	b.WriteByte('[')
+	values := make([]map[string]any, 0, events.Len())
 	for i := 0; i < events.Len(); i++ {
-		if i > 0 {
-			b.WriteByte(',')
-		}
 		ev := events.At(i)
-		b.WriteByte('{')
-		fmt.Fprintf(&b, `"name":%q,"timestamp":%q`,
-			ev.Name(), formatDateTime64(ev.Timestamp().AsTime()))
-		b.WriteByte('}')
+		values = append(values, map[string]any{
+			"name": ev.Name(), "timestamp": formatDateTime64(ev.Timestamp().AsTime()),
+			"attributes": ev.Attributes().AsRaw(), "dropped_attributes_count": ev.DroppedAttributesCount(),
+		})
 	}
-	b.WriteByte(']')
-	return b.String()
+	encoded, _ := json.Marshal(values) // only finite sanitized scalars
+	return string(encoded)
 }
 
 // formatDateTime64 emits CH's DateTime64(6) text form: "YYYY-MM-DD HH:MM:SS.ffffff".

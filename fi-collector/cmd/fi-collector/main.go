@@ -11,7 +11,9 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_GZIP_INFLIGHT_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
+//     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
+//     FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -24,10 +26,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -63,6 +68,7 @@ func main() {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	applyContainerMemoryLimit(log, os.Getenv("GOMEMLIMIT"), cgroupRoot)
 	cfg := loadConfig(log, configPath)
 	if err := applyEnvOverrides(log, &cfg); err != nil {
 		log.Error("invalid environment override", "err", err)
@@ -175,7 +181,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, log)
+	go runAdmin(":9464", writer, authenticator, srv, log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -284,12 +290,37 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
 	}
-	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			c.Server.GzipInflightMiB = n
-		} else {
-			log.Warn("ignoring invalid FI_GZIP_INFLIGHT_MIB", "value", v)
+	for _, o := range []struct {
+		env    string
+		target *int
+	}{
+		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
+		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
+		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
+		{"FI_INSERT_CONCURRENCY", &c.Server.InsertConcurrency},
+	} {
+		if v := os.Getenv(o.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*o.target = n
+			} else {
+				log.Warn("ignoring invalid "+o.env, "value", v)
+			}
 		}
+	}
+	// FI_INGEST_MAX_WAIT: a Go duration ("2s", "1500ms"), the longest a
+	// request waits for the ingest budget before it is refused as busy.
+	if v := os.Getenv("FI_INGEST_MAX_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.Server.IngestMaxWait = d
+		} else {
+			log.Warn("ignoring invalid FI_INGEST_MAX_WAIT (want a duration such as 2s)", "value", v)
+		}
+	}
+	// FI_GZIP_INFLIGHT_MIB bounded gzip requests only. One budget now bounds
+	// every OTLP request, so it is not read: setting it to a gzip-sized value
+	// would otherwise shrink the whole budget.
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
@@ -315,6 +346,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 			// mode this knob exists to fix — an operator must see it.
 			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
 		}
+	}
+	if os.Getenv("FI_MAX_PENDING_ROWS") != "" || c.Server.ObsoleteMaxPendingRows != nil {
+		return fmt.Errorf("FI_MAX_PENDING_ROWS / server.max_pending_rows is obsolete; use FI_INGEST_BUDGET_MIB (byte admission), not a row cap")
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
@@ -405,20 +439,97 @@ func healthBody(status string, stats chwriter.Stats, router routingReporter) map
 	return body
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, log *slog.Logger) {
+// ingestReporter is the part of the server /healthz reads.
+type ingestReporter interface {
+	IngestStats() server.IngestStats
+}
+
+// withIngest adds the ingest budget's use and the refused OTLP requests to a
+// /healthz body.
+func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
+	if ingest != nil {
+		body["ingest"] = ingest.IngestStats()
+	}
+	return body
+}
+
+// buildInfo identifies the running binary so a benchmark report can name the
+// revision it measured. The VCS fields are present only when the binary was built
+// from a git checkout with VCS stamping; a container build without .git sets
+// FI_BUILD_REVISION instead. Nothing here is secret.
+func buildInfo(getenv func(string) string) map[string]any {
+	info := map[string]any{"go_version": runtime.Version()}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Path != "" {
+			info["module"] = bi.Main.Path
+		}
+		for _, setting := range bi.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				info["vcs_revision"] = setting.Value
+			case "vcs.time":
+				info["vcs_time"] = setting.Value
+			case "vcs.modified":
+				info["vcs_modified"] = setting.Value
+			}
+		}
+	}
+	if v := getenv("FI_BUILD_REVISION"); v != "" {
+		info["configured_revision"] = v
+	}
+	return info
+}
+
+// runtimeInfo is the CPU and memory the collector process may use, so a
+// benchmark report records the hardware the measured collector ran with.
+// go_memory_limit_bytes is present only when a Go memory limit (GOMEMLIMIT) is
+// set.
+func runtimeInfo() map[string]any {
+	info := map[string]any{"num_cpu": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "os": runtime.GOOS, "arch": runtime.GOARCH}
+	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
+		info["go_memory_limit_bytes"] = limit
+	}
+	return info
+}
+
+// admissionReporter is the part of the server /healthz reads: the admission
+// limits in force and the current backlog.
+type admissionReporter interface {
+	IngestStats() server.IngestStats
+	Limits() server.Limits
+	Admission() server.Admission
+}
+
+// adminHandler serves /healthz: writer statistics and insert policy, the
+// simulation routing counters, the build the binary identifies as, its CPU and
+// memory limits, the admission limits in force and the current backlog
+// (buffered rows), which a benchmark samples over time.
+func adminHandler(w *chwriter.Writer, router routingReporter, admission admissionReporter) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
+		code, status := 200, "ok"
 		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(healthBody("unhealthy", s, router))
-			return
+			code, status = 503, "unhealthy"
 		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(healthBody("ok", s, router))
+		body := withIngest(healthBody(status, s, router), admission)
+		body["build"] = buildInfo(os.Getenv)
+		body["runtime"] = runtimeInfo()
+		body["writer"] = w.Policy()
+		if admission != nil {
+			body["limits"] = admission.Limits()
+			body["admission"] = admission.Admission()
+		}
+		rw.WriteHeader(code)
+		_ = json.NewEncoder(rw).Encode(body)
 	})
+	return mux
+}
+
+// runAdmin serves /healthz for container health checks.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, admission admissionReporter, log *slog.Logger) {
+	mux := adminHandler(w, router, admission)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)

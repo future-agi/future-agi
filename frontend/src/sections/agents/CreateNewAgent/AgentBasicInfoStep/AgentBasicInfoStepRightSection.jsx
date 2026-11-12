@@ -24,9 +24,9 @@ const AgentBasicInfoStepRightSection = () => {
             padding: "12px",
             display: "flex",
             gap: "12px",
-            backgroundColor: "blue.o5",
+            backgroundColor: "status.info.bg",
             border: "1px solid",
-            borderColor: "blue.200",
+            borderColor: "status.info.border",
             borderRadius: "4px",
           }}
         >
@@ -54,16 +54,11 @@ const AgentBasicInfoStepRightSection = () => {
                 background: "rgba(0, 0, 0, 0.6)",
                 backdropFilter: "blur(1px)",
                 WebkitBackdropFilter: "blur(4px)",
-                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.3)",
-                transition: "all 0.2s ease-in-out",
                 cursor: "pointer",
-                "&:hover": {
-                  transform: "translate(-50%, -50%) scale(1.05)",
-                },
               }}
             >
               <Icon
-                icon="weui:play-filled"
+                icon="solar:play-linear"
                 width={22}
                 height={22}
                 color="white"

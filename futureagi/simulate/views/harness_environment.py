@@ -4,11 +4,28 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.selectors.held_back import (
+    coding_agent_key,
+    detail_without,
+    members_without,
+    verify_result,
+    verify_run,
+)
+from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
+    HarnessAgentCredentialsResponseSerializer,
+    HarnessAgentVersionCreateSerializer,
+    HarnessCompareQuerySerializer,
+    HarnessCompareSerializer,
+    HarnessDefaultMoveSerializer,
+    HarnessDraftSaveResponseSerializer,
+    HarnessDraftSaveSerializer,
+    HarnessDraftsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -20,6 +37,18 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationsQueuedSerializer,
     HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessNudgeAnswerSerializer,
+    HarnessNudgeListQuerySerializer,
+    HarnessNudgeSerializer,
+    HarnessRunPlanQuerySerializer,
+    HarnessRunPlanSerializer,
+    HarnessSuiteMemberSerializer,
+    HarnessVerifyCreateResponseSerializer,
+    HarnessVerifyCreateSerializer,
+    HarnessVerifyResultSerializer,
+    HarnessVersionDiffQuerySerializer,
+    HarnessVersionDiffSerializer,
+    HarnessVersionsSerializer,
 )
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
@@ -33,13 +62,18 @@ from simulate.services.harness_environment import (
     eval_modality,
 )
 from simulate.services.harness_provider import (
+    _usage_limit_response,
     get_harness_provider,
     request_organization,
     request_workspace,
     scope_jobs,
 )
+from simulate.services.harness_verify import require_default_suite, start_verify
+from simulate.services.harness_versioning import read as version_reads
+from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -74,6 +108,15 @@ def _bound_by_name(run_test, name):
         if name == str(getattr(config.eval_template, "name", "") or ""):
             return config
     return None
+
+
+def _held_back_from(request, job, suite_version_id=None) -> tuple[str, ...]:
+    """The scenarios this caller may not read: the held-back cases for a coding agent,
+    chosen on its first read; none for anyone else. A coding agent may read or pick
+    only the default suite: ``suite_version_id`` is refused as not found otherwise."""
+    if coding_agent_key(request) is None:
+        return ()
+    return require_default_suite(job, suite_version_id).scenario_keys
 
 
 def _uuid_or_none(value):
@@ -126,6 +169,497 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return None
         return self._queryset(request).filter(id=identifier).first()
 
+    def handle_exception(self, exc):
+        if isinstance(exc, HostedHarnessError):
+            return Response(exc.as_dict(), status=exc.status_code)
+        response = _usage_limit_response(exc)
+        if response is not None:
+            return response
+        return super().handle_exception(exc)
+
+    def _not_found(self):
+        return Response(
+            {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    @validated_request(responses={200: HarnessVersionsSerializer})
+    @action(detail=True, methods=["get"], url_path="versions")
+    def versions(self, request, pk=None):
+        """Every agent, environment and suite version of this environment, read-only."""
+        # The flag outranks every other 404, so a disabled feature reads as disabled.
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(version_reads.list_versions(job))
+
+    @validated_request(
+        query_serializer=HarnessVersionDiffQuerySerializer,
+        responses={200: HarnessVersionDiffSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
+    )
+    def version_diff(self, request, pk=None, piece=None, version_id=None):
+        """What one version changed, against its parent or the ``against`` version."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(version_id)
+        if identifier is None:
+            raise version_reads.version_not_found()
+        against = request.validated_query_data.get("against")
+        return Response(version_reads.version_diff(job, piece, identifier, against))
+
+    @validated_request(
+        request_serializer=HarnessDefaultMoveSerializer,
+        responses={200: HarnessVersionsSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=(
+            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/default"
+        ),
+    )
+    def move_default(self, request, pk=None, piece=None, version_id=None):
+        """Make an agent, environment or suite version the default; returns every
+        version."""
+        from simulate.services.harness_versioning.versions import (
+            MOVABLE_PIECES,
+            move_default,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(version_id)
+        if piece not in MOVABLE_PIECES or identifier is None:
+            raise version_reads.version_not_found()
+        moved = move_default(
+            job,
+            piece,
+            identifier,
+            expected_default_id=request.validated_data["expected_default_id"],
+            user=request.user,
+        )
+        return Response(version_reads.list_versions(moved))
+
+    def _agent_version(self, job, version_id):
+        """One agent version of this environment's agent, or a 404."""
+        identifier = _uuid_or_none(version_id)
+        found = (
+            version_reads._agent_versions(job, [identifier])
+            if identifier is not None
+            else []
+        )
+        if not found:
+            raise version_reads.version_not_found()
+        return found[0]
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: HarnessVersionsSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"versions/agent/(?P<version_id>[0-9a-fA-F-]{36})/discard",
+    )
+    def discard_agent_version(self, request, pk=None, version_id=None):
+        """Set an agent version aside; returns every version."""
+        from simulate.services.harness_agent_versions import (
+            discard_agent_version,
+            require_environments_version,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        version = self._agent_version(job, version_id)
+        require_environments_version(job, version)
+        discard_agent_version(version, by_environment=job.id)
+        return Response(version_reads.list_versions(job))
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={202: HarnessVersionsSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"versions/agent/(?P<version_id>[0-9a-fA-F-]{36})/retry",
+    )
+    def retry_agent_version(self, request, pk=None, version_id=None):
+        """Check an agent version whose check failed again; returns every version."""
+        from simulate.services.harness_agent_versions import (
+            require_environments_version,
+            retry_preflight,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        version = self._agent_version(job, version_id)
+        require_environments_version(job, version)
+        retry_preflight(version)
+        return Response(
+            version_reads.list_versions(job), status=status.HTTP_202_ACCEPTED
+        )
+
+    @validated_request(
+        request_serializer=HarnessAgentVersionCreateSerializer,
+        responses={202: HarnessAgentCredentialsResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="versions/agent")
+    def create_agent_version(self, request, pk=None):
+        """A new agent version from an upload, a prompt edit or a settings edit; it is
+        checked next, then made this environment's default unless make_default is
+        false. A coding agent key pushes only an upload, never made the default."""
+        from simulate.services.harness_agent_changes import change_agent_source
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        change = dict(request.validated_data)
+        if coding_agent_key(request) is not None:
+            if "archive_artifact_id" not in change:
+                # The loop is built for uploaded-folder agents; their prompt and
+                # settings stay with people.
+                raise PermissionDenied(
+                    "A coding agent key can push only an uploaded folder",
+                    code="coding_agent_candidate_unsupported",
+                )
+            # Shipping a version stays with people; a coding agent pushes candidates.
+            if change.get("make_default"):
+                raise PermissionDenied(
+                    "A coding agent key cannot make a version the default",
+                    code="coding_agent_cannot_ship",
+                )
+            change["make_default"] = False
+        version = change_agent_source(job, **change, user=request.user)
+        job.refresh_from_db(fields=["agent_version"])
+        return Response(
+            {"agent_version": version_reads.agent_version_item(job, version)},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(responses={200: HarnessSuiteMemberSerializer(many=True)})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
+    )
+    def suite_members(self, request, pk=None, version_id=None):
+        """The scenarios in one suite version, by number; a coding agent's read leaves
+        out the held-back cases."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(version_id)
+        if identifier is None:
+            raise version_reads.version_not_found()
+        hidden = _held_back_from(request, job, identifier)
+        members = version_reads.suite_members(job, identifier)
+        return Response(members_without(members, hidden))
+
+    @validated_request(
+        request_serializer=HarnessVerifyCreateSerializer,
+        responses={202: HarnessVerifyCreateResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="verify")
+    def verify(self, request, pk=None):
+        """Verify an agent version on the held-back cases, in a run no user read shows.
+        Its live or completed verify is final: asking again returns it. After one that
+        failed or was canceled, asking again starts a new one."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        run = start_verify(job, **request.validated_data)
+        return Response(
+            {"verify_id": str(run.id), "state": run.state},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(responses={200: HarnessVerifyResultSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"verify/(?P<verify_id>[0-9a-fA-F-]{36})",
+        url_name="verify-detail",
+    )
+    def verify_detail(self, request, pk=None, verify_id=None):
+        """How the verified version did on the held-back cases, as counts only."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(verify_id)
+        run = verify_run(job, identifier) if identifier is not None else None
+        if run is None:
+            raise NotFound("Verify not found")
+        return Response(verify_result(run))
+
+    @validated_request(responses={200: HarnessDraftsSerializer})
+    @action(detail=True, methods=["get"], url_path="drafts")
+    def drafts(self, request, pk=None):
+        """The environment's unsaved changes, for the Save bar."""
+        from simulate.services.harness_versioning.drafts import list_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(list_drafts(job))
+
+    @validated_request(
+        request_serializer=HarnessDraftSaveSerializer,
+        responses={200: HarnessDraftSaveResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path=r"drafts/save")
+    def save_drafts(self, request, pk=None):
+        """Make every named draft live together; returns the new defaults and every
+        version."""
+        from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            save_drafts(
+                job,
+                {
+                    one["piece"]: SaveRequest(
+                        expected_parent_id=one["expected_parent_id"],
+                        expected_revision=one.get("expected_revision"),
+                    )
+                    for one in body["drafts"]
+                },
+                idempotency_key=body["idempotency_key"],
+                user=request.user,
+            )
+        )
+
+    @swagger_auto_schema(
+        responses={204: "Discarded"},
+        operation_id="simulate_api_harness-environments_discard_draft",
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"drafts/(?P<piece>environment|suite)",
+    )
+    def discard_draft(self, request, pk=None, piece=None):
+        """Set one piece's unsaved changes aside; discarding none is not an error."""
+        from simulate.services.harness_versioning.drafts import discard_draft
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        discard_draft(job, piece, user=request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        query_serializer=HarnessNudgeListQuerySerializer,
+        responses={200: HarnessNudgeSerializer(many=True)},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="nudges")
+    def nudges(self, request, pk=None):
+        """This environment's offers to rebuild after a change, newest first."""
+        from simulate.services.harness_versioning.nudges import list_nudges
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        states = request.validated_query_data.get("state")
+        return Response(list_nudges(job, states=states))
+
+    @validated_request(
+        request_serializer=HarnessNudgeAnswerSerializer,
+        responses={200: HarnessNudgeSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"nudges/(?P<nudge_id>[0-9a-fA-F-]{36})/answer",
+    )
+    def answer_nudge(self, request, pk=None, nudge_id=None):
+        """Skip ("no") or Rebuild ("yes") a pending nudge; returns the nudge."""
+        from simulate.services.harness_versioning.nudges import (
+            answer_nudge,
+            nudge_not_found,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(nudge_id)
+        if identifier is None:
+            raise nudge_not_found()
+        return Response(
+            answer_nudge(
+                job,
+                identifier,
+                answer=request.validated_data["answer"],
+                user=request.user,
+            )
+        )
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: HarnessNudgeSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"nudges/(?P<nudge_id>[0-9a-fA-F-]{36})/stop",
+    )
+    def stop_nudge(self, request, pk=None, nudge_id=None):
+        """Stop a queued or running rebuild; it can be run again. Returns the nudge."""
+        from simulate.services.harness_versioning.nudges import (
+            _nudges,
+            nudge_item,
+            nudge_not_found,
+        )
+        from simulate.services.harness_versioning.rebuild import stop_rebuild
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(nudge_id)
+        if identifier is None:
+            raise nudge_not_found()
+        nudge = stop_rebuild(job, identifier, user=request.user)
+        return Response(nudge_item(_nudges(job).get(id=nudge.id)))
+
+    @validated_request(
+        query_serializer=HarnessRunPlanQuerySerializer,
+        responses={200: HarnessRunPlanSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="run-plan")
+    def run_plan(self, request, pk=None):
+        """The versions a run of these picks would use and what to warn about; no
+        writes. An absent pick is the environment's default."""
+        from simulate.services.harness_versioning.run_warnings import preview_run
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = request.validated_query_data
+        # A coding agent may plan only on the default suite.
+        _held_back_from(request, job, query.get("suite_version_id"))
+        picks = VersionPicks(
+            agent_version_id=query.get("agent_version_id"),
+            environment_version_id=query.get("environment_version_id"),
+            suite_version_id=query.get("suite_version_id"),
+        )
+        return Response(preview_run(job, picks))
+
+    @validated_request(
+        query_serializer=HarnessCompareQuerySerializer,
+        responses={200: HarnessCompareSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="compare")
+    def compare(self, request, pk=None):
+        """Two runs of this environment, scenario by scenario; against defaults to
+        the previous completed run. Not gated on versioning: a run from before
+        versioning compares too, with null versions."""
+        from simulate.models import TestExecution
+        from simulate.services.run_results_v3_queries import (
+            build_run_comparison,
+            run_calls_queryset,
+        )
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = request.validated_query_data
+        wanted = [query["execution_id"], query.get("against_execution_id")]
+        # A run of this environment is one of its run test's executions.
+        runs = (
+            {
+                one.id: one
+                for one in user_executions().filter(
+                    id__in=[one for one in wanted if one], run_test_id=job.run_test_id
+                )
+            }
+            if job.run_test_id
+            else {}
+        )
+        execution = runs.get(wanted[0])
+        against = runs.get(wanted[1]) if wanted[1] else None
+        if execution is None or (wanted[1] and against is None):
+            return Response(
+                {"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        if against is not None and against.id == execution.id:
+            return Response(
+                {"detail": "Pick another run to compare against"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Older or newer, as long as both completed: only a completed run has verdicts.
+        ended = {
+            TestExecution.ExecutionStatus.FAILED: "failed",
+            TestExecution.ExecutionStatus.CANCELLED: "was cancelled",
+        }
+        for run, name, unfinished in (
+            (execution, "This run", "Compare this run once it finishes"),
+            (
+                against,
+                "The run to compare against",
+                "Pick a finished run to compare against",
+            ),
+        ):
+            if run is None or run.status == TestExecution.ExecutionStatus.COMPLETED:
+                continue
+            details = {"execution_id": str(run.id)}
+            if run.status in ended:
+                raise HostedHarnessError(
+                    f"comparison_run_{run.status}",
+                    f"{name} {ended[run.status]} before its calls were graded",
+                    details=details,
+                )
+            raise HostedHarnessError(
+                "comparison_run_unfinished", unfinished, details=details
+            )
+        comparison = build_run_comparison(
+            execution, run_calls_queryset(execution), against=against, with_pairs=True
+        )
+        return Response(
+            {
+                "execution_id": str(execution.id),
+                "against_execution_id": comparison["previous_execution_id"],
+                "pairs": comparison["pairs"],
+                "summary": comparison["summary"],
+                "versions": comparison["versions"],
+            }
+        )
+
     @validated_request(
         query_serializer=HarnessEnvironmentListQuerySerializer,
         responses={200: HarnessEnvironmentListResponseSerializer},
@@ -150,7 +684,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
         Same shape whichever door built it. A section the pipeline has not reached
-        yet is null, so the client renders "building" rather than an empty pane.
+        yet is null, so the client renders "building" rather than an empty pane. A
+        coding agent's read leaves out the held-back cases.
         """
         job = self._job(request, pk)
         if job is None:
@@ -158,7 +693,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(environment_detail(job))
+        return Response(
+            detail_without(environment_detail(job), _held_back_from(request, job))
+        )
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
@@ -369,9 +906,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         # (harness_provider.py:1130-1136), so an older run must still be
         # addressable.
         execution = (
-            TestExecution.objects.filter(
-                id=identifier, run_test_id=job.run_test_id
-            ).first()
+            user_executions().filter(id=identifier, run_test_id=job.run_test_id).first()
             if identifier is not None
             else None
         )
@@ -491,7 +1026,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if refusal is not None:
             return refusal
         identifier = _uuid_or_none(execution_id)
-        runs = TestExecution.objects.filter(id=identifier, run_test_id=job.run_test_id)
+        runs = user_executions().filter(id=identifier, run_test_id=job.run_test_id)
         if identifier is None or not runs.exists():
             return Response(
                 build_error_envelope(

@@ -4,7 +4,13 @@ import SvgColor from "src/components/svg-color";
 
 export const ExperimentActionsCellRenderer = () => {
   return (
-    <IconButton type="button" size="small" variant="contained" color="primary">
+    <IconButton
+      className="row-hover-action"
+      type="button"
+      size="small"
+      variant="contained"
+      color="primary"
+    >
       <SvgColor
         src="/assets/icons/ic_pen.svg"
         sx={{

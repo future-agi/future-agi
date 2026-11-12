@@ -17,13 +17,16 @@ const SOURCE_LABELS = {
   eleven_labs: "ElevenLabs",
 };
 
-const enumField = (value, label, labels) => ({
-  value,
+const enumField = (id, label, labels) => ({
+  id,
   label,
   type: "enum",
-  operators: ["is"],
-  choices: Object.keys(labels),
-  choiceLabels: labels,
+  multiple: true,
+  options: Object.entries(labels).map(([value, text]) => ({
+    value,
+    label: text,
+  })),
+  operators: ["in"],
 });
 
 export const CONNECTED_AGENT_FILTER_FIELDS = [
@@ -38,6 +41,27 @@ export const CONNECTED_AGENT_FILTER_FIELDS = [
     not_linked: "Not linked",
   }),
 ];
+
+const FILTER_IDS = CONNECTED_AGENT_FILTER_FIELDS.map((field) => field.id);
+
+export const filtersToRows = (filters) =>
+  FILTER_IDS.filter((id) => filters?.[id]?.length).map((id) => ({
+    field: id,
+    fieldType: "string",
+    operator: "in",
+    value: filters[id],
+  }));
+
+export const rowsToFilters = (rows) => {
+  const result = {};
+  (rows || []).forEach((row) => {
+    if (!FILTER_IDS.includes(row.field)) return;
+    const values = [].concat(row.value ?? []).filter((v) => v !== "");
+    if (!values.length) return;
+    result[row.field] = [...new Set([...(result[row.field] ?? []), ...values])];
+  });
+  return Object.keys(result).length ? result : null;
+};
 
 export const humanize = (value) =>
   String(value)
