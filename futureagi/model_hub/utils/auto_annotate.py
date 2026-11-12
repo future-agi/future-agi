@@ -32,8 +32,12 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 from tfc.constants.api_calls import APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -221,29 +225,35 @@ class AutoAnnotation:
                         inputs, input_type, strict=False
                     ):
                         if input_type_item == "image":
-                            tokens = (count_tiktoken_tokens("", input_item) if count_tiktoken_tokens else 0)
+                            tokens = (
+                                count_tiktoken_tokens("", input_item)
+                                if count_tiktoken_tokens
+                                else 0
+                            )
                         else:
-                            tokens = (count_tiktoken_tokens(input_item) if count_tiktoken_tokens else 0)
+                            tokens = (
+                                count_tiktoken_tokens(input_item)
+                                if count_tiktoken_tokens
+                                else 0
+                            )
                         api_call_type = APICallTypeChoices.AUTO_ANNOTATION.value
                         config = {}
                         config["input_tokens"] = tokens
                         if log_and_deduct_cost_for_api_request is not None:
                             log_and_deduct_cost_for_api_request(
-                            org,
-                            api_call_type,
-                            config,
-                            source="auto_annotate",
-                            workspace=dataset.workspace,
-                        )
+                                org,
+                                api_call_type,
+                                config,
+                                source="auto_annotate",
+                                workspace=dataset.workspace,
+                            )
 
                     Cell.objects.filter(
                         column__source_id=f"{self.annotation.id}-sourceid-{self.annotation_label.id}",
                         row_id=row.id,
                     ).exclude(feedback_info__annotation__verified=True).exclude(
                         feedback_info__annotation__has_key="user_id"
-                    ).update(
-                        status=CellStatus.RUNNING.value, value=None
-                    )
+                    ).update(status=CellStatus.RUNNING.value, value=None)
 
                     if self.annotation_label.settings["strategy"] == RAG_TXT:
                         # Get cell values for each input column ID
@@ -312,26 +322,29 @@ class AutoAnnotation:
                                 "total_cost", 0
                             )
                         if BillingConfig is not None:
-
-                            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-                        if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
-                            emit(
-                            UsageEvent(
-                                org_id=str(org.id),
-                                event_type=BillingEventType.AUTO_ANNOTATION,
-                                amount=credits,
-                                properties={
-                                    "source": "auto_annotate",
-                                    "annotation_id": str(self.annotation.id),
-                                    "row_id": str(row.id),
-                                    "raw_cost_usd": str(actual_cost),
-                                    **llm_usage_properties(agent),
-                                },
+                            credits = BillingConfig.get().calculate_ai_credits(
+                                actual_cost
                             )
-                        )
+
+                        if (
+                            emit is not None
+                            and UsageEvent is not None
+                            and BillingEventType is not None
+                        ):
+                            emit(
+                                UsageEvent(
+                                    org_id=str(org.id),
+                                    event_type=BillingEventType.AUTO_ANNOTATION,
+                                    amount=credits,
+                                    properties={
+                                        "source": "auto_annotate",
+                                        "annotation_id": str(self.annotation.id),
+                                        "row_id": str(row.id),
+                                        "raw_cost_usd": str(actual_cost),
+                                        **llm_usage_properties(agent),
+                                    },
+                                )
+                            )
                     except Exception:
                         pass
 

@@ -100,7 +100,9 @@ class LLMPromptRunner(BaseNodeRunner):
 
         messages = prompt_config.get("messages", [])
         template_format = configuration.get("template_format")
-        rendered_messages = self._render_messages(messages, inputs, model, template_format)
+        rendered_messages = self._render_messages(
+            messages, inputs, model, template_format
+        )
 
         # Extract tool configs
         tools = configuration.get("tools", [])
@@ -219,7 +221,10 @@ class LLMPromptRunner(BaseNodeRunner):
 
         if template_format in ("jinja", "jinja2"):
             # Resolve all input variables, then render through Jinja2
-            from model_hub.views.run_prompt import render_template, TEMPLATE_FORMAT_JINJA2
+            from model_hub.views.run_prompt import (
+                render_template,
+                TEMPLATE_FORMAT_JINJA2,
+            )
 
             # Build context by resolving each input variable.
             # Dot-notation keys (e.g. "Node1.response") must be nested into

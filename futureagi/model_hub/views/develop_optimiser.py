@@ -47,8 +47,12 @@ from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.prompt_template import replace_ids_with_column_name
 from tfc.constants.api_calls import APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -99,9 +103,13 @@ class DevelopOptimizer:
                     cell_values_strings.append("")
 
             input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = (count_tiktoken_tokens(
-                input_words_string, input_image_urls=cell_values_image_urls
-            ) if count_tiktoken_tokens else 0)
+            opt_column_token_count = (
+                count_tiktoken_tokens(
+                    input_words_string, input_image_urls=cell_values_image_urls
+                )
+                if count_tiktoken_tokens
+                else 0
+            )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -115,12 +123,12 @@ class DevelopOptimizer:
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
             if log_and_deduct_cost_for_api_request is not None:
                 log_and_deduct_cost_for_api_request(
-                organization,
-                api_call_type,
-                config,
-                source="optimisation",
-                workspace=column.dataset.workspace,
-            )
+                    organization,
+                    api_call_type,
+                    config,
+                    source="optimisation",
+                    workspace=column.dataset.workspace,
+                )
 
             # Non-chargeable tracking event — optimisation uses user's own API keys.
             # Eval runs within optimisation emit ai_credits events via run_eval_func().
@@ -137,15 +145,15 @@ class DevelopOptimizer:
 
                 if emit is not None and UsageEvent is not None:
                     emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        properties={
-                            "source": "optimisation",
-                            "source_id": str(self.optimize_dataset.id),
-                        },
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=api_call_type,
+                            properties={
+                                "source": "optimisation",
+                                "source_id": str(self.optimize_dataset.id),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -158,6 +166,7 @@ class DevelopOptimizer:
         try:
             # get the optimisation object by id
             from tfc.constants.api_calls import APICallStatusChoices
+
             try:
                 from ee.usage.models.usage import APICallLog
             except ImportError:
@@ -172,8 +181,8 @@ class DevelopOptimizer:
             # get the api call log row by reference id
             if APICallLog is not None:
                 api_call_log_row = APICallLog.objects.filter(
-                reference_id=optimisation_id, deleted=False
-            ).first()
+                    reference_id=optimisation_id, deleted=False
+                ).first()
             if optimizer_row.status == StatusType.FAILED.value:
                 # refund the cost
                 # update the api call log row

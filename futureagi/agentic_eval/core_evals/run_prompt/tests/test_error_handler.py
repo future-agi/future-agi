@@ -26,7 +26,9 @@ def _raise_masked_api_key_error():
 
 def _raise_generic_wrapper_api_key_error():
     try:
-        raise Exception("Authentication failed because the configured API key is invalid")
+        raise Exception(
+            "Authentication failed because the configured API key is invalid"
+        )
     except Exception as exc:
         raise RuntimeError("runprompt provider call failed") from exc
 

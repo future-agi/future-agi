@@ -82,7 +82,11 @@ class SsrfResponse:
         # HTTPHeaderDict is case-insensitive (matches requests.Response's
         # CaseInsensitiveDict contract): callers can look up 'Content-Type'
         # regardless of the casing the server sent (or a test constructed).
-        self.headers = urllib3.HTTPHeaderDict(headers) if headers is not None else urllib3.HTTPHeaderDict()
+        self.headers = (
+            urllib3.HTTPHeaderDict(headers)
+            if headers is not None
+            else urllib3.HTTPHeaderDict()
+        )
         self.content = content
         self.final_url = final_url
 
@@ -254,9 +258,7 @@ def safe_fetch(
                 for chunk in response.stream(64 * 1024):
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError(
-                            f"URL body exceeds {max_bytes} byte limit."
-                        )
+                        raise ValueError(f"URL body exceeds {max_bytes} byte limit.")
                 content = bytes(body)
 
             return SsrfResponse(

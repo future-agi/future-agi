@@ -89,20 +89,23 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             start = page_number * page_size
             end = start + page_size
 
-            eval_groups = EvalGroup.no_workspace_objects.db_manager(
-                DATABASE_FOR_EVAL_GROUP_LIST
-            ).filter(
-                Q(
-                    workspace=request.workspace,
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+            eval_groups = (
+                EvalGroup.no_workspace_objects.db_manager(DATABASE_FOR_EVAL_GROUP_LIST)
+                .filter(
+                    Q(
+                        workspace=request.workspace,
+                        deleted=False,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                    )
+                    | Q(is_sample=True, deleted=False)
                 )
-                | Q(is_sample=True, deleted=False)
-            ).select_related("organization", "created_by")
+                .select_related("organization", "created_by")
+            )
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_groups = eval_groups.filter(normalize_search_for_name(name))
 
             # Get total count before pagination
@@ -122,8 +125,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             # Single query to get all template relationships from through table
             all_relationships = (
-                EvalGroup.eval_templates.through.objects
-                .using(DATABASE_FOR_EVAL_GROUP_LIST)
+                EvalGroup.eval_templates.through.objects.using(
+                    DATABASE_FOR_EVAL_GROUP_LIST
+                )
                 .filter(evalgroup_id__in=eval_group_ids)
                 .values_list("evalgroup_id", "evaltemplate_id")
             )
@@ -219,6 +223,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_templates = eval_templates.filter(normalize_search_for_name(name))
 
             # Get all template IDs for efficient querying

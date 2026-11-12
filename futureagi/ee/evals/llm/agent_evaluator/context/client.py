@@ -177,7 +177,8 @@ class EvalLLMClient(FalconLLMClient):
                 max_iterations=max_iter,
             )
             output_format = output_format_instruction(
-                self.output_type, self.output_choices,
+                self.output_type,
+                self.output_choices,
                 multi_choice=getattr(self, "output_multi_choice", False),
             )
             messages = list(messages) + [
@@ -211,9 +212,7 @@ class EvalLLMClient(FalconLLMClient):
         # ``msg["content"]`` in place — copying here guarantees we never
         # mutate the agent loop's underlying messages list.
         messages = [
-            {**m} if isinstance(m, dict) else m
-            for m in messages
-            if m is not None
+            {**m} if isinstance(m, dict) else m for m in messages if m is not None
         ]
 
         # L1: per-message head+tail cap
@@ -248,7 +247,9 @@ class EvalLLMClient(FalconLLMClient):
         if tokens <= soft:
             safe_info(
                 "eval_context_l3a_resolved",
-                model=self.model, tokens=tokens, soft=soft,
+                model=self.model,
+                tokens=tokens,
+                soft=soft,
             )
             return messages
 
@@ -390,7 +391,8 @@ class EvalLLMClient(FalconLLMClient):
         digest = ""
         try:
             async for chunk in super().stream_completion(
-                compaction_msgs, tools=None,
+                compaction_msgs,
+                tools=None,
             ):
                 for choice in chunk.get("choices") or []:
                     delta = choice.get("delta") or {}
@@ -438,10 +440,7 @@ class EvalLLMClient(FalconLLMClient):
             return messages
 
         kept = list(middle)
-        while (
-            total_tokens(anchors + kept + recent) > target
-            and kept
-        ):
+        while total_tokens(anchors + kept + recent) > target and kept:
             head = kept[0]
             drop_count = 1
             if (
@@ -461,9 +460,7 @@ class EvalLLMClient(FalconLLMClient):
                 if tc_ids:
                     for nxt in kept[1:]:
                         nxt_id = (
-                            nxt.get("tool_call_id")
-                            if isinstance(nxt, dict)
-                            else None
+                            nxt.get("tool_call_id") if isinstance(nxt, dict) else None
                         )
                         if (
                             isinstance(nxt, dict)

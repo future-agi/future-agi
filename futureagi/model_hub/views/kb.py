@@ -76,7 +76,6 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         check_ee_feature("knowledge_base", org_id=str(org.id))
 
         try:
-
             serializer = request.validated_serializer
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)

@@ -33,9 +33,9 @@ SAVE_TO_DB = os.getenv("SAVE_TO_DB", "0") == "1"
 
 def test_extraction(trace_id: str):
     """Test just the data extraction step."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Testing extraction for trace: {trace_id}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     span = ObservationSpan.objects.filter(
         trace_id=trace_id, observation_type="conversation"
@@ -74,10 +74,10 @@ def test_extraction(trace_id: str):
 
 def test_full_pipeline(trace_id: str):
     """Test the full Voice Compass pipeline."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running full Voice Compass for trace: {trace_id}")
     print(f"Save to DB: {SAVE_TO_DB}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     start = time.time()
     agent = VoiceCompassAgent(trace_id=trace_id, save_to_db=SAVE_TO_DB)
@@ -91,7 +91,12 @@ def test_full_pipeline(trace_id: str):
     print(f"Insights: {result.get('summary', {}).get('insights', '')[:300]}")
 
     scores = result.get("scores", {})
-    for dim in ["factual_grounding", "privacy_and_safety", "instruction_adherence", "optimal_plan_execution"]:
+    for dim in [
+        "factual_grounding",
+        "privacy_and_safety",
+        "instruction_adherence",
+        "optimal_plan_execution",
+    ]:
         s = scores.get(dim, {})
         print(f"  {dim}: {s.get('score')} — {s.get('reason', '')[:100]}")
 
@@ -113,7 +118,9 @@ def test_full_pipeline(trace_id: str):
             prompt = usage.get("prompt_tokens", 0)
             completion = usage.get("completion_tokens", 0)
             cached = usage.get("cache_read_input_tokens", 0)
-            print(f"  {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})")
+            print(
+                f"  {stage}: {total} tokens (prompt={prompt}, completion={completion}, cached={cached})"
+            )
             grand_total += total
         print(f"  GRAND TOTAL: {grand_total} tokens")
 

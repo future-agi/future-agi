@@ -52,7 +52,5 @@ class Command(BaseCommand):
             pass
         AuthToken.objects.filter(id__in=token_ids).update(is_active=False)
 
-        self.stdout.write(
-            self.style.SUCCESS(f"Password updated for '{user.email}'.")
-        )
+        self.stdout.write(self.style.SUCCESS(f"Password updated for '{user.email}'."))
         self.stdout.write("Existing sessions have been signed out.")

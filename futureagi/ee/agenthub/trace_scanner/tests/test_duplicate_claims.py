@@ -11,6 +11,7 @@ bug reached the feed as four claims across three separate entries.
 Nothing downstream can repair a per-trace duplicate, which is why this is fixed
 where the evidence quotes are still in hand.
 """
+
 import pytest
 
 from ee.agenthub.trace_scanner.scanner import (
@@ -94,10 +95,18 @@ class TestCollapseThroughTheGate:
                 "tools": {"evidence": QUOTE, "verdict": "FAIL"},
             },
             "issues": [
-                {"dim": "grounding", "cat": "Unsupported Claim",
-                 "brief": "double-counted cash in the portfolio total", "conf": "H"},
-                {"dim": "tools", "cat": "Tool Output Misinterpretation",
-                 "brief": "added cash to a total that already included cash", "conf": "H"},
+                {
+                    "dim": "grounding",
+                    "cat": "Unsupported Claim",
+                    "brief": "double-counted cash in the portfolio total",
+                    "conf": "H",
+                },
+                {
+                    "dim": "tools",
+                    "cat": "Tool Output Misinterpretation",
+                    "brief": "added cash to a total that already included cash",
+                    "conf": "H",
+                },
             ],
         }
 
@@ -113,13 +122,17 @@ class TestCollapseThroughTheGate:
         """Collapse runs after gating, so a dimension whose quote was invented is
         already gone and cannot become the surviving claim."""
         parsed = self._parsed()
-        parsed["dimensions"]["tools"]["evidence"] = "a sentence that is not in the trace"
+        parsed["dimensions"]["tools"]["evidence"] = (
+            "a sentence that is not in the trace"
+        )
         out = TraceScanner._v8_to_trace_output(parsed, SEEN)
         assert len(out["issues"]) == 1
         assert out["issues"][0]["cat"] == "Unsupported Claim"
 
 
-@pytest.mark.parametrize("dim", ["tools", "grounding", "instruction", "goal", "completion"])
+@pytest.mark.parametrize(
+    "dim", ["tools", "grounding", "instruction", "goal", "completion"]
+)
 def test_every_dimension_has_a_specificity_rank(dim):
     from ee.agenthub.trace_scanner.scanner import _DIMENSION_SPECIFICITY
 

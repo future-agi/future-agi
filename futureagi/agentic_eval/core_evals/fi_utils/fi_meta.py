@@ -8,7 +8,7 @@ class FiMeta:
     context: dict | None = None
     session_id: str | None = None
     user_query: str | None = None
-    environment: str | None = 'production'
+    environment: str | None = "production"
     external_reference_id: str | None = None
     customer_id: str | None = None
     customer_user_id: str | None = None

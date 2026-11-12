@@ -41,7 +41,9 @@ SendCallback = Callable[[dict], Awaitable[None]]
 _DONE = object()
 
 
-def _resolve_cluster(organization: Any, workspace: Any, label: str, project_id: Optional[str]):
+def _resolve_cluster(
+    organization: Any, workspace: Any, label: str, project_id: Optional[str]
+):
     """Resolve a cluster CharField label (e.g. "C01") to (uuid, project_uuid,
     error_count) within the caller's org/workspace scope. Returns None if the
     label can't be resolved — caller falls through to normal Falcon."""
@@ -68,7 +70,9 @@ def _resolve_cluster(organization: Any, workspace: Any, label: str, project_id: 
     return str(cluster.id), str(cluster.project_id), int(cluster.error_count or 0)
 
 
-def _persist_synthesis(cluster_uuid: str, synthesis: Any, error_count_at_run: int, trace: list[dict] | None) -> None:
+def _persist_synthesis(
+    cluster_uuid: str, synthesis: Any, error_count_at_run: int, trace: list[dict] | None
+) -> None:
     """Cache the synthesis + investigation trail onto the cluster row (the
     headline card reads the synthesis; the Analyze tab replays the trail)."""
     from django.utils import timezone
@@ -397,9 +401,7 @@ async def run_cluster_rca(
         result = await fut
     except Exception:
         logger.exception("cluster_rca_bridge_run_failed", cluster_id=cluster_uuid)
-        await send_callback(
-            RcaErrorEvent(message_id=assistant_message_id).to_frame()
-        )
+        await send_callback(RcaErrorEvent(message_id=assistant_message_id).to_frame())
         return {
             "id": assistant_message_id,
             "content": "",

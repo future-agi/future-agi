@@ -74,9 +74,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.create_response(serializer.data)
@@ -180,9 +178,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.success_response(serializer.data)
@@ -239,9 +235,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         """Get all categories for the user's organization"""
         try:
             categories = (
-                self.get_queryset()
-                .values_list("category", flat=True)
-                .distinct()
+                self.get_queryset().values_list("category", flat=True).distinct()
             )
 
             return self._gm.success_response(list(set(categories)))

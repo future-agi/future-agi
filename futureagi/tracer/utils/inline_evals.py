@@ -136,7 +136,6 @@ def _get_logger_kwargs(inline_eval: InlineEval, span: ObservationSpan):
         and inline_eval.evaluation.error_localizer.status
         == ErrorLocalizerStatus.COMPLETED
     ):
-
         error_localizer_task = inline_eval.evaluation.error_localizer
         output_metadata.update(
             {

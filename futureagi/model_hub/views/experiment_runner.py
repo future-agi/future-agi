@@ -1291,7 +1291,11 @@ class ExperimentRunner:
 
             try:
                 messages = populate_placeholders(
-                    messages, self.dataset.id, row.id, column.id, model_name=model,
+                    messages,
+                    self.dataset.id,
+                    row.id,
+                    column.id,
+                    model_name=model,
                     template_format=model_config.get("template_format"),
                 )
                 if output_format != "audio":
@@ -1570,7 +1574,11 @@ def _process_row_impl(
 
         try:
             messages = populate_placeholders(
-                messages, dataset_id, row_id, column_id, model_name=model,
+                messages,
+                dataset_id,
+                row_id,
+                column_id,
+                model_name=model,
                 template_format=model_config.get("template_format"),
             )
             if output_format != "audio":

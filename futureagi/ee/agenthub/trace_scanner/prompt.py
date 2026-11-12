@@ -254,9 +254,11 @@ def build_prompt_v8(payloads):
     gate verifies its claim against the named span's real output).
     """
     t = payloads[0] if isinstance(payloads, list) else payloads
-    parts = [f"TRACE {t.get('tid','t1')}"]
+    parts = [f"TRACE {t.get('tid', 't1')}"]
     if t.get("tools_available"):
-        parts.append("\nTOOLS AVAILABLE: " + ", ".join(map(str, t["tools_available"]))[:1200])
+        parts.append(
+            "\nTOOLS AVAILABLE: " + ", ".join(map(str, t["tools_available"]))[:1200]
+        )
     if t.get("flow"):
         parts.append(f"\nEXECUTION FLOW:\n{t['flow']}")
     if t.get("signals"):
@@ -285,7 +287,9 @@ def build_prompt_v8(payloads):
         nl = cut.rfind("\n")
         if nl > 0:
             cut = cut[:nl]
-        prompt = f"{cut}\n{SCANNER_TRUNCATION_MARK}, {len(prompt) - len(cut)} chars omitted⟩"
+        prompt = (
+            f"{cut}\n{SCANNER_TRUNCATION_MARK}, {len(prompt) - len(cut)} chars omitted⟩"
+        )
     return prompt
 
 

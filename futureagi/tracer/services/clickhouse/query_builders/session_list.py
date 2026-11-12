@@ -3175,7 +3175,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         identity_names = self._physical_identity_names_sql()
         group_by = self._physical_group_by_sql()
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
-        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP, include_summary=True)
+        coverage = usage_coverage_sql(
+            attrs=self._COST_ATTRIBUTE_MAP, include_summary=True
+        )
         message_length = (
             f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
             if include_messages

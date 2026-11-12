@@ -248,9 +248,7 @@ class Command(BaseCommand):
             # copied each EDT column.
             snapshot_cols_by_source = {
                 c.source_id: c
-                for c in Column.objects.filter(
-                    dataset=snapshot_dataset, deleted=False
-                )
+                for c in Column.objects.filter(dataset=snapshot_dataset, deleted=False)
                 if c.source_id
             }
 
@@ -584,8 +582,7 @@ class Command(BaseCommand):
             )
 
             logger.info(
-                f"Migrated EDT column {orig_col.id} -> {new_col.id} "
-                f"for EDT {edt.id}"
+                f"Migrated EDT column {orig_col.id} -> {new_col.id} for EDT {edt.id}"
             )
 
     def _get_or_create_prompt_template(

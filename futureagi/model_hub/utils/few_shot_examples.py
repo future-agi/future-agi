@@ -133,9 +133,7 @@ def _examples_from_datasets(
     values_by_row_and_column_id: dict[str, dict[str, str]] = {}
     for cell in cells:
         row_values = values_by_row_and_column_id.setdefault(str(cell.row_id), {})
-        row_values[str(cell.column_id)] = (
-            "" if cell.value is None else str(cell.value)
-        )
+        row_values[str(cell.column_id)] = "" if cell.value is None else str(cell.value)
 
     examples: list[dict] = []
     for row in rows:

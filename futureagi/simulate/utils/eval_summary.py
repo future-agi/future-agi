@@ -41,9 +41,7 @@ def derive_kpi_output_type(eval_template):
         "percentage": "score",
         "deterministic": "choices",
     }
-    return mapping.get(
-        getattr(eval_template, "output_type_normalized", None), "score"
-    )
+    return mapping.get(getattr(eval_template, "output_type_normalized", None), "score")
 
 
 def _get_eval_config_for_agent_version(agent_version):

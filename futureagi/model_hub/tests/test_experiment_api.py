@@ -944,9 +944,7 @@ class TestExperimentActionWorkspaceIsolation:
             organization, user, other_workspace, v2=True
         )
 
-        response = auth_client.get(
-            f"/model-hub/experiments/v2/{other_experiment.id}/"
-        )
+        response = auth_client.get(f"/model-hub/experiments/v2/{other_experiment.id}/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

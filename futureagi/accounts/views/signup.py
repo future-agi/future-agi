@@ -276,7 +276,9 @@ def user_signup(request):
                     organization_id=user.organization_id,
                 )
             except Exception:
-                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
+                logger.debug(
+                    "deployment_telemetry_signup_login_event_failed", exc_info=True
+                )
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(

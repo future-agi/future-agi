@@ -20,8 +20,13 @@ from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.views.eval_runner import EvaluationRunner
+
 try:
-    from ee.usage.utils.usage_entries import APICallStatusChoices, APICallTypeChoices, log_api_call
+    from ee.usage.utils.usage_entries import (
+        APICallStatusChoices,
+        APICallTypeChoices,
+        log_api_call,
+    )
 except ImportError:
     APICallStatusChoices = None
     APICallTypeChoices = None
@@ -255,6 +260,7 @@ class PromptOptimizer:
                 # Get the evaluation class and run evaluation
                 eval_class_name = eval_config.get("eval_type_id")
                 from evaluations.engine.registry import get_eval_class, is_registered
+
                 if not is_registered(eval_class_name):
                     continue
                 eval_class = get_eval_class(eval_class_name)
