@@ -41,25 +41,31 @@ ORIGIN = "evidence"
 # Where an evidence turn's sandbox holds the redacted evidence: outside the
 # authoring workspace (never checkpointed) and the agent's source tree.
 EVIDENCE_PATH = "/work/evidence.txt"
-# What a blocked case says when the builder left the environment changed.
-ENVIRONMENT_CHANGED = (
-    "The builder changed the environment itself (its contract, world or an "
-    "existing check) while drafting from this evidence, so nothing from the turn "
-    "is kept."
-)
 CATALOGUE = "sub_goals.json"
-NO_SCENARIO = "The builder drafted no scenario for this case."
-TURN_FAILED = "The drafting turn ended without a result."
-TIMED_OUT = "Drafting did not finish in time."
 # A drafting chat still working after this is settled and deleted: the slowest
 # platform-sent builder turn on shared dev took about 40 minutes.
 DRAFTING_TIMEOUT = timedelta(minutes=90)
+# What a blocked case says. A blocked case is never drafted again, so each
+# reason ends with the way to retry.
+RETRY = "Import the evidence again to retry."
+ENVIRONMENT_CHANGED = (
+    "While drafting, the builder changed the environment itself (its contract, "
+    f"world or an existing check), so nothing from this draft was kept. {RETRY}"
+)
+NO_SCENARIO = f"The builder didn't draft a scenario for this case. {RETRY}"
+TURN_FAILED = f"Drafting stopped before the builder finished. {RETRY}"
+TIMED_OUT = (
+    f"Drafting didn't finish within {DRAFTING_TIMEOUT // timedelta(minutes=1)} "
+    f"minutes. {RETRY}"
+)
+SAVE_UNREADABLE = f"The builder's draft couldn't be read. {RETRY}"
 # What a drafting chat's capability leaves out; its server-side refusals stand too.
 # The sandbox client will not load a capability without `rerun` and `adjust`, so
 # those two stay offered and refuse_for_drafting_job refuses them when called.
 UNOFFERED_ENDPOINTS = ("publish", "run_start")
-# The builder's last words a blocked case shows, at most.
-REASON_CHARS = 240
+# The longest builder reply redacted for a blocked case; the reason keeps what fits.
+REPLY_CHARS = 2000
+REASON_LENGTH = EvidenceImportCase._meta.get_field("reason").max_length
 
 
 def is_evidence_command(command: HostedHarnessConversationMessage | None) -> bool:
@@ -215,7 +221,12 @@ def _settle(
         split, prepared = drafts._prepared(environment, files)
         added = _added_checks(environment, basis, files, prepared)
     except HostedHarnessError as exc:
-        _block(cases, f"The builder's save could not be read: {exc.message}")
+        logger.warning(
+            "evidence_draft_save_unreadable",
+            environment=str(environment.id),
+            error=exc.message,
+        )
+        _block(cases, SAVE_UNREADABLE)
         return
     if added is None:
         _block(cases, ENVIRONMENT_CHANGED)
@@ -235,8 +246,7 @@ def _settle(
         document = by_token.get(_token(key))
         proposal = _proposal(split.suite, document, key) if document else None
         if proposal is None:
-            reason = NO_SCENARIO + (f" It said: {last_words}" if last_words else "")
-            _block([case], reason)
+            _block([case], _with_reply(NO_SCENARIO, last_words))
             continue
         object_key = archives.suite_key(
             environment.organization_id, environment.id, proposal
@@ -246,6 +256,7 @@ def _settle(
         case.status = EvidenceImportCase.Status.DRAFTED
         case.reason = ""
         case.scenario_key = key
+        case.scenario_name = str(document.get("name") or "")[:255]
         case.proposal_object_key = object_key
         case.environment_hash = basis.hash
         case.new_sub_goals = [one for one in added if one.get("name") in named]
@@ -254,6 +265,7 @@ def _settle(
                 "status",
                 "reason",
                 "scenario_key",
+                "scenario_name",
                 "proposal_object_key",
                 "environment_hash",
                 "new_sub_goals",
@@ -341,8 +353,27 @@ def _proposal(suite: dict[str, bytes], document: dict, key: str) -> bytes | None
 def _block(cases: list[EvidenceImportCase], reason: str) -> None:
     for case in cases:
         case.status = EvidenceImportCase.Status.BLOCKED
-        case.reason = reason[:255]
+        case.reason = reason[:REASON_LENGTH]
         case.save(update_fields=["status", "reason", "updated_at"])
+
+
+def _with_reply(reason: str, reply: str) -> str:
+    """The reason, then the builder's reply, quoted and cut at a word to fit."""
+    if not reply:
+        return reason
+    opening = f"{reason} Builder's reply: \""
+    room = REASON_LENGTH - len(opening) - 1
+    if len(reply) > room:
+        reply = _cut(reply, room - 1) + "…"
+    return f'{opening}{reply}"'
+
+
+def _cut(text: str, length: int) -> str:
+    """Text at most ``length`` long, cut at the last word that fits."""
+    if len(text) <= length:
+        return text
+    head = text[: length + 1]
+    return head[: head.rfind(" ")] if " " in head else text[:length]
 
 
 def _last_words(
@@ -359,8 +390,10 @@ def _last_words(
         .order_by("-sequence")
         .first()
     )
-    text = " ".join(str(getattr(reply, "content", "") or "").split())[:REASON_CHARS]
-    # Model text written from customer text: redacted before it is kept.
+    # Cut at a word, never through a value: a cut email or card number could
+    # pass redaction. Model text written from customer text: redacted before
+    # it is kept.
+    text = _cut(" ".join(str(getattr(reply, "content", "") or "").split()), REPLY_CHARS)
     found = find_pii([text])
     return redact(text, (found if found is not None else find_pii_basic([text]))[0])
 
@@ -550,7 +583,7 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
             )
         )
         last_words = _last_words(command.conversation, command)
-        _block(cases, TURN_FAILED + (f" It said: {last_words}" if last_words else ""))
+        _block(cases, _with_reply(TURN_FAILED, last_words))
         import_id = str(payload.get("_evidence_import_id") or "")
         transaction.on_commit(lambda: _settled(import_id))
 

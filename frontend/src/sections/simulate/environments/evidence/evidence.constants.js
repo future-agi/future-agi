@@ -11,7 +11,7 @@ export const EVIDENCE_ACTION_ID = "create-environment-test";
 export const EVIDENCE_COPY = {
   action: "Create environment test",
   actionTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} to import at once`,
-  actionAll: "Pick the items to import; Select all is not supported here",
+  actionAll: "Tick them one by one; Select all isn't available here",
   actionNoProject: "Open a project to import its evidence",
   dialogTitle: "Create environment test",
   dialogBody: (count, kind) =>
@@ -36,7 +36,8 @@ export const EVIDENCE_COPY = {
   simulatedNotice: (kind) =>
     `These ${kind}s come from a Simulator project: they are simulations, not production. The scenarios drafted from them never claim a customer did this.`,
   notFound: "This import is not available.",
-  loadError: "Couldn't read this import from Observe. Try again in a moment.",
+  loadError: "Couldn't load this import. Try again in a moment.",
+  loading: "Loading this import…",
   stepEvidence: "1. Evidence",
   stepState: "2. Starting state",
   stepDraft: "3. Drafted scenarios",
@@ -45,7 +46,9 @@ export const EVIDENCE_COPY = {
     total
       ? `${total} value${total === 1 ? "" : "s"} of personal data will be replaced with tokens before anything becomes scenario text.`
       : "No personal data was found.",
-  shows: "What should the new scenarios be?",
+  shows: "What should this case's scenario be?",
+  // No outcome recorded: nothing claims a failure or a success for the person.
+  showsUnset: "Not set: the builder judges from the evidence",
   showsOptions: {
     failure: "Reproduce the failure as a regression test",
     success: "Keep this success as a regression test",
@@ -60,6 +63,8 @@ export const EVIDENCE_COPY = {
   },
   // What each choice keeps from the evidence, and what the builder makes up.
   showsDetail: {
+    unset:
+      "Nothing in this source records how it ended. Keeps: what the record shows. Makes: checks for what the builder can tell from it; pick one above if you know.",
     failure:
       "Keeps: the situation, what the user said and the failure evidence. Makes: what should have happened, written from the policy, never copied from the agent's answer.",
     success:
@@ -68,19 +73,25 @@ export const EVIDENCE_COPY = {
       "Keeps: only what the record does show. Makes: checks for that part; anything it does not show is labelled synthetic.",
   },
   startingState:
-    "Observe never records the records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels everything it assumes as synthetic. If you have the real record, add it to the scenario after it is drafted: the test is not an exact replay.",
+    "Observe doesn't record the seed records the agent's tools read before the conversation (an earlier refund, an order's age). The draft seeds what the evidence shows and labels the rest synthetic. Add the real records to the scenario after drafting; the test is not an exact replay.",
   draft: (n) => `Draft ${n} scenario${n === 1 ? "" : "s"}`,
   drafting: (n) => `Drafting ${n} imported case${n === 1 ? "" : "s"}`,
   draftingBody:
-    "The environment's builder is writing a scenario for each case. Changing the environment meanwhile can block the drafted cases.",
+    "The environment's builder is writing a scenario for each case. This can take up to 90 minutes; you can close this and come back. Changing the environment meanwhile can block the drafted cases.",
   noneWaiting: "No case is waiting to be drafted.",
+  noneDrafted: "Draft scenarios first, then add them here.",
   drafted: "Drafted",
   blocked: "Blocked",
   added: "Added to the suite",
   unavailable: "Unavailable",
   pending: "Waiting",
   newCheck: "New check added by this import",
-  scenarioKey: "Scenario",
+  scenario: "Scenario",
+  has: "Has:",
+  missing: "Missing:",
+  moreTurns: (n) => `… ${n} more turn${n === 1 ? "" : "s"}`,
+  untitled: (kind) =>
+    `${kind[0].toUpperCase()}${kind.slice(1)} with no recorded conversation`,
   provenanceUnavailable:
     "Provenance unavailable: Observe no longer keeps this source.",
   changed: "The source changed since it was imported.",
@@ -121,15 +132,6 @@ export const PART_LABELS = {
   starting_state: "Starting state",
 };
 
-// A part's status as a StatusBadge role.
-export const PART_ROLE = {
-  present: "success",
-  partial: "warning",
-  truncated: "warning",
-  missing: "neutral",
-  unreadable: "danger",
-};
-
 // A case's status as a StatusBadge role; a blocked case never reads as passed.
 export const CASE_ROLE = {
   pending: "neutral",
@@ -138,6 +140,20 @@ export const CASE_ROLE = {
   blocked: "danger",
   unavailable: "neutral",
 };
+
+// Text at most `length` long, cut at the last word that fits.
+export const cutAtWord = (text, length) => {
+  if (!text || text.length <= length) return text;
+  const head = text.slice(0, length + 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > 0 ? head.slice(0, space) : text.slice(0, length)).trimEnd()}…`;
+};
+
+// Labels record how a source ended; without them, no choice is made for the person.
+export const caseShowsDefault = (item) =>
+  ["present", "partial", "truncated"].includes(item.labels?.status)
+    ? "failure"
+    : "";
 
 export const errorText = (error) =>
   EVIDENCE_COPY.errors[error?.error] ||

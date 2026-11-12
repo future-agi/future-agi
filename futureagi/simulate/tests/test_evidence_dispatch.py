@@ -418,7 +418,7 @@ class TestSettleAndForget:
             evidence_drafts.turn_ended(str(conversation.id), str(command.id), "failed")
 
         assert {
-            (c.status, c.reason.split(" It said")[0])
+            (c.status, c.reason.split(" Builder's reply")[0])
             for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
         } == {("blocked", evidence_drafts.TURN_FAILED)}
         scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
@@ -445,7 +445,40 @@ class TestSettleAndForget:
         assert {
             c.reason
             for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
-        } == {f"{evidence_drafts.TURN_FAILED} It said: I could not draft these cases."}
+        } == {
+            f"{evidence_drafts.TURN_FAILED} Builder's reply: "
+            '"I could not draft these cases."'
+        }
+
+    def test_a_long_reply_is_cut_at_a_word_and_never_through_a_value(
+        self, cases, user, scheduled, django_capture_on_commit_callbacks
+    ):
+        conversation = _start(cases, user)
+        command = _command(conversation)
+        words = "I tried every record I could find " * 4
+        HostedHarnessConversationMessage.no_workspace_objects.create(
+            conversation=conversation,
+            sequence=command.sequence + 1,
+            role="assistant",
+            content=f"{words}then wrote to jane.doe@example.com about it " * 3,
+            state="completed",
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            evidence_drafts.turn_ended(str(conversation.id), str(command.id), "failed")
+
+        (reason,) = {
+            c.reason
+            for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
+        }
+        opening = f"{evidence_drafts.TURN_FAILED} Builder's reply: \""
+        assert len(reason) <= evidence_drafts.REASON_LENGTH
+        assert reason.startswith(opening) and reason.endswith('…"')
+        quoted = reason.removeprefix(opening).removesuffix('…"')
+        # Whole words only, and the address is a whole token, never a fragment.
+        allowed = {*f"{words} then wrote to about it".split(), "<EMAIL_ADDRESS>"}
+        assert set(quoted.split()) <= allowed
+        assert "jane" not in reason and "example" not in reason
 
     def test_a_turn_that_never_ends_is_settled_and_deleted_by_the_sweep(
         self, cases, user, scheduled

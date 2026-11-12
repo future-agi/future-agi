@@ -40271,6 +40271,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       scenario_key: zod
         .string()
         .describe("The drafted scenario's key, once drafted."),
+      scenario_name: zod
+        .string()
+        .describe(
+          "The drafted scenario's title, once drafted; blank when the builder gave none.",
+        ),
       new_checks: zod
         .array(
           zod
@@ -40552,6 +40557,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           scenario_key: zod
             .string()
             .describe("The drafted scenario's key, once drafted."),
+          scenario_name: zod
+            .string()
+            .describe(
+              "The drafted scenario's title, once drafted; blank when the builder gave none.",
+            ),
           new_checks: zod
             .array(
               zod

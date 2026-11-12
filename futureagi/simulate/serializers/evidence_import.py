@@ -93,6 +93,11 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     scenario_key = serializers.CharField(
         allow_blank=True, help_text="The drafted scenario's key, once drafted."
     )
+    scenario_name = serializers.CharField(
+        allow_blank=True,
+        help_text="The drafted scenario's title, once drafted; blank when the "
+        "builder gave none.",
+    )
     new_checks = EvidenceNewCheckSerializer(
         many=True,
         help_text="Checks this case adds to the environment when it is added: each "

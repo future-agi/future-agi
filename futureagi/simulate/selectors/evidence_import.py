@@ -39,8 +39,9 @@ MAX_FINDINGS = 1000
 DOCUMENT_LINE_CHARS = 1000
 
 STATE_MISSING = (
-    "Observe does not record the records the agent's tools read before the "
-    "conversation. Supply them, or label the starting state synthetic."
+    "Observe doesn't record the seed records the agent's tools read before the "
+    "conversation. The draft labels what it assumes synthetic; add the real "
+    "records to the scenario after drafting."
 )
 BASIC_REDACTION = (
     "Names and addresses were not checked. Emails, phone numbers, card and ID "
@@ -297,6 +298,7 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
             "reason": reason if pending or not case.reason else case.reason,
             "source_available": False,
             "scenario_key": case.scenario_key,
+            "scenario_name": case.scenario_name,
             "new_checks": _new_checks(case),
             "changed_since_import": None,
             "trace_ids": [],
@@ -317,6 +319,7 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
         "reason": case.reason,
         "source_available": True,
         "scenario_key": case.scenario_key,
+        "scenario_name": case.scenario_name,
         "new_checks": _new_checks(case),
         # Unknown when either side could not be read in full.
         "changed_since_import": (

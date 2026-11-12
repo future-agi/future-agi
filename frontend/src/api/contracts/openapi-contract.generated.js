@@ -99557,6 +99557,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "reason",
         "source_available",
         "scenario_key",
+        "scenario_name",
         "new_checks",
         "changed_since_import",
         "trace_ids",
@@ -99599,6 +99600,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         scenario_key: {
           title: "Scenario key",
           description: "The drafted scenario's key, once drafted.",
+          type: "string",
+        },
+        scenario_name: {
+          title: "Scenario name",
+          description:
+            "The drafted scenario's title, once drafted; blank when the builder gave none.",
           type: "string",
         },
         new_checks: {

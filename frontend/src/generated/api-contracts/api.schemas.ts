@@ -20153,6 +20153,8 @@ export interface EvidenceImportCaseApi {
   source_available: boolean;
   /** The drafted scenario's key, once drafted. */
   scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
   /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
   new_checks: EvidenceNewCheckApi[];
   /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
