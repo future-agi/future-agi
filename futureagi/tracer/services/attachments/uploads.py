@@ -524,7 +524,10 @@ def complete(token, *, scope_id, upload_id, body=None):
         upload=upload,
         event="validate",
         generation=scope.deletion_generation,
-        defaults={"available_at": timezone.now(), "attachment_id": upload.attachment_id},
+        defaults={
+            "available_at": timezone.now(),
+            "attachment_id": upload.attachment_id,
+        },
     )
     return upload
 
@@ -571,7 +574,10 @@ def settle(upload_id, *, scope_id, outcome):
         upload=upload,
         event="settled",
         generation=upload.deletion_generation,
-        defaults={"available_at": timezone.now(), "attachment_id": upload.attachment_id},
+        defaults={
+            "available_at": timezone.now(),
+            "attachment_id": upload.attachment_id,
+        },
     )
     if outcome != AttachmentState.READY:
         AttachmentOutbox.objects.get_or_create(

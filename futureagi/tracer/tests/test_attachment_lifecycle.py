@@ -109,7 +109,9 @@ def bind(scope, row):
         True,
         True,
     )
-    return retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
+    return retention.bind_retention(
+        scope_id=scope.id, occurrence_id=row.id, source=state
+    )
 
 
 # --- Outbox consumers and schedules -------------------------------------------
@@ -140,7 +142,9 @@ def test_lifecycle_schedules_exist_only_when_enabled(monkeypatch):
     assert "tracer.tasks.attachment_lifecycle" in TEMPORAL_ACTIVITY_MODULES
     for config in configured:
         assert config.activity_name in _ACTIVITY_REGISTRY
-        assert getattr(tasks, config.activity_name)._activity_name == config.activity_name
+        assert (
+            getattr(tasks, config.activity_name)._activity_name == config.activity_name
+        )
 
 
 def test_activities_are_inert_while_disabled(settings):
@@ -326,7 +330,9 @@ def test_tombstone_parent_loops_past_one_hundred(setup):
         )
     parent = occurrences.Parent(upload.occurrence.trace_id, upload.occurrence.span_id)
     assert (
-        retention.tombstone_parent(scope_id=scope.id, parent=parent, source_generation=1)
+        retention.tombstone_parent(
+            scope_id=scope.id, parent=parent, source_generation=1
+        )
         == 151
     )
     assert not AttachmentOccurrence.objects.filter(deleted_at__isnull=True).exists()

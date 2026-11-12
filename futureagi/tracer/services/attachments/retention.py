@@ -30,7 +30,6 @@ from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import get_occurrence
 from tracer.services.attachments.uploads import TRANSFER_SECONDS, _lock_budgets, settle
 
-
 logger = structlog.get_logger(__name__)
 
 

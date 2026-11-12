@@ -195,7 +195,9 @@ def sweep(*, now=None):
                 scope_id=scope_id,
             )
     _isolated(counts, "media_purged", purge_media, now=now)
-    _isolated(counts, "audit_purged", retention.purge_audit, before=now - audit_retention())
+    _isolated(
+        counts, "audit_purged", retention.purge_audit, before=now - audit_retention()
+    )
     return dict(counts)
 
 

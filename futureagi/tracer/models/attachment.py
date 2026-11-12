@@ -52,7 +52,9 @@ class AttachmentWriteGrant(ScopedAttachmentRecord):
 
     api_key = models.ForeignKey("accounts.OrgApiKey", on_delete=models.PROTECT)
     # The grant outlives the person who made it: offboarding never blocks on it.
-    granted_by = models.ForeignKey("accounts.User", null=True, on_delete=models.SET_NULL)
+    granted_by = models.ForeignKey(
+        "accounts.User", null=True, on_delete=models.SET_NULL
+    )
     enabled = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
 
