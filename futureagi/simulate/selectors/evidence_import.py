@@ -43,9 +43,8 @@ STATE_MISSING = (
     "conversation. Supply them, or label the starting state synthetic."
 )
 BASIC_REDACTION = (
-    "Names and addresses were not checked: this server has no name detection "
-    "(the pii extra, Presidio). Emails, phone, card and ID numbers, IP addresses "
-    "and keys were."
+    "Names and addresses were not checked. Emails, phone numbers, card and ID "
+    "numbers, IP addresses and keys were redacted."
 )
 SOURCE_UNAVAILABLE = "The source was deleted or is no longer kept by Observe."
 SOURCE_NOT_FOUND = "No retained session or call with this id in the project."

@@ -243,6 +243,11 @@ class TestCreate:
         assert response.status_code == status.HTTP_201_CREATED
         redaction = response.json()["redaction"]
         assert (redaction["method"], redaction["reason"]) == ("basic", BASIC_REDACTION)
+        # The person reads this: what was and was not checked, never the library.
+        assert redaction["reason"] == (
+            "Names and addresses were not checked. Emails, phone numbers, card and "
+            "ID numbers, IP addresses and keys were redacted."
+        )
         assert [f["value"] for f in redaction["findings"]] == ["jane.doe@example.com"]
 
     def test_parts_that_could_not_be_read_say_so(self, client, environment, project):
