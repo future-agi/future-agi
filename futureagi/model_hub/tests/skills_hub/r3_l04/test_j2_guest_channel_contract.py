@@ -59,7 +59,9 @@ def post(view, body, monkeypatch, service):
     [{**HEALTH, "extra": True}, {k: v for k, v in HEALTH.items() if k != "protocol"}],
 )
 def test_malformed_health_is_runtime_incompatible_without_a_write(body, monkeypatch):
-    response, calls = post(NativeGuestHealthView, body, monkeypatch, "record_guest_health")
+    response, calls = post(
+        NativeGuestHealthView, body, monkeypatch, "record_guest_health"
+    )
     assert response.status_code == 422
     assert response.data["error"]["code"] == "runtime_incompatible"
     assert calls == []
@@ -74,14 +76,18 @@ def test_malformed_health_is_runtime_incompatible_without_a_write(body, monkeypa
     ],
 )
 def test_malformed_observation_is_an_invalid_receipt_without_a_write(body, monkeypatch):
-    response, calls = post(NativeGuestObservationView, body, monkeypatch, "ingest_observation")
+    response, calls = post(
+        NativeGuestObservationView, body, monkeypatch, "ingest_observation"
+    )
     assert response.status_code == 400
     assert response.data["error"]["code"] == "invalid_receipt"
     assert calls == []
 
 
 def test_well_formed_bodies_reach_the_service_unchanged(monkeypatch):
-    response, calls = post(NativeGuestHealthView, HEALTH, monkeypatch, "record_guest_health")
+    response, calls = post(
+        NativeGuestHealthView, HEALTH, monkeypatch, "record_guest_health"
+    )
     assert response.status_code == 200 and calls[0]["health"] == HEALTH
     response, calls = post(
         NativeGuestObservationView, OBSERVATION, monkeypatch, "ingest_observation"
@@ -91,6 +97,8 @@ def test_well_formed_bodies_reach_the_service_unchanged(monkeypatch):
 
 @pytest.mark.parametrize("body", [{"reason": "provider_timeout"}, {"reason": 7}, {}])
 def test_any_failure_reason_is_recorded(body, monkeypatch):
-    response, calls = post(NativeGuestFailureView, body, monkeypatch, "report_guest_failure")
+    response, calls = post(
+        NativeGuestFailureView, body, monkeypatch, "report_guest_failure"
+    )
     assert response.status_code == 200
     assert calls == [{"attempt": calls[0]["attempt"], "reason": body.get("reason")}]
