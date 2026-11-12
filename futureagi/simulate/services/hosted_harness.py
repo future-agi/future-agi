@@ -558,7 +558,7 @@ def create_selected_harness_run(
                 ),
             }
         )
-        if planned is not None:
+        if planned is not None and planned.plan is not None:
             child_metadata["readiness_selection"] = planned.plan.view
         if pins is not None:
             child_metadata["version_pins"] = pins.as_metadata()
@@ -659,7 +659,7 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
-            if planned is not None:
+            if planned is not None and planned.plan is not None:
                 # The report the selection was decided from, not one read after this
                 # run changed its inputs.
                 child.capability_snapshot = planned.plan.report
@@ -860,7 +860,8 @@ def _replayable(bundle: Any) -> bool:
 
 @dataclass(frozen=True)
 class _ReadinessPlan:
-    """The cases readiness holds back from a run, for the pins it was read with."""
+    """The cases readiness holds back from a run, for the pins it was read with;
+    ``plan`` is ``None`` when readiness refused the selection (the run refuses it too)."""
 
     pins: tuple[Any, Any, Any]
     plan: Any
@@ -908,7 +909,7 @@ def _readiness_plan(
     except HostedHarnessError as exc:
         if exc.status_code != 400:
             raise
-        return None
+        return _ReadinessPlan(pins=_pin_tuple(resolved), plan=None)
     except Exception as exc:
         logger.exception(
             "harness_run_readiness_unavailable", environment_id=str(environment.id)
@@ -936,17 +937,15 @@ def _held_back_checked(
             moved since readiness was read; 409 ``all_cases_blocked`` when every case
             is held back.
     """
-    if planned is None:
+    if planned is None and resolved is None:
         return list(scenario_keys)
-    if planned.pins != _pin_tuple(resolved) or (
-        planned.plan.revision != _evidence_revision(environment, resolved)
-    ):
-        raise HostedHarnessError(
-            "environment_not_ready",
-            "environment changed while submitting this Run; submit it again",
-            status_code=409,
-            retryable=True,
-        )
+    # Pins that appeared or moved after readiness was read were never checked.
+    if planned is None or planned.pins != _pin_tuple(resolved):
+        raise _readiness_moved()
+    if planned.plan is None:
+        return list(scenario_keys)
+    if planned.plan.revision != _evidence_revision(environment, resolved):
+        raise _readiness_moved()
     held = planned.plan.held
     if held and all(key in held for key in scenario_keys):
         from simulate.services.harness_readiness import CATALOGUE
@@ -965,6 +964,15 @@ def _held_back_checked(
             details={"selection": planned.plan.view},
         )
     return [key for key in scenario_keys if key not in held]
+
+
+def _readiness_moved() -> HostedHarnessError:
+    return HostedHarnessError(
+        "environment_not_ready",
+        "environment changed while submitting this Run; submit it again",
+        status_code=409,
+        retryable=True,
+    )
 
 
 def _evidence_revision(environment: HostedHarnessJob, resolved: ResolvedPins) -> str:
