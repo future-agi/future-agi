@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ExecutionLocation(str, Enum):
+class ExecutionLocation(StrEnum):
     LOCAL = "local"
     FUTUREAGI_SERVICE = "futureagi_service"
     HYBRID = "hybrid"
 
 
-class GraceBehavior(str, Enum):
+class GraceBehavior(StrEnum):
     ALLOWED = "allowed"
     DENIED = "denied"
 
 
-class AirGapBehavior(str, Enum):
+class AirGapBehavior(StrEnum):
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
     DEGRADED = "degraded"
