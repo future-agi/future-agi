@@ -261,7 +261,7 @@ export async function getLaunchOptions(sourceRunId) {
 }
 
 // Everything the launch dialog shows and prefills, for one finished run.
-// The failing scenarios of a run that an evidence import added: Improve agent starts a fix on
+// The failing scenarios of a run that an evidence import added: Run Epoch starts a fix on
 // them, from the evidence they came from.
 export const importedFailingKeys = (options) =>
   (options?.scenarios ?? [])

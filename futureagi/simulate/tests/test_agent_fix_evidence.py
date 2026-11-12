@@ -1,5 +1,5 @@
 """Fix my agent from evidence: a scenario an evidence import added to the suite offers
-Improve agent, and a fix launched on it stores the evidence it came from (import ids and
+Run Epoch, and a fix launched on it stores the evidence it came from (import ids and
 source ids only), for its pull request to name."""
 
 from __future__ import annotations

@@ -26,6 +26,7 @@ import { seedEnvironment } from '../../lib/environment-seed';
 const UI_READY = 60_000;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
 const DIALOG_BODY = /Paste a transcript or upload files/;
+const CREATE = 'Create environment test';
 const NOT_PRODUCTION = /Not marked as production, so these become tests, not regression tests/;
 const NOT_EXACT_REPLAY = /the test is not an exact replay/;
 // The import route, pinned from simulate/views/harness_environment.py (`evidence-imports/`).
@@ -95,7 +96,7 @@ test(
       await dialog.getByLabel('Transcript', { exact: true }).fill(unreadable);
       const answered = page.waitForResponse((r) => r.url().endsWith(imports(env))
         && r.request().method() === 'POST', { timeout: UI_READY });
-      await dialog.getByRole('button', { name: 'Import' }).click();
+      await dialog.getByRole('button', { name: CREATE }).click();
       const response = await answered;
       // Check 1.
       expect(response.status()).toBe(400);
@@ -114,7 +115,7 @@ test(
       await dialog.getByLabel('Name', { exact: true }).fill(name);
       const created = page.waitForResponse((r) => r.url().endsWith(imports(env))
         && r.request().method() === 'POST', { timeout: UI_READY });
-      await dialog.getByRole('button', { name: 'Import' }).click();
+      await dialog.getByRole('button', { name: CREATE }).click();
       const response = await created;
       expect(response.status()).toBe(201);
       bundle = await response.json() as Bundle;

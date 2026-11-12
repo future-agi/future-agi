@@ -318,7 +318,7 @@ describe("LaunchFixDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("starts from the cases Improve agent picked, not the suggestion", async () => {
+  it("starts from the cases Run Epoch picked, not the suggestion", async () => {
     const user = userEvent.setup();
     renderDialog({ initialTargets: ["identity-phone"] });
     await user.click(

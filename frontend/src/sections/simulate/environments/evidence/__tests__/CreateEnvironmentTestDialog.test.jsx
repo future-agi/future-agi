@@ -164,9 +164,13 @@ describe("CreateEnvironmentTestDialog", () => {
 
     pickEnvironment();
     // No conversation column yet: nothing to read the rows through.
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create environment test" }),
+    ).toBeDisabled();
     pick("evidence-conversation-column", "col-chat");
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(axios.post).toHaveBeenCalledWith(
@@ -193,7 +197,9 @@ describe("CreateEnvironmentTestDialog", () => {
     await userEvent.click(
       screen.getByRole("checkbox", { name: "These rows come from production" }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     await waitFor(() => expect(axios.post).toHaveBeenCalled());
     expect(axios.post.mock.calls[0][1]).toMatchObject({
@@ -206,6 +212,8 @@ describe("CreateEnvironmentTestDialog", () => {
     renderRows();
     pickEnvironment();
     pick("evidence-conversation-column", "col-audio");
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create environment test" }),
+    ).toBeDisabled();
   });
 });

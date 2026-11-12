@@ -379,7 +379,7 @@ describe("EvidenceReviewDrawer", () => {
     );
     // Rows are read live, so redaction is what it will replace, not what it did.
     expect(
-      screen.getByText(/will be replaced with tokens/),
+      screen.getByText(/will be replaced with placeholders/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/^A dataset row doesn't hold the seed records/),

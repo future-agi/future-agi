@@ -844,7 +844,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         "agent_definition", "harness_runtime"
     ).get(id=version_id)
     scenarios = scenario_results(source_run)
-    # A scenario an evidence import added offers Improve agent from that evidence.
+    # A scenario an evidence import added offers Run Epoch from that evidence.
     imported = {
         key: origin.import_id
         for origin in evidence_origins(environment, [one.key for one in scenarios])

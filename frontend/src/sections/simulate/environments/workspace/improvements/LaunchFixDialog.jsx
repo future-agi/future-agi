@@ -135,7 +135,7 @@ LockedFiles.propTypes = {
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
 // parts that may change and the limit; everything else is shown, not asked.
-// ``initialTargets`` (Improve agent) picks the cases to fix instead of the
+// ``initialTargets`` (Run Epoch) picks the cases to fix instead of the
 // suggested ones.
 export default function LaunchFixDialog({
   open,

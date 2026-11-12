@@ -71,7 +71,9 @@ describe("ImportEvidenceButton", () => {
       screen.getByRole("button", { name: "Import evidence" }),
     );
     expect(
-      screen.getByText(/or rows in a dataset, then choose Create environment test/),
+      screen.getByText(
+        /or rows in a dataset, then choose Create environment test/,
+      ),
     ).toBeInTheDocument();
 
     await userEvent.click(
@@ -96,7 +98,9 @@ describe("ImportTranscriptDialog", () => {
   it("imports a pasted transcript, not called production, and opens its review", async () => {
     axios.post.mockResolvedValue({ data: { id: IMPORT, cases: [] } });
     const { onImported } = await openDialog();
-    const importButton = screen.getByRole("button", { name: "Import" });
+    const importButton = screen.getByRole("button", {
+      name: "Create environment test",
+    });
     expect(importButton).toBeDisabled();
 
     paste(PASTED);
@@ -130,7 +134,9 @@ describe("ImportTranscriptDialog", () => {
         name: "These transcripts come from production",
       }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(URL, {
@@ -163,7 +169,9 @@ describe("ImportTranscriptDialog", () => {
         .map((one) => one.textContent),
     ).toEqual(["CSV with role and text", "User: / Agent: lines"]);
     expect(screen.queryByLabelText("Transcript")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(URL, {
@@ -188,7 +196,9 @@ describe("ImportTranscriptDialog", () => {
     const { onImported } = await openDialog();
 
     paste("User: hi\nBoss: no");
-    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create environment test" }),
+    );
 
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(onImported).not.toHaveBeenCalled();
@@ -205,7 +215,9 @@ describe("ImportTranscriptDialog", () => {
     expect(
       screen.getByText("Pasted transcript is longer than 500,000 characters."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Create environment test" }),
+    ).toBeDisabled();
     expect(axios.post).not.toHaveBeenCalled();
   });
 });

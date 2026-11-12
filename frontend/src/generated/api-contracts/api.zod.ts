@@ -36544,7 +36544,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
         .string()
         .uuid()
         .describe(
-          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence.",
+          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
         ),
     }),
   ),

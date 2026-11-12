@@ -470,7 +470,7 @@ class AgentFixLaunchScenarioSerializer(serializers.Serializer):
     evidence_import_id = serializers.UUIDField(
         allow_null=True,
         help_text="The evidence import that added this scenario to the suite; null for "
-        "any other scenario. A failing one offers Improve agent from that evidence.",
+        "any other scenario. A failing one offers Run Epoch from that evidence.",
     )
 
 

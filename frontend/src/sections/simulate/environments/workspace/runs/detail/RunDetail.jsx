@@ -108,7 +108,7 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [fixLaunching, setFixLaunching] = useState(false);
-  // Set by Improve agent: the imported failing cases the fix starts from.
+  // Set by Run Epoch: the imported failing cases the fix starts from.
   const [fixTargets, setFixTargets] = useState(null);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
@@ -173,7 +173,7 @@ export default function RunDetail({
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
   // A finished run whose failures include cases an evidence import added offers
-  // Improve agent on them; the launch form reads the same cached options.
+  // Run Epoch on them; the launch form reads the same cached options.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
@@ -395,7 +395,7 @@ export default function RunDetail({
         {improvable.length > 0 && (
           <Tooltip
             describeChild
-            title={`Starts from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
+            title={`Starts Epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
           >
             <Button
               variant="outlined"
@@ -408,7 +408,7 @@ export default function RunDetail({
                 <Iconify icon="solar:magic-stick-3-linear" width={15} />
               }
             >
-              Improve agent
+              Run Epoch
             </Button>
           </Tooltip>
         )}

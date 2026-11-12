@@ -93390,7 +93390,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evidence_import_id: {
           title: "Evidence import id",
           description:
-            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Improve agent from that evidence.",
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
           type: "string",
           format: "uuid",
           "x-nullable": true,

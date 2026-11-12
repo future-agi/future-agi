@@ -63,7 +63,7 @@ vi.mock("notistack", async (importOriginal) => {
   };
 });
 
-// The run's fix launch options; Improve agent reads which failing cases came
+// The run's fix launch options; Run Epoch reads which failing cases came
 // from evidence. None by default.
 const fixLaunchOptions = vi.fn();
 vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => ({
@@ -104,7 +104,7 @@ vi.mock(
 );
 
 // The fix launch form reads launch-options itself; stub it to a marker that
-// names the run it was opened for, and the cases Improve agent picked.
+// names the run it was opened for, and the cases Run Epoch picked.
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
   default: ({ open, sourceRunId, initialTargets }) =>
@@ -783,7 +783,7 @@ describe("RunDetail", () => {
     }
   });
 
-  describe("Improve agent", () => {
+  describe("Run Epoch", () => {
     const scenario = (key, evidence, failing) => ({
       key,
       name: key,
@@ -812,7 +812,12 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      await user.click(screen.getByRole("button", { name: /Improve agent/ }));
+      // It says which cases Epoch starts from.
+      await user.hover(screen.getByRole("button", { name: "Run Epoch" }));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Starts Epoch from the 1 failing scenario that came from imported evidence.",
+      );
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
 
       expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
       expect(screen.getByText("fix-targets:evidence-a")).toBeInTheDocument();
@@ -833,9 +838,7 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      expect(
-        screen.queryByRole("button", { name: /Improve agent/ }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
     });
 
     it("reads nothing for an org without Fix my agent", () => {
@@ -846,9 +849,7 @@ describe("RunDetail", () => {
       expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
         enabled: false,
       });
-      expect(
-        screen.queryByRole("button", { name: /Improve agent/ }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
     });
   });
 
