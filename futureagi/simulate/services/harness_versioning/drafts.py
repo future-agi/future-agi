@@ -704,7 +704,7 @@ def edit_side(
     ).get(id=environment.id)
     version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
     key = str(getattr(version, "archive_object_key", "") or "")
-    return _piece_files(head, piece, version), key
+    return piece_files(head, piece, version), key
 
 
 def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
