@@ -85,7 +85,11 @@ class DatasetOptimizationWorkflow:
                 isinstance(e, ActivityError) and isinstance(e.cause, CancelledError)
             )
             finalize_status = "cancelled" if is_cancel else "failed"
-            error_msg = "Cancelled by user" if is_cancel else (evaluation_denial_message(e) or str(e))
+            error_msg = (
+                "Cancelled by user"
+                if is_cancel
+                else (evaluation_denial_message(e) or str(e))
+            )
 
             try:
                 await workflow.execute_activity(

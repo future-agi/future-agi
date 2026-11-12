@@ -10,18 +10,18 @@ import pytest
 @pytest.mark.django_db
 @pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
 def test_call_detail_http_preserves_denial(auth_client, organization, workspace, code):
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
     from model_hub.models.evals_metric import EvalTemplate
     from simulate.models import (
-        SimulateEvalConfig,
-        RunTest,
-        TestExecution,
         CallExecution,
+        RunTest,
         Scenarios,
+        SimulateEvalConfig,
+        TestExecution,
     )
     from simulate.services.evaluation_denials import record_evaluation_denial
     from tfc.utils.evaluation_denials import EvaluationRateLimited
-    from ee.usage.exceptions import UsageLimitExceeded
-    from ee.usage.schemas.events import CheckResult
 
     template = EvalTemplate.no_workspace_objects.create(
         name="Synthetic HTTP grading",

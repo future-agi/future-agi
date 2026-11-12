@@ -15,6 +15,7 @@ from ee.usage.schemas.events import UsageEvent
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import emit
 from ee.usage.services.metering import check_usage
+from sockets.org_scope import membership_organization
 from sockets.saml_guard import SamlSocketGuard
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 
@@ -569,20 +570,10 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _get_organization(self):
-        from accounts.models.organization_membership import OrganizationMembership
-
         try:
-            membership = (
-                OrganizationMembership.objects.filter(user=self.user, is_active=True)
-                .select_related("organization")
-                .first()
-            )
-            if membership:
-                return membership.organization
-            # Fallback to legacy FK
-            if getattr(self.user, "organization", None):
-                return self.user.organization
-            return None
+            # A removed member's retained legacy FK must not reopen the
+            # former organization; see sockets.org_scope.
+            return membership_organization(self.user)
         except Exception:
             return None
 

@@ -1,6 +1,7 @@
 """Terminal grading refusals must not replay successful judges or provider calls."""
 
 import asyncio
+import json
 import os
 from uuid import uuid4
 
@@ -8,13 +9,13 @@ import pytest
 
 pytest.importorskip("optuna")  # Optional agent-optimizer extra.
 from temporalio import activity
-from temporalio.worker import (
-    Interceptor,
-    ActivityInboundInterceptor,
-    Worker,
-    UnsandboxedWorkflowRunner,
-)
 from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import (
+    ActivityInboundInterceptor,
+    Interceptor,
+    UnsandboxedWorkflowRunner,
+    Worker,
+)
 
 
 class AttemptInterceptor(Interceptor):
@@ -46,8 +47,13 @@ class AttemptInterceptor(Interceptor):
         return Inbound(next)
 
 
-def make_run(organization, workspace):
-    from model_hub.models.develop_dataset import Dataset, Row, Column, Cell
+def make_run(
+    organization,
+    workspace,
+    algorithm="random_search",
+    optimizer_config=None,
+):
+    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
     from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
     from model_hub.models.optimize_dataset import OptimizeDataset
     from model_hub.utils.dataset_optimization import create_dataset_optimization_steps
@@ -72,8 +78,9 @@ def make_run(organization, workspace):
         organization=organization,
         workspace=workspace,
         column=column,
-        optimizer_algorithm="random_search",
-        optimizer_config={"num_variations": 1, "model_name": "gpt-4o-mini"},
+        optimizer_algorithm=algorithm,
+        optimizer_config=optimizer_config
+        or {"num_variations": 1, "model_name": "gpt-4o-mini"},
         status="pending",
         optimize_type="PromptTemplate",
         environment="Training",
@@ -103,68 +110,27 @@ def make_run(organization, workspace):
     return run, str(metrics[0].template_id), str(metrics[1].template_id)
 
 
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
-@pytest.mark.parametrize("phase", ["baseline", "trial"])
-def test_terminal_denial_must_not_retry(
-    monkeypatch, organization, workspace, code, phase
-):
-    from ee.agenthub.fix_your_agent.direct_evaluator import DirectEvaluator
-    from ee.agent_opt.optimizers import random_search
-    from model_hub.views.utils import evals
-    from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
-    from tfc.temporal.dataset_optimization import activities
-    from tfc.temporal.dataset_optimization.workflows import DatasetOptimizationWorkflow
-    from tfc.temporal.dataset_optimization.types import DatasetOptimizationWorkflowInput
-    from tfc.utils.evaluation_denials import EvaluationRateLimited
+def denial_for(code):
     from ee.usage.exceptions import UsageLimitExceeded
     from ee.usage.schemas.events import CheckResult
+    from tfc.utils.evaluation_denials import EvaluationRateLimited
 
-    run, allowed_template, denied_template = make_run(organization, workspace)
-    observed = {
-        "attempts": [],
-        "failures": [],
-        "provider_calls": [],
-        "usage_events": [],
-        "denials": [],
-    }
-
-    async def provider(self, prompt):
-        observed["provider_calls"].append(prompt)
-        return "synthetic output: " + prompt
-
-    def judge(**kwargs):
-        template_id = str(kwargs["template"].id)
-        output = kwargs["mappings"]["output"]
-        prompt_phase = "baseline" if "baseline synthetic" in output else "trial"
-        should_deny = template_id == denied_template and (
-            phase == "baseline" or prompt_phase == "trial"
+    if code == "rate_limited":
+        return EvaluationRateLimited()
+    return UsageLimitExceeded(
+        CheckResult(
+            allowed=False,
+            error_code=code,
+            reason="Synthetic budget paused; resume before grading.",
         )
-        if should_deny:
-            observed["denials"].append({"code": code, "phase": prompt_phase})
-            if code == "rate_limited":
-                raise EvaluationRateLimited()
-            raise UsageLimitExceeded(
-                CheckResult(
-                    allowed=False,
-                    error_code="BUDGET_PAUSED",
-                    reason="Synthetic budget paused; resume before grading.",
-                )
-            )
-        observed["usage_events"].append(
-            {"template": template_id, "phase": prompt_phase}
-        )
-        return {"output": 0.8, "reason": "Synthetic successful judge usage"}
+    )
 
-    monkeypatch.setattr(DirectEvaluator, "_call_llm_async", provider)
-    monkeypatch.setattr(evals, "run_eval_func", judge)
-    monkeypatch.setattr(
-        random_search, "_generate_variations", lambda *a, **kw: ["trial synthetic"]
-    )
-    monkeypatch.setattr(
-        activities, "get_api_key_for_model", lambda **kw: "synthetic-not-a-real-key"
-    )
-    monkeypatch.setattr("tfc.ee_gating.check_ee_feature", lambda *a, **kw: None)
+
+def execute_workflow(run, observed):
+    """Run the real dataset optimization workflow and activities to completion."""
+    from tfc.temporal.dataset_optimization import activities
+    from tfc.temporal.dataset_optimization.types import DatasetOptimizationWorkflowInput
+    from tfc.temporal.dataset_optimization.workflows import DatasetOptimizationWorkflow
 
     async def execute():
         options = {}
@@ -192,7 +158,60 @@ def test_terminal_denial_must_not_retry(
                     timeout=180,
                 )
 
-    result = asyncio.run(execute())
+    return asyncio.run(execute())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
+@pytest.mark.parametrize("phase", ["baseline", "trial"])
+def test_terminal_denial_must_not_retry(
+    monkeypatch, organization, workspace, code, phase
+):
+    from ee.agent_opt.optimizers import random_search
+    from ee.agenthub.fix_your_agent.direct_evaluator import DirectEvaluator
+    from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
+    from model_hub.views.utils import evals
+    from tfc.temporal.dataset_optimization import activities
+
+    run, allowed_template, denied_template = make_run(organization, workspace)
+    observed = {
+        "attempts": [],
+        "failures": [],
+        "provider_calls": [],
+        "usage_events": [],
+        "denials": [],
+    }
+
+    async def provider(self, prompt):
+        observed["provider_calls"].append(prompt)
+        return "synthetic output: " + prompt
+
+    def judge(**kwargs):
+        template_id = str(kwargs["template"].id)
+        output = kwargs["mappings"]["output"]
+        prompt_phase = "baseline" if "baseline synthetic" in output else "trial"
+        should_deny = template_id == denied_template and (
+            phase == "baseline" or prompt_phase == "trial"
+        )
+        if should_deny:
+            observed["denials"].append({"code": code, "phase": prompt_phase})
+            raise denial_for(code)
+        observed["usage_events"].append(
+            {"template": template_id, "phase": prompt_phase}
+        )
+        return {"output": 0.8, "reason": "Synthetic successful judge usage"}
+
+    monkeypatch.setattr(DirectEvaluator, "_call_llm_async", provider)
+    monkeypatch.setattr(evals, "run_eval_func", judge)
+    monkeypatch.setattr(
+        random_search, "_generate_variations", lambda *a, **kw: ["trial synthetic"]
+    )
+    monkeypatch.setattr(
+        activities, "get_api_key_for_model", lambda **kw: "synthetic-not-a-real-key"
+    )
+    monkeypatch.setattr("tfc.ee_gating.check_ee_feature", lambda *a, **kw: None)
+
+    result = execute_workflow(run, observed)
     run.refresh_from_db()
     trials = list(
         DatasetOptimizationTrial.no_workspace_objects.filter(
@@ -249,3 +268,144 @@ def test_terminal_denial_must_not_retry(
     assert code in result.error
     assert code in run.error_message
     assert "before" in result.error
+
+
+TRIAL_DENIAL_CONFIGS = {
+    "random_search": {"num_variations": 3, "model_name": "gpt-4o-mini"},
+    "metaprompt": {"num_rounds": 3, "model_name": "gpt-4o-mini"},
+    "bayesian": {
+        "n_trials": 3,
+        "min_examples": 1,
+        "max_examples": 1,
+        "model_name": "gpt-4o-mini",
+    },
+}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("code", ["rate_limited", "BUDGET_PAUSED"])
+@pytest.mark.parametrize("algorithm", sorted(TRIAL_DENIAL_CONFIGS))
+def test_trial_denial_fails_run_for_every_optimizer(
+    monkeypatch, organization, workspace, algorithm, code
+):
+    """A graded baseline, then one refused trial: the run fails, nothing repeats."""
+    from ee.agent_opt.generators.litellm_generator import LiteLLMGenerator
+    from ee.agent_opt.optimizers import random_search
+    from ee.agenthub.fix_your_agent.direct_evaluator import DirectEvaluator
+    from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
+    from model_hub.views.utils import evals
+    from tfc.temporal.dataset_optimization import activities
+
+    run, allowed_template, denied_template = make_run(
+        organization, workspace, algorithm, dict(TRIAL_DENIAL_CONFIGS[algorithm])
+    )
+    observed = {
+        "phase": "baseline",
+        "attempts": [],
+        "failures": [],
+        "provider_calls": [],
+        "allowed_judge_calls": [],
+        "denials": [],
+        "teacher_calls": [],
+        "candidate_generations": [],
+    }
+
+    def event():
+        return {"phase": observed["phase"], "after_denial": bool(observed["denials"])}
+
+    async def provider(self, prompt):
+        observed["provider_calls"].append(event())
+        return "synthetic output"
+
+    def judge(**kwargs):
+        template_id = str(kwargs["template"].id)
+        if template_id == denied_template and observed["phase"] == "trial":
+            observed["denials"].append(code)
+            raise denial_for(code)
+        observed["allowed_judge_calls"].append({**event(), "template": template_id})
+        return {"output": 0.8, "reason": "Synthetic successful judge usage"}
+
+    def teacher(self, prompt_vars, **kwargs):
+        observed["teacher_calls"].append(event())
+        return json.dumps(
+            {"hypothesis": "synthetic", "improved_prompt": "trial synthetic"}
+        )
+
+    def variations(*args, **kwargs):
+        observed["candidate_generations"].append(event())
+        return ["trial synthetic"]
+
+    real_store = activities.store_single_trial
+
+    def store(**trial):
+        stored = real_store(**trial)
+        if trial["is_baseline"]:
+            observed["phase"] = "trial"
+        return stored
+
+    monkeypatch.setattr(DirectEvaluator, "_call_llm_async", provider)
+    monkeypatch.setattr(evals, "run_eval_func", judge)
+    monkeypatch.setattr(LiteLLMGenerator, "generate", teacher)
+    monkeypatch.setattr(random_search, "_generate_variations", variations)
+    monkeypatch.setattr(activities, "store_single_trial", store)
+    monkeypatch.setattr(
+        activities, "get_api_key_for_model", lambda **kw: "synthetic-not-a-real-key"
+    )
+    monkeypatch.setattr("tfc.ee_gating.check_ee_feature", lambda *a, **kw: None)
+
+    result = execute_workflow(run, observed)
+    run.refresh_from_db()
+    saved_baselines = DatasetOptimizationTrial.no_workspace_objects.filter(
+        optimization_run=run, is_baseline=True
+    ).count()
+
+    def after_denial(events):
+        return [e for e in events if e["after_denial"]]
+
+    trial_providers = [e for e in observed["provider_calls"] if e["phase"] == "trial"]
+    trial_allowed_judge = [
+        e
+        for e in observed["allowed_judge_calls"]
+        if e["template"] == allowed_template and e["phase"] == "trial"
+    ]
+    print(
+        "TRIAL_DENIAL",
+        algorithm,
+        code,
+        "attempts=",
+        observed["attempts"],
+        "denials=",
+        len(observed["denials"]),
+        "trial_provider_calls=",
+        len(trial_providers),
+        "provider_calls_after_denial=",
+        len(after_denial(observed["provider_calls"])),
+        "allowed_judge_calls_after_denial=",
+        len(after_denial(observed["allowed_judge_calls"])),
+        "workflow_status=",
+        result.status,
+        "run_status=",
+        run.status,
+        "run_error=",
+        run.error_message,
+    )
+
+    assert observed["denials"], "Fixture never reached the trial-phase refusal"
+    assert saved_baselines == 1, "Baseline should have been graded and persisted"
+    assert result.status == run.status == "failed", (
+        f"{algorithm}: trial-phase {code} was swallowed; workflow={result.status}, "
+        f"run={run.status}, denials={len(observed['denials'])}, provider calls "
+        f"after the refusal={len(after_denial(observed['provider_calls']))}"
+    )
+    assert code in result.error
+    assert code in run.error_message
+    assert observed["attempts"] == [1]
+    assert all(f["non_retryable"] for f in observed["failures"]), observed["failures"]
+    # The first refusal ends paid work: no regeneration, judge, or new candidate.
+    assert len(observed["denials"]) == 1
+    assert len(trial_providers) == 1
+    assert len(trial_allowed_judge) == 1
+    assert after_denial(observed["provider_calls"]) == []
+    assert after_denial(observed["allowed_judge_calls"]) == []
+    assert after_denial(observed["teacher_calls"]) == []
+    assert after_denial(observed["candidate_generations"]) == []

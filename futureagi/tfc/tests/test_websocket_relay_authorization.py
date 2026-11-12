@@ -2,6 +2,7 @@
 
 Only synthetic account setup uses the ORM. Login, membership removal, relay
 requests, authentication and subscriber delivery all use the real application.
+The in-process publishers are the real helpers that Temporal and usage code use.
 """
 
 import json
@@ -17,12 +18,14 @@ import uvicorn
 from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
 from django.core.cache import cache
+from websockets.exceptions import InvalidStatus
 from websockets.sync.client import connect
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from model_hub.utils.utils import send_message_to_channel, send_message_to_uuid
 from sockets.routing import websocket_urlpatterns
 from tfc.constants.levels import Level
 from tfc.middleware.jwt_auth import JWTAuthMiddleware
@@ -164,6 +167,18 @@ def login(server, user):
     return result
 
 
+def ping(ws):
+    ws.send(json.dumps({"type": "ping"}))
+    assert json.loads(ws.recv(timeout=10)) == {"type": "pong"}
+
+
+def subscribe(ws, target):
+    ws.send(json.dumps({"type": "subscribe", "uuid": target}))
+    confirmed = json.loads(ws.recv(timeout=10))
+    assert confirmed["type"] == "subscription_confirmed", confirmed
+    return confirmed["current_subscription"]
+
+
 @contextmanager
 def subscriber(server, org, owner, target):
     token = login(server, owner)["access"]
@@ -172,14 +187,27 @@ def subscriber(server, org, owner, target):
         proxy=None,
         open_timeout=30,
     ) as ws:
-        ws.send(json.dumps({"type": "ping"}))
-        assert json.loads(ws.recv(timeout=10)) == {"type": "pong"}
+        ping(ws)
         if target:
-            ws.send(json.dumps({"type": "subscribe", "uuid": target}))
-            confirmed = json.loads(ws.recv(timeout=10))
-            assert confirmed["type"] == "subscription_confirmed"
-            assert confirmed["current_subscription"] == f"uuid_org_{org.pk}_{target}"
+            assert subscribe(ws, target) == f"uuid_org_{org.pk}_{target}"
         yield ws
+
+
+@contextmanager
+def socket_or_refusal(url):
+    """Yield ``(ws, None)`` for an open socket or ``(None, status)`` if refused.
+
+    A consumer that closes before accepting is reported by the server as an
+    HTTP status on the handshake, unlike a socket that opens and then drops.
+    """
+    try:
+        ws = connect(url, proxy=None, open_timeout=30)
+    except InvalidStatus as exc:
+        yield None, exc.response.status_code
+        return
+    with ws:
+        ping(ws)
+        yield ws, None
 
 
 def receive_optional(ws):
@@ -206,6 +234,33 @@ def relay(server, headers, target):
 
 def key_headers(key):
     return {"X-Api-Key": key.api_key, "X-Secret-Key": key.secret_key}
+
+
+def remove_member_and_log_in_again(server, org, owner, member):
+    """Remove the member through the real API and return their fresh login."""
+    owner_token = login(server, owner)["access"]
+    removed = server[0].delete(
+        server[1] + "/accounts/organization/members/remove/",
+        headers={"Authorization": "Bearer " + owner_token},
+        json={"user_id": str(member.pk)},
+        timeout=30,
+    )
+    assert removed.status_code == 200, removed.text
+    member.refresh_from_db()
+    assert member.is_active
+    assert member.organization_id == org.pk
+    assert not OrganizationMembership.no_workspace_objects.filter(
+        user=member,
+        is_active=True,
+    ).exists()
+    assert not WorkspaceMembership.no_workspace_objects.filter(
+        user=member,
+        is_active=True,
+    ).exists()
+
+    fresh_login = login(server, member)
+    assert fresh_login["requires_org_setup"] is True
+    return fresh_login
 
 
 @pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
@@ -247,28 +302,7 @@ def test_removed_member_fresh_login_cannot_relay(
         assert before.status_code == 200, before.text
         assert json.loads(ws.recv(timeout=10)) == message
 
-        owner_token = login(relay_server, owner)["access"]
-        removed = relay_server[0].delete(
-            relay_server[1] + "/accounts/organization/members/remove/",
-            headers={"Authorization": "Bearer " + owner_token},
-            json={"user_id": str(member.pk)},
-            timeout=30,
-        )
-        assert removed.status_code == 200, removed.text
-        member.refresh_from_db()
-        assert member.is_active
-        assert member.organization_id == org.pk
-        assert not OrganizationMembership.no_workspace_objects.filter(
-            user=member,
-            is_active=True,
-        ).exists()
-        assert not WorkspaceMembership.no_workspace_objects.filter(
-            user=member,
-            is_active=True,
-        ).exists()
-
-        fresh_login = login(relay_server, member)
-        assert fresh_login["requires_org_setup"] is True
+        fresh_login = remove_member_and_log_in_again(relay_server, org, owner, member)
         assert fresh_login["access"] != old_login["access"]
         headers = {"Authorization": "Bearer " + fresh_login["access"]}
         if former_org_header:
@@ -285,3 +319,66 @@ def test_removed_member_fresh_login_cannot_relay(
         assert (
             response.json()["message"] == "An authenticated organization is required."
         )
+
+
+@pytest.mark.parametrize(
+    "former_org_param", [False, True], ids=["implicit", "former-org-param"]
+)
+def test_removed_member_socket_is_refused(relay_server, former_org_param):
+    org, owner, member, _ = create_organization()
+    token = remove_member_and_log_in_again(relay_server, org, owner, member)["access"]
+    query = f"token={token}"
+    if former_org_param:
+        query += f"&organization_id={org.pk}"
+    with socket_or_refusal(f"{relay_server[2]}/ws/connect/?{query}") as (ws, status):
+        group = subscribe(ws, str(uuid4())) if ws is not None else None
+        assert (status, group) == (403, None)
+
+
+@pytest.mark.parametrize("publisher", ["in_process", "system_key"])
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+def test_removed_member_socket_receives_no_former_org_traffic(
+    relay_server, targeted, publisher
+):
+    org, owner, member, key = create_organization()
+    target = str(uuid4()) if targeted else None
+    with subscriber(relay_server, org, owner, target) as own:
+        token = remove_member_and_log_in_again(relay_server, org, owner, member)
+        url = f"{relay_server[2]}/ws/connect/?token={token['access']}"
+        with socket_or_refusal(url) as (removed, status):
+            if removed is not None and target:
+                subscribe(removed, target)
+            if publisher == "system_key":
+                response, message = relay(relay_server, key_headers(key), target)
+                assert response.status_code == 200, response.text
+            elif target:
+                message = {"chunk": "synthetic", "marker": uuid4().hex, "uuid": target}
+                send_message_to_uuid(target, message, org.pk)
+            else:
+                message = {"alert_title": "Synthetic usage", "marker": uuid4().hex}
+                send_message_to_channel(org.pk, message)
+            # The organization's own subscriber is the positive control.
+            assert json.loads(own.recv(timeout=10)) == message
+            leaked = receive_optional(removed) if removed is not None else None
+            assert (status, leaked) == (403, None)
+
+
+def test_removed_member_socket_cannot_publish_to_former_org_stream(relay_server):
+    org, owner, member, _ = create_organization()
+    target = str(uuid4())
+    with subscriber(relay_server, org, owner, target) as own:
+        # While still a member, a peer frame on the shared target reaches the owner.
+        with subscriber(relay_server, org, member, target) as peer:
+            data = {"marker": uuid4().hex}
+            peer.send(json.dumps({"type": "peer_msg", "uuid": target, "data": data}))
+            expected = {"type": "peer_msg", "data": data, "uuid": target}
+            assert json.loads(own.recv(timeout=10)) == expected
+
+        token = remove_member_and_log_in_again(relay_server, org, owner, member)
+        url = f"{relay_server[2]}/ws/connect/?token={token['access']}"
+        with socket_or_refusal(url) as (removed, status):
+            if removed is not None:
+                subscribe(removed, target)
+                frame = {"type": "injected", "uuid": target, "data": {"text": "x"}}
+                removed.send(json.dumps(frame))
+            assert (status, receive_optional(own)) == (403, None)
