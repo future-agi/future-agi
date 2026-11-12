@@ -233,9 +233,9 @@ def test_cap_filler_names_are_still_catalog_keys():
     """
     known = offerable_eval_names()
     for name in [*CAP_FILLERS, ONE_TOO_MANY]:
-        assert (
-            name in known
-        ), f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        assert name in known, (
+            f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        )
 
 
 # --- A failed read of the eval definitions is never memoised -------------------
@@ -358,8 +358,7 @@ def test_pick_winner_breaks_a_tie_between_two_of_a_tenants_own_templates_by_crea
 
     assert harness_evals._pick_winner([older, newer]).id == "newer"
     assert harness_evals._pick_winner([newer, older]).id == "newer", (
-        "the newest must win regardless of which element the candidate "
-        "list puts first"
+        "the newest must win regardless of which element the candidate list puts first"
     )
 
 
@@ -1589,13 +1588,10 @@ def test_the_cap_only_drops_survivors_past_the_eighth(organization, workspace):
 
 
 @pytest.mark.django_db
-def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
-    organization, django_capture_on_commit_callbacks
-):
-    """A hosted receipt for an environment with zero selected evals must
-    still dispatch when the run test's tool-call judge is on."""
+def _tool_switch_receipt(organization, idempotency_key):
+    """A hosted run with the tool-call judge on and no eval selected, and one finished
+    scenario's receipt for it."""
     from simulate.services.hosted_harness import canonical_digest
-    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="tool-switch-only-key"
@@ -1655,6 +1651,18 @@ def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
     }
     receipt["digest"] = canonical_digest(receipt)
 
+    return job, capability, receipt
+
+
+def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
+    organization, django_capture_on_commit_callbacks
+):
+    """A hosted receipt for an environment with zero selected evals must
+    still dispatch when the run test's tool-call judge is on."""
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    _, capability, receipt = _tool_switch_receipt(organization, "tool-switch-only-key")
+
     with (
         patch(
             "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
@@ -1665,6 +1673,40 @@ def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
 
     assert created is True
     dispatch.assert_called_once()
+
+
+def test_a_fix_check_run_s_receipt_starts_no_grading(
+    organization, django_capture_on_commit_callbacks
+):
+    """A fix grades its check runs only once it has a winner, so a check run's receipt
+    dispatches nothing whatever its run test selects, and closes its call's eval side."""
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    _, capability, receipt = _tool_switch_receipt(organization, "check-run-key")
+
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.is_fix_check_run",
+            return_value=True,
+        ),
+        patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ) as dispatch,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is True
+    dispatch.assert_not_called()
+    call = CallExecution.objects.get(hosted_registration__scenario_key="tool-switch")
+    assert (
+        call.call_metadata["eval_started"],
+        call.call_metadata["eval_completed"],
+    ) == (
+        True,
+        True,
+    )
 
 
 @pytest.mark.django_db
