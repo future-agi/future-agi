@@ -20,10 +20,7 @@ from django.db import router, transaction
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tfc.routers import ReadReplicaRouter
-from tfc.tests.lagging_replica import (
-    OPTED_IN_MODELS,
-    lagging_replica,  # noqa: F401  (fixture)
-)
+from tfc.tests.lagging_replica import OPTED_IN_MODELS, lagging_replica  # noqa: F401
 from tracer.models.eval_task import EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EndUser, UserIdType
 from tracer.models.trace import Trace
