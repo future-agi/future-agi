@@ -40196,15 +40196,20 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
- * Freeze Observe sessions or calls, or store transcripts a person added,
-as evidence for this environment's tests; returns what each holds and
-lacks, and what redaction replaces. Nothing is drafted or run.
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
  */
 export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
   id: zod.string(),
 });
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax = 20;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault =
+  [];
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax = 10;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax = 120;
 
@@ -40213,7 +40218,7 @@ export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTex
 export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax = 20;
 
 export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
-  source_kind: zod.enum(["session", "call", "transcript"]),
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
   project_id: zod
     .string()
     .uuid()
@@ -40225,8 +40230,36 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
     .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax)
     .optional()
     .describe(
-      "Session and call imports: session ids, or the trace ids of calls, in the order picked.",
+      "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
     ),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Dataset imports: the dataset."),
+  columns: zod
+    .object({
+      conversation: zod
+        .string()
+        .uuid()
+        .describe(
+          'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+        ),
+      labels: zod
+        .array(zod.string().uuid())
+        .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsMax)
+        .default(
+          simulateApiHarnessEnvironmentsEvidenceImportsBodyColumnsLabelsDefault,
+        )
+        .describe("Columns read as the row's labels."),
+      expected: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("The column that says what should happen."),
+    })
+    .optional()
+    .describe("Dataset imports: the columns to read."),
   transcripts: zod
     .array(
       zod.object({
@@ -40261,7 +40294,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
     .boolean()
     .optional()
     .describe(
-      "Transcript imports: the person says they come from production. Unsaid, they are not called production evidence.",
+      "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
     ),
 });
 
@@ -40273,6 +40306,10 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportParams = zod.object({
   id: zod.string(),
   import_id: zod.string(),
 });
+
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsDefault =
+  [];
+export const simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsMax = 10;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportResponseRedactionFindingsItemIndexMin = 0;
 
@@ -40289,8 +40326,36 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     .string()
     .uuid()
     .describe("The Observe project; null for evidence from outside Observe."),
+  dataset_id: zod
+    .string()
+    .uuid()
+    .describe("A dataset import's dataset; null otherwise."),
+  dataset_columns: zod
+    .object({
+      conversation: zod
+        .string()
+        .uuid()
+        .describe(
+          'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+        ),
+      labels: zod
+        .array(zod.string().uuid())
+        .max(
+          simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsMax,
+        )
+        .default(
+          simulateApiHarnessEnvironmentsEvidenceImportResponseDatasetColumnsLabelsDefault,
+        )
+        .describe("Columns read as the row's labels."),
+      expected: zod
+        .string()
+        .uuid()
+        .optional()
+        .describe("The column that says what should happen."),
+    })
+    .describe("Dataset imports: the columns to read."),
   agent_version_id: zod.string().uuid(),
-  source_kind: zod.enum(["session", "call", "transcript"]),
+  source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
   created_at: zod.string().datetime({ offset: true }),
   simulated: zod
     .boolean()
@@ -40300,7 +40365,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   production: zod
     .boolean()
     .describe(
-      "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
+      "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
     ),
   drafting: zod
     .boolean()
@@ -40312,7 +40377,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       name: zod
         .string()
         .describe(
-          "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+          "A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row.",
         ),
       status: zod.enum([
         "pending",
@@ -40325,7 +40390,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       source_available: zod
         .boolean()
         .describe(
-          "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+          "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
         ),
       scenario_key: zod
         .string()
@@ -40453,10 +40518,27 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
                 "As the annotator recorded it: input evidence, not a verdict.",
               ),
             notes: zod.string(),
-            target: zod.enum(["session", "trace", "span"]),
+            target: zod
+              .enum(["session", "trace", "span", "row"])
+              .describe("row: a dataset row's label column."),
           }),
         ),
       }),
+      expected_outcome: zod
+        .object({
+          status: zod.enum([
+            "present",
+            "partial",
+            "truncated",
+            "missing",
+            "unreadable",
+          ]),
+          reason: zod.string(),
+          text: zod.string(),
+        })
+        .describe(
+          "What a dataset row's expected outcome column says should happen.",
+        ),
     }),
   ),
   redaction: zod.object({
@@ -40469,7 +40551,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     findings: zod.array(
       zod.object({
         case_id: zod.string().uuid(),
-        part: zod.enum(["transcript", "tool_calls", "labels"]),
+        part: zod.enum([
+          "transcript",
+          "tool_calls",
+          "labels",
+          "expected_outcome",
+        ]),
         index: zod
           .number()
           .min(
@@ -40556,6 +40643,10 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody =
       ),
   });
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsDefault =
+  [];
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsMax = 10;
+
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemIndexMin = 0;
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportRedactionFindingsItemStartMin = 0;
@@ -40580,8 +40671,36 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         .describe(
           "The Observe project; null for evidence from outside Observe.",
         ),
+      dataset_id: zod
+        .string()
+        .uuid()
+        .describe("A dataset import's dataset; null otherwise."),
+      dataset_columns: zod
+        .object({
+          conversation: zod
+            .string()
+            .uuid()
+            .describe(
+              'The conversation: chat messages as JSON, or lines that start "User:" or "Agent:".',
+            ),
+          labels: zod
+            .array(zod.string().uuid())
+            .max(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsMax,
+            )
+            .default(
+              simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseEvidenceImportDatasetColumnsLabelsDefault,
+            )
+            .describe("Columns read as the row's labels."),
+          expected: zod
+            .string()
+            .uuid()
+            .optional()
+            .describe("The column that says what should happen."),
+        })
+        .describe("Dataset imports: the columns to read."),
       agent_version_id: zod.string().uuid(),
-      source_kind: zod.enum(["session", "call", "transcript"]),
+      source_kind: zod.enum(["session", "call", "transcript", "dataset"]),
       created_at: zod.string().datetime({ offset: true }),
       simulated: zod
         .boolean()
@@ -40591,7 +40710,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       production: zod
         .boolean()
         .describe(
-          "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
+          "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
         ),
       drafting: zod
         .boolean()
@@ -40603,7 +40722,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           name: zod
             .string()
             .describe(
-              "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+              "A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row.",
             ),
           status: zod.enum([
             "pending",
@@ -40616,7 +40735,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           source_available: zod
             .boolean()
             .describe(
-              "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+              "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
             ),
           scenario_key: zod
             .string()
@@ -40744,10 +40863,27 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                     "As the annotator recorded it: input evidence, not a verdict.",
                   ),
                 notes: zod.string(),
-                target: zod.enum(["session", "trace", "span"]),
+                target: zod
+                  .enum(["session", "trace", "span", "row"])
+                  .describe("row: a dataset row's label column."),
               }),
             ),
           }),
+          expected_outcome: zod
+            .object({
+              status: zod.enum([
+                "present",
+                "partial",
+                "truncated",
+                "missing",
+                "unreadable",
+              ]),
+              reason: zod.string(),
+              text: zod.string(),
+            })
+            .describe(
+              "What a dataset row's expected outcome column says should happen.",
+            ),
         }),
       ),
       redaction: zod.object({
@@ -40760,7 +40896,12 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         findings: zod.array(
           zod.object({
             case_id: zod.string().uuid(),
-            part: zod.enum(["transcript", "tool_calls", "labels"]),
+            part: zod.enum([
+              "transcript",
+              "tool_calls",
+              "labels",
+              "expected_outcome",
+            ]),
             index: zod
               .number()
               .min(

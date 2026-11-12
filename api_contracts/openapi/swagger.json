@@ -52017,7 +52017,7 @@
         "/simulate/api/harness-environments/{id}/evidence-imports/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_evidence_imports",
-                "description": "Freeze Observe sessions or calls, or store transcripts a person added,\nas evidence for this environment's tests; returns what each holds and\nlacks, and what redaction replaces. Nothing is drafted or run.",
+                "description": "Freeze Observe sessions or calls or dataset rows, or store transcripts\na person added, as evidence for this environment's tests; returns what\neach holds and lacks, and what redaction replaces. Nothing is drafted or\nrun.",
                 "parameters": [
                     {
                         "name": "data",
@@ -141955,6 +141955,38 @@
                 }
             }
         },
+        "EvidenceDatasetColumns": {
+            "description": "Dataset imports: the columns to read.",
+            "required": [
+                "conversation"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation": {
+                    "title": "Conversation",
+                    "description": "The conversation: chat messages as JSON, or lines that start \"User:\" or \"Agent:\".",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "labels": {
+                    "description": "Columns read as the row's labels.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": [],
+                    "maxItems": 10
+                },
+                "expected": {
+                    "title": "Expected",
+                    "description": "The column that says what should happen.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
         "EvidenceTranscriptInput": {
             "required": [
                 "name",
@@ -142001,7 +142033,8 @@
                     "enum": [
                         "session",
                         "call",
-                        "transcript"
+                        "transcript",
+                        "dataset"
                     ]
                 },
                 "project_id": {
@@ -142011,7 +142044,7 @@
                     "format": "uuid"
                 },
                 "ids": {
-                    "description": "Session and call imports: session ids, or the trace ids of calls, in the order picked.",
+                    "description": "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -142019,6 +142052,15 @@
                     },
                     "maxItems": 20,
                     "minItems": 1
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "description": "Dataset imports: the dataset.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "columns": {
+                    "$ref": "#/definitions/EvidenceDatasetColumns"
                 },
                 "transcripts": {
                     "description": "Transcript imports: one case each, in this order.",
@@ -142031,7 +142073,7 @@
                 },
                 "production": {
                     "title": "Production",
-                    "description": "Transcript imports: the person says they come from production. Unsaid, they are not called production evidence.",
+                    "description": "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
                     "type": "boolean"
                 }
             }
@@ -142272,11 +142314,13 @@
                 },
                 "target": {
                     "title": "Target",
+                    "description": "row: a dataset row's label column.",
                     "type": "string",
                     "enum": [
                         "session",
                         "trace",
-                        "span"
+                        "span",
+                        "row"
                     ]
                 }
             }
@@ -142312,6 +142356,36 @@
                 }
             }
         },
+        "EvidenceExpectedOutcome": {
+            "description": "What a dataset row's expected outcome column says should happen.",
+            "required": [
+                "status",
+                "reason",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
         "EvidenceImportCase": {
             "required": [
                 "id",
@@ -142331,7 +142405,8 @@
                 "tool_inputs",
                 "tool_outputs",
                 "starting_state",
-                "labels"
+                "labels",
+                "expected_outcome"
             ],
             "type": "object",
             "properties": {
@@ -142347,7 +142422,7 @@
                 },
                 "name": {
                     "title": "Name",
-                    "description": "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+                    "description": "A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row.",
                     "type": "string"
                 },
                 "status": {
@@ -142367,7 +142442,7 @@
                 },
                 "source_available": {
                     "title": "Source available",
-                    "description": "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+                    "description": "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
                     "type": "boolean"
                 },
                 "scenario_key": {
@@ -142424,6 +142499,9 @@
                 },
                 "labels": {
                     "$ref": "#/definitions/EvidenceLabels"
+                },
+                "expected_outcome": {
+                    "$ref": "#/definitions/EvidenceExpectedOutcome"
                 }
             }
         },
@@ -142452,7 +142530,8 @@
                     "enum": [
                         "transcript",
                         "tool_calls",
-                        "labels"
+                        "labels",
+                        "expected_outcome"
                     ]
                 },
                 "index": {
@@ -142540,6 +142619,8 @@
                 "id",
                 "environment_id",
                 "project_id",
+                "dataset_id",
+                "dataset_columns",
                 "agent_version_id",
                 "source_kind",
                 "created_at",
@@ -142568,6 +142649,16 @@
                     "format": "uuid",
                     "x-nullable": true
                 },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "description": "A dataset import's dataset; null otherwise.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "dataset_columns": {
+                    "$ref": "#/definitions/EvidenceDatasetColumns"
+                },
                 "agent_version_id": {
                     "title": "Agent version id",
                     "type": "string",
@@ -142580,7 +142671,8 @@
                     "enum": [
                         "session",
                         "call",
-                        "transcript"
+                        "transcript",
+                        "dataset"
                     ]
                 },
                 "created_at": {
@@ -142595,7 +142687,7 @@
                 },
                 "production": {
                     "title": "Production",
-                    "description": "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
+                    "description": "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
                     "type": "boolean"
                 },
                 "drafting": {

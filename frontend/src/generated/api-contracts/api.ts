@@ -60445,9 +60445,10 @@ export const getSimulateApiHarnessEnvironmentsEvidenceImportsUrl = (
 };
 
 /**
- * Freeze Observe sessions or calls, or store transcripts a person added,
-as evidence for this environment's tests; returns what each holds and
-lacks, and what redaction replaces. Nothing is drafted or run.
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
  */
 export const simulateApiHarnessEnvironmentsEvidenceImports = async (
   id: string,

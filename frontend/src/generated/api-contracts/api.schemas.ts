@@ -19976,7 +19976,23 @@ export const EvidenceImportCreateApiSourceKind = {
   session: "session",
   call: "call",
   transcript: "transcript",
+  dataset: "dataset",
 } as const;
+
+/**
+ * Dataset imports: the columns to read.
+ */
+export interface EvidenceDatasetColumnsApi {
+  /** The conversation: chat messages as JSON, or lines that start "User:" or "Agent:". */
+  conversation: string;
+  /**
+   * Columns read as the row's labels.
+   * @maxItems 10
+   */
+  labels?: string[];
+  /** The column that says what should happen. */
+  expected?: string;
+}
 
 /**
  * json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.
@@ -20012,18 +20028,21 @@ export interface EvidenceImportCreateApi {
   /** Session and call imports: the Observe project. */
   project_id?: string;
   /**
-   * Session and call imports: session ids, or the trace ids of calls, in the order picked.
+   * Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.
    * @minItems 1
    * @maxItems 20
    */
   ids?: string[];
+  /** Dataset imports: the dataset. */
+  dataset_id?: string;
+  columns?: EvidenceDatasetColumnsApi;
   /**
    * Transcript imports: one case each, in this order.
    * @minItems 1
    * @maxItems 20
    */
   transcripts?: EvidenceTranscriptInputApi[];
-  /** Transcript imports: the person says they come from production. Unsaid, they are not called production evidence. */
+  /** Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence. */
   production?: boolean;
 }
 
@@ -20034,6 +20053,7 @@ export const EvidenceImportApiSourceKind = {
   session: "session",
   call: "call",
   transcript: "transcript",
+  dataset: "dataset",
 } as const;
 
 export type EvidenceImportCaseApiStatus =
@@ -20152,6 +20172,9 @@ export const EvidenceLabelsApiStatus = {
   unreadable: "unreadable",
 } as const;
 
+/**
+ * row: a dataset row's label column.
+ */
 export type EvidenceLabelApiTarget =
   (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
 
@@ -20159,6 +20182,7 @@ export const EvidenceLabelApiTarget = {
   session: "session",
   trace: "trace",
   span: "span",
+  row: "row",
 } as const;
 
 /**
@@ -20174,6 +20198,7 @@ export interface EvidenceLabelApi {
   /** As the annotator recorded it: input evidence, not a verdict. */
   value: EvidenceLabelApiValue;
   notes: string;
+  /** row: a dataset row's label column. */
   target: EvidenceLabelApiTarget;
 }
 
@@ -20183,15 +20208,35 @@ export interface EvidenceLabelsApi {
   labels: EvidenceLabelApi[];
 }
 
+export type EvidenceExpectedOutcomeApiStatus =
+  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
+
+export const EvidenceExpectedOutcomeApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * What a dataset row's expected outcome column says should happen.
+ */
+export interface EvidenceExpectedOutcomeApi {
+  status: EvidenceExpectedOutcomeApiStatus;
+  reason: string;
+  text: string;
+}
+
 export interface EvidenceImportCaseApi {
   id: string;
   /** @minLength 1 */
   source_id: string;
-  /** A transcript's name as the person gave it, redacted; blank for an Observe source. */
+  /** A transcript's name as the person gave it, redacted; blank for an Observe source or a dataset row. */
   name: string;
   status: EvidenceImportCaseApiStatus;
   reason: string;
-  /** False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
+  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
   source_available: boolean;
   /** The drafted scenario's key, once drafted. */
   scenario_key: string;
@@ -20208,6 +20253,7 @@ export interface EvidenceImportCaseApi {
   tool_outputs: EvidencePartApi;
   starting_state: EvidencePartApi;
   labels: EvidenceLabelsApi;
+  expected_outcome: EvidenceExpectedOutcomeApi;
 }
 
 /**
@@ -20228,6 +20274,7 @@ export const EvidenceRedactionFindingApiPart = {
   transcript: "transcript",
   tool_calls: "tool_calls",
   labels: "labels",
+  expected_outcome: "expected_outcome",
 } as const;
 
 export type EvidenceRedactionFindingApiField =
@@ -20277,12 +20324,15 @@ export interface EvidenceImportApi {
   environment_id: string;
   /** The Observe project; null for evidence from outside Observe. */
   project_id: string;
+  /** A dataset import's dataset; null otherwise. */
+  dataset_id: string;
+  dataset_columns: EvidenceDatasetColumnsApi;
   agent_version_id: string;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
   /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
   simulated: boolean;
-  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production. */
+  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
   production: boolean;
   /** True while the environment's builder is drafting cases. */
   drafting: boolean;
