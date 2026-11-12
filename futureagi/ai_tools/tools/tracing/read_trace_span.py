@@ -55,16 +55,11 @@ class ReadTraceSpanTool(BaseTool):
     input_model = ReadTraceSpanInput
 
     def execute(self, params: ReadTraceSpanInput, context: ToolContext) -> ToolResult:
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing.access import get_trace_project
         from tracer.services.clickhouse.v2 import get_reader
 
-        # Verify trace access
-        try:
-            Trace.objects.get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
+        project = get_trace_project(params.trace_id, context)
+        if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Read all spans for the trace from CH 25.3 — was
@@ -73,7 +68,9 @@ class ReadTraceSpanTool(BaseTool):
         # Loading once and indexing in Python avoids 1-4 extra CH round-trips
         # for the id/exact-name/case-insensitive-name fallback chain.
         with get_reader() as reader:
-            ch_spans = reader.list_by_trace(str(params.trace_id))
+            ch_spans = reader.list_by_trace(
+                str(params.trace_id), project_id=str(project.id)
+            )
         all_spans = [(s.id, s.name) for s in ch_spans]
         valid_ids = {str(sid) for sid, _ in all_spans}
         valid_names = {name: str(sid) for sid, name in all_spans if name}

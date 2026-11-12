@@ -71,7 +71,7 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
     assert conversation.organization_id == project.organization_id
     assert conversation.workspace_id == project.workspace_id
     assert conversation.metadata == {"hidden": True, "type": "background_analysis"}
-    clear.assert_called_once_with(trace_id)
+    clear.assert_called_once_with(trace_id, project_id=str(project.id))
     failed.assert_not_called()
     clickhouse.return_value.insert.assert_called_once()
     logged_result = clickhouse.return_value.insert.call_args.args[1][0]
@@ -181,7 +181,7 @@ def test_falcon_analysis_scopes_reused_trace_id_to_project(
         assert analysis.overall_score == 4.0
         assert analysis.insights == "No errors found during analysis."
     clear, failed, clickhouse = falcon_boundaries
-    clear.assert_called_once_with(trace_id)
+    clear.assert_called_once_with(trace_id, project_id=str(project.id))
     failed.assert_not_called()
     logged_result = clickhouse.return_value.insert.call_args.args[1][0]
     assert logged_result["project_id"] == str(project.id)
@@ -220,7 +220,7 @@ def test_falcon_analysis_marks_failed_stream_without_clean_result(
     assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
     clear, failed, clickhouse = falcon_boundaries
     clear.assert_not_called()
-    failed.assert_called_once_with(trace_id)
+    failed.assert_called_once_with(trace_id, project_id=str(project.id))
     clickhouse.return_value.insert.assert_not_called()
 
 

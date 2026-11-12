@@ -1338,7 +1338,9 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in ensure_all_projects_have_tasks: {str(e)}")
             return 0
 
-    def ingest_trace_error_embeddings(self, trace_id: str) -> int:
+    def ingest_trace_error_embeddings(
+        self, trace_id: str, *, project_id: str, organization_id: str
+    ) -> int:
         """
         Generate and store embeddings for all errors from a single trace analysis.
         Called after trace analysis completes.
@@ -1348,8 +1350,12 @@ class TraceErrorAnalysisDB:
         try:
             # Get the analysis and error details for this trace
             analysis = (
-                TraceErrorAnalysis.objects.filter(trace_id=trace_id)
-                .select_related("project", "trace")
+                TraceErrorAnalysis.objects.filter(
+                    trace_id=trace_id,
+                    project_id=project_id,
+                    project__organization_id=organization_id,
+                )
+                .select_related("project")
                 .first()
             )
 
@@ -1359,7 +1365,7 @@ class TraceErrorAnalysisDB:
 
             error_details = list(
                 TraceErrorDetail.objects.filter(analysis=analysis).select_related(
-                    "analysis__project", "analysis__trace"
+                    "analysis__project"
                 )
             )
 
@@ -1395,7 +1401,7 @@ class TraceErrorAnalysisDB:
                 try:
                     # Check if already embedded
                     if self._embedding_exists_for_detail(
-                        detail.id, clusterer.table_name
+                        detail.id, clusterer.table_name, project_id
                     ):
                         logger.debug(
                             f"Embedding already exists for error detail {detail.id}"
@@ -1442,7 +1448,7 @@ class TraceErrorAnalysisDB:
                         eval_id=str(analysis.project_id),
                         vectors=vectors,
                         metadata_list=metadata_list,
-                        unique_keys=["error_detail_pk"],
+                        unique_keys=["project_id", "error_detail_pk"],
                     )
                     logger.info(
                         f"Ingested {len(vectors)} embeddings for trace {trace_id}"
@@ -1459,7 +1465,7 @@ class TraceErrorAnalysisDB:
             return 0
 
     def _embedding_exists_for_detail(
-        self, error_detail_id: str, table_name: str
+        self, error_detail_id: str, table_name: str, project_id: str
     ) -> bool:
         """Check if embedding already exists for an error detail"""
         try:
@@ -1472,12 +1478,13 @@ class TraceErrorAnalysisDB:
                     SELECT 1
                     FROM {table_name}
                     WHERE deleted = 0
+                    AND eval_id = %(project_id)s
                     AND metadata.value[indexOf(metadata.key, 'error_detail_pk')] = %(detail_id)s
                     LIMIT 1
                 """
                 result = db.execute_read(
                     query,
-                    {"detail_id": str(error_detail_id)},
+                    {"detail_id": str(error_detail_id), "project_id": str(project_id)},
                     max_result_rows=1,
                 )
                 return len(result) > 0

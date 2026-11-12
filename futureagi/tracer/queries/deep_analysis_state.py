@@ -26,49 +26,59 @@ from django.core.cache import cache
 _TTL_SECONDS = 3600
 
 
-def _running_key(trace_id: str) -> str:
-    return f"deep_analysis:running:{trace_id}"
+def _running_key(trace_id: str, project_id: str | None = None) -> str:
+    scope = f"project:{project_id}:" if project_id is not None else ""
+    return f"deep_analysis:running:{scope}{trace_id}"
 
 
-def _failed_key(trace_id: str) -> str:
-    return f"deep_analysis:failed:{trace_id}"
+def _failed_key(trace_id: str, project_id: str | None = None) -> str:
+    scope = f"project:{project_id}:" if project_id is not None else ""
+    return f"deep_analysis:failed:{scope}{trace_id}"
 
 
-def set_running(trace_id: str) -> bool:
+def set_running(trace_id: str, *, project_id: str | None = None) -> bool:
     """Claim the trace as running. Returns ``True`` if this call set the marker,
     ``False`` if a run was already in flight — an atomic double-click guard. A
     prior failure never blocks the claim (its marker is cleared first)."""
-    cache.delete(_failed_key(trace_id))
-    return bool(cache.add(_running_key(trace_id), "1", _TTL_SECONDS))
+    cache.delete(_failed_key(trace_id, project_id))
+    return bool(cache.add(_running_key(trace_id, project_id), "1", _TTL_SECONDS))
 
 
-def is_running(trace_id: str) -> bool:
-    return cache.get(_running_key(trace_id)) is not None
+def is_running(trace_id: str, *, project_id: str | None = None) -> bool:
+    return cache.get(_running_key(trace_id, project_id)) is not None
 
 
-def set_failed(trace_id: str) -> None:
+def set_failed(trace_id: str, *, project_id: str | None = None) -> None:
     """Record a failed run (until it TTLs out) and release the running claim so a
     retry can re-dispatch."""
-    cache.delete(_running_key(trace_id))
-    cache.set(_failed_key(trace_id), "1", _TTL_SECONDS)
+    cache.delete(_running_key(trace_id, project_id))
+    cache.set(_failed_key(trace_id, project_id), "1", _TTL_SECONDS)
 
 
-def clear(trace_id: str) -> None:
-    cache.delete(_running_key(trace_id))
-    cache.delete(_failed_key(trace_id))
+def clear(trace_id: str, *, project_id: str | None = None) -> None:
+    cache.delete(_running_key(trace_id, project_id))
+    cache.delete(_failed_key(trace_id, project_id))
 
 
-def status(trace_id: str, *, has_analysis: bool) -> str:
+def status(trace_id: str, *, has_analysis: bool, project_id: str | None = None) -> str:
     """Frontend job state: ``done`` | ``running`` | ``failed`` | ``idle``.
 
     A completed ``TraceErrorAnalysis`` row wins ("done"). Otherwise the transient
     running/failed marker, else "idle" — mirroring the old status→feed-state map
     without touching the dropped column.
     """
+    # Scoped Falcon jobs may have saved partial scores before a stream failed.
+    # Keep their failure visible until retry/success, even if a row exists.
+    # The unscoped namespace preserves the legacy deep-analysis contract.
+    if (
+        project_id is not None
+        and cache.get(_failed_key(trace_id, project_id)) is not None
+    ):
+        return "failed"
     if has_analysis:
         return "done"
-    if cache.get(_running_key(trace_id)) is not None:
+    if cache.get(_running_key(trace_id, project_id)) is not None:
         return "running"
-    if cache.get(_failed_key(trace_id)) is not None:
+    if cache.get(_failed_key(trace_id, project_id)) is not None:
         return "failed"
     return "idle"

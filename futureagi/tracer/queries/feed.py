@@ -3896,18 +3896,29 @@ def get_deep_analysis(
     part of it. Otherwise always returns a response — the ``status``
     field tells the frontend whether data is available.
     """
-    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
-        return None
-
-    if not _cluster_has_trace(cluster_id, trace_id, project_ids):
+    clusters = _cluster_qs_for_access(cluster_id, project_ids)
+    project_id = (
+        _current_memberships()
+        .filter(cluster__in=clusters, trace_id=trace_id)
+        .values_list("cluster__project_id", flat=True)
+        .first()
+    )
+    if project_id is None:
         return None
 
     analysis = (
-        TraceErrorAnalysis.objects.filter(trace_id=trace_id)
+        TraceErrorAnalysis.objects.filter(trace_id=trace_id, project_id=project_id)
         .order_by("-analysis_date")
         .first()
     )
-    status = deep_analysis_state.status(str(trace_id), has_analysis=bool(analysis))
+    # Falcon saves findings/scores before the stream finishes. Its scoped
+    # running/failed state must win over those partial rows. Keep the separate
+    # legacy deep-analysis worker's marker protocol backward-compatible.
+    status = deep_analysis_state.status(
+        str(trace_id), project_id=str(project_id), has_analysis=False
+    )
+    if status not in ("running", "failed"):
+        status = deep_analysis_state.status(str(trace_id), has_analysis=bool(analysis))
 
     if not analysis or status != "done":
         return DeepAnalysisResponse(

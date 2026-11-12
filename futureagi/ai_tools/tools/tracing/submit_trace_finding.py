@@ -80,7 +80,7 @@ class SubmitTraceFindingTool(BaseTool):
     ) -> ToolResult:
         from django.db import transaction
 
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing.access import get_trace_project
         from tracer.models.trace_error_analysis import (
             TraceErrorAnalysis,
             TraceErrorDetail,
@@ -106,13 +106,8 @@ class SubmitTraceFindingTool(BaseTool):
                 f"Invalid impact '{params.impact}'. Must be HIGH, MEDIUM, or LOW."
             )
 
-        # Verify trace access
-        try:
-            trace = Trace.objects.select_related("project").get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
+        project = get_trace_project(params.trace_id, context)
+        if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         with transaction.atomic():
@@ -123,7 +118,9 @@ class SubmitTraceFindingTool(BaseTool):
                 try:
                     analysis = TraceErrorAnalysis.objects.get(
                         id=params.analysis_id,
-                        trace=trace,
+                        trace_id=params.trace_id,
+                        project=project,
+                        project__organization=context.organization,
                     )
                 except TraceErrorAnalysis.DoesNotExist:
                     # Invalid analysis_id — create a new one
@@ -132,8 +129,8 @@ class SubmitTraceFindingTool(BaseTool):
             # Create a new analysis record (same as the old agent did)
             if analysis is None:
                 analysis = TraceErrorAnalysis.objects.create(
-                    trace=trace,
-                    project=trace.project,
+                    trace_id=params.trace_id,
+                    project=project,
                     overall_score=None,
                     total_errors=0,
                     high_impact_errors=0,

@@ -144,7 +144,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
-            error_analysis_db.ingest_trace_error_embeddings(trace_id)
+            error_analysis_db.ingest_trace_error_embeddings(
+                trace_id, project_id=str(project.id), organization_id=str(organization.id)
+            )
 
         # Mark the API call as successful
         if api_call_log_row:
@@ -450,18 +452,28 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         }
 
     from ai_tools.base import ToolContext
-    from tfc.middleware.workspace_context import set_workspace_context
+    from tfc.middleware.workspace_context import (
+        get_current_organization,
+        get_current_user,
+        get_current_workspace,
+        set_workspace_context,
+    )
     from tracer.models.project import Project
     from tracer.queries import deep_analysis_state
     from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
     close_old_connections()
+    previous_context = {
+        "workspace": get_current_workspace(),
+        "organization": get_current_organization(),
+        "user": get_current_user(),
+    }
 
     try:
         # The caller passes project_id (traces live only in CH post-cutover);
         # load the PG Project (kept) for org / user / workspace resolution.
         project = (
-            Project.objects.select_related("organization").filter(id=project_id).first()
+            Project.no_workspace_objects.select_related("organization").filter(id=project_id).first()
         )
         if project is None:
             logger.error(f"Project {project_id} not found, skipping trace {trace_id}")
@@ -481,12 +493,17 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
 
         workspace = get_default_workspace_for_project(project)
 
+        if workspace.organization_id != org.id:
+            raise ValueError("Project workspace does not belong to its organization")
         set_workspace_context(workspace=workspace, organization=org, user=user)
-        ctx = ToolContext(user=user, organization=org, workspace=workspace)
+        ctx = ToolContext(user=user, organization=org, workspace=workspace, project=project)
 
         # Load the skill
+        from django.db.models import Q
+
         skill = Skill.objects.filter(
-            organization=org, slug="analyze-trace-errors", is_active=True
+            Q(workspace=workspace) | Q(workspace__isnull=True),
+            organization=org, slug="analyze-trace-errors", is_active=True,
         ).first()
 
         # Create a hidden conversation (filtered out from user's chat list)
@@ -498,6 +515,19 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             metadata={"hidden": True, "type": "background_analysis"},
         )
 
+        from ai_tools.tools.tracing.explore_trace import ExploreTraceTool
+        from ai_tools.tools.tracing.read_trace_span import ReadTraceSpanTool
+        from ai_tools.tools.tracing.submit_trace_finding import SubmitTraceFindingTool
+        from ai_tools.tools.tracing.submit_trace_scores import SubmitTraceScoresTool
+
+        # The general chat catalog includes unrelated datasets, projects and MCP
+        # tools. A background analysis may use only these scoped trace tools.
+        explorer = ExploreTraceTool()
+        explorer.name = "explore_trace"  # Name used by the analysis skill.
+        analysis_tools = [
+            explorer, ExploreTraceTool(), ReadTraceSpanTool(),
+            SubmitTraceFindingTool(), SubmitTraceScoresTool(),
+        ]
         agent = AgentLoop(tool_context=ctx, conversation=conversation)
 
         # Collect ALL events for comprehensive logging
@@ -552,6 +582,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
                 send_callback=logging_callback,
                 context_page="tracing",
                 skill=skill,
+                tools_override=analysis_tools,
             )
 
         loop = asyncio.new_event_loop()
@@ -633,12 +664,14 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         error_count = analysis.total_errors or 0
 
         # Done is derived from the TraceErrorAnalysis row above; release marker.
-        deep_analysis_state.clear(str(trace_id))
+        deep_analysis_state.clear(str(trace_id), project_id=str(project.id))
 
         # Ingest embeddings for clustering if there are errors
         if error_count > 0:
             db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(trace_id)
+            db.ingest_trace_error_embeddings(
+                trace_id, project_id=str(project.id), organization_id=str(org.id)
+            )
 
         # Log complete results to ClickHouse
         try:
@@ -685,9 +718,10 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
 
     except Exception as e:
         logger.exception(f"Falcon analysis failed for trace {trace_id}: {str(e)}")
-        deep_analysis_state.set_failed(str(trace_id))
+        deep_analysis_state.set_failed(str(trace_id), project_id=str(project_id))
         return {"success": False, "trace_id": trace_id, "error": str(e)}
     finally:
+        set_workspace_context(**previous_context)
         close_old_connections()
 
 
