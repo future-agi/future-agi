@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -158,103 +158,150 @@ function Details({ agent, task }) {
 }
 Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
-/* The path the work took, as numbers in order (1 → 2 → 3 → 1 is a
-   loop); the same numbers name the graph's nodes. Who each is, on hover. */
-/* The order the work moved ("Hand-off order", not "path": the Expected
-   steps tab's path is the scenario's). Hovering a stop lights up its box and the arrow
-   into it on the graph; clicking a number filters the tree, as a box does. */
-function PathLine({ path, onHover, onPick }) {
+const BAD = new Set(["no answer came back", "failed", "no reply"]);
+
+/* What came back, short, for the right-hand column: "both answered", or
+   each target's outcome when they differ. Turns read "replied". */
+const outcomeOf = (h) => {
+  if (h.turn) return h.outcomes[0] === "no reply" ? "no reply" : "replied";
+  const o = h.outcomes;
+  if (o.every((x) => x === o[0])) {
+    if (o.length === 1) return o[0];
+    const who = o.length === 2 ? "both" : `all ${o.length}`;
+    return o[0] === "no answer came back"
+      ? "no answer from either"
+      : `${who} ${o[0]}`;
+  }
+  return h.toNames.map((n, i) => `${n}: ${o[i]}`).join(" · ");
+};
+
+/* The quiet second line: parallel work, or turns the coordinator answered
+   on its own (folded). */
+const detailOf = (h) => {
+  if (h.together) return "At the same time";
+  if (h.turn && h.alone)
+    return h.turns > 1
+      ? `${h.turns} turns in a row, each answered by ${h.toNames[0]} alone`
+      : `Answered by ${h.toNames[0]} alone`;
+  return null;
+};
+
+/* Hand-offs (Nosang, 12 Nov): a short numbered list, one row per time work
+   was handed on, with the same numbers on the graph's arrows. Hovering a
+   row lights up its arrows and boxes; clicking it shows who got the work in
+   the tree, as a box does. */
+function HandoffList({ handoffs, onHover, onPick }) {
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      useFlexGap
-      flexWrap="wrap"
-      sx={{ px: 2, pt: 1.25, columnGap: 0.75, rowGap: 0.5 }}
-      onMouseLeave={() => onHover(null)}
-    >
-      <Typography sx={{ typography: "s3", color: "text.tertiary", mr: 0.5 }}>
-        Hand-off order
+    <Box sx={{ px: 2, pt: 1.5 }} onMouseLeave={() => onHover(null)}>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}>
+        {`Hand-offs · ${handoffs.length}`}
       </Typography>
-      {path.map((stop, i) => (
-        <Fragment key={i}>
-          {i > 0 && (
-            <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-              {"→"}
-            </Typography>
-          )}
-          <Tooltip
-            arrow
-            title={`${stop.who.map((w) => `${w.n} · ${w.name}`).join(" and ")}${stop.together ? " — handed work at the same time" : ""}`}
-          >
+      <Box
+        sx={{
+          maxHeight: 200,
+          overflow: "auto",
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+        }}
+      >
+        {handoffs.map((h, i) => {
+          const outcome = outcomeOf(h);
+          const bad = h.outcomes.some((o) => BAD.has(o));
+          const detail = detailOf(h);
+          const pick = () => onPick(h.to.length === 1 ? h.to[0] : h.from);
+          return (
             <Box
-              component="span"
+              key={h.n}
+              role="button"
+              tabIndex={0}
               onMouseEnter={() => onHover(i)}
+              onFocus={() => onHover(i)}
+              onClick={pick}
+              onKeyDown={(e) => e.key === "Enter" && pick()}
               sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                typography: "s2",
-                fontWeight: 600,
-                fontVariantNumeric: "tabular-nums",
-                borderRadius: "4px",
-                bgcolor: "background.neutral",
-                "&:hover": { bgcolor: "action.selected" },
+                display: "grid",
+                gridTemplateColumns: "24px minmax(0, 1fr) auto",
+                columnGap: 1.25,
+                alignItems: "start",
+                px: 1.25,
+                py: 0.875,
+                cursor: "pointer",
+                "&:not(:first-of-type)": {
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                },
+                "&:hover": { bgcolor: "action.hover" },
               }}
             >
-              {stop.who.map((w, k) => (
-                <Fragment key={w.id}>
-                  {k > 0 && <Box component="span">{"+"}</Box>}
+              <Box
+                component="span"
+                sx={{
+                  mt: "1px",
+                  height: 20,
+                  lineHeight: "20px",
+                  textAlign: "center",
+                  typography: "s3",
+                  fontWeight: 600,
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  borderRadius: "4px",
+                  bgcolor: "background.neutral",
+                }}
+              >
+                {h.n}
+              </Box>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                  {h.fromName}
                   <Box
                     component="span"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Show ${w.name} only`}
-                    onClick={() => onPick(w.id)}
-                    onKeyDown={(e) => e.key === "Enter" && onPick(w.id)}
-                    sx={{ px: 0.75, cursor: "pointer" }}
+                    sx={{ color: "text.disabled", fontWeight: 400, mx: 0.75 }}
                   >
-                    {w.n}
+                    {"→"}
                   </Box>
-                </Fragment>
-              ))}
-            </Box>
-          </Tooltip>
-          {stop.repeat > 1 && (
-            <Tooltip
-              arrow
-              title={`This back-and-forth happened ${stop.repeat} times in a row`}
-            >
+                  {h.toNames.join(" + ")}
+                </Typography>
+                {detail && (
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {detail}
+                  </Typography>
+                )}
+              </Box>
               <Typography
-                component="span"
-                sx={{ typography: "s3", color: "text.tertiary" }}
+                sx={{
+                  typography: "s3",
+                  lineHeight: "22px",
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
+                  color: bad ? "error.main" : "text.secondary",
+                  fontWeight: bad ? 500 : 400,
+                }}
               >
-                {`×${stop.repeat}`}
+                {outcome}
               </Typography>
-            </Tooltip>
-          )}
-        </Fragment>
-      ))}
-    </Stack>
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
   );
 }
-PathLine.propTypes = {
-  path: PropTypes.array.isRequired,
+HandoffList.propTypes = {
+  handoffs: PropTypes.array.isRequired,
   onHover: PropTypes.func.isRequired,
   onPick: PropTypes.func.isRequired,
 };
 
-/* CSS that lights up one path stop on the graph: its boxes, and the arrows
-   into them from the stop before. Edge ids follow AgentGraph's own naming. */
-const stopHighlightSx = (path, edges, i) => {
-  if (i == null || !path[i]) return {};
-  const ids = path[i].who.map((w) => w.id);
-  const prev = i > 0 ? path[i - 1].who.map((w) => w.id) : [];
+/* CSS that lights up one hand-off on the graph: its arrows and the boxes at
+   both ends. Edge ids follow AgentGraph's own naming. */
+const handoffHighlightSx = (handoffs, edges, i) => {
+  const h = i == null ? null : handoffs[i];
+  if (!h) return {};
+  const ids = [h.from, ...h.to];
   const edgeIds = edges
     .map((e, idx) =>
-      prev.includes(e.source) && ids.includes(e.target)
-        ? e._return
-          ? `e-ret-${idx}`
-          : `e-${idx}`
+      !e._return && e.source === h.from && h.to.includes(e.target)
+        ? `e-${idx}`
         : null,
     )
     .filter(Boolean);
@@ -280,6 +327,31 @@ const stopHighlightSx = (path, edges, i) => {
       ]),
     ),
   };
+};
+
+/* Tall enough for the graph's levels and no more, so there's no empty band
+   between the hand-off list and the graph. */
+const graphHeightOf = (graph) => {
+  const kids = {};
+  graph.edges
+    .filter((e) => !e._return)
+    .forEach((e) => (kids[e.source] ||= []).push(e.target));
+  const targets = new Set(
+    graph.edges.filter((e) => !e._return).map((e) => e.target),
+  );
+  const roots = graph.nodes.filter((nd) => !targets.has(nd.id));
+  let depth = 0;
+  const seen = new Set();
+  const walk = (id, d) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    depth = Math.max(depth, d);
+    (kids[id] || []).forEach((k) => walk(k, d + 1));
+  };
+  (roots.length ? roots : graph.nodes.slice(0, 1)).forEach((r) =>
+    walk(r.id, 1),
+  );
+  return Math.min(520, Math.max(260, depth * 120 + 40));
 };
 
 const dashedKey = (edges) => {
@@ -523,16 +595,19 @@ export default function HandoffTimeline({ agent, task, participants }) {
           color="text.disabled"
         />
       </Box>
-      {g.path?.length > 1 && (
-        <PathLine
-          path={g.path}
+      {g.handoffs?.length > 0 && (
+        <HandoffList
+          handoffs={g.handoffs}
           onHover={setHoverStop}
           onPick={(id) => setFocusNode((cur) => (cur === id ? null : id))}
         />
       )}
       <EdgeKey edges={graph.edges} />
       <Box
-        sx={{ height: 520, ...stopHighlightSx(g.path, graph.edges, hoverStop) }}
+        sx={{
+          height: graphHeightOf(graph),
+          ...handoffHighlightSx(g.handoffs || [], graph.edges, hoverStop),
+        }}
       >
         <AgentGraph
           data={graph}

@@ -102,8 +102,8 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
     returns[k] = (returns[k] || 0) + 1;
   };
   const nodeOfSpan = {};
-  const add = (at, from, to, kind, group) =>
-    steps.push({ at: at ?? 0, edge: `${from}->${to}`, kind, group });
+  const add = (at, from, to, kind, group, outcome) =>
+    steps.push({ at: at ?? 0, edge: `${from}->${to}`, kind, group, outcome });
 
   const toolSpan = (t, c, owner, ownerName) => {
     const node = `${owner}::${c.name}`;
@@ -149,7 +149,27 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
       w.state !== "unobserved"
     )
       addReturn(node, parent);
-    add(w.delegatedAt, parent, node, "handoff", w.parallelWith ? parent : null);
+    /* What came back, in the trace's own terms (no summaries). */
+    /* Same words as the box's end-state badge (endStateOf): a timeout in the
+       record reads "no answer came back" (Karthik: no invented timeouts). */
+    const outcome =
+      w.transfer || w.state === "transferred"
+        ? "took over the call"
+        : w.state === "unobserved"
+          ? "no events"
+          : w.state === "failed" || w.failed
+            ? "failed"
+            : w.state === "timeout" || w.endedAt == null
+              ? "no answer came back"
+              : "answered";
+    add(
+      w.delegatedAt,
+      parent,
+      node,
+      "handoff",
+      w.parallelWith ? parent : null,
+      outcome,
+    );
     const subs = turnWorkers.filter((x) => x.parentId === w.id);
     const id = `t${t.n}:${w.id}`;
     nodeOfSpan[id] = node;
@@ -189,7 +209,15 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
       t.endAt ?? t.replyAt ?? start,
       ...ws.map((w) => w.endedAt || 0),
     );
-    if (t.request) add(start, USER_NODE, coord.id, "turn");
+    if (t.request)
+      add(
+        start,
+        USER_NODE,
+        coord.id,
+        "turn",
+        null,
+        t.reply ? "answered" : "no reply",
+      );
     if (t.reply) addReturn(coord.id, USER_NODE);
     const coordId = `t${t.n}:coord`;
     nodeOfSpan[coordId] = coord.id;
@@ -255,27 +283,50 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
     s.n = n;
   });
 
-  /* The path the work took, as Chintan reads it (10 Nov): each participant
-     gets a number in the order it first acted, and the path lists those
-     numbers in the order the work moved, so a loop reads 1 → 2 → 3 → 1.
-     Siblings handed work at once share one step. Tools aren't steps. */
+  /* Hand-offs (Nosang, 12 Nov): one numbered line per time work was handed
+     on — who to whom, at the same time or not, and what came back — with the
+     same numbers on the graph's arrows. An arrow only ever means "handed
+     work to"; the next turn starting is a line of its own, not an arrow. */
   const moves = ordered.filter((st) => st.kind !== "tool");
-  const path = [];
-  /* Who holds the work now: one participant, or a group working at once. */
-  let at = [];
+  const groups = [];
   moves.forEach((st) => {
-    const [from, to] = st.edge.split("->");
-    const together = moves.filter((x) => x.n === st.n);
-    if (together.length > 1 && together[0] !== st) return;
-    if (!at.includes(from)) path.push({ ids: [from] });
-    const ids = together.map((x) => x.edge.split("->")[1]);
-    path.push(together.length > 1 ? { ids, together: true } : { ids: [to] });
-    at = together.length > 1 ? ids : [to];
+    const last = groups[groups.length - 1];
+    if (last && last.n === st.n) last.moves.push(st);
+    else groups.push({ n: st.n, moves: [st] });
   });
-  const numberOf = {};
-  path.forEach((stop) =>
-    stop.ids.forEach((id) => {
-      if (!(id in numberOf)) numberOf[id] = Object.keys(numberOf).length + 1;
+  const lines = [];
+  groups.forEach((gr, i) => {
+    const [from] = gr.moves[0].edge.split("->");
+    const to = gr.moves.map((m) => m.edge.split("->")[1]);
+    const outcomes = gr.moves.map((m) => m.outcome || "answered");
+    const turn = gr.moves[0].kind === "turn";
+    /* A turn the coordinator answered alone: the next move is another turn,
+       or the call ends. Back-to-back ones fold into one line. */
+    const alone =
+      turn && (!groups[i + 1] || groups[i + 1].moves[0].kind === "turn");
+    const prev = lines[lines.length - 1];
+    if (alone && prev?.alone && prev.outcomes[0] === outcomes[0]) {
+      prev.turns += 1;
+      return;
+    }
+    lines.push({
+      from,
+      to,
+      together: to.length > 1,
+      outcomes,
+      turn,
+      alone,
+      turns: 1,
+      edgeKeys: to.map((id) => `${from}->${id}`),
+    });
+  });
+  lines.forEach((ln, i) => {
+    ln.n = i + 1;
+  });
+  const stepsOf = {};
+  lines.forEach((ln) =>
+    ln.edgeKeys.forEach((k) => {
+      (stepsOf[k] ||= []).push(ln.n);
     }),
   );
 
@@ -284,9 +335,12 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
     const key = `${e.source}->${e.target}`;
     return control.has(key) ? { ...e, _control: true } : e;
   });
+  graph.edges = graph.edges.map((e) => {
+    const nums = stepsOf[`${e.source}->${e.target}`];
+    return nums ? { ...e, _stepLabel: nums.join(", ") } : e;
+  });
   graph.nodes = graph.nodes.map((nd) => ({
     ...nd,
-    ...(numberOf[nd.id] && { name: `${numberOf[nd.id]} · ${nd.name}` }),
     ...(states[nd.id] && { _state: states[nd.id] }),
   }));
 
@@ -346,17 +400,13 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
     });
   });
 
-  /* Each stop: { ids, together }, with each id's number and name. */
   const nameOf = Object.fromEntries(
     buildTraceGraph(spans).nodes.map((nd) => [nd.id, nd.name]),
   );
-  const pathStops = path.map((stop) => ({
-    together: !!stop.together,
-    who: stop.ids.map((id) => ({
-      id,
-      n: numberOf[id],
-      name: nameOf[id] || id,
-    })),
+  const handoffs = lines.map((ln) => ({
+    ...ln,
+    fromName: nameOf[ln.from] || ln.from,
+    toNames: ln.to.map((id) => nameOf[id] || id),
   }));
 
   /* Read for people, not traces (12 Nov): no Start/End — the caller's node
@@ -389,29 +439,7 @@ export const participantsGraphOf = (p, { callerName = null } = {}) => {
             : e,
     );
 
-  /* The same two stops back to back (a turn the coordinator answered alone,
-     again and again) fold into one pair with a count: 1 → 2 ×5. */
-  const keyOf = (st) => st.who.map((w) => w.id).join("+");
-  const folded = [];
-  for (let i = 0; i < pathStops.length; ) {
-    const a = pathStops[i];
-    const b = pathStops[i + 1];
-    const n = folded.length;
-    if (
-      b &&
-      n >= 2 &&
-      keyOf(folded[n - 2]) === keyOf(a) &&
-      keyOf(folded[n - 1]) === keyOf(b)
-    ) {
-      folded[n - 1].repeat = (folded[n - 1].repeat || 1) + 1;
-      i += 2;
-    } else {
-      folded.push({ ...a });
-      i += 1;
-    }
-  }
-
-  return { spans, graph, nodeOfSpan, path: folded };
+  return { spans, graph, nodeOfSpan, handoffs };
 };
 
 /** The span tree cut to one participant: its turns, the path to it, and
