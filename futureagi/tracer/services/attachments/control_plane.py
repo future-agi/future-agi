@@ -1,9 +1,13 @@
 """Concrete ingest adapters over the attachment control plane.
 
 - ``OccurrenceBindingStore``: the durable pending set is the unbound live
-  ``AttachmentOccurrence`` rows themselves (B01). Binding goes through
-  ``retention.bind_retention`` (fenced CAS, B05/B09); expiry and rejection
-  tombstone through ``retention._tombstone``, which enqueues the erase outbox.
+  ``AttachmentOccurrence`` rows themselves (B01). Claims are round-robin across
+  scopes, least recently checked first, with a per-scope cap per tick; a row
+  that stays pending is stamped (``bind_checked_at``) and goes to the back.
+  Binding goes through ``retention.bind_retention`` (fenced CAS, B05/B09);
+  expiry, rejection and permanent bind fences (stale policy or deletion
+  generation) tombstone through ``retention._tombstone``, which enqueues the
+  erase outbox.
 - ``ClickHouseParentReader``: one ``spans FINAL`` batch per project per tick.
   ``source_state`` derives the stored source facts with the same rule as
   ``authority.LiveAuthority.source``, so binding and reading cannot disagree.
@@ -14,13 +18,15 @@
 No adapter fetches media, follows a URL or trusts an OTLP timestamp.
 """
 
+from collections import Counter
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q, Window
+from django.db.models.functions import Coalesce, RowNumber
 from django.utils import timezone
 
 from tracer.models.attachment import (
@@ -56,6 +62,9 @@ from tracer.services.attachments.uploads import _lock_budgets
 SPAN_COLUMNS = ["id", "trace_id", "project_id", "start_time", "is_deleted"]
 # A worker tick walks at most this many claim batches before yielding.
 MAX_TICK_BATCHES = 8
+# One scope gets at most this many claims per tick, so a backlog in one
+# project never consumes a whole tick while another project waits.
+PER_SCOPE_TICK_CAP = 512
 # One trace or Voice read authorizes at most this many occurrences in total.
 MAX_READ_ROWS = MAX_PER_PARENT
 
@@ -114,34 +123,72 @@ def _references(span):
     return {ref["occurrence_id"]: ref for ref in refs}
 
 
+def _permanently_fenced(row, scope, now):
+    """A bind fence no later tick can pass: retire the row instead of retrying."""
+    return (
+        row.policy_version != scope.policy_version
+        or row.deletion_generation != scope.deletion_generation
+        or row.expires_at <= now
+    )
+
+
 class OccurrenceBindingStore:
-    """Pending links are unbound, undeleted occurrences of enabled scopes."""
+    """Pending links are unbound, undeleted occurrences of enabled scopes.
+
+    One store lives for one tick. Within a tick no row is claimed twice; across
+    ticks the order is the persisted ``bind_checked_at`` stamp (never-checked
+    rows by age), so rows that keep waiting cannot starve newer ones.
+    """
 
     def __init__(self):
-        self.cursor = None
+        self.claimed = set()
+        self.per_scope = Counter()
 
     def claim_pending(self, now, limit):
-        query = (
-            AttachmentOccurrence.objects.select_related("attachment", "scope")
-            .filter(
-                bound_at__isnull=True,
-                deleted_at__isnull=True,
-                scope__enabled=True,
-            )
+        pending = AttachmentOccurrence.objects.filter(
+            bound_at__isnull=True,
+            deleted_at__isnull=True,
+            scope__enabled=True,
+        ).exclude(
             # Aborted or erased bytes have nothing left to bind. Failed and
             # rejected uploads still bind, so readers can show that state.
-            .exclude(
-                attachment__state__in=(AttachmentState.DELETED, AttachmentState.EXPIRED)
-            )
-            .order_by("created_at", "id")
+            attachment__state__in=(AttachmentState.DELETED, AttachmentState.EXPIRED)
         )
-        if self.cursor is not None:
-            created_at, row_id = self.cursor
-            query = query.filter(
-                Q(created_at__gt=created_at) | Q(created_at=created_at, id__gt=row_id)
+        if self.claimed:
+            pending = pending.exclude(id__in=self.claimed)
+        full = [
+            scope_id
+            for scope_id, count in self.per_scope.items()
+            if count >= PER_SCOPE_TICK_CAP
+        ]
+        if full:
+            pending = pending.exclude(scope_id__in=full)
+        # Round-robin: every scope's least recently checked row first, then
+        # every scope's second, and so on.
+        ids = list(
+            pending.annotate(touched=Coalesce("bind_checked_at", "created_at"))
+            .annotate(
+                turn=Window(
+                    RowNumber(),
+                    partition_by=[F("scope_id")],
+                    order_by=[F("touched").asc(), F("id").asc()],
+                )
             )
+            .filter(turn__lte=PER_SCOPE_TICK_CAP)
+            .order_by("turn", "touched", "id")
+            .values_list("id", "scope_id")[:limit]
+        )
+        rows = AttachmentOccurrence.objects.select_related("attachment", "scope")
+        rows = rows.in_bulk([row_id for row_id, _ in ids])
         links = []
-        for row in query[:limit]:
+        for row_id, scope_id in ids:
+            if self.per_scope[scope_id] >= PER_SCOPE_TICK_CAP:
+                continue
+            row = rows.get(row_id)
+            if row is None:
+                continue
+            self.claimed.add(row_id)
+            self.per_scope[scope_id] += 1
             scope = row.scope
             links.append(
                 PendingLink(
@@ -161,11 +208,11 @@ class OccurrenceBindingStore:
                     expires_at=row.expires_at,
                 )
             )
-            self.cursor = (row.created_at, row.id)
         return links
 
     def settle(self, link, state, parent, now):
         if state == "pending":
+            self._park(link)
             return True
         if state == "bound":
             try:
@@ -174,17 +221,26 @@ class OccurrenceBindingStore:
                     occurrence_id=link.internal_id,
                     source=parent.source,
                 )
-            except (
-                AttachmentError,
-                AttachmentOccurrence.DoesNotExist,
-                AttachmentScope.DoesNotExist,
-            ):
+            except AttachmentError as error:
+                if error.code == "binding_fenced" and self._tombstone(
+                    link, only_if_fenced=True
+                ):
+                    return "rejected"
+                self._park(link)
+                return False
+            except (AttachmentOccurrence.DoesNotExist, AttachmentScope.DoesNotExist):
                 return False
             return True
         return self._tombstone(link)
 
+    def _park(self, link):
+        """Send a still-unbound row to the back of its scope's claim order."""
+        AttachmentOccurrence.objects.filter(
+            pk=link.internal_id, bound_at__isnull=True, deleted_at__isnull=True
+        ).update(bind_checked_at=timezone.now())
+
     @transaction.atomic
-    def _tombstone(self, link):
+    def _tombstone(self, link, *, only_if_fenced=False):
         # Same lock order as retention.expire_occurrences: budgets, scope, row.
         scope = AttachmentScope.objects.get(pk=link.scope_id)
         _lock_budgets(scope)
@@ -200,6 +256,8 @@ class OccurrenceBindingStore:
             .first()
         )
         if row is None:
+            return False
+        if only_if_fenced and not _permanently_fenced(row, scope, timezone.now()):
             return False
         # The audit vocabulary is closed; an unbindable occurrence is retired
         # by the same "retention" deletion as an expired bound one.

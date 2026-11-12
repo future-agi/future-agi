@@ -19,6 +19,7 @@ from tracer.models.attachment import (
     AttachmentAuditEvent,
     AttachmentOccurrence,
     AttachmentOutbox,
+    AttachmentScope,
     AttachmentState,
 )
 from tracer.services.attachments import (
@@ -80,12 +81,14 @@ def ref_for(row, **changes):
     return ref
 
 
-def span_for(row, *, refs=None, deleted=0, trace_id=None, project_id=None):
+def span_for(
+    row, *, refs=None, deleted=0, trace_id=None, project_id=None, start_time=None
+):
     return SimpleNamespace(
         id=row.span_id,
         trace_id=str(trace_id or row.trace_id),
         project_id=str(project_id or row.scope.project_id),
-        start_time=timezone.now() - timedelta(minutes=5),
+        start_time=start_time or timezone.now() - timedelta(minutes=5),
         is_deleted=deleted,
         attrs_string={REFS: json.dumps([ref_for(row)] if refs is None else refs)},
     )
@@ -115,6 +118,17 @@ def occurrence(setup, monkeypatch, **overrides):
     return AttachmentOccurrence.objects.select_related("attachment", "scope").get(
         pk=upload.occurrence_id
     )
+
+
+def occurrence_on(setup, monkeypatch, span_id):
+    """An occurrence whose authenticated parent is another span of TRACE."""
+    current, _ = core.session(setup)
+    association = {
+        "capture_session_id": str(current.client_id),
+        "correlation_nonce": str(current.correlation_nonce),
+        "parent": {"trace_id": core.TRACE, "span_id": span_id},
+    }
+    return occurrence(setup, monkeypatch, current=current, association=association)
 
 
 class LiveSession(LiveAuthority):
@@ -171,14 +185,74 @@ def test_binding_waits_without_any_sdk_retry(setup, monkeypatch):
     scope, _ = setup
     row = occurrence(setup, monkeypatch)
     spans = Spans()
-    # No span yet, then a span that does not reference it yet: both wait.
-    assert control_plane.reconcile_tick(span_reader=spans)["pending"] == 1
-    spans.put(scope.project_id, span_for(row, refs=[]))
+    # No span yet: the row waits, and is stamped to the back of the queue.
     assert control_plane.reconcile_tick(span_reader=spans)["pending"] == 1
     row.refresh_from_db()
     assert row.bound_at is None and row.deleted_at is None
+    assert row.bind_checked_at is not None
     spans.put(scope.project_id, span_for(row))
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+
+
+def _binds_without_a_reference(scope, row, refs):
+    """The authenticated parent + live span + known retention is the proof."""
+    spans = Spans()
+    span = span_for(row, refs=refs)
+    assert str(row.client_id) not in control_plane._references(span)
+    spans.put(scope.project_id, span)
+    counts = control_plane.reconcile_tick(span_reader=spans)
+    assert counts == dict(
+        dict.fromkeys(("bound", "pending", "rejected", "expired", "conflict"), 0),
+        bound=1,
+    )
+    row.refresh_from_db()
+    assert row.bound_at is not None and row.deleted_at is None
+    assert row.source_generation == 0
+    # Still bound after the 24 h pending window: nothing erases it.
+    AttachmentOccurrence.objects.filter(pk=row.pk).update(
+        created_at=timezone.now() - timedelta(hours=25)
+    )
+    control_plane.reconcile_tick(span_reader=spans)
+    row.refresh_from_db()
+    assert row.deleted_at is None
+    assert not AttachmentOutbox.objects.filter(
+        scope=scope, upload__occurrence=row, event="erase"
+    ).exists()
+
+
+def test_recording_segment_binds_with_no_span_reference(setup, monkeypatch):
+    scope, _ = setup
+    scope.record_audio, scope.policy_version = True, scope.policy_version + 1
+    scope.save(update_fields=["record_audio", "policy_version"])
+    upload, _ = ready_upload(
+        setup,
+        monkeypatch,
+        recording_id=str(uuid.uuid4()),
+        segment_index=0,
+        purpose="conversation_recording",
+    )
+    row = AttachmentOccurrence.objects.select_related("attachment", "scope").get(
+        pk=upload.occurrence_id
+    )
+    _binds_without_a_reference(scope, row, refs=[])
+
+
+def test_late_attach_binds_with_no_span_reference(setup, monkeypatch):
+    """The span was exported (ended) before the upload; it never names it."""
+    scope, _ = setup
+    _binds_without_a_reference(scope, occurrence(setup, monkeypatch), refs=[])
+
+
+def test_occurrence_past_the_reference_cap_binds(setup, monkeypatch):
+    """The 65th occurrence: the span carries 64 other references, not this one."""
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    others = [
+        ref_for(row, attachment_id=str(uuid.uuid4()), occurrence_id=str(uuid.uuid4()))
+        for _ in range(64)
+    ]
+    assert len(control_plane._references(span_for(row, refs=others))) == 64
+    _binds_without_a_reference(scope, row, refs=others)
 
 
 @pytest.mark.parametrize(
@@ -257,19 +331,44 @@ def test_fences_and_disabled_scopes_are_not_bound(setup, monkeypatch):
         ("bound", "pending", "rejected", "expired", "conflict"), 0
     )
     # Re-enabled under a newer policy: the upload's policy no longer matches.
+    # No later tick can pass that fence, so the row is retired, not retried.
     scope.enabled, scope.policy_version = True, scope.policy_version + 1
     scope.save(update_fields=["enabled", "policy_version"])
     counts = control_plane.reconcile_tick(span_reader=spans)
+    assert counts["rejected"] == 1 and counts["bound"] == 0
+    row.refresh_from_db()
+    assert row.bound_at is None and row.deleted_at is not None
+    assert AttachmentOutbox.objects.filter(
+        scope=scope, upload__occurrence=row, event="erase"
+    ).exists()
+    assert control_plane.reconcile_tick(span_reader=spans) == dict.fromkeys(
+        ("bound", "pending", "rejected", "expired", "conflict"), 0
+    )
+
+
+def test_transient_bind_fence_parks_and_never_erases(setup, monkeypatch):
+    """A source that starts in the future fails the CAS but is not permanent."""
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    spans.put(
+        scope.project_id,
+        span_for(row, start_time=timezone.now() + timedelta(hours=1)),
+    )
+    counts = control_plane.reconcile_tick(span_reader=spans)
     assert counts["conflict"] == 1 and counts["bound"] == 0
     row.refresh_from_db()
-    assert row.bound_at is None
+    assert row.bound_at is None and row.deleted_at is None
+    assert row.bind_checked_at is not None
+    spans.put(scope.project_id, span_for(row))
+    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
 
 
 def test_claims_walk_past_a_full_batch_of_waiting_rows(setup, monkeypatch):
     scope, _ = setup
-    first = occurrence(setup, monkeypatch)
+    first = occurrence_on(setup, monkeypatch, "1111111111111111")
     second = occurrence(setup, monkeypatch)
-    spans = Spans()
+    spans = Spans()  # first's span never arrives
     spans.put(scope.project_id, span_for(second))
     store = control_plane.OccurrenceBindingStore()
     assert [link.internal_id for link in store.claim_pending(timezone.now(), 1)] == [
@@ -331,7 +430,7 @@ def test_reader_is_dark_when_disabled(setup, settings, django_assert_num_queries
 def test_reader_returns_only_bound_authorized_occurrences(setup, user, monkeypatch):
     scope, _ = setup
     bound = occurrence(setup, monkeypatch)
-    unbound = occurrence(setup, monkeypatch)
+    unbound = occurrence_on(setup, monkeypatch, "1111111111111111")
     spans = Spans()
     spans.put(scope.project_id, span_for(bound, refs=[ref_for(bound)]))
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
@@ -422,8 +521,9 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
     scope, _ = setup
     row = occurrence(setup, monkeypatch)
     spans = Spans()
-    spans.put(scope.project_id, span_for(row, refs=[]))
-    control_plane.reconcile_tick(span_reader=spans)
+    # A reference that disagrees with the upload rejects the occurrence.
+    spans.put(scope.project_id, span_for(row, refs=[ref_for(row, direction="input")]))
+    assert control_plane.reconcile_tick(span_reader=spans)["rejected"] == 1
     authority = LiveSession(
         span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
             span_id
@@ -465,3 +565,80 @@ def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):
         ).count()
         == 0
     )
+
+
+@pytest.fixture
+def other_setup(observe_project, user, setup):
+    """A second enabled scope (another project) in the same workspace."""
+    scope = AttachmentScope.objects.create(
+        project=observe_project,
+        workspace=observe_project.workspace,
+        organization=observe_project.organization,
+        enabled=True,
+        require_media_redaction=False,
+    )
+    writer = core.broker.Writer(
+        "user", user.pk, scope.organization_id, scope.workspace_id
+    )
+    return scope, writer
+
+
+def test_waiting_rows_never_starve_another_scope(setup, other_setup, monkeypatch):
+    """Round-robin claims: an older backlog in one project cannot fill a batch."""
+    scope, _ = setup
+    waiting = [occurrence(setup, monkeypatch) for _ in range(3)]
+    other, _ = other_setup
+    bindable = occurrence(other_setup, monkeypatch)
+    spans = Spans()  # the waiting rows' spans never arrive
+    spans.put(other.project_id, span_for(bindable))
+    monkeypatch.setattr(control_plane, "MAX_BATCH", 2)
+    monkeypatch.setattr(control_plane, "MAX_TICK_BATCHES", 1)
+    counts = control_plane.reconcile_tick(span_reader=spans)
+    assert (counts["bound"], counts["pending"]) == (1, 1)
+    bindable.refresh_from_db()
+    assert bindable.bound_at is not None
+    assert all(
+        AttachmentOccurrence.objects.get(pk=row.pk).bound_at is None for row in waiting
+    )
+
+
+def test_waiting_rows_rotate_within_a_scope(setup, monkeypatch):
+    """A parked row goes to the back, so a newer bindable row is reached."""
+    scope, _ = setup
+    # The waiting rows' spans never arrive.
+    waiting = [
+        occurrence_on(setup, monkeypatch, span_id)
+        for span_id in ("1111111111111111", "2222222222222222")
+    ]
+    bindable = occurrence(setup, monkeypatch)
+    spans = Spans()
+    spans.put(scope.project_id, span_for(bindable))
+    monkeypatch.setattr(control_plane, "MAX_BATCH", 1)
+    monkeypatch.setattr(control_plane, "MAX_TICK_BATCHES", 1)
+    seen = []
+    for _ in range(3):
+        store = control_plane.OccurrenceBindingStore()
+        (link,) = store.claim_pending(timezone.now(), 1)
+        seen.append(link.internal_id)
+        control_plane.reconcile_tick(span_reader=spans)
+    assert seen == [waiting[0].id, waiting[1].id, bindable.id]
+    bindable.refresh_from_db()
+    assert bindable.bound_at is not None
+
+
+def test_one_scope_is_capped_per_tick(setup, other_setup, monkeypatch):
+    scope, _ = setup
+    for _ in range(3):
+        occurrence(setup, monkeypatch)
+    other, _ = other_setup
+    occurrence(other_setup, monkeypatch)
+    monkeypatch.setattr(control_plane, "PER_SCOPE_TICK_CAP", 1)
+    store = control_plane.OccurrenceBindingStore()
+    first = store.claim_pending(timezone.now(), 4)
+    assert sorted(str(link.scope_id) for link in first) == sorted(
+        [str(scope.id), str(other.id)]
+    )
+    # Both scopes reached their cap for this tick; nothing else is claimed.
+    assert store.claim_pending(timezone.now(), 4) == []
+    counts = control_plane.reconcile_tick(span_reader=Spans())
+    assert counts["pending"] == 2

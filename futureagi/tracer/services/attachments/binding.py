@@ -1,12 +1,18 @@
 """Ingestion staging seam plus the bounded reconcile engine for occurrence binding.
 
 Binding proof (``control_plane`` supplies the concrete store and reader):
-- the occurrence's parent was fixed by an authenticated, eligible writer when
-  the upload was initialized (B02 broker), never by OTLP attributes; and
-- the latest live ClickHouse span at exactly that scope/trace/span persists a
-  normalized ``fi.attachment.refs`` entry naming the same attachment and
-  occurrence, with the same direction and modality; and
-- the source's retention is known (the same rule the read path applies).
+- the occurrence's parent is the upload's ``association.parent``, fixed by an
+  authenticated, eligible writer when the upload was initialized (B02 broker),
+  never by OTLP attributes; and
+- the latest live ClickHouse span exists at exactly that project/trace/span; and
+- the source's retention is known (``LiveAuthority.source``, generation 0: the
+  same rule the read path applies).
+
+``fi.attachment.refs`` is a consistency check that can only reject: a persisted
+reference to this occurrence must name the same attachment, direction and
+modality. A missing reference never blocks binding, because recordings,
+imports, late attaches and occurrences past the 64-reference cap are uploaded
+without one.
 
 The capture-session carriers are stripped before persistence on both ingest
 paths, so the nonce is not re-proven at bind time. ``stage_ingested_span`` is
@@ -89,7 +95,8 @@ class PendingLink:
 class ParentState:
     """Latest collapsed ClickHouse facts for one exact parent.
 
-    ``references`` maps occurrence_id to the persisted, validated reference.
+    ``references`` maps occurrence_id to the persisted, validated reference;
+    it can only reject a link, never stand in for the authenticated parent.
     ``source`` is the backend ``SourceState`` that binding stores; it is None
     when retention is unknown, which never binds.
     """
@@ -123,13 +130,16 @@ class StagingStore(Protocol):
 
 class BindingStore(Protocol):
     def claim_pending(self, now: datetime, limit: int) -> list[PendingLink]:
-        """Unbound live occurrences, oldest first, with a hard SQL limit."""
+        """Unbound live occurrences, fair across scopes, with a hard SQL limit."""
         ...
 
     def settle(
         self, link: PendingLink, state: str, source: ParentState | None, now: datetime
-    ) -> bool:
+    ) -> bool | str:
         """Apply one decision atomically; False on any concurrent change.
+
+        True confirms ``state``. A state name reports a different terminal
+        outcome (a fenced bind that was retired instead of bound).
 
         ``bound`` goes through the backend's fenced CAS (scope enabled, policy
         and deletion generation unchanged, identical source on replay) and
@@ -226,11 +236,9 @@ def _decision(link, parent, now):
         return "rejected"
     if not parent.live:
         return "expired"
+    # A reference is optional; when present it must agree with the upload.
     reference = parent.references.get(link.occurrence_id)
-    if reference is None:
-        # The span may be re-exported with its references; expiry bounds this.
-        return "pending"
-    if (
+    if reference is not None and (
         reference["attachment_id"],
         reference["direction"],
         reference["modality"],
@@ -261,8 +269,11 @@ def reconcile_pending(
     for link in links:
         parent = parents.get((link.scope, link.parent))
         state = _decision(link, parent, now)
-        if store.settle(link, state, parent, now):
+        outcome = store.settle(link, state, parent, now)
+        if outcome is True:
             counts[state] += 1
+        elif isinstance(outcome, str) and outcome in counts:
+            counts[outcome] += 1
         else:
             counts["conflict"] += 1
     return counts

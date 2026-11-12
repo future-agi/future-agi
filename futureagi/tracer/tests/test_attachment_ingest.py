@@ -202,11 +202,13 @@ class AttachmentBindingTests(TestCase):
         self.store.stage.assert_not_called()
 
     def test_arrival_permutations_need_no_sdk_retry(self):
-        # Attachment before span, span before its references, span first.
+        # Attachment before span, span without any reference, span first.
+        # A missing reference never blocks: recordings, imports, late attaches
+        # and occurrences past the 64-reference cap have none.
         for name, parents in (
             ("attachment_first", {}),
             (
-                "span_without_refs_yet",
+                "span_without_refs",
                 {(SCOPE, PARENT): replace(self.source, references={})},
             ),
             ("span_first", {(SCOPE, PARENT): self.source}),
@@ -214,8 +216,8 @@ class AttachmentBindingTests(TestCase):
             with self.subTest(order=name):
                 self.reader.latest.return_value = parents
                 counts = reconcile_pending(self.store, self.reader, now=NOW)
-                self.assertEqual(counts["bound"], int(name == "span_first"))
-                self.assertEqual(counts["pending"], int(name != "span_first"))
+                self.assertEqual(counts["bound"], int(name != "attachment_first"))
+                self.assertEqual(counts["pending"], int(name == "attachment_first"))
                 self.reader.latest.return_value = {(SCOPE, PARENT): self.source}
                 self.assertEqual(
                     reconcile_pending(self.store, self.reader, now=NOW)["bound"], 1
@@ -243,6 +245,16 @@ class AttachmentBindingTests(TestCase):
                 self.assertEqual(
                     reconcile_pending(self.store, self.reader, now=NOW)[expected], 1
                 )
+
+    def test_store_may_report_a_different_terminal_outcome(self):
+        # A fenced bind the store retired is counted as what it became.
+        self.store.settle.return_value = "rejected"
+        counts = reconcile_pending(self.store, self.reader, now=NOW)
+        self.assertEqual((counts["bound"], counts["rejected"]), (0, 1))
+        self.store.settle.return_value = "not-a-state"
+        self.assertEqual(
+            reconcile_pending(self.store, self.reader, now=NOW)["conflict"], 1
+        )
 
     def test_tail_dropped_jobs_expire_and_publication_conflicts_fail_closed(self):
         self.reader.latest.return_value = {}
