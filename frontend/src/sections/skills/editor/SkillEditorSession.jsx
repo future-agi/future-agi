@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, IconButton, Stack, Tab, TextField, Typography } from "@mui/material";
 
@@ -21,6 +21,7 @@ import AssistPanel from '../assist/AssistPanel';
 import ContextLinksPanel from '../contexts/ContextLinksPanel';
 import HotfixHeadReview from './HotfixHeadReview';
 import RecoverableDraftChanges from './RecoverableDraftChanges';
+import J1MigrationDraftRecovery from './J1MigrationDraftRecovery';
 import DraftChecksPanel from "./DraftChecksPanel";
 import DraftConflictDialog from "./DraftConflictDialog";
 import PublishDialog from "./PublishDialog";
@@ -36,6 +37,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const isContext = kind === 'agent_context';
   const root = isContext ? 'AGENTS.md' : 'SKILL.md';
   const navigate = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const [panel, setPanel] = useState(params.get('tab') === 'tests' ? 'tests' : 'checks');
   const assistKind = !isContext && ['draft', 'description'].includes(params.get('assist')) ? params.get('assist') : null;
@@ -56,7 +58,10 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const [serverDraft, setServerDraft] = useState(null);
   const legacyDiscard = useDiscardSkillDraft(skill.id);
   const options = useSkillTestingOptions();
-  const session = useDraftSession(skill.id, initialDraft, preparing || discardOpen || Boolean(publishDraft), resourceApi);
+  // The recovery view has no editor/autosave competing with suspension. Its
+  // explicit flush binds the checkpoint to the current saved recovery digest.
+  const migrationRecovery = !isContext && params.get('preserve') === 'migration';
+  const session = useDraftSession(skill.id, initialDraft, migrationRecovery || preparing || discardOpen || Boolean(publishDraft), resourceApi);
   const latestSession = useRef(session);
   const deletionCheckpoint = useRef(null);
   latestSession.current = session;
@@ -160,6 +165,9 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   else if (session.dirty || saving) saveLabel = 'Saving…';
   else if (session.revision === 0) saveLabel = 'Not saved yet';
 
+  if (migrationRecovery) return <J1MigrationDraftRecovery skill={skill} session={session}
+    onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
+
   return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
     <PageHeader title={<Box component="span" sx={{ fontFamily: 'monospace' }}>{skill.name}</Box>}
       description={isContext ? `Content origin ${session.baseVersion == null ? 'unpublished' : `v${session.baseVersion}`} · draft r${session.revision} · ${session.resolvedLock?.links?.length || 0} locked skills` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
@@ -206,7 +214,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
       </Box>
     </Box>
     {isContext && <Stack spacing={2} sx={{ flexShrink: 0 }}>
-      <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} readOnly={locked} />
+      <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} proposedLinks={contextControls.proposedLinks} readOnly={locked} />
       <HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
     </Stack>}
     {assistKind && !publishDraft && <Stack spacing={1.5}><Box><Button size="small" onClick={closeAssist}>Close assistance</Button></Box><AssistPanel skill={skill} draft={session} kind={assistKind} sourceRunId={sourceRunId} isDirty={session.dirty} onSave={session.flush} onApplied={session.reload} /></Stack>}

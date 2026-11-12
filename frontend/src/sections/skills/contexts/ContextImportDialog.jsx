@@ -9,7 +9,7 @@ import { AuthoringError, useAuthoringOperation, useExpired } from "../editor/Hot
 // Hierarchy: source choice, complete inventory, then explicit rights/identity confirmation.
 // Palette/depth/surfaces: shared dialog and neutral fields, warning for unsupported input.
 // Typography/spacing: m3/s1/s3 with compact 12px groups; no extra onboarding layer.
-function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate, onCreated }) {
+function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate, onCreated, proposedLinkCount = 0 }) {
   const [mode, setMode] = useState(onPreview ? 'upload' : 'write');
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -48,6 +48,7 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     <DialogTitle id="context-import-title">Create agent context</DialogTitle>
     <DialogContent><Stack spacing={1.5} sx={{ pt: 1, minWidth: 0 }}>
       <Typography variant="s1">AGENTS.md is standing context. Skills load when needed. Import creates a private draft; production and source applications stay unchanged.</Typography>
+      {proposedLinkCount > 0 && <Alert severity="info">{proposedLinkCount} published skills from your migration will be proposed as links pinned to their exact versions. You review and accept them in the draft.</Alert>}
       <AuthoringError error={operation.error} />
       {uploadError && <Alert severity="error">{uploadError}</Alert>}
       <TextField select size="small" label="Start from" value={mode} disabled={locked} onChange={(event) => { setMode(event.target.value); setRights(false); }}><MenuItem value="upload" disabled={!onPreview || !onImport}>Folder or ZIP</MenuItem><MenuItem value="write">Write or paste AGENTS.md</MenuItem></TextField>
@@ -70,6 +71,6 @@ function ImportContext({ scopeKey, open, onClose, onPreview, onImport, onCreate,
     <DialogActions><Button disabled={operation.pending} onClick={onClose}>Cancel</Button><Button variant="contained" onClick={submit} disabled={!canSubmit || operation.pending || Boolean(operation.result)}>{submitted && operation.uncertain ? "Retry same operation" : mode === "upload" ? "Import as draft" : "Create draft"}</Button></DialogActions>
   </ClosableDialog>;
 }
-ImportContext.propTypes = { scopeKey: PropTypes.string.isRequired, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, onPreview: PropTypes.func, onImport: PropTypes.func, onCreate: PropTypes.func, onCreated: PropTypes.func };
+ImportContext.propTypes = { proposedLinkCount: PropTypes.number, scopeKey: PropTypes.string.isRequired, open: PropTypes.bool.isRequired, onClose: PropTypes.func.isRequired, onPreview: PropTypes.func, onImport: PropTypes.func, onCreate: PropTypes.func, onCreated: PropTypes.func };
 export default function ContextImportDialog(props) { return <ImportContext key={`${props.scopeKey}:${props.open}`} {...props} />; }
 ContextImportDialog.propTypes = ImportContext.propTypes;

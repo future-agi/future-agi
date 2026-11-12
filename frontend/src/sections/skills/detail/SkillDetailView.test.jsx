@@ -22,6 +22,7 @@ vi.mock("src/api/skills", () => ({
   getSkillErrorCode: (error) => error?.code,
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('src/api/skills/j1-migration-export', () => ({ useMigrationExport: () => ({ mutateAsync: vi.fn() }) }));
 vi.mock("src/config-global", () => ({ HOST_API: "https://api.example.test" }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("./FilesTab", () => ({ default: () => <p>Published file viewer</p> }));

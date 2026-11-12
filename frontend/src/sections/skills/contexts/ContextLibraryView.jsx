@@ -25,7 +25,10 @@ ContextAuthoringProvider.propTypes = { scopeKey: PropTypes.string.isRequired, bi
 export const useContextAuthoring = () => useContext(AuthoringContext);
 
 function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, onSkills, onArchived, importActions, state }) {
-  const [importOpen, setImportOpen] = useState(false);
+  // Arriving from a reviewed migration opens creation directly; its published
+  // skills are proposed (not accepted) as pinned links in the new draft.
+  const proposedLinks = importActions?.proposedLinks;
+  const [importOpen, setImportOpen] = useState(Array.isArray(proposedLinks) && proposedLinks.length > 0);
   const scoped = query.scopeKey === scopeKey;
   const data = scoped ? query.data : null;
   const rows = data?.results || [];
@@ -58,7 +61,7 @@ function Library({ scopeKey, query, filters = {}, onFilterChange, onOpen, onSkil
       <TablePagination component="div" count={data.count} page={data.page - 1} rowsPerPage={data.pageSize} rowsPerPageOptions={[]} onPageChange={(_, page) => onFilterChange?.({ ...filters, page: page + 1 })} />
     </>}
     {!importActions && <Alert severity="info">Context authoring is unavailable until its service and scoped client are enabled.</Alert>}
-    {importOpen && importActions && <ContextImportDialog {...importActions} scopeKey={scopeKey} open onClose={() => setImportOpen(false)} onCreated={(result) => { setImportOpen(false); importActions.onCreated?.(result); }} />}
+    {importOpen && importActions && <ContextImportDialog {...importActions} scopeKey={scopeKey} proposedLinkCount={Array.isArray(proposedLinks) ? proposedLinks.length : 0} open onClose={() => setImportOpen(false)} onCreated={(result) => { setImportOpen(false); importActions.onCreated?.(result); }} />}
   </Stack>;
 }
 Library.propTypes = { scopeKey: PropTypes.string.isRequired, query: PropTypes.object.isRequired, filters: PropTypes.object, onFilterChange: PropTypes.func, onOpen: PropTypes.func, onSkills: PropTypes.func, onArchived: PropTypes.func, importActions: PropTypes.object, state: PropTypes.string };

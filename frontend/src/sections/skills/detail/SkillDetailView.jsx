@@ -43,6 +43,7 @@ import TestsTab from '../tests/TestsTab';
 import GitHubSourcePanel from '../sources/GitHubSourcePanel';
 import VersionsTab from "../versions/VersionsTab";
 import FilesTab from "./FilesTab";
+import J1MigrationExport from './J1MigrationExport';
 import UsageTab from "./UsageTab";
 import UseSkillPanel from "./UseSkillPanel";
 import { resolveViewedVersion } from "./detail-state";
@@ -209,7 +210,7 @@ function DetailContent({ skill, preview }) {
               description="Your files are in a draft. Publish a version to browse it here."
             />
           ) : (
-            <Stack spacing={3}><FilesTab skill={skill} /><GitHubSourcePanel skill={skill} /></Stack>
+            <Stack spacing={3}><FilesTab skill={skill} /><J1MigrationExport resourceId={skill.id} number={downloadNumber} /><GitHubSourcePanel skill={skill} /></Stack>
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "versions" && <VersionsTab skill={skill} />}

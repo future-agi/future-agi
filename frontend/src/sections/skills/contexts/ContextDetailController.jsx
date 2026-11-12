@@ -8,6 +8,8 @@ import { paths } from 'src/routes/paths';
 import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
 import ContextUsePanel from './ContextUsePanel';
+import ContextPilotCredentials from './ContextPilotCredentials';
+import ContextMigrationExport from './ContextMigrationExport';
 import ContextCaptureController from './ContextCaptureController';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
@@ -53,7 +55,11 @@ function Detail() {
       sections={{
         versions: <Stack spacing={1}><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
         consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} />,
-        use: <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />,
+        use: <Stack spacing={2}>
+          <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />
+          {query.data?.context && version.data?.descriptor?.links?.length > 0 && <ContextMigrationExport contextName={query.data.context.name} links={version.data.descriptor.links} />}
+          {deliveryState === 'ready' && version.data?.snapshot && <ContextPilotCredentials key={`${scopeKey}:${version.data.snapshot.versionId}`} contextId={contextId} snapshot={version.data.snapshot} canIssue={query.data?.releaseState.permissions.canIssueCredentials === true} />}
+        </Stack>,
       }} />
     <ContextCaptureController contextId={contextId} canCapture={!query.isError && query.data?.releaseState.permissions.canPublish === true} />
   </Stack>;

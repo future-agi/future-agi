@@ -139,7 +139,7 @@ const HUMAN_ACTIONS = {
 // drivers stay absent; the dispatcher records not_measured rather than running
 // prerequisite browser flows as if they were the whole job.
 const integrations = {
-  J1: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-010', flow: 'j1-retained-subset.spec.ts' },
+  J1: { status: 'incomplete', module: './drivers/j1.mjs', flow_id: 'SKILLS-E2E-010', flow: 'j1-retained-subset.spec.ts' },
   J2: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-020', flow: 'j2-historical-draft.spec.ts' },
   J3: { status: 'missing', module: null, flow_id: 'SKILLS-E2E-030', flow: 'j3-accepted-dependency.spec.ts' },
   J4: { status: 'incomplete', module: './drivers/j4.mjs', flow_id: 'SKILLS-E2E-040', flow: 'j4-reviewer-receipt.spec.ts' },

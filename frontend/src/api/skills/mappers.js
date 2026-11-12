@@ -36,7 +36,7 @@ export const mapPage = (value, mapper) => ({
   pageSize: value.page_size, totalPages: value.total_pages,
   ...(value.stats ? { stats: { total: value.stats.total, inProduction: value.stats.in_production, fetches7d: value.stats.fetches_7d, myDrafts: value.stats.my_drafts } } : {}),
 });
-export const mapDraft = (value) => value ? { baseVersion: value.base_version, files: value.files, note: value.note, revision: value.revision, updatedAt: value.updated_at, source: value.source } : null;
+export const mapDraft = (value) => value ? { baseVersion: value.base_version, files: value.files, note: value.note, revision: value.revision, updatedAt: value.updated_at, source: value.source, recoveryDigest: value.recovery_digest } : null;
 export const mapTemplate = (value) => ({ id: value.id, name: value.name, title: value.title, description: value.description, tags: value.tags || [], files: (value.files || []).map(mapFile) });
 export const mapCompare = (value) => ({
   from: value.from, to: value.to, summary: value.summary,

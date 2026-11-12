@@ -1,35 +1,52 @@
-import { useCallback, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { paths } from 'src/routes/paths';
-import { useMigrationDecision, useMigrationPreview } from 'src/api/skills/migration';
+import { useMigrationDecision, useMigrationPreview, useMigrationPublish, useMigrationPlanReload } from 'src/api/skills/migration';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import ContentSkeleton from 'src/components/content-skeleton';
 import MigrationPlanPanel from './MigrationPlanPanel';
+import MigrationBatchReview from './MigrationBatchReview';
+import { retainPlan } from './migration-batch';
+import { packetSources } from './migration-packet';
+
 
 // Intent: trial a private library as retained drafts, never move production labels.
 // Hierarchy: bounded source/identity input, exact review, explicit publication handoff.
-export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
+export default function RetainedMigrationPanel({ onBusyChange, onClose, initialPlanIds }) {
   const navigate = useNavigate();
   const formatId = useId();
   const { identity } = useSkillV11Scope();
   const preview = useMigrationPreview();
   const decision = useMigrationDecision();
+  const publish = useMigrationPublish();
+  const reload = useMigrationPlanReload();
   const folder = useRef(null);
   const upload = useRef(null);
+  const packetInput = useRef(null);
+  const [proposal, setProposal] = useState(null);
   const [kind, setKind] = useState('langfuse');
   const [files, setFiles] = useState([]);
   const [identities, setIdentities] = useState('');
-  const [plan, setPlan] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const plan = plans.at(-1) || null;
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
   const [receipts, setReceipts] = useState([]);
-  const busy = locked || preview.isPending;
-  const selectFiles = (next) => { setFiles(Array.from(next)); setPlan(null); setError(''); setReceipts([]); };
+  const busy = locked || preview.isPending || reload.isPending;
+  const reloaded = useRef(false);
+  // Reload retained plans after draft preservation: same immutable plan and
+  // fingerprint, with live destination and personal-draft state re-read.
+  useEffect(() => {
+    if (reloaded.current || !initialPlanIds?.length) return;
+    reloaded.current = true;
+    reload.mutateAsync({ planIds: initialPlanIds }).then((loaded) => setPlans(loaded.reduce(retainPlan, [])))
+      .catch((failure) => setError(failure.message || 'Could not reload the retained migration. Preview the source again.'));
+  });
+  const selectFiles = (next) => { setFiles(Array.from(next)); setError(''); };
   const prepare = async () => {
     setError('');
-    setPlan(null);
     onBusyChange(true);
     try {
       let input;
@@ -42,9 +59,26 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
         if (identities.trim()) form.append('source_identities', JSON.stringify(JSON.parse(identities)));
         input = { form };
       }
-      setPlan(await preview.mutateAsync(input));
+      const next = await preview.mutateAsync(input);
+      setPlans((current) => retainPlan(current, next));
       setReceipts([]);
     } catch (failure) { setError(failure.message || 'Could not retain this source. No content was imported.'); }
+    finally { onBusyChange(false); }
+  };
+  // One packet from the local inventory replaces choosing each source again
+  // and copying identity JSON by hand. Every source is previewed into the same
+  // reviewed set; the server re-derives every identity and digest.
+  const previewPacket = async (file) => {
+    setError('');
+    onBusyChange(true);
+    try {
+      const { sources, proposal: next } = await packetSources(file);
+      let retained = [];
+      for (const source of sources) retained = retainPlan(retained, await preview.mutateAsync(source));
+      setPlans((current) => retained.reduce(retainPlan, current));
+      setProposal(next);
+      setReceipts([]);
+    } catch (failure) { setError(failure.message || 'Could not retain this packet. No content was imported.'); }
     finally { onBusyChange(false); }
   };
   const openDraft = (resourceId) => { onClose(); navigate(paths.dashboard.skills.edit(resourceId)); };
@@ -55,23 +89,36 @@ export default function RetainedMigrationPanel({ onBusyChange, onClose }) {
       <MenuItem value="langfuse">Versioned Langfuse exchange JSON</MenuItem><MenuItem value="folder">Private folder or ZIP</MenuItem>
     </TextField>
     <Alert severity="info">Langfuse intake supports the explicit langfuse-skills-v1 exchange schema, not arbitrary native exports or remote URLs. Local-folder identities must come from the local inventory; without them a later import cannot be matched by immutable source identity.</Alert>
-    <Stack direction="row" spacing={1}>
+    <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+      <Button variant="outlined" disabled={busy} onClick={() => packetInput.current?.click()}>Choose inventory packet</Button>
       <Button variant="outlined" disabled={busy} onClick={() => upload.current?.click()}>Choose source files</Button>
-      {kind === 'folder' && <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose private folder</Button>}
+      <Button variant="outlined" disabled={busy} onClick={() => folder.current?.click()}>Choose private folder</Button>
     </Stack>
+    <Typography variant="s3">An inventory packet (skills-inventory --packet) holds every inventoried source, its identities and the proposed context. Choosing it previews them all.</Typography>
+    <input ref={packetInput} type="file" hidden accept="application/json,.json" aria-label="Inventory migration packet" disabled={busy} onChange={(event) => { const [file] = event.target.files; event.target.value = ''; if (file) previewPacket(file); }} />
     <input ref={upload} type="file" hidden multiple={kind === 'folder'} aria-label="Retained source files" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
-    <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { selectFiles(event.target.files); event.target.value = ''; }} />
+    {/* Choosing a folder is itself the format choice; no separate selection is needed. */}
+    <input ref={folder} type="file" hidden multiple webkitdirectory="" aria-label="Retained private folder" disabled={busy} onChange={(event) => { setKind('folder'); selectFiles(event.target.files); event.target.value = ''; }} />
     <Typography variant="s3">{files.length} source files selected</Typography>
-    {kind === 'folder' && <TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => { setIdentities(event.target.value); setPlan(null); }} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." />}
+    {kind === 'folder' && <TextField label="Immutable source identities JSON" multiline minRows={2} size="small" value={identities} disabled={busy} onChange={(event) => setIdentities(event.target.value)} helperText="Inventory package key → origin, project, resource, revision and digest. Names are never used as migration identities." />}
     <Button variant={plan ? 'outlined' : 'contained'} disabled={busy || !files.length} onClick={prepare}>Preview retained migration</Button>
     {error && <Alert severity="error">{error}</Alert>}
+    {reload.isPending && <ContentSkeleton variant="rows" rows={3} label="Reloading the retained migration review" />}
     {preview.isPending && <ContentSkeleton variant="rows" rows={3} label="Retaining source and loading exact comparisons" />}
+    {plans.length > 0 && <MigrationBatchReview plans={plans} contextProposal={proposal}
+      onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
+      onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
+      onPublish={(input) => publish.mutateAsync(input)}
+      onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`, { state: { reopenMigration: { planIds: plans.map((entry) => entry.id) } } }); }}
+      onBusyChange={setOperationBusy}
+      onCreateContext={(links) => { onClose(); navigate(paths.dashboard.skills.contexts, { state: { proposedLinks: links } }); }} />}
+    {plan && <Typography variant="m3" component="h2">Decide one item at a time</Typography>}
     {plan && <MigrationPlanPanel scopeKey={identity} plan={plan}
       onAccept={(input, options) => decision.mutateAsync({ ...input, ...options })}
       onKeep={(input, options) => decision.mutateAsync({ ...input, ...options, decision: 'keep' })}
-      onPreserveDraft={(item) => openDraft(item.destinationId)} onBusyChange={setOperationBusy}
+      onPreserveDraft={(item) => { onClose(); navigate(`${paths.dashboard.skills.edit(item.destinationId)}?preserve=migration`); }} onBusyChange={setOperationBusy}
       onAccepted={(receipt) => setReceipts((previous) => [...previous, receipt])} />}
     {receipts.map((receipt) => <Alert severity="success" key={receipt.receiptId} action={<Button disabled={busy} onClick={() => openDraft(receipt.resourceId)}>Open destination</Button>}>Decision {receipt.decision} retained. {receipt.published ? 'Published' : 'Not published; review and publish deliberately in the editor.'}</Alert>)}
   </Stack>;
 }
-RetainedMigrationPanel.propTypes = { onBusyChange: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired };
+RetainedMigrationPanel.propTypes = { onBusyChange: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired, initialPlanIds: PropTypes.arrayOf(PropTypes.string) };

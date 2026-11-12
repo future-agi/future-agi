@@ -2,6 +2,7 @@ import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { idempotencyHeaders, skillV11Result, useSkillV11Mutation } from './testing';
 import { retainedPlanAcceptanceInput, retainedPlanKeepInput } from './r3-intake';
+import { isDefiniteRejection } from './operation-errors';
 
 const reviewPath = (plan_id) => apiPath('/model-hub/skills/intake/{plan_id}/review/', { plan_id });
 const changes = (comparison) => comparison?.files.map((file) => ({
@@ -40,21 +41,31 @@ export function migrationDecisionInput(value) {
   return body;
 }
 
+async function withReviews(plan, config) {
+  const items = await Promise.all(plan.items.map(async (item) => {
+    if (item.blocked) return item;
+    const review = skillV11Result(await axios.post(reviewPath(plan.id), {
+      item_key: item.key, expected_fingerprint: plan.fingerprint,
+    }, config));
+    return { ...item, ...mapMigrationReview(review) };
+  }));
+  return { ...plan, items };
+}
+
 export function useMigrationPreview() {
   return useSkillV11Mutation({ send: async ({ form, exportData }, config) => {
     const wire = skillV11Result(await axios.post(exportData
       ? apiPath('/model-hub/skills/intake/langfuse/preview/') : apiPath('/model-hub/skills/intake/preview/'),
     exportData || form, config));
-    const plan = mapMigrationPlan(wire);
-    const items = await Promise.all(plan.items.map(async (item) => {
-      if (item.blocked) return item;
-      const review = skillV11Result(await axios.post(reviewPath(plan.id), {
-        item_key: item.key, expected_fingerprint: plan.fingerprint,
-      }, config));
-      return { ...item, ...mapMigrationReview(review) };
-    }));
-    return { ...plan, items };
+    return withReviews(mapMigrationPlan(wire), config);
   } });
+}
+
+// Reload retained plans by identity (for example after preserving a draft).
+// The retained bytes and fingerprint are unchanged; comparisons are re-read live.
+export function useMigrationPlanReload() {
+  return useSkillV11Mutation({ send: async ({ planIds }, config) => Promise.all(planIds.map(async (plan_id) =>
+    withReviews(mapMigrationPlan(skillV11Result(await axios.get(apiPath('/model-hub/skills/intake/{plan_id}/', { plan_id }), config))), config))) });
 }
 
 export function useMigrationDecision() {
@@ -63,5 +74,26 @@ export function useMigrationDecision() {
       migrationDecisionInput(input), { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } }));
     return { resourceId: result.resource_id, decision: result.decision, published: result.published,
       draftRevision: result.draft_revision, digest: result.digest, receiptId: `${input.planId}/${input.itemKey}` };
+  }, invalidate: () => [['migration']], invalidateLegacy: () => [['skills', 'list']] });
+}
+
+// Batch migration publication: one reviewed decision publishes each imported
+// draft as an unlabelled version bound to the exact imported revision and digest.
+// Publication has no idempotency key, so an unknown outcome is settled by reading
+// the published versions for that exact digest before one exact resend.
+const publishedWithDigest = async (resourceId, digest, config) => {
+  const page = skillV11Result(await axios.get(apiPath('/model-hub/skills/{skill_id}/versions/', { skill_id: resourceId }), config));
+  return (page.results || []).find((version) => version.digest === digest) || null;
+};
+export function useMigrationPublish() {
+  return useSkillV11Mutation({ send: async ({ resourceId, revision, digest, acknowledgeWarnings = false }, config) => {
+    const body = { labels: [], acknowledge_warnings: acknowledgeWarnings === true, revision, expected_digest: digest };
+    const post = async () => skillV11Result(await axios.post(apiPath('/model-hub/skills/{skill_id}/draft/publish/', { skill_id: resourceId }), body, config)).version;
+    let version;
+    try { version = await post(); } catch (error) {
+      if (isDefiniteRejection(error)) throw error;
+      version = await publishedWithDigest(resourceId, digest, config) || await post();
+    }
+    return { resourceId, version: version.number, digest: version.digest };
   }, invalidate: () => [['migration']], invalidateLegacy: () => [['skills', 'list']] });
 }

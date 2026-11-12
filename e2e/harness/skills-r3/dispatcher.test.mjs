@@ -15,16 +15,26 @@ test('all six jobs register existing prerequisite flows without claiming complet
   assert.deepEqual(manifest.job_integrations.map(({ job }) => job), JOBS.map(({ id }) => id));
   for (const job of JOBS) {
     const entry = manifest.job_integrations.find(({ job: id }) => job.id === id);
-    assert.deepEqual(entry, { job: job.id, driver_status: job.integration.status,
+    // The sealed qualification contract is the retained prerequisite snapshot.
+    // J1 now has an executable, still-incomplete driver; do not rewrite that
+    // historical snapshot or treat registering a module as qualification.
+    const current = job.id === 'J1' ? {
+      ...entry, driver_status: 'incomplete', driver_module: './drivers/j1.mjs',
+    } : entry;
+    if (job.id === 'J1') assert.deepEqual(entry, {
+      job: 'J1', driver_status: 'missing', driver_module: null,
+      flow_id: 'SKILLS-E2E-010', flow: 'j1-retained-subset.spec.ts', complete_job_qualified: false,
+    });
+    assert.deepEqual(current, { job: job.id, driver_status: job.integration.status,
       driver_module: job.integration.module, flow_id: job.integration.flow_id,
       flow: job.integration.flow, complete_job_qualified: false });
     assert.equal(job.integration.complete_job_qualified, false);
     const flow = await readFile(new URL(`../../flows/skills/${entry.flow}`, import.meta.url), 'utf8');
     assert.ok(flow.includes(entry.flow_id));
-    if (entry.driver_module) {
-      const module = await import(new URL(entry.driver_module, benchmarkRoot).href);
+    if (current.driver_module) {
+      const module = await import(new URL(current.driver_module, benchmarkRoot).href);
       assert.equal(typeof module.createDriver, 'function');
-      assert.equal(entry.driver_status, 'incomplete');
+      assert.equal(current.driver_status, 'incomplete');
     } else {
       assert.equal(entry.driver_status, 'missing');
       // No placeholders are silently presented as complete drivers.
@@ -33,7 +43,23 @@ test('all six jobs register existing prerequisite flows without claiming complet
   }
 });
 
-for (const jobId of ['J1', 'J2', 'J3', 'J6']) {
+test('J1 registration fails closed without private cloud configuration in both cohorts', async () => {
+  const previous = process.env.J1_DRIVER_INPUT;
+  delete process.env.J1_DRIVER_INPUT;
+  try {
+    for (const cohort of ['cold', 'configured']) {
+      // An untrusted registration cannot replace the repository-owned module.
+      const registration = { job: 'J1', cohort, driver_module: '/untrusted/ignored.mjs' };
+      await assert.rejects(createRegisteredDriver({ jobId: 'J1', runId: 'unconfigured', registration }),
+        /Private cloud-local J1 input is required/);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.J1_DRIVER_INPUT;
+    else process.env.J1_DRIVER_INPUT = previous;
+  }
+});
+
+for (const jobId of ['J2', 'J3', 'J6']) {
   test(`${jobId} dispatcher records unavailable cold/configured runs with null counts and nonzero exit`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'skills-dispatch-'));
     try {
