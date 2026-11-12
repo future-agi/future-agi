@@ -122,7 +122,7 @@ def drain_outbox(*, storage=None, limits=None):
                 _push_back(pk, RETRY_SECONDS)
                 continue
             except Exception:  # noqa: BLE001 - per-row isolation; one row never stalls the drain
-                logger.exception("attachment_outbox_row_failed", event=event)
+                logger.exception("attachment_outbox_row_failed", kind=event)
                 counts[f"{event}_error"] += 1
                 _push_back(pk, RETRY_SECONDS)
                 continue
