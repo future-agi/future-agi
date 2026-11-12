@@ -36,7 +36,6 @@ from agentic_eval.core_evals.run_prompt.litellm_models import (
     MissingProviderKeyError,
     missing_provider_key_message,
 )
-from model_hub.utils.eval_input_validation import EvalConfigError
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -131,6 +130,7 @@ from model_hub.serializers.eval_runner import (
     UpdateEvalTemplateSerializer,
 )
 from model_hub.utils.api_log_config import parse_api_log_config
+from model_hub.utils.eval_input_validation import EvalConfigError
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )

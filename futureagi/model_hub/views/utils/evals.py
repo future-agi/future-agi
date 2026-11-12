@@ -11,14 +11,14 @@ from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import MissingProviderKeyError
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
-from model_hub.utils.eval_input_validation import (
-    EvalConfigError,
-    validate_eval_configuration,
-)
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_input_validation import (
+    EvalConfigError,
+    validate_eval_configuration,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
@@ -618,7 +618,9 @@ def run_eval_func(
             pass
 
         if isinstance(e, (EvalConfigError, MissingProviderKeyError)):
-            logger.warning("evaluation_configuration_invalid", error_type=type(e).__name__)
+            logger.warning(
+                "evaluation_configuration_invalid", error_type=type(e).__name__
+            )
         else:
             logger.exception(f"Error running evaluation: {str(e)}")
         raise e

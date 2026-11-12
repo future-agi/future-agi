@@ -33,7 +33,7 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
 # (available_models always available)
-from agentic_eval.core_evals.run_prompt.litellm_models import (
+from agentic_eval.core_evals.run_prompt.litellm_models import (  # noqa: E402
     LiteLLMModelManager,
     MissingProviderKeyError,
     UnavailableModelError,

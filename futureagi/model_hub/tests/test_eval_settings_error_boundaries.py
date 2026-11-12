@@ -357,10 +357,10 @@ def test_eval_runs_show_exception_text_only_for_safe_setup_errors():
             run_evals.add(view)
             for handler in node.handlers:
                 if handler.name and _responds_with_exception(handler):
-                    assert (
-                        isinstance(handler.type, ast.Name)
-                        and handler.type.id in {"CodeEvalSetupError", "EvalConfigError"}
-                    ), f"{view}.{method.name} line {handler.lineno}"
+                    assert isinstance(handler.type, ast.Name) and handler.type.id in {
+                        "CodeEvalSetupError",
+                        "EvalConfigError",
+                    }, f"{view}.{method.name} line {handler.lineno}"
     assert run_evals == {
         "TraceEvalView",
         "EvalPlayGroundAPIView",
