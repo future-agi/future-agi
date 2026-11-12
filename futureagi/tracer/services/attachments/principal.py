@@ -81,7 +81,7 @@ def identity(request):
         try:
             user, token, auth_scope = decode_token(token)
             session_id = UUID(str(decrypt_message(token)["id"]))
-        except Exception:
+        except Exception:  # noqa: BLE001 - token decoding boundary; fails closed as 401
             # decode_token raises several exception types for bad, expired,
             # revoked and SAML-invalid tokens; none may leak a detail here.
             raise AttachmentError("unauthenticated", 401) from None

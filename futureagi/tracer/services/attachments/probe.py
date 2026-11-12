@@ -1027,7 +1027,7 @@ def probe(path):
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(probe(sys.argv[1]), separators=(",", ":")))
-    except Exception:
+        sys.stdout.write(json.dumps(probe(sys.argv[1]), separators=(",", ":")) + "\n")
+    except Exception:  # noqa: BLE001 - sandbox entrypoint; any failure is a rejection
         # Do not include filenames, parser details or input fragments.
         sys.exit(REJECTED_EXIT)

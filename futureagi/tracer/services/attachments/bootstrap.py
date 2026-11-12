@@ -236,7 +236,7 @@ def resolve_scope(writer, *, project_name, project_type):
                     str(creator),
                     workspace_id=str(writer.workspace_id),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - project resolution boundary; fails closed as 404
                 raise AttachmentError("scope_unresolved", 404) from None
             if project is None or project.deleted:
                 raise AttachmentError("scope_unresolved", 404)
