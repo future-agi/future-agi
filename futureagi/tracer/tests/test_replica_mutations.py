@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
+from rest_framework import serializers
 
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
@@ -495,6 +496,31 @@ def test_mutations_preserve_tenant_denial(
         .exists()
     )
     assert not SpanNotes.objects.using("default").filter(span_id=span.pk).exists()
+
+
+def test_c39_span_under_soft_deleted_trace_validates_as_before(
+    project, observe_project
+):
+    # Like ``instance.trace``, the primary read of the parent finds a
+    # soft-deleted trace: the update validates instead of raising DoesNotExist.
+    parent = Trace.objects.create(project=project, name="soft-deleted parent")
+    span = ObservationSpan.objects.create(
+        id="span_" + uuid.uuid4().hex,
+        project=project,
+        trace=parent,
+        name="live span",
+        observation_type="llm",
+        start_time=timezone.now(),
+        end_time=timezone.now(),
+    )
+    Trace.all_objects.filter(pk=parent.pk).update(deleted=True)
+    span = ObservationSpan.objects.get(pk=span.pk)
+
+    serializer = ObservationSpanSerializer(instance=span)
+    assert serializer.validate({"project": project}) == {"project": project}
+    with pytest.raises(serializers.ValidationError) as denied:
+        serializer.validate({"project": observe_project})
+    assert "trace" in denied.value.detail
 
 
 def test_serializer_creation_without_parent_is_validation_error_not_exception(project):

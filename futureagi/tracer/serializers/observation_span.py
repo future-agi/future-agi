@@ -314,8 +314,14 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
         project = attrs.get("project") or getattr(instance, "project", None)
         trace = attrs.get("trace")
         if trace is None and instance is not None and instance.trace_id:
-            # The relation may have changed since the replica's last applied write.
-            trace = Trace.objects.using("default").get(pk=instance.trace_id)
+            # The relation may have changed since the replica's last applied
+            # write. The base manager, like ``instance.trace``, also finds a
+            # soft-deleted parent, so that span still validates as before.
+            trace = (
+                Trace._base_manager.using("default")
+                .filter(pk=instance.trace_id)
+                .first()
+            )
         project_version = attrs.get("project_version") or getattr(
             instance, "project_version", None
         )
