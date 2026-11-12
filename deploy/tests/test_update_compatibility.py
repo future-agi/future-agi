@@ -328,6 +328,20 @@ class ReleaseProofTests(unittest.TestCase):
                                                     ("all",), ("full",), ("workers", "peerdb", "observability")])):
             path = ROOT / ("docker-compose.yml" if mode == "standalone" else "docker-compose.distributed.yml")
             services = ComposeYaml(path.read_text()).parse()["services"]
+            if mode == "distributed":
+                sql_worker = merged(services["worker-sql-workbench"])
+                queue_worker = merged(services["worker-default"])
+                self.assertEqual(sql_worker["profiles"], [])
+                self.assertEqual(sql_worker["image"], "futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}")
+                self.assertEqual(sql_worker["image"], queue_worker["image"])
+                self.assertEqual(sql_worker["depends_on"], queue_worker["depends_on"])
+                self.assertEqual(sql_worker["depends_on"]["clickhouse-cdc-bootstrap"],
+                                 {"condition": "service_completed_successfully"})
+                environment = merged(sql_worker["environment"])
+                for key, value in {"SERVICE_TYPE": "temporal-worker", "TEMPORAL_TASK_QUEUE": "sql_workbench",
+                                   "NO_STARTUP_DB_MUTATIONS": "true", "CH25_DROP_LEGACY_CDC_CHAIN": "false",
+                                   "CH25_TRACE_DUAL_WRITE": "false", "CH_DUAL_WRITE": "false"}.items():
+                    self.assertEqual(environment[key], value, key)
             for profiles in combinations:
                 products, dependencies = {}, set()
                 for name, declaration in services.items():
@@ -345,6 +359,33 @@ class ReleaseProofTests(unittest.TestCase):
                 with self.subTest(mode=mode, profiles=profiles):
                     self.assertEqual(dict(layout.products), products)
                     self.assertEqual(set(layout.dependencies), dependencies)
+
+    def test_sql_worker_is_always_on_and_runtime_inventory_remains_closed(self):
+        from itertools import combinations
+        from deploy.update.compatibility import _images
+
+        components = valid_manifest()["components"]
+        supported = ("workers", "peerdb", "observability", "all", "full")
+        for size in range(len(supported) + 1):
+            for profiles in combinations(supported, size):
+                with self.subTest(profiles=profiles):
+                    layout = topology_profile("distributed", profiles)
+                    self.assertEqual(dict(layout.products)["worker-sql-workbench"], "backend")
+                    expected = {service: components[component] for service, component in layout.products}
+                    observed = runtime_images(components, layout)
+                    self.assertEqual(observed["worker-sql-workbench"], observed["backend"])
+                    _images(observed, expected)
+                    for mutation in ("missing", "unknown", "wrong_component"):
+                        damaged = dict(observed)
+                        if mutation == "missing":
+                            del damaged["worker-sql-workbench"]
+                        elif mutation == "unknown":
+                            damaged["worker-unreviewed"] = observed["backend"]
+                        else:
+                            damaged["worker-sql-workbench"] = observed["frontend"]
+                        with self.subTest(mutation=mutation), self.assertRaises(CompatibilityError):
+                            _images(damaged, expected)
+        self.assertNotIn("worker-sql-workbench", dict(topology_profile("standalone", ()).products))
 
     def test_persistence_mapping_is_explicit_not_all_services_are_backup_domains(self):
         standalone = topology_profile("standalone", ())
