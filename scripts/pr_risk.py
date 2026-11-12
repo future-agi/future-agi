@@ -34,6 +34,9 @@ ESCALATION_MARKER = "<!-- pr-autopilot:escalation -->"
 APPROVAL_MARKER = "<!-- pr-autopilot:approval -->"
 MERGE_BLOCKED_MARKER = "<!-- pr-autopilot:merge-blocked -->"
 APPROVER_UNAVAILABLE_MARKER = "<!-- pr-autopilot:approver-unavailable -->"
+# The record that a merge's follow-ups (dispatches, label) were started. A
+# sweep recovers a bot merge without it (recover_merges).
+MERGED_MARKER = "<!-- pr-autopilot:merged -->"
 # Asks a person to dismiss an approval the autopilot could not withdraw. Not a
 # parking note: the PR's new head is judged as usual.
 NOT_WITHDRAWN_MARKER = "<!-- pr-autopilot:approval-not-withdrawn -->"
@@ -1339,6 +1342,109 @@ PARKED_SWEEPS = 4
 PARKING_NOTES = (ESCALATION_MARKER, MERGE_BLOCKED_MARKER, APPROVER_UNAVAILABLE_MARKER)
 
 
+# Closed PRs into dev, most recently updated first, that one sweep checks for
+# a merge without its follow-ups. One page: on 12 Nov 2026 it covered nine
+# days, so a merge stays in view for days if recovery keeps failing.
+RECOVERY_LIST = "pulls?state=closed&base=dev&sort=updated&direction=desc&per_page=100"
+# Longer than the approve-and-merge job's 10-minute limit, so recovery never
+# races the run that merged and is still dispatching.
+RECOVERY_AFTER = dt.timedelta(minutes=15)
+
+
+def merged_at(row):
+    try:
+        return dt.datetime.strptime(row.get("merged_at") or "", "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=dt.timezone.utc
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def unfinished_merges(api, policy, now):
+    """Merged PRs labelled approved but not merged by the autopilot, merged
+    long enough ago that the merging run has ended. Only these are read."""
+    rows = api.request("GET", RECOVERY_LIST)
+    if not isinstance(rows, list):
+        raise PolicyError("the closed PR listing is unavailable")
+    labels = policy["labels"]
+    found = []
+    for row in rows:
+        names = {label.get("name") for label in row.get("labels") or []}
+        when = merged_at(row)
+        if (
+            when is not None
+            and now - when >= RECOVERY_AFTER
+            and labels["approved"] in names
+            and labels["merged"] not in names
+            and type(row.get("number")) is int
+        ):
+            found.append(row["number"])
+    return found
+
+
+def recover_merge(api, policy, settings, number):
+    """Start the follow-ups of an autopilot merge whose run ended before them
+    (a lost merge answer, a timeout, a lost runner). Returns the follow-ups
+    that did not start, or None when there is nothing to recover.
+
+    The autopilot's merge: merged by the workflow token, on a head the bot's
+    approval audit names. A person's merge started the push workflows itself.
+    The record comes first, so a failure after it never dispatches twice."""
+    pr = get_pr(api, number)
+    if pr.get("merged") is not True or (pr.get("merged_by") or {}).get("login") != ACTIONS_BOT:
+        return None
+    head, merge_sha = pr["head"]["sha"], pr.get("merge_commit_sha")
+    comments = api.pages(f"issues/{number}/comments")
+    bodies = [c.get("body") or "" for c in comments if bot_comment(c)]
+    if any(body.startswith(MERGED_MARKER) for body in bodies):
+        # The merging run started its follow-ups; its comment names any it missed.
+        return None
+    if not any(body.startswith(APPROVAL_MARKER) and f"`{head}`" in body for body in bodies):
+        return None
+    if not isinstance(merge_sha, str) or not SHA.fullmatch(merge_sha):
+        raise PolicyError("the merge commit is unknown")
+    plan = post_merge_plan(policy, api.pages(f"pulls/{number}/files"), settings)
+    names = ", ".join(f"`{safe_text(entry['workflow'])}`" for entry in plan) or "none"
+    comment(
+        api,
+        number,
+        f"{MERGED_MARKER}\nAutopilot merged head `{head}` (merge SHA `{merge_sha}`), but the run "
+        "that merged it ended before its follow-ups. A later sweep started them: post-merge "
+        f"dispatches on dev: {names}. They test the current dev tip, which may include later merges.",
+    )
+    missed = dispatch_plan(api, plan)
+    try:
+        add_label(api, number, policy["labels"]["merged"])
+    except PolicyError:
+        missed.append("merged label")
+    if missed:
+        try:
+            comment(api, number, f"{MERGED_MARKER}\nThe sweep's post-merge follow-ups for head `{head}` did not all start.{not_started(missed)}")
+        except PolicyError:
+            missed.append("note naming them")
+    return missed
+
+
+def recover_merges(api, policy, settings):
+    """Recover every unfinished autopilot merge in view. Returns problems."""
+    try:
+        numbers = unfinished_merges(api, policy, now_utc())
+    except PolicyError:
+        return ["the closed PR listing for merge recovery could not be read"]
+    problems = []
+    for number in numbers:
+        try:
+            missed = recover_merge(api, policy, settings, number)
+        except PolicyError:
+            problems.append(f"merge recovery of PR {number} failed")
+            continue
+        if missed is not None:
+            summary(f"Recovered the post-merge follow-ups of PR #{number}.")
+        if missed:
+            problems.append(f"PR {number} merged, but recovered follow-ups did not start: " + ", ".join(missed))
+    return problems
+
+
 def rotation(items, limit, slot):
     """At most `limit` items, from an offset that moves each sweep, so PRs whose
     runs keep failing cannot hold every slot."""
@@ -1444,6 +1550,9 @@ def sweep(api, policy, settings):
             except PolicyError:
                 summary("The autopilot labels could not be checked; each run creates its own.")
         send(classify)
+    # Last: a merge without its follow-ups is not urgent, and dispatching
+    # its workflows would only add to a throttle.
+    recovered = [] if throttled else recover_merges(api, policy, settings)
     summary(
         f"Scheduled dev PR sweep dispatched {sent} run(s). Trusted LOW PRs: {len(act)}, "
         f"and {waiting} waiting on a person or the owner (dispatched about hourly). "
@@ -1457,6 +1566,7 @@ def sweep(api, policy, settings):
         problems.append("GitHub throttled the dispatches; the next sweep continues")
     if unread:
         problems.append("the tier audit of PR(s) " + ", ".join(unread) + " could not be read")
+    problems += recovered
     if problems:
         raise PolicyError("; ".join(problems))
 
@@ -1984,6 +2094,7 @@ def merge(api, policy, settings, context, approver):
     except PolicyError:
         summary("The approver note could not be marked as no longer applying.")
     summary(audit)
+    merge_sent = False
     try:
         # Re-read AFTER approval. GitHub can take a moment to update protection; a
         # blocked/unknown state waits for the next scheduled sweep, never bypasses it.
@@ -2011,15 +2122,25 @@ def merge(api, policy, settings, context, approver):
         if current_base(api, pr) != context["base"]:
             raise PolicyError("head or dev base changed; fresh evaluation is required")
         # The merge is refused (409) if the branch moved, even while the PR
-        # object still shows the old head.
+        # object still shows the old head. Never sent twice: if the answer is
+        # lost after GitHub merged, a later sweep runs the follow-ups.
+        merge_sent = True
         response = api.request(
             "PUT",
             f"pulls/{number}/merge",
             {"sha": context["head"], "merge_method": policy["merge_method"]},
         )
-        if response.get("merged") is not True:
+        if not isinstance(response, dict) or response.get("merged") is not True:
             raise PolicyError("GitHub did not confirm a merge")
-    except PolicyError:
+    except PolicyError as exc:
+        # A refusal (409, 405, 422) is definite; no answer, a server error or an
+        # unconfirming answer may hide a merge GitHub performed.
+        if merge_sent and (transient(exc) or not isinstance(exc, ApiError)):
+            summary(
+                "The merge call was not confirmed. If GitHub merged the PR anyway, "
+                "the next sweep after the run ends starts the post-merge dispatches "
+                "and writes the merged label and comment."
+            )
         # Any failure on the same head keeps the approval: the next run reuses
         # it. Only a moved head withdraws it.
         if posted:
@@ -2027,12 +2148,38 @@ def merge(api, policy, settings, context, approver):
         raise
     # GITHUB_TOKEN merges start no push workflows, so the dev verification
     # dispatches matter most. Each follow-up gets its own attempt.
+    merge_sha = response.get("sha")
+    merge_sha = merge_sha if isinstance(merge_sha, str) and SHA.fullmatch(merge_sha) else "unknown"
     missed = []
     try:
         plan = post_merge_plan(policy, plan_files, settings)
     except (KeyError, TypeError):
         plan = []
         missed.append("post-merge plan")
+    missed += dispatch_plan(api, plan)
+    try:
+        add_label(api, number, policy["labels"]["merged"])
+    except PolicyError:
+        missed.append("merged label")
+    try:
+        comment(
+            api,
+            number,
+            f"{MERGED_MARKER}\nAutopilot merged head `{context['head']}` with a merge commit after rechecking policy, review and required checks. Merge SHA: `{merge_sha}`.{not_started(missed)}\n\n{audit}",
+        )
+    except PolicyError:
+        missed.append("merged comment")
+    summary(
+        f"Autopilot merged PR #{number}; merge SHA {merge_sha}; checks: {', '.join(checks)}."
+    )
+    if missed:
+        raise PolicyError("merged, but follow-ups did not complete: " + ", ".join(missed))
+
+
+def dispatch_plan(api, plan):
+    """Dispatch each post-merge workflow on dev, three tries each; return the
+    ones that did not start. One failure does not skip the rest."""
+    missed = []
     for entry in plan:
         workflow = urllib.parse.quote(entry["workflow"], safe="")
         for attempt in range(3):
@@ -2049,24 +2196,15 @@ def merge(api, policy, settings, context, approver):
                     missed.append(entry["workflow"])
                 else:
                     time.sleep(2 * (attempt + 1))
-    try:
-        add_label(api, number, policy["labels"]["merged"])
-    except PolicyError:
-        missed.append("merged label")
-    note = ("\n\nNot started (dispatch these on dev by hand): " + ", ".join(f"`{safe_text(m)}`" for m in missed)) if missed else ""
-    try:
-        comment(
-            api,
-            number,
-            f"<!-- pr-autopilot:merged -->\nAutopilot merged head `{context['head']}` with a merge commit after rechecking policy, review and required checks. Merge SHA: `{response['sha']}`.{note}\n\n{audit}",
-        )
-    except PolicyError:
-        missed.append("merged comment")
-    summary(
-        f"Autopilot merged PR #{number}; merge SHA {response['sha']}; checks: {', '.join(checks)}."
+    return missed
+
+
+def not_started(missed):
+    if not missed:
+        return ""
+    return "\n\nNot started (dispatch these on dev by hand): " + ", ".join(
+        f"`{safe_text(m)}`" for m in missed
     )
-    if missed:
-        raise PolicyError("merged, but follow-ups did not complete: " + ", ".join(missed))
 
 
 def merge_blocked(api, number, head, state):

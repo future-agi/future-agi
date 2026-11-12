@@ -226,6 +226,10 @@ class FakeGitHub:
         self.push_log = [(risk.ZERO_SHA, HEAD, "trusted-author")]
         self.activity = None
         self.open_prs = None
+        # Closed PRs into dev; None lists this PR once it is closed.
+        self.closed_prs = None
+        # What the merge call answers once GitHub has merged.
+        self.merge_answer = {"merged": True, "sha": "c" * 40}
         # Comments and reviews of PRs other than #42, by number (the sweep reads them).
         self.pr_comments = {}
         self.pr_reviews = {}
@@ -455,9 +459,21 @@ class FakeGitHub:
         if method == "PUT" and route == "pulls/42/merge":
             if data["sha"] != self.pr["head"]["sha"]:
                 raise risk.PolicyError("head SHA mismatch")
-            self.pr["merged"] = True
-            self.pr["state"] = "closed"
-            return {"merged": True, "sha": "c" * 40}
+            # As GitHub records a merge by the workflow token.
+            self.pr.update(
+                merged=True, state="closed", merge_commit_sha="c" * 40,
+                merged_at=risk.now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                merged_by={"login": "github-actions[bot]", "type": "Bot"},
+            )
+            return copy.deepcopy(self.merge_answer)
+        if method == "GET" and route.startswith("pulls?"):
+            # The closed listing's rows (real shape, 12 Nov 2026) carry
+            # merged_at, merge_commit_sha and labels, but not merged or merged_by.
+            assert route == risk.RECOVERY_LIST, route
+            rows = self.closed_prs if self.closed_prs is not None else (
+                [self.pr] if self.pr["state"] == "closed" else [])
+            return [{k: v for k, v in copy.deepcopy(row).items() if k not in ("merged", "merged_by")}
+                    for row in rows]
         if method == "POST" and route.endswith("/dispatches"):
             status = self.failing_dispatches.get((data.get("inputs") or {}).get("pr_number"))
             if status:
@@ -2486,6 +2502,133 @@ class ControllerTests(unittest.TestCase):
         with patch.object(risk.time, "sleep"), self.assertRaisesRegex(risk.PolicyError, "merged, but"):
             risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertTrue(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
+
+    # --- A merge whose run ended before its follow-ups ---
+
+    def merge_with_lost_answer(self, status=None):
+        """GitHub merges, but the run gets no answer (None) or a server error."""
+        context = self.passing_review()
+        self.failing(lambda method, route, data: (method, route) == ("PUT", "pulls/42/merge"),
+                     1, status=status, lose_response=True)
+        with self.assertRaises(risk.ApiError):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertTrue(self.api.pr["merged"])
+        self.api.open_prs = []
+        return context
+
+    def later_sweep(self, minutes, config=None):
+        with patch.object(risk, "now_utc", return_value=NOW + dt.timedelta(minutes=minutes)):
+            return self.sweep(config)
+
+    def merged_records(self):
+        return [c["body"] for c in self.api.comments if c["body"].startswith(risk.MERGED_MARKER)]
+
+    def post_merge_dispatches(self):
+        own = f"actions/workflows/{risk.WORKFLOW}/dispatches"
+        return [r[1].split("/")[2] for r in self.api.requests
+                if r[0] == "POST" and r[1].endswith("/dispatches") and r[1] != own]
+
+    def test_a_lost_merge_answer_is_recovered_by_a_later_sweep(self):
+        planned = [entry["workflow"] for entry in risk.post_merge_plan(POLICY, [file()], settings())]
+        self.assertIn("backend-ci.yml", planned)
+        for status in (None, 502):
+            with self.subTest(status=status):
+                self.api = FakeGitHub()
+                self.merge_with_lost_answer(status)
+                self.assertEqual(self.post_merge_dispatches(), [])
+                self.assertEqual(self.merged_records(), [])
+                self.assertNotIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+                self.assertTrue(any("next sweep" in str(call) for call in self.summary.call_args_list))
+                # Not while the merging run may still be dispatching.
+                self.later_sweep(5)
+                self.assertEqual(self.post_merge_dispatches(), [])
+                self.later_sweep(20)
+                self.assertEqual(self.post_merge_dispatches(), planned)
+                self.assertIn({"name": "autopilot-merged"}, self.api.pr["labels"])
+                [record] = self.merged_records()
+                self.assertIn("c" * 40, record)
+                self.assertIn(f"`{HEAD}`", record)
+                # Once only: the record stops every later sweep.
+                self.later_sweep(35)
+                self.assertEqual(self.post_merge_dispatches(), planned)
+                self.assertEqual(len(self.merged_records()), 1)
+
+    def test_merge_recovery_leaves_merges_it_did_not_make(self):
+        cases = {
+            "a person merged it": lambda api: api.pr.update(merged_by={"login": "a-person", "type": "User"}),
+            "no approval audit of the merged head": lambda api: api.comments.clear(),
+            "the merged label is there": lambda api: api.pr["labels"].append({"name": "autopilot-merged"}),
+            "the merging run wrote its record": lambda api: api.comments.append(
+                {"id": 900, "body": risk.MERGED_MARKER + "\nAutopilot merged head.",
+                 "user": {"login": "github-actions[bot]", "type": "Bot"}}),
+            "a copied record by a person": None,
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                self.api = FakeGitHub()
+                self.merge_with_lost_answer()
+                if change is None:
+                    # Only the bot's record counts: a person's copy changes nothing.
+                    self.api.comments.append({"id": 901, "body": risk.MERGED_MARKER,
+                                              "user": {"login": "a-person", "type": "User"}})
+                    self.later_sweep(20)
+                    self.assertTrue(self.post_merge_dispatches())
+                    continue
+                change(self.api)
+                self.later_sweep(20)
+                self.assertEqual(self.post_merge_dispatches(), [])
+                self.assertFalse(self.api.writes("issues/42/comments")[-1][2]["body"].startswith(risk.MERGED_MARKER))
+
+    def test_merge_recovery_writes_its_record_before_dispatching(self):
+        self.merge_with_lost_answer()
+        # The record cannot be written: nothing is dispatched.
+        self.failing(lambda method, route, data: (method, route) == ("POST", "issues/42/comments"), 1, status=403)
+        with self.assertRaisesRegex(risk.PolicyError, "merge recovery of PR 42 failed"):
+            self.later_sweep(20)
+        self.assertEqual(self.post_merge_dispatches(), [])
+        # A dispatch that keeps failing is named on the PR and not repeated.
+        self.failing(lambda method, route, data: route == "actions/workflows/backend-ci.yml/dispatches", 3)
+        with self.assertRaisesRegex(risk.PolicyError, "recovered follow-ups did not start: backend-ci.yml"):
+            self.later_sweep(35)
+        record, note = self.merged_records()
+        self.assertIn("`backend-ci.yml`", record)
+        self.assertIn("Not started (dispatch these on dev by hand): `backend-ci.yml`", note)
+        first = [r for r in self.api.requests if r[:2] == ("POST", "issues/42/comments")][-2]
+        self.assertLess(self.api.requests.index(first), next(
+            i for i, r in enumerate(self.api.requests) if r[1].endswith("e2e-ci.yml/dispatches")))
+        sent = self.post_merge_dispatches()
+        self.later_sweep(50)
+        self.assertEqual(self.post_merge_dispatches(), sent)
+
+    def test_merge_recovery_respects_the_dev_cdn_switch(self):
+        self.assertIn("DEV_CDN_AUTO_DEPLOY: ${{ vars.DEV_CDN_AUTO_DEPLOY }}", workflow_job("prepare"))
+        for switch, cdn in (("false", False), ("", True)):
+            with self.subTest(switch=switch):
+                self.api = FakeGitHub()
+                self.api.files = [file("frontend/src/locales/langs/en.json")]
+                self.merge_with_lost_answer()
+                self.later_sweep(20, settings(dev_cdn_enabled=switch))
+                sent = self.post_merge_dispatches()
+                self.assertIn("frontend-develop.yml", sent)
+                self.assertEqual("frontend-dev-cdn.yaml" in sent, cdn)
+
+    def test_an_unconfirming_merge_answer_is_recovered_not_a_crash(self):
+        # An empty 2xx body: no AttributeError, and a later sweep recovers.
+        self.api.merge_answer = None
+        context = self.passing_review()
+        with self.assertRaisesRegex(risk.PolicyError, "did not confirm a merge"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.api.open_prs = []
+        self.later_sweep(20)
+        self.assertIn("backend-ci.yml", self.post_merge_dispatches())
+        # A confirmation without a merge SHA still runs every follow-up.
+        self.api = FakeGitHub()
+        self.api.merge_answer = {"merged": True}
+        context = self.passing_review()
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertIn("backend-ci.yml", self.post_merge_dispatches())
+        [record] = self.merged_records()
+        self.assertIn("Merge SHA: `unknown`", record)
 
     def test_hold_head_base_and_required_check_races_after_approval(self):
         changes = {

@@ -136,8 +136,11 @@ Both capped lists start at an offset that moves each sweep, so PRs whose runs
 keep failing cannot hold every slot. The sweep pauses one second between
 dispatches, as GitHub asks for mutating requests. A failed dispatch does not
 stop the rest, except a 403 or 429 (GitHub's secondary rate limits): then the
-sweep stops dispatching until the next sweep. The sweep fails and names the PRs
-it could not dispatch or whose tier comment it could not read.
+sweep stops dispatching until the next sweep. Last, unless GitHub throttled
+it, the sweep recovers autopilot merges whose run ended before their
+follow-ups (see [After merge and audit recovery](#after-merge-and-audit-recovery)).
+The sweep fails and names the PRs it could not dispatch, whose tier comment it
+could not read, or whose merge it could not recover.
 
 Parked PRs are still dispatched hourly, not skipped. An escalation can stop
 applying without a new head (for example a run that read as deleted reads
@@ -840,12 +843,43 @@ skip the others; the job then fails and names what was missed.
 
 Approval comments, review records, tier labels, review check details, merge
 comments and job summaries identify the policy/base SHA, head SHA, checks and
-workflow run. `autopilot-merged` is applied only after the API confirms a merge.
-If an audit or dispatch request fails after merge, the job fails but does not
-undo the merge or claim the downstream workflow ran. Inspect the run, reconcile
-its merge label/comment, and dispatch any missed checks through the normal
-operating procedure. An `autopilot-approved` label with a merged PR is a useful
-reconciliation queue, not proof that the bot performed the final merge.
+workflow run. The merge run applies `autopilot-merged` only after the API
+confirms a merge. If an audit or dispatch request fails after merge, the job
+fails but does not undo the merge or claim the downstream workflow ran; its
+merge comment names what did not start, for a person to dispatch on `dev`.
+
+**A merge whose run ended before its follow-ups.** The merge call is never
+sent twice. If GitHub merged but the run got no answer, a server error or an
+answer that does not confirm the merge, the run fails with no dispatch, label
+or comment, and its summary says the next sweep takes over. A job that times
+out or loses its runner after the merge ends the same way. Each sweep
+therefore reads one page of the 100 most recently updated closed PRs into
+`dev` (one request; on 12 Nov 2026 that page covered nine days). A PR is
+recovered when all of these hold:
+
+- it was merged at least 15 minutes ago, longer than the `approve-and-merge`
+  job's 10-minute limit, so the merging run has ended;
+- it has `autopilot-approved` and not `autopilot-merged`;
+- `GET .../pulls/<n>` shows it merged by `github-actions[bot]` (the list rows
+  carry no `merged_by`), on a head that the bot's approval audit comment
+  names;
+- no comment by `github-actions[bot]` starts with `<!-- pr-autopilot:merged -->`.
+
+The sweep then posts that merged record first, naming the workflows it is
+about to dispatch, dispatches them on `dev` (respecting
+`DEV_CDN_AUTO_DEPLOY=false`, which the workflow passes to the sweep for this),
+and adds `autopilot-merged`. A dispatch that still fails after three tries is
+named in a second comment and in the failed sweep. Because the record comes
+first, a later sweep never dispatches the same merge again. A person's merge
+of an approved PR is left alone: it started the push workflows itself. The
+dispatches test the current `dev` tip, which may include later merges. The
+merging run does not re-read the PR to find out whether its merge happened;
+the sweep covers that case and the others above within about 15 to 30
+minutes.
+
+An `autopilot-approved` label on a merged PR without `autopilot-merged` is
+still a useful reconciliation queue (the query below), not proof that the
+bot performed the final merge.
 
 ## Guardrail: revert rate
 
@@ -1015,6 +1049,8 @@ the same head, after a failed re-read or for an earlier approval), the
 not-started marker, unreviewable diffs, a PR blocked after an earlier approval,
 a refused approval, the sweep's order, caps, rotation, pause, throttling stop,
 re-tier of moved heads and hourly dispatch of PRs that wait on a person,
+recovery of a merge whose answer was lost or unconfirmed (record before
+dispatch, no repeat, only the bot's own merges, the CDN switch),
 concurrent label creation, and post-merge coverage
 checked against every workflow file. No cloud/cluster or production
 configuration is needed. In CI the unprivileged `policy-tests` job tests proposed
