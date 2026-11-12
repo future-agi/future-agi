@@ -521,6 +521,7 @@ def simulation_evidence_page(
     calls = []
     for call in rows:
         tool_calls = _tool_calls(call)
+        scenario = authored.get(call.id)
         calls.append(
             {
                 "call_execution_id": str(call.id),
@@ -540,11 +541,11 @@ def simulation_evidence_page(
                     }
                     for entry in call.transcripts.all()
                 ],
-                "goals": _goals_payload(authored.get(call.id)),
+                "goals": _goals_payload(scenario),
                 # The simulated caller's setup, so the investigator judges the agent's
                 # replies against what that caller needed. The agent never saw these.
-                "situation": _situation(authored.get(call.id)),
-                "persona": _persona(authored.get(call.id)),
+                "situation": _situation(scenario),
+                "persona": _persona(scenario),
                 # The run's own verdicts: Omega explains how a goal broke, the
                 # evals decide whether it did.
                 "evaluations": [
