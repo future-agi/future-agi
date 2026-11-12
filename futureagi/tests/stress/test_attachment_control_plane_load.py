@@ -1,7 +1,7 @@
 """Attachment control-plane load test: capture_session FK contention, fence cost.
 
-Opt-in (``ATTACHMENT_LOAD=1``); ``tests/stress`` is excluded from the pytest
-shards. Real PostgreSQL with the real 0132/0133 schema and the real service
+Opt-in (``-m attachment_load``, deselected by default in pytest.ini), and
+``tests/stress`` is excluded from the pytest shards. Real PostgreSQL with the real 0132/0133 schema and the real service
 code; object storage is the in-memory ``ImmutableStore`` double, so this
 measures the database control plane only, not S3 or the parser sandbox.
 
@@ -59,13 +59,8 @@ from tracer.services.attachments import uploads
 from tracer.services.attachments.contract import AttachmentError
 from tracer.tests.test_attachment_core import ImmutableStore, wav_bytes
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.skipif(
-        os.environ.get("ATTACHMENT_LOAD") != "1",
-        reason="opt-in load test: set ATTACHMENT_LOAD=1 (see module docstring)",
-    ),
-]
+# Deselected by default (pytest.ini addopts); run with ``-m attachment_load``.
+pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.attachment_load]
 
 WRITERS = [
     int(n) for n in os.environ.get("ATTACHMENT_LOAD_WRITERS", "64,128,256").split(",")
