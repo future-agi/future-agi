@@ -1106,6 +1106,13 @@ def on_turn_event(
         ):
             # Its turn is over: the sandbox stops and chat restarts as the agent wanted.
             _after_close(str(conversation.job_id), dispatched=True)
+        elif (
+            nudge is None
+            and kind == "turn_completed"
+            and command is not None
+            and (command.payload or {}).get("from_platform") is True
+        ):
+            stop_after_platform_turn(conversation_id)
         if (
             kind != "turn_started"
             and HarnessNudge.no_workspace_objects.filter(
@@ -1119,6 +1126,44 @@ def on_turn_event(
         logger.exception(
             "harness_nudge_turn_event_failed conversation=%s", conversation_id
         )
+
+
+def stop_after_platform_turn(conversation_id: str) -> None:
+    """The platform's own turn (the build's check) is over: chat's own sandbox stops
+    now unless a person is using the chat. A turn in an attempt's sandbox changes
+    nothing; that sandbox is the attempt's to clean up."""
+    from simulate.services.hosted_harness_conversation import settle_stop_only_queue
+    from simulate.tasks import harness_nudges as tasks
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(id=conversation_id)
+            .first()
+        )
+        if conversation is None:
+            return
+        if _chat_lease(conversation, live=True) is None:
+            return
+        if conversation.blocking_input is None:
+            # A Stop sent after the turn's last poll has nothing left to stop.
+            settle_stop_only_queue(conversation)
+        if not _chat_idle(conversation):
+            return
+        ref = _expire_chat_lease(conversation)
+        conversation.state = HostedHarnessConversation.State.COLD
+        conversation.save(update_fields=["state", "updated_at"])
+    logger.info(
+        "harness_platform_turn_sandbox_stopped conversation=%s", conversation_id
+    )
+    if ref:
+        try:
+            tasks.schedule_sandbox_stop(conversation_id, ref)
+        except Exception:  # noqa: BLE001 - the sandbox still dies at its provider's limit
+            logger.exception(
+                "harness_platform_turn_sandbox_stop_failed conversation=%s",
+                conversation_id,
+            )
 
 
 def end_nudge_turn(

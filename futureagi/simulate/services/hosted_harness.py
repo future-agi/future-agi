@@ -2925,6 +2925,11 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
             conversation__job_id=job_id, client_request_id=f"build-{attempt_id}"
         ).exists():
             return
+        if HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job_id=job_id, client_request_id=f"check-{attempt_id}"
+        ).exists():
+            # A retried clean-up asks nothing more; the recovery sweep restarts a failed first ask.
+            return
         send_to_harness(
             HostedHarnessJob.no_workspace_objects.get(id=job_id),
             content="The environment is validated and sealed. Check it against the agent.",
