@@ -1153,7 +1153,9 @@ def _csv_rows(
             verdict = (
                 "passed"
                 if goal["passed"] is True
-                else "failed" if goal["passed"] is False else "inconclusive"
+                else "failed"
+                if goal["passed"] is False
+                else "inconclusive"
             )
             sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(
