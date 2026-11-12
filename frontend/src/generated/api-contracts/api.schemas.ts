@@ -20611,6 +20611,8 @@ export interface HarnessConsumptionApi {
   ai_credits: number;
   /** @minimum 0 */
   sandbox_seconds: number;
+  /** @minimum 0 */
+  sandbox_minutes: number;
 }
 
 export interface HarnessVersioningFlagsApi {

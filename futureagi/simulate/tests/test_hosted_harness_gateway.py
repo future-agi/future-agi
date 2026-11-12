@@ -3992,6 +3992,7 @@ def _unbound_job():
     return SimpleNamespace(
         id=uuid.uuid4(),
         organization_id=uuid.uuid4(),
+        workspace_id=None,
         run_id=uuid.uuid4(),
         run_test_id=None,
         test_execution_id=None,
@@ -4036,6 +4037,22 @@ def _chat_document(monkeypatch, events=None):
         lambda *_a, **_k: SimpleNamespace(document={"conversation": "x"}),
     )
     monkeypatch.setattr(f"{_GATEWAY}._platform_simulator_material", lambda: {})
+    # Not a database test: the plan check and the sandbox's timing are stood in for.
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.require_sandbox_create", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        f"{_GATEWAY}._unacked_commands",
+        lambda _c: SimpleNamespace(values_list=lambda *a, **k: []),
+    )
+    for name in (
+        "open_sandbox_lifetime",
+        "record_sandbox_end_reason",
+        "close_sandbox_lifetime",
+    ):
+        monkeypatch.setattr(
+            f"simulate.services.sandbox_usage.{name}", lambda *_a, **_k: None
+        )
     with pytest.raises(_StopAfterJobJson):
         gateway._start_chat_sandbox(
             job,

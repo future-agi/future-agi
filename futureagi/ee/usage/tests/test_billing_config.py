@@ -144,9 +144,9 @@ class TestPlansSection:
 
 
 class TestDimensionsSection:
-    def test_has_seven_dimensions(self):
+    def test_has_eight_dimensions(self):
         raw = load_raw_yaml()
-        assert len(raw["dimensions"]) == 7
+        assert len(raw["dimensions"]) == 8
 
     def test_expected_dimensions(self):
         raw = load_raw_yaml()
@@ -157,6 +157,7 @@ class TestDimensionsSection:
             "gateway_cache_hits",
             "text_sim_tokens",
             "voice_sim_minutes",
+            "sandbox_minutes",
             "tracing_events",
         }
         assert set(raw["dimensions"].keys()) == expected
@@ -327,7 +328,7 @@ class TestCrossSectionConsistency:
         raw = load_raw_yaml()
         schema = BillingConfigSchema(**raw)
         assert len(schema.plans) == len(PlanChoices)
-        assert len(schema.dimensions) == 7
+        assert len(schema.dimensions) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +468,7 @@ class TestBillingConfigService:
     def test_get_all_dimensions(self):
         config = BillingConfig.get()
         dims = config.get_all_dimensions()
-        assert len(dims) == 7
+        assert len(dims) == 8
 
     def test_get_pricing_tiers(self):
         config = BillingConfig.get()

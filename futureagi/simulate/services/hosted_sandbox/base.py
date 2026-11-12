@@ -103,6 +103,8 @@ class SandboxRuntimeProvider(ABC):
     create_timeout_seconds = 300
     supports_adjustments = False
     supports_public_ingress = False
+    # Whether renew_ttl restarts the sandbox's lifetime, so the recorded limit moves with it.
+    renews_ttl = False
 
     def renew_ttl(self, sandbox: Any, ttl_seconds: int) -> None:
         """Re-arm the sandbox lease after provisioning, when supported.
@@ -131,3 +133,19 @@ class SandboxRuntimeProvider(ABC):
         self, sandbox: Any, port: int, *, expires_in_seconds: int
     ) -> SandboxPreview:
         raise NotImplementedError
+
+
+def delete_confirmed(
+    provider, provider_ref: str, deleted: Any, *, request_timeout: int
+) -> bool:
+    """Whether a delete that returned ``deleted`` leaves the sandbox gone. A provider that
+    answers False for a sandbox that no longer exists (E2B) is asked once more."""
+    if deleted is not False:
+        return True
+    try:
+        provider.get(provider_ref, request_timeout=request_timeout)
+    except SandboxNotFoundError:
+        return True
+    except Exception:  # noqa: BLE001 - unknown stays open; the sweep caps it
+        return False
+    return False

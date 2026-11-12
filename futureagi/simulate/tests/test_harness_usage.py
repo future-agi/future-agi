@@ -39,7 +39,7 @@ def metered_attempt(hosted_attempt, monkeypatch):
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
-    monkeypatch.setattr(emitter, "emit", events.append)
+    monkeypatch.setattr(emitter, "emit", lambda event, **_: events.append(event))
     # Cleanup enqueues the seal after commit; run it inline so these tests see its events.
     monkeypatch.setattr(
         seal_hosted_harness_usage,
@@ -413,6 +413,7 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
         "voice_sim_minutes": 2.25,
         "ai_credits": 0,
         "sandbox_seconds": 0,
+        "sandbox_minutes": 0,
     }
 
 
@@ -694,16 +695,28 @@ def required_actions(monkeypatch):
 @pytest.mark.parametrize(
     ("agent", "metadata", "expected"),
     [
-        ({"connector": "phone"}, {}, ["harness_authoring", "voice_call"]),
-        ({"connector": "livekit"}, {}, ["harness_authoring", "voice_call"]),
-        ({"connector": "retell_chat"}, {}, ["harness_authoring", "text_call"]),
+        (
+            {"connector": "phone"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
+        ),
+        (
+            {"connector": "livekit"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
+        ),
+        (
+            {"connector": "retell_chat"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "text_call"],
+        ),
         (
             {"connector": "auto"},
             {"modality": "voice"},
-            ["harness_authoring", "voice_call"],
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
         ),
-        ({"connector": "auto"}, {}, ["harness_authoring"]),
-        ({}, {}, ["harness_authoring"]),
+        ({"connector": "auto"}, {}, ["harness_authoring", "sandbox_runtime"]),
+        ({}, {}, ["harness_authoring", "sandbox_runtime"]),
     ],
 )
 def test_run_usage_checks_the_rail_the_connector_names(
@@ -747,14 +760,14 @@ def test_selected_run_checks_the_rail_of_the_authored_modality(
     job = hosted_attempt.attempt.job
 
     harness_usage.require_harness_call_usage(job)
-    assert required_actions == ["text_call"]
+    assert required_actions == ["text_call", "sandbox_runtime"]
 
     job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
     job.save(update_fields=["stage_outputs", "updated_at"])
     required_actions.clear()
 
     harness_usage.require_harness_call_usage(job)
-    assert required_actions == ["voice_call"]
+    assert required_actions == ["voice_call", "sandbox_runtime"]
 
 
 @pytest.mark.django_db
@@ -773,7 +786,7 @@ def test_selected_run_reads_the_modality_past_malformed_contract_outputs(
 
     harness_usage.require_harness_call_usage(job)
 
-    assert required_actions == ["voice_call"]
+    assert required_actions == ["voice_call", "sandbox_runtime"]
 
 
 @pytest.mark.django_db

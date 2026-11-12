@@ -37,13 +37,14 @@ def get_redis() -> redis.Redis:
     return _redis_client
 
 
-def emit(event: UsageEvent) -> None:
+def emit(event: UsageEvent, *, raise_on_failure: bool = False) -> None:
     """Emit a usage event to the Redis Stream.
 
     This is the ONLY way to record usage in the system.
     Non-blocking, fire-and-forget. ~0.5ms.
 
     On Redis failure: logs the error, does NOT raise.
+    With raise_on_failure, re-raises after logging, for a caller that retries.
     The user's action must not fail because metering failed.
 
     A no-op unless settings.USAGE_EVENTS_ENABLED: without the consumer that
@@ -109,3 +110,5 @@ def emit(event: UsageEvent) -> None:
             tags={"alarm": "emit_failed_total", "event_type": str(event.event_type)},
             context={"billing": {"org_id": event.org_id, "amount": event.amount}},
         )
+        if raise_on_failure:
+            raise

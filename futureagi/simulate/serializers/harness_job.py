@@ -1065,6 +1065,7 @@ class HarnessConsumptionSerializer(serializers.Serializer):
     voice_sim_minutes = serializers.FloatField(min_value=0)
     ai_credits = serializers.FloatField(min_value=0, allow_null=True)
     sandbox_seconds = serializers.FloatField(min_value=0)
+    sandbox_minutes = serializers.FloatField(min_value=0)
 
 
 class HarnessVersioningFlagsSerializer(serializers.Serializer):

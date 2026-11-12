@@ -244,6 +244,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     max_egress_domains = None
     supports_adjustments = True
     supports_public_ingress = True
+    renews_ttl = True
 
     def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
         self.validate_requested_resources(*self.configured_resources(), ttl_seconds)

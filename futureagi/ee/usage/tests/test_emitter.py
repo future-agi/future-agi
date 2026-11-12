@@ -130,6 +130,33 @@ class TestEmitterErrorHandling:
                     == "emit_failed_total"
                 )
 
+    def test_raise_on_failure_reraises_after_logging_and_the_alarm(self):
+        # A caller that retries must learn the event never reached the stream, and the
+        # loss must still be logged and alarmed as for every other caller.
+        from ee.usage.services.emitter import emit
+
+        with patch("ee.usage.services.emitter.get_redis") as mock_redis:
+            mock_redis.return_value.xadd.side_effect = ConnectionError("Redis down")
+            with (
+                patch("ee.usage.services.emitter.logger") as mock_logger,
+                patch("ee.usage.services.emitter.capture_message") as mock_capture,
+            ):
+                with pytest.raises(ConnectionError):
+                    emit(
+                        UsageEvent(org_id="org-1", event_type="test"),
+                        raise_on_failure=True,
+                    )
+                mock_logger.exception.assert_called_once()
+                mock_capture.assert_called_once()
+
+    def test_raise_on_failure_is_silent_when_the_write_succeeds(self):
+        from ee.usage.services.emitter import emit
+
+        with patch("ee.usage.services.emitter.get_redis") as mock_redis:
+            emit(UsageEvent(org_id="org-1", event_type="test"), raise_on_failure=True)
+
+        mock_redis.return_value.xadd.assert_called_once()
+
 
 class TestEmitterWithoutAConsumer:
     """Only Future AGI Cloud drains usage:events. Anywhere else the stream would

@@ -288,7 +288,13 @@ def recover_stalled_conversations(
             # A rebuild's own checks end it; its chat restarts meanwhile.
             and not holds_conversation(candidate)
         ):
-            counts["abandoned"] += _abandon_outstanding(candidate.id)
+            try:
+                counts["abandoned"] += _abandon_outstanding(candidate.id)
+            except Exception:
+                logger.exception(
+                    "conversation abandon failed conversation=%s", candidate.id
+                )
+                counts["errors"] += 1
             continue
         try:
             # Also back off starts waiting for an attempt to reach RUNNING.
@@ -344,6 +350,7 @@ def retire_without_saved_workspace(conversation_id) -> int:
                 "This environment's saved files are no longer available, so chat "
                 "can't start. Rebuild the environment to chat with it again."
             ),
+            reason="saved_workspace_gone",
         )
 
 
@@ -387,12 +394,36 @@ def _abandon_outstanding(conversation_id) -> int:
                 else "The environment chat could not start, so your message was not "
                 "delivered. Send it again to retry."
             ),
+            reason="chat_stopped_responding",
+            failure_domain="infrastructure",
         )
 
 
 def _fail_outstanding(
-    conversation: HostedHarnessConversation, *, state: str, reply: str
+    conversation: HostedHarnessConversation,
+    *,
+    state: str,
+    reply: str,
+    reason: str,
+    failure_domain: str = "",
 ) -> int:
+    own = HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation, attempt__isnull=True
+    ).first()
+    if own is not None and not own.provider_ref.startswith("pending:"):
+        from simulate.services.sandbox_usage import record_sandbox_end_reason
+
+        recorded = record_sandbox_end_reason(
+            provider_ref=own.provider_ref,
+            reason=reason,
+            failure_domain=failure_domain,
+            # Only a sandbox found gone is checked against its lifetime limit.
+            last_seen=own.heartbeat_at if failure_domain else None,
+        )
+        if failure_domain and not recorded:
+            # Fencing the lease without its ending would lose the ending: the whole
+            # abandon waits for the next recovery pass instead.
+            raise RuntimeError("sandbox ending not recorded")
     HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation=conversation
     ).update(state=HostedHarnessConversationLease.State.EXPIRED)

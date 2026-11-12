@@ -374,6 +374,7 @@ describe("HarnessDetail run checklist", () => {
         voice_sim_minutes: 0.25,
         ai_credits: 3,
         sandbox_seconds: 45,
+        sandbox_minutes: 0.75,
       },
     };
     getHarnessJob.mockResolvedValue(recovered);
@@ -395,6 +396,11 @@ describe("HarnessDetail run checklist", () => {
       within(
         screen.getByText("Voice simulation minutes").parentElement,
       ).getByText("0.25"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByText("Sandbox minutes").parentElement).getByText(
+        "0.75",
+      ),
     ).toBeInTheDocument();
   });
 });

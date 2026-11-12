@@ -813,13 +813,15 @@ def launch_blocker(
             status_code=409,
         )
     if usage:
-        decision = check_harness_action(str(source_run.organization_id), "agent_fix")
-        if not decision["allowed"]:
-            return HostedHarnessError(
-                "usage_limit",
-                decision.get("reason") or "AI credits are used up",
-                status_code=402,
-            )
+        for action, fallback in (
+            ("agent_fix", "AI credits are used up"),
+            ("sandbox_runtime", "sandbox minutes are used up"),
+        ):
+            decision = check_harness_action(str(source_run.organization_id), action)
+            if not decision["allowed"]:
+                return HostedHarnessError(
+                    "usage_limit", decision.get("reason") or fallback, status_code=402
+                )
     return None
 
 
