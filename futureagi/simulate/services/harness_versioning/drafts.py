@@ -642,6 +642,9 @@ def record_draft(
     checked = wanted | set(checked or ())
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
+    from simulate.services.harness_actors import require_valid_faults
+
+    require_valid_faults(prepared.scenarios)
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,

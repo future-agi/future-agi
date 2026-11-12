@@ -2063,3 +2063,88 @@ def test_the_scenario_filter_names_a_world_only_actor_by_its_name(
     assert "channel" not in MANAGER
     assert _add(auth_client, environment, MANAGER).status_code == 200
     assert call_actor_labels(environment)["manager"] == "Priya Raman"
+
+
+@pytest.mark.parametrize(
+    "fault,problem",
+    [
+        ({"action": "orders.get", "mode": "delay"}, "mode must be"),
+        ({"action": "", "mode": "timeout_before_commit"}, "action must name"),
+        (
+            {"action": "orders.get", "mode": "timeout_after_commit", "on_call": 0},
+            "on_call must be",
+        ),
+        (
+            {
+                "action": "orders.get",
+                "mode": "timeout_after_commit",
+                "delay_seconds": 31,
+            },
+            "delay_seconds must be",
+        ),
+        (
+            {"action": "orders.get", "mode": "timeout_after_commit", "when": "now"},
+            "unknown field when",
+        ),
+        ("orders.get", "a fault must be an object"),
+    ],
+)
+def test_a_scenario_fault_the_world_cannot_apply_is_refused_by_name(fault, problem):
+    from simulate.services.harness_actors import require_valid_faults
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    with pytest.raises(HostedHarnessError) as raised:
+        require_valid_faults([{"name": "refund-late", "faults": [fault]}])
+    assert raised.value.code == "scenario_faults_invalid"
+    assert "refund-late" in str(raised.value) and problem in str(raised.value)
+
+
+def test_scenario_faults_the_world_can_apply_pass():
+    from simulate.services.harness_actors import require_valid_faults
+
+    require_valid_faults(
+        [
+            {
+                "name": "a",
+                "faults": [{"action": "orders.get", "mode": "timeout_before_commit"}],
+            },
+            {
+                "name": "b",
+                "faults": [
+                    {
+                        "action": "x",
+                        "mode": "timeout_after_commit",
+                        "on_call": 2,
+                        "delay_seconds": 4.5,
+                    }
+                ],
+            },
+            {"name": "c"},
+        ]
+    )
+
+
+def test_a_draft_write_with_a_fault_mode_the_world_does_not_know_is_refused(
+    user, workspace, storage
+):
+    from simulate.services.harness_versioning import drafts
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_versioning_record import _scenario
+
+    good = [_scenario(NAMES[0]), _scenario(NAMES[1])]
+    environment = record_tests._environment(user, workspace, "faults-on-write")
+    tree = {
+        "scenarios.json": json.dumps(good),
+        **{f"scenarios/{one['name']}/scenario.json": json.dumps(one) for one in good},
+    }
+    record_authoring(environment, _authoring(**tree), origin="authoring")
+    bad = [dict(good[0], faults=[{"action": "orders.get", "mode": "delay"}]), good[1]]
+    edited = {
+        "scenarios.json": json.dumps(bad),
+        **{f"scenarios/{one['name']}/scenario.json": json.dumps(one) for one in bad},
+    }
+
+    with pytest.raises(HostedHarnessError) as raised:
+        drafts.record_draft(environment, _authoring(**edited), origin="chat", user=user)
+    assert raised.value.code == "scenario_faults_invalid"
+    assert drafts.fresh_draft(environment, "suite") is None
