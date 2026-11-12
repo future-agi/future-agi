@@ -90,6 +90,8 @@ class PairingView(TypedDict):
     suite_version: VersionRef | None
     evidence: EvidenceSource
     agent_tools: AgentToolsView
+    # The certification archive could not be read: its rows read as unmeasured.
+    evidence_unreadable: bool
 
 
 class AnswerView(TypedDict):

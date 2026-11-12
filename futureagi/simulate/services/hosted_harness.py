@@ -365,14 +365,21 @@ def create_selected_harness_run(
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
         )
-    # Before the lock: reading the evidence may download an archive.
-    planned = _readiness_plan(
-        environment,
-        rerun_of=rerun_of,
-        picks=picks,
-        scenario_keys=scenario_keys,
-        trials=trials,
-    )
+    # Before the lock: reading the evidence may download an archive. When it cannot be
+    # read, a repeated request is still answered with its run before refusing.
+    unreadable: HostedHarnessError | None = None
+    try:
+        planned = _readiness_plan(
+            environment,
+            rerun_of=rerun_of,
+            picks=picks,
+            scenario_keys=scenario_keys,
+            trials=trials,
+        )
+    except HostedHarnessError as exc:
+        if exc.code != "readiness_unavailable":
+            raise
+        planned, unreadable = None, exc
 
     with transaction.atomic():
         try:
@@ -412,6 +419,8 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+        if unreadable is not None:
+            raise unreadable
         if resolved is not None:
             from simulate.services.harness_versioning.validation import (
                 require_pair_runnable,
@@ -473,7 +482,9 @@ def create_selected_harness_run(
                 status_code=400,
             )
         if pins is not None and pins.assembles:
-            _refuse_ungradable(pins, scenario_keys)
+            # A case readiness holds back (certification dropped it) is not sent, so it
+            # is not refused either.
+            _refuse_ungradable(pins, run_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in run_keys:
@@ -889,7 +900,8 @@ def _readiness_plan(
 
     Raises:
         HostedHarnessError: 503 ``readiness_unavailable`` (retryable) when readiness
-            cannot be read: a run never goes out unchecked.
+            cannot be read: a new run never goes out unchecked. Re-running calls of a
+            finished run (``rerun_calls_in_run``) reuses that run's pairing and its check.
     """
     from simulate.services.harness_readiness import Pairing, select_for_run
 
