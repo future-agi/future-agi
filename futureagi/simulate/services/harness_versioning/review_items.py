@@ -213,15 +213,18 @@ def index_key(entry: Any) -> str:
 
 def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
     folders: dict[str, dict[str, bytes]] = {}
-    roots: dict[str, str] = {}
-    # One folder per key: the first root that has it, `scenarios/` before the older `scenario/`.
-    for root in hashing.SCENARIO_ROOTS:
-        for path, data in sorted(files.items()):
-            parts = path.split("/")
-            if parts[0] != root or len(parts) < 3:
-                continue
-            if roots.setdefault(parts[1], root) != root:
-                continue
+    # Like ALK and the suite hash, `scenarios/` wins and the older `scenario/` is read only without it.
+    root = next(
+        (
+            one
+            for one in hashing.SCENARIO_ROOTS
+            if any(path.startswith(one + "/") for path in files)
+        ),
+        hashing.SCENARIO_ROOTS[0],
+    )
+    for path, data in files.items():
+        parts = path.split("/")
+        if parts[0] == root and len(parts) >= 3:
             folders.setdefault(parts[1], {})["/".join(parts[2:])] = data
     index = read_json(files.get("scenarios.json", b"null"))
     entries = (
@@ -245,7 +248,6 @@ def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
             **({"_files": others} if others else {}),
             **({INDEX_ENTRY: entries[key]} if key in entries else {}),
         }
-        root = roots.get(key, hashing.SCENARIO_ROOTS[0])
         items.append(Item("scenario", key, f"{root}/{key}/scenario.json", value))
     return items
 
