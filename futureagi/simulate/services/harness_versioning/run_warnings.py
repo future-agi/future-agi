@@ -72,10 +72,16 @@ def _names(names: list[str]) -> str:
 
 
 def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
-    """The suite's scenarios a saved, graded change touched that hold no proof against this environment version."""
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that hold
+    no proof against this environment version."""
     from simulate.models import HarnessSuiteMember
 
-    reviewed = (environment_version.documents or {}).get("review_changes") or []
+    reviewed = [
+        one
+        for version in (environment_version, suite_version)
+        for one in (getattr(version, "documents", None) or {}).get("review_changes")
+        or []
+    ]
     touched = {
         key
         for one in reviewed
@@ -85,9 +91,9 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
     if not touched:
         return []
     members = set(
-        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version).values_list(
-            "scenario_key", flat=True
-        )
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", flat=True)
     )
     proofs = (
         HarnessSuiteValidation.no_workspace_objects.filter(
@@ -105,7 +111,9 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         for key in members
         if _scenario_token(key) in tokens
         and not any(
-            isinstance(proof, dict) and proof.get("holds") is True and _scenario_token(name) == _scenario_token(key)
+            isinstance(proof, dict)
+            and proof.get("holds") is True
+            and _scenario_token(name) == _scenario_token(key)
             for name, proof in proofs.items()
         )
     )
@@ -218,11 +226,13 @@ def run_warnings(
         )
     unproved = _needs_revalidation(environment_version, suite_version)
     if unproved:
-        shown = unproved[:5] + ([f"{len(unproved) - 5} more"] if len(unproved) > 5 else [])
+        shown = unproved[:5] + (
+            [f"{len(unproved) - 5} more"] if len(unproved) > 5 else []
+        )
         warnings.append(
             _warning(
                 "scenarios_need_revalidation",
-                f"Environment {environment_label} changed what"
+                f"Saved changes to environment {environment_label} or its suite changed what"
                 f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
                 f" prove {_names(shown)} again",
                 "suite",
@@ -258,8 +268,7 @@ def run_warnings(
         warnings.append(
             _warning(
                 "bundle_cache_failed",
-                "The last preparation of this combination failed and will be"
-                " retried",
+                "The last preparation of this combination failed and will be retried",
                 None,
             )
         )

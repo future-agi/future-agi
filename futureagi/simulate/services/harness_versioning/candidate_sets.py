@@ -9,7 +9,7 @@ runnable until Save promotes it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, NotRequired, TypedDict
+from typing import Any, TypedDict
 
 from django.utils import timezone
 
@@ -43,7 +43,6 @@ class CandidateSet(TypedDict):
     job_id: str | None
     at: str
     # The check ended on our side for a cause that repeats: the set may be saved uncertified, as a run may go ahead.
-    check_unavailable: NotRequired[bool]
 
 
 def validation_available(environment: HostedHarnessJob) -> bool:

@@ -510,6 +510,10 @@ export const DRAFTS_COPY = {
       "These changes moved while saving; press Save again.",
     validation_required:
       "Some of these changes were accepted or rejected in review, so they need Validate before they can be saved. Validate isn't in the web app yet, so they can't be saved from here; discard them to start over.",
+    scenario_index_mismatch:
+      "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
+    change_depends_on_rejected:
+      "An accepted change needs one that was rejected. Accept both or reject both, then save again.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",

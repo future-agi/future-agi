@@ -174,10 +174,30 @@ def _malformed(files: Mapping[str, bytes]) -> set[str]:
             ),
         ):
             whole.add(document)
+    whole |= _shared_keys(files)
     index = read_json(files.get("scenarios.json", b"null"))
     if "scenarios.json" in files and not _unique_keys(index, index_key):
         whole.add("scenarios.json")
     return whole
+
+
+def _shared_keys(files: Mapping[str, bytes]) -> set[str]:
+    """The listed documents of one kind that hold an entry with the same key (an actor and a sub-actor sharing an id):
+    their items would share one review id, so each such document is reviewed as one file."""
+    seen: dict[tuple[str, str], str] = {}
+    shared: set[str] = set()
+    for document, (kind, field, key) in LISTED.items():
+        if document not in files:
+            continue
+        body = read_json(files[document])
+        entries = body.get(field) if isinstance(body, dict) else body
+        for entry in entries if isinstance(entries, list) else []:
+            if not (isinstance(entry, dict) and entry.get(key)):
+                continue
+            other = seen.setdefault((kind, str(entry[key])), document)
+            if other != document:
+                shared |= {document, other}
+    return shared
 
 
 # Where a scenario item keeps its entry in the suite index, which runs read as the scenario.
@@ -193,9 +213,15 @@ def index_key(entry: Any) -> str:
 
 def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
     folders: dict[str, dict[str, bytes]] = {}
-    for path, data in files.items():
-        parts = path.split("/")
-        if parts[0] in hashing.SCENARIO_ROOTS and len(parts) >= 3:
+    roots: dict[str, str] = {}
+    # One folder per key: the first root that has it, `scenarios/` before the older `scenario/`.
+    for root in hashing.SCENARIO_ROOTS:
+        for path, data in sorted(files.items()):
+            parts = path.split("/")
+            if parts[0] != root or len(parts) < 3:
+                continue
+            if roots.setdefault(parts[1], root) != root:
+                continue
             folders.setdefault(parts[1], {})["/".join(parts[2:])] = data
     index = read_json(files.get("scenarios.json", b"null"))
     entries = (
@@ -206,18 +232,21 @@ def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
     items = []
     for key in sorted(set(folders) | set(entries)):
         inside = folders.get(key, {})
-        document = read_json(inside.get("scenario.json", b"")) or {}
+        parsed = read_json(inside.get("scenario.json", b""))
+        document = parsed if isinstance(parsed, dict) else {}
+        # A scenario.json that is not a JSON object is compared by its bytes, so a change to it is still reviewed.
         others = {
             name: archives.sha256_hex(data)
             for name, data in sorted(inside.items())
-            if name != "scenario.json"
+            if name != "scenario.json" or not isinstance(parsed, dict)
         }
         value = {
             **document,
             **({"_files": others} if others else {}),
             **({INDEX_ENTRY: entries[key]} if key in entries else {}),
         }
-        items.append(Item("scenario", key, f"scenarios/{key}/scenario.json", value))
+        root = roots.get(key, hashing.SCENARIO_ROOTS[0])
+        items.append(Item("scenario", key, f"{root}/{key}/scenario.json", value))
     return items
 
 

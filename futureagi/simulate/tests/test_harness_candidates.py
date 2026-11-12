@@ -1318,6 +1318,39 @@ def test_an_undecided_rule_saved_carries_no_proofs_and_warns_the_next_run(
     )
 
 
+def test_an_accepted_scenario_edit_saved_on_the_suite_warns_the_next_run(
+    user, workspace, storage
+):
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.run_warnings import _needs_revalidation
+
+    environment = _with_world(user, workspace, "cand-suite-revalidate", storage)
+    version, suite = environment.environment_version, environment.suite_version
+    HarnessSuiteValidation.no_workspace_objects.filter(suite_version=suite).delete()
+    key = (
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite)
+        .values_list("scenario_key", flat=True)
+        .first()
+    )
+    assert _needs_revalidation(version, suite) == []
+    suite.documents = {
+        **(suite.documents or {}),
+        "review_changes": [
+            {
+                "id": f"scenario:{key}",
+                "kind": "scenario",
+                "key": key,
+                "action": "changed",
+                "decision": "accepted",
+                "graded": True,
+                "revalidate": [key],
+            }
+        ],
+    }
+    suite.save(update_fields=["documents"])
+    assert _needs_revalidation(version, suite) == [key]
+
+
 # --- review fixes: what a Save refuses --------------------------------------------------------------------------
 
 

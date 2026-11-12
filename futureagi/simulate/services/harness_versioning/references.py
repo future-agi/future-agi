@@ -71,7 +71,7 @@ def depends_on(
     base: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str]:
     """The other changes this one needs. An added or changed scenario needs the tools, sub-goals and actors it names
-    that only the draft adds. Removing a tool, sub-goal or actor needs the scenario edits and removals that stop the
+    that the draft adds, and, unless it is only renamed, the ones it names that the draft changes. Removing a tool, sub-goal or actor needs the scenario edits and removals that stop the
     saved scenarios naming it."""
     if (
         change["kind"] in ("tool", "sub_goal", "actor")
@@ -86,11 +86,15 @@ def depends_on(
         )
     if change["kind"] != "scenario" or change["action"] == "removed":
         return []
+    from simulate.services.harness_versioning.review_items import graded
+
+    # A rename grades nothing, so it needs no definition; a graded edit may rely on how a named definition changed.
+    wanted = ("added", "changed") if graded(change) else ("added",)
     uses = scenario_uses(scenarios.get(change["key"]) or {})
     return sorted(
         other["id"]
         for other in changes
-        if other["action"] == "added"
+        if other["action"] in wanted
         and other["kind"] in uses
         and other["key"] in uses[other["kind"]]
     )
