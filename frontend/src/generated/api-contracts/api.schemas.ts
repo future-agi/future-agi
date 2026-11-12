@@ -10121,45 +10121,45 @@ export interface PromptConfigApi {
    * @minimum 0
    * @maximum 2
    */
-  temperature?: number;
+  temperature?: number | null;
   /**
    * Penalty for word repetition. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  frequency_penalty?: number;
+  frequency_penalty?: number | null;
   /**
    * Penalty for new word usage. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  presence_penalty?: number;
+  presence_penalty?: number | null;
   /**
    * Maximum number of tokens to generate. Null = use provider default.
    * @minimum 1
    * @maximum 65536
    */
-  max_tokens?: number;
+  max_tokens?: number | null;
   /**
    * Controls diversity via nucleus sampling. Value between 0 and 1.
    * @minimum 0
    * @maximum 1
    */
-  top_p?: number;
+  top_p?: number | null;
   /** String or JSON object. */
-  response_format?: PromptConfigApiResponseFormat;
+  response_format?: PromptConfigApiResponseFormat | null;
   /** Tool selection mode: 'auto' or 'required'. */
-  tool_choice?: PromptConfigApiToolChoice;
+  tool_choice?: PromptConfigApiToolChoice | null;
   /** List of tools with tool properties if available. */
-  tools?: PromptConfigApiToolsItem[];
+  tools?: PromptConfigApiToolsItem[] | null;
   /** Output format type. */
-  output_format?: PromptConfigApiOutputFormat;
+  output_format?: PromptConfigApiOutputFormat | null;
   /**
    * Number of concurrent operations allowed. Maximum 10.
    * @minimum 1
    * @maximum 10
    */
-  concurrency?: number;
+  concurrency?: number | null;
 }
 
 export interface AddRunPromptApi {
@@ -15705,7 +15705,7 @@ export type TestEvalTemplateApiInputDataTypes = { [key: string]: unknown };
 /**
  * Any valid JSON value.
  */
-export type TestEvalTemplateApiVariableKeys = { [key: string]: unknown };
+export type TestEvalTemplateApiVariableKeys = JsonValueApi;
 
 export type TestEvalTemplateApiMapping = { [key: string]: unknown };
 
@@ -31560,7 +31560,7 @@ export const CostCoverageApiStatus = {
   unknown: "unknown",
 } as const;
 
-export interface CostCoverageApi {
+export type CostCoverageApi = {
   status: CostCoverageApiStatus;
   /**
    * Sum in USD of known observed contributions, never an average.
@@ -31577,7 +31577,7 @@ export interface CostCoverageApi {
    * @minimum 0
    */
   unknown_fact_count: number;
-}
+};
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -33188,7 +33188,7 @@ export const CaptureCoverageApiScope = {
   observed_requests: "observed_requests",
 } as const;
 
-export interface CaptureCoverageApi {
+export type CaptureCoverageApi = {
   scope: CaptureCoverageApiScope;
   source_summary_present: boolean;
   /**
@@ -33198,7 +33198,7 @@ export interface CaptureCoverageApi {
   request_count: number;
   /** Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness. */
   coverage_unknown: boolean;
-}
+};
 
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
@@ -36841,24 +36841,6 @@ export type AgentPlaygroundGraphsVersionsRead200 = {
   results: GraphListApi[];
 };
 
-export type AgentPlaygroundGraphsVersionsReadParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
-};
-
 export type AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsParams = {
   /**
    * A page number within the paginated result set.
@@ -38160,24 +38142,6 @@ export type ModelHubExperimentsReadParams = {
   search?: string;
 };
 
-export type ModelHubExperimentsReadParams = {
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  page_size?: number;
-  /**
-   * @minimum 0
-   */
-  current_page_index?: number;
-  column_config_only?: boolean;
-  get_diff?: boolean;
-  /**
-   * @maxLength 512
-   */
-  search?: string;
-};
-
 export type ModelHubFeedbackListParams = {
   /**
    * A page number within the paginated result set.
@@ -38282,21 +38246,6 @@ export type ModelHubGetEvalMetricsListParams = {
 };
 
 export type ModelHubKbListParams = {
-  /**
-   * A search term.
-   */
-  search?: string;
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type ModelHubKbSupportedEmbeddingModelsParams = {
   /**
    * A search term.
    */
@@ -38455,7 +38404,7 @@ export type ModelHubOrganizationsUsersList200 = {
 export type ModelHubPerformanceTagDistributionCreate200Result = {
   good?: string[][];
   bad?: string[][];
-  [key: string]: string[][];
+  [key: string]: string[][] | undefined;
 };
 
 export type ModelHubPerformanceTagDistributionCreate200 = {
