@@ -107,7 +107,9 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
     const states = Object.fromEntries(observations.results.map(row => [row.binding.id, row.states]));
     expect(states).toEqual({
       [bindings[0].id]: ['matches_target', 'pinned_as_intended'],
-      [bindings[1].id]: ['unknown'], [bindings[2].id]: ['unknown'], [bindings[3].id]: ['unknown'],
+      [bindings[1].id]: ['unknown'], [bindings[2].id]: ['unknown'],
+      // One-sided fallibility control changes the expectation, never the data.
+      [bindings[3].id]: process.env.J6_ORACLE_FAULT === 'unknown' ? ['matches_target'] : ['unknown'],
     });
     await testInfo.attach('j6-independent-observations', { body: JSON.stringify({ persisted, observations }), contentType: 'application/json' });
 

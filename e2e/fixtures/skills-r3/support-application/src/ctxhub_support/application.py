@@ -72,6 +72,9 @@ class Application:
         """
         with self.store.exclusive():
             state = self.store.load(thread)
+            if state and state.get("phase") == "closed":
+                # J6: an operator-closed thread is never resumed or re-resolved.
+                raise ValueError("thread_closed")
             if state and (
                 state["case"] != case
                 or state["runtime_digest"] != self.registry.runtime_digest

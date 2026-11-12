@@ -58,6 +58,7 @@ function InboxRows({
             ["approved", "Approved"],
             ["changes_requested", "Changes requested"],
             ["released", "Released"],
+            ["superseded", "Superseded"],
           ].map(([value, label]) => (
             <MenuItem key={value} value={value}>
               {label}
@@ -113,6 +114,13 @@ function InboxRows({
                           ? "Agent context"
                           : "Skill"}{" "}
                         · packet r{item.revision}
+                        {/* Requests for one context look alike; the update time tells them apart. */}
+                        {item.updatedAt
+                          ? ` · updated ${new Date(item.updatedAt)
+                              .toISOString()
+                              .slice(0, 19)
+                              .replace("T", " ")} UTC`
+                          : ""}
                       </Typography>
                     </TableCell>
                     <TableCell>

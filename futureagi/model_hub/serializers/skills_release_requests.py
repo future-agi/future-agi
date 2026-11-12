@@ -155,7 +155,14 @@ class ExecutionReceipt(Revision):
 
 class InboxQuery(ctx.PageQuery):
     status = s.ChoiceField(
-        choices=["pending", "approved", "changes_requested", "released"], required=False
+        choices=[
+            "pending",
+            "approved",
+            "changes_requested",
+            "released",
+            "superseded",
+        ],
+        required=False,
     )
 
 

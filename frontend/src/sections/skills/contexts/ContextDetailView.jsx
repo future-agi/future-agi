@@ -14,8 +14,8 @@ import ContextLinksPanel from "./ContextLinksPanel";
 // Hierarchy: selected/latest/production strip, AGENTS root, read-only provenance.
 // Palette/depth/surfaces: neutral source paper and divider, no delivery inference.
 // Type/spacing: m3/s1/s3, 12px groups; file rail stacks below narrow-width identity.
-// A shared link may open any known tab; anything else opens the context itself.
-const TAB_IDS = ["context", "links", "tests", "versions", "consumers", "use"];
+// A shared link (for example an incident's ?tab=recovery) may open any known tab; anything else opens the context itself.
+const TAB_IDS = ["context", "links", "tests", "versions", "consumers", "recovery", "use"];
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGENTS.md", onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, sections = {}, state, initialTab }) {
   const [tab, setTab] = useState(TAB_IDS.includes(initialTab) ? initialTab : 'context');
   const [fileMode, setFileMode] = useState('source');
@@ -29,7 +29,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = "AGEN
   const manifest = versionQuery.data?.files || [];
   const selected = manifest.find((file) => file.path === selectedPath);
   const content = fileQuery.data?.path === selectedPath && fileQuery.data?.versionId === viewed?.id ? fileQuery.data.text : null;
-  const tabs = [["context", "Context"], ["links", "Linked skills"], ["tests", "Tests"], ["versions", "Versions"], ["consumers", "Consumers"], ["use", "Use"]];
+  const tabs = [["context", "Context"], ["links", "Linked skills"], ["tests", "Tests"], ["versions", "Versions"], ["consumers", "Consumers"], ["recovery", "Recovery"], ["use", "Use"]];
   const openFile = (path) => { if (manifest.some((file) => file.path === path)) onSelectPath?.(path); };
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     <PageHeader title={context.name} description={descriptor?.description || context.description} />

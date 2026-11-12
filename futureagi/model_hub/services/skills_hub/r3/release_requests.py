@@ -477,6 +477,14 @@ def submit_release_request(
             "External decisions must be attributed to their recorder.",
             400,
         )
+    # Close the author's stale requests first so the fresh request is the newest row in every inbox.
+    _supersede_stale_requests(
+        principal=principal,
+        skill=skill,
+        keep_id=request_id,
+        candidate_id=packet["candidate_version_id"],
+        label=actual["transition"]["label"],
+    )
     request: HubSkillReleaseRequest | None
     if request_id is None:
         if revision != 0:
@@ -523,6 +531,60 @@ def submit_release_request(
         request.pk,
         {"id": str(request.pk), "revision": request.revision, "status": request.status},
     )
+
+
+_STALE_PACKET_CODES = frozenset(
+    {
+        "review_stale",
+        "release_conflict",
+        "impact_changed",
+        "target_configuration_changed",
+        "version_not_found",
+    }
+)
+
+
+def _supersede_stale_requests(
+    *,
+    principal: SkillPrincipal,
+    skill: HubSkill,
+    keep_id: UUID | None,
+    candidate_id: object,
+    label: str,
+) -> None:
+    """Close the author's other open requests for the same candidate and label that went stale.
+
+    A fresh packet from the same author for the same candidate and label replaces
+    a request that can no longer be approved or executed, so no reviewer has to
+    open and decline it. Only a packet that fails the current-state check is
+    closed; a still-current request, a released one, another candidate or label
+    and another author's request are untouched. Closing grants and moves
+    nothing: the status only records why the request cannot proceed.
+    """
+    for other in (
+        HubSkillReleaseRequest.objects.select_for_update()
+        .filter(
+            **_scope(principal),
+            skill=skill,
+            author_id=principal.user_id,
+            status__in=("pending", "approved"),
+        )
+        .exclude(pk=keep_id)
+    ):
+        packet = other.hub_skill_packets.filter(revision=other.revision).first()
+        if (
+            packet is None
+            or str(packet.candidate_id) != str(candidate_id)
+            or packet.packet["transition"]["label"] != label
+        ):
+            continue
+        try:
+            _validate_packet(principal, packet.packet, lock=True)
+        except SkillsHubError as exc:
+            if exc.code not in _STALE_PACKET_CODES:
+                continue
+            other.status = "superseded"
+            other.save(update_fields=["status", "updated_at"])
 
 
 def _request_packet(
@@ -629,10 +691,14 @@ def decide_release_request(
     if (
         request.revision != revision
         or packet.fingerprint != expected_fingerprint
-        or request.status == "released"
+        or request.status in {"released", "superseded"}
     ):
         raise _error("review_conflict", "The release request changed.")
-    _validate_packet(principal, packet.packet, lock=True)
+    if decision == "approve":
+        # Only an approval needs the packet to be current. Declining a packet that
+        # went stale (a moved release, changed evidence) grants nothing and is the
+        # only way a reviewer can close it instead of leaving it pending forever.
+        _validate_packet(principal, packet.packet, lock=True)
     if packet.hub_skill_decisions.filter(actor_id=principal.user_id).exists():
         raise _error(
             "review_conflict",

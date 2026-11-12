@@ -201,7 +201,14 @@ function PacketActions({
     current &&
     permissions.canDecide &&
     request &&
-    request.status !== "released";
+    request.status !== "released" &&
+    request.status !== "superseded";
+  // Declining grants nothing, so a reviewer can close a packet that went stale.
+  const canRequestChanges =
+    permissions.canDecide &&
+    request &&
+    request.status !== "released" &&
+    request.status !== "superseded";
   const canExecute =
     current && permissions.canExecute && request?.status === "approved";
   const actionInput = request
@@ -291,7 +298,7 @@ function PacketActions({
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
                 inputProps={{ maxLength: 2000 }}
-                disabled={locked || !canDecide}
+                disabled={locked || !canRequestChanges}
               />
             )}
             <FormControlLabel
@@ -354,7 +361,10 @@ function PacketActions({
                   <Button
                     variant="outlined"
                     disabled={
-                      !onDecide || !canDecide || !comment.trim() || locked
+                      !onDecide ||
+                      !canRequestChanges ||
+                      !comment.trim() ||
+                      locked
                     }
                     onClick={() =>
                       operation.run(onDecide, {

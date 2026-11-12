@@ -356,6 +356,29 @@ describe("exact decisions and retry safety", () => {
       expect(decide).not.toHaveBeenCalled();
     },
   );
+  it("lets an assigned reviewer decline a stale packet but never approve or release it", async () => {
+    const decide = vi.fn().mockResolvedValue({ id: ID });
+    render(
+      <ReleaseRequestPanel
+        {...panelProps}
+        preview={{ ...preview, current: false }}
+        onDecide={decide}
+      />,
+    );
+    expect(screen.getByText(/Review is stale or unavailable/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Approve exact packet" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Release approved packet" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
+      target: { value: "Production moved while this was pending." },
+    });
+    click("Request changes");
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+    expect(decide.mock.calls[0][0].decision).toBe("request_changes");
+  });
   it("separates attributed decision, release execution and before/after receipt", async () => {
     const execute = vi
       .fn()
@@ -381,6 +404,31 @@ describe("exact decisions and retry safety", () => {
     expect(screen.getByText("Currentness before the move")).toBeVisible();
     expect(screen.getByText("Pointer state after the move")).toBeVisible();
     expect(execute.mock.calls[0][0]).not.toHaveProperty("packet");
+  });
+  it("offers no decision or release on a request replaced by a fresh packet", () => {
+    const decide = vi.fn();
+    const execute = vi.fn();
+    render(
+      <ReleaseRequestPanel
+        {...panelProps}
+        request={{ ...request, status: "superseded" }}
+        onDecide={decide}
+        onExecute={execute}
+      />,
+    );
+    acknowledge();
+    fireEvent.change(screen.getByLabelText("Review comment"), {
+      target: { value: "Closing" },
+    });
+    for (const name of [
+      "Approve exact packet",
+      "Request changes",
+      "Release approved packet",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(decide).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
   it("hides previous-scope private material and ignores a late completion", async () => {
     const d = deferred();

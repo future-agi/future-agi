@@ -53,7 +53,14 @@ def reset(request):
         or request["reconstruction_reviewed"] is not True
     ):
         raise ValueError("clean_thread_requires_reconstruction_review")
-    return {"schema": 1, "thread": str(uuid4()), "case": request["case"]}
+    case = request["case"]
+    if (
+        not isinstance(case, dict)
+        or set(case) != {"case_id", "order_id", "request"}
+        or not all(isinstance(value, str) and value.strip() for value in case.values())
+    ):
+        raise ValueError("invalid_reconstructed_case")
+    return {"schema": 1, "thread": str(uuid4()), "case": dict(case)}
 
 
 def fixture_url(value):
@@ -70,14 +77,86 @@ def fixture_url(value):
     return value.rstrip("/") + "/"
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Synthetic support application; no qualification claim"
-    )
-    parser.add_argument("request", type=Path)
-    parser.add_argument("--state", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+def execute(
+    request,
+    state,
+    *,
+    registry_url,
+    consume,
+    binding_id,
+    runtime_digest,
+    provider_url,
+    business_url,
+    report=None,
+    provider_key=None,
+    model="fixture-model",
+):
+    """Run one request under one binding's credentials and return the result.
+
+    Shared by the single-thread entrypoint and the batch ``recover`` command, so
+    a resumed or clean thread is the same application run either way.
+    """
+    with ExitStack() as stack:
+        sdk = Client(base_url=registry_url, auth=ContextAuth(consume), max_retries=0)
+        stack.callback(sdk.close)
+        provider = stack.enter_context(
+            httpx.Client(
+                base_url=fixture_url(provider_url),
+                trust_env=False,
+                follow_redirects=False,
+                timeout=15,
+                # A scenario-scoped synthetic transport credential, never a broad key.
+                headers=(
+                    {"Authorization": "Bearer " + provider_key} if provider_key else {}
+                ),
+            )
+        )
+        business = stack.enter_context(
+            httpx.Client(
+                base_url=fixture_url(business_url),
+                trust_env=False,
+                follow_redirects=False,
+                timeout=15,
+            )
+        )
+        store = Store(state)
+        stack.callback(store.close)
+        result = run(
+            request,
+            store=store,
+            registry=Registry(sdk, binding_id, runtime_digest),
+            provider=provider,
+            business=business,
+            model=model,
+        )
+        # J6: optional authenticated delivery receipts (report credential only).
+        if report:
+            from .reporting import report_deliveries
+
+            reporter = Client(
+                base_url=registry_url, auth=ContextAuth(report), max_retries=0
+            )
+            stack.callback(reporter.close)
+            try:
+                result["reported"] = report_deliveries(
+                    store, request["thread"], reporter, binding_id
+                )
+            except Exception as exc:  # never claim delivery reporting on failure
+                result["reported"] = 0
+                result["report_error"] = type(exc).__name__
+        result["events"] = store.events(request["thread"])
+        return result
+
+
+def transport_settings():
+    """The scenario-scoped provider credential and model, shared by every entrypoint."""
+    return {
+        "provider_key": os.environ.get("CTXHUB_PROVIDER_KEY") or None,
+        "model": os.environ.get("CTXHUB_MODEL", "fixture-model"),
+    }
+
+
+def refuse_broad_credentials():
     # Broad keys are never passed through or used as a fallback credential mode.
     if any(
         os.environ.get(name)
@@ -89,66 +168,50 @@ def main():
         )
     ):
         raise ValueError("broad_credentials_must_be_absent")
+
+
+def write_private(path, value):
+    """Exclusive-or-overwrite private JSON output; the raw transcript stays in the state DB."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as output:
+        path.chmod(0o600)
+        output.write(canonical(value) + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Synthetic support application; no qualification claim"
+    )
+    parser.add_argument("request", type=Path)
+    parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    refuse_broad_credentials()
     request = json.loads(args.request.read_text())
-    with ExitStack() as stack:
-        sdk = Client(
-            base_url=os.environ["CTXHUB_REGISTRY_URL"],
-            auth=ContextAuth(os.environ["CTXHUB_CONTEXT_CREDENTIAL"]),
-            max_retries=0,
+    result = execute(
+        request,
+        args.state,
+        registry_url=os.environ["CTXHUB_REGISTRY_URL"],
+        consume=os.environ["CTXHUB_CONTEXT_CREDENTIAL"],
+        binding_id=os.environ["CTXHUB_BINDING_ID"],
+        runtime_digest=os.environ["CTXHUB_RUNTIME_DIGEST"],
+        provider_url=os.environ["CTXHUB_PROVIDER_URL"],
+        business_url=os.environ["CTXHUB_BUSINESS_URL"],
+        report=os.environ.get("CTXHUB_REPORT_CREDENTIAL") or None,
+        **transport_settings(),
+    )
+    write_private(args.output, result)
+    print(
+        canonical(
+            {
+                "status": result["status"],
+                "checkpoint": result["checkpoint"],
+                "evidence_class": "synthetic fixture",
+            }
         )
-        stack.callback(sdk.close)
-        provider = stack.enter_context(
-            httpx.Client(
-                base_url=fixture_url(os.environ["CTXHUB_PROVIDER_URL"]),
-                trust_env=False,
-                follow_redirects=False,
-                timeout=15,
-                # A scenario-scoped synthetic transport credential, never a broad key.
-                headers=(
-                    {"Authorization": "Bearer " + os.environ["CTXHUB_PROVIDER_KEY"]}
-                    if os.environ.get("CTXHUB_PROVIDER_KEY")
-                    else {}
-                ),
-            )
-        )
-        business = stack.enter_context(
-            httpx.Client(
-                base_url=fixture_url(os.environ["CTXHUB_BUSINESS_URL"]),
-                trust_env=False,
-                follow_redirects=False,
-                timeout=15,
-            )
-        )
-        store = Store(args.state)
-        stack.callback(store.close)
-        result = run(
-            request,
-            store=store,
-            registry=Registry(
-                sdk,
-                os.environ["CTXHUB_BINDING_ID"],
-                os.environ["CTXHUB_RUNTIME_DIGEST"],
-            ),
-            provider=provider,
-            business=business,
-            model=os.environ.get("CTXHUB_MODEL", "fixture-model"),
-        )
-        result["events"] = store.events(request["thread"])
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        # Raw transcript remains in the private state DB, not stdout or ingestion receipts.
-        with args.output.open("w", encoding="utf-8") as output:
-            args.output.chmod(0o600)
-            output.write(canonical(result) + "\n")
-        print(
-            canonical(
-                {
-                    "status": result["status"],
-                    "checkpoint": result["checkpoint"],
-                    "evidence_class": "synthetic fixture",
-                }
-            )
-        )
-        return 0 if result["status"] == "completed" else 2
+    )
+    return 0 if result["status"] == "completed" else 2
 
 
 if __name__ == "__main__":
