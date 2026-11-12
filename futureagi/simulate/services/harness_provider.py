@@ -1294,15 +1294,7 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
-        from simulate.services.harness_agent_versions import advisory_xact_lock
-        from simulate.services.harness_versioning.versions import versioning_enabled
-        from simulate.services.hosted_harness import (
-            HostedHarnessError,
-            create_hosted_job,
-            find_replayed_job,
-            idempotency_lock_name,
-        )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+        from simulate.services.hosted_harness import HostedHarnessError
 
         organization = request_organization(request)
         if organization is None:
@@ -1323,124 +1315,27 @@ class HostedHarnessProvider:
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
         ).rstrip("/")
-        # This uses only references/configuration and deployment env presence.
-        # Definitive launch validation runs again after vault resolution.
-        workspace = request_workspace(request)
-        try:
-            _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
-            _validate_phone_connectivity(payload)
-            _validate_known_hosted_egress(payload, base_url)
-            if versioning_enabled():
-                from simulate.services.harness_agent_changes import (
-                    validate_public_github_source,
-                )
-
-                # Before the source is cloned; GitHub is asked once replays are out.
-                if (
-                    find_replayed_job(
-                        organization,
-                        payload,
-                        idempotency_key=idempotency_key,
-                        workspace=workspace,
-                    )
-                    is None
-                ):
-                    validate_public_github_source(payload, lookup=False)
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        from simulate.services.harness_usage import (
-            require_harness_run_usage,
-            require_harness_source_call_usage,
+        from simulate.services.hosted_harness_submission import (
+            submit_hosted_harness_job,
         )
 
         try:
-            require_harness_run_usage(str(organization.id), payload)
-        except Exception as exc:
-            response = _usage_limit_response(exc)
-            if response is not None:
-                return response
-            raise
-        try:
-            source_analysis = _validate_required_credential_files(organization, payload)
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        try:
-            require_harness_source_call_usage(
-                str(organization.id),
+            job, _created = submit_hosted_harness_job(
+                organization,
+                request_workspace(request),
                 payload,
-                source_analysis[0] if source_analysis else (),
+                idempotency_key,
+                base_url,
+                user=request.user,
+                secret_values=secret_values,
             )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:
                 return response
             raise
-        try:
-            with transaction.atomic():
-                # A same-key create waits here and then replays the first's job, so
-                # credentials are checked once; a replay never reads them again.
-                advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
-                replayed = find_replayed_job(
-                    organization,
-                    payload,
-                    idempotency_key=idempotency_key,
-                    workspace=workspace,
-                )
-                on_create = None
-                if replayed is None and versioning_enabled():
-                    from simulate.services.harness_agent_changes import (
-                        validate_public_github_source,
-                    )
-
-                    # A replay answers with its job, whatever GitHub says now.
-                    repository_id = validate_public_github_source(
-                        payload, organization_id=organization.id
-                    )
-                    on_create = _environment_agent_maker(
-                        organization,
-                        payload,
-                        secret_values,
-                        source_analysis,
-                        request.user,
-                        repository_id,
-                    )
-                elif replayed is None and secret_values:
-                    on_create = _secret_ref_minter(secret_values)
-                job, _ = create_hosted_job(
-                    organization,
-                    payload,
-                    idempotency_key=idempotency_key,
-                    workspace=workspace,
-                    on_create=on_create,
-                )
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        except Exception as exc:
-            logger.warning(
-                "harness_create_failed org=%s error=%s",
-                organization.id,
-                type(exc).__name__,
-            )
-            return Response(
-                {"detail": "Hosted harness scheduler is unavailable"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        try:
-            retry_cfg = job.payload["retry"]
-            start_hosted_harness_gateway_workflow(
-                str(job.id),
-                base_url,
-                retry_cfg["max_infrastructure_attempts"],
-                retry_cfg["initial_backoff_seconds"],
-                retry_cfg["max_backoff_seconds"],
-            )
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        except Exception:
-            return Response(
-                {"detail": "Hosted harness scheduler is unavailable"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
