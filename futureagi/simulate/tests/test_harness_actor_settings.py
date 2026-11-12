@@ -436,6 +436,9 @@ def test_an_actor_removal_and_a_scenario_naming_it_never_both_land(
             first(environment, user)
 
     assert refused.value.code == "draft_changed"
+    if first is _remove_manager:
+        # The edit that landed was a scenario, so the copy never blames the actors alone.
+        assert "scenarios" in refused.value.message
     sides = drafts.edit_sides(environment)
     named = any(
         one.get("id") == "manager"
