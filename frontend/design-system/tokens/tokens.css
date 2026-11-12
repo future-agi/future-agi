@@ -1,4 +1,4 @@
-/* Future AGI Design System tokens v0.2.3.
+/* Future AGI Design System tokens v0.2.4.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild. */
 
@@ -156,6 +156,14 @@
   --ds-data-6: #EA580C;
   --ds-data-7: #65A30D;
   --ds-data-8: #71717A;
+  --ds-data-mono-1: #7857FC;
+  --ds-data-mono-2: #B8AFFF;
+  --ds-data-mono-3: #573FCC;
+  --ds-data-mono-4: #A792FD;
+  --ds-data-mono-5: #4531A6;
+  --ds-data-mono-6: #D7D0FF;
+  --ds-data-mono-7: #32247F;
+  --ds-data-mono-8: #684BE3;
   --ds-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ds-shadow-overlay: 0 0 0 1px #E4E4E7, 0 4px 8px -2px rgba(0, 0, 0, 0.05), 0 12px 24px -6px rgba(0, 0, 0, 0.08);
   --ds-shadow-modal: 0 0 0 1px #E4E4E7, 0 24px 48px -12px rgba(0, 0, 0, 0.18);
@@ -244,6 +252,14 @@
   --ds-data-6: #FB923C;
   --ds-data-7: #A3E635;
   --ds-data-8: #A1A1AA;
+  --ds-data-mono-1: #A792FD;
+  --ds-data-mono-2: #573FCC;
+  --ds-data-mono-3: #D7D0FF;
+  --ds-data-mono-4: #7857FC;
+  --ds-data-mono-5: #ECE8FF;
+  --ds-data-mono-6: #4531A6;
+  --ds-data-mono-7: #B8AFFF;
+  --ds-data-mono-8: #684BE3;
   --ds-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.40);
   --ds-shadow-overlay: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px -4px rgba(0, 0, 0, 0.60);
   --ds-shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 64px -8px rgba(0, 0, 0, 0.70);
@@ -333,6 +349,14 @@
   --ds-data-6: #FB923C;
   --ds-data-7: #A3E635;
   --ds-data-8: #A1A1AA;
+  --ds-data-mono-1: #A792FD;
+  --ds-data-mono-2: #573FCC;
+  --ds-data-mono-3: #D7D0FF;
+  --ds-data-mono-4: #7857FC;
+  --ds-data-mono-5: #ECE8FF;
+  --ds-data-mono-6: #4531A6;
+  --ds-data-mono-7: #B8AFFF;
+  --ds-data-mono-8: #684BE3;
   --ds-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.40);
   --ds-shadow-overlay: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px -4px rgba(0, 0, 0, 0.60);
   --ds-shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 64px -8px rgba(0, 0, 0, 0.70);

@@ -1,4 +1,4 @@
-/* Future AGI Design System v0.2.3 — MUI v5 mapping.
+/* Future AGI Design System v0.2.4 — MUI v5 mapping.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild.
 
@@ -180,6 +180,16 @@ const palettes = {
       "#65A30D",
       "#71717A"
     ],
+    "dataMono": [
+      "#7857FC",
+      "#B8AFFF",
+      "#573FCC",
+      "#A792FD",
+      "#4531A6",
+      "#D7D0FF",
+      "#32247F",
+      "#684BE3"
+    ],
     "control": {
       "checked": "#7857FC",
       "onChecked": "#FFFFFF",
@@ -353,6 +363,16 @@ const palettes = {
       "#FB923C",
       "#A3E635",
       "#A1A1AA"
+    ],
+    "dataMono": [
+      "#A792FD",
+      "#573FCC",
+      "#D7D0FF",
+      "#7857FC",
+      "#ECE8FF",
+      "#4531A6",
+      "#B8AFFF",
+      "#684BE3"
     ],
     "control": {
       "checked": "#EFEFF1",
