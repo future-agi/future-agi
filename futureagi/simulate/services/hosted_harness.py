@@ -1655,6 +1655,30 @@ def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
     return calls
 
 
+def executions_without_result(
+    job: HostedHarnessJob, attempt_number: int
+) -> list[str] | None:
+    """The keys of the executions an attempt was sent and delivered no result for.
+
+    None when it was sent none: a build's product is its bundle, not call results. A
+    result an earlier attempt delivered is not this attempt's.
+    """
+    if job.environment_id is None:
+        return None
+    executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+    rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+    if rerun_keys:
+        executions = executions.filter(execution_key__in=rerun_keys)
+    if not executions.exists():
+        return None
+    received = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt_number=attempt_number, execution__isnull=False
+    ).values("execution_id")
+    return sorted(
+        executions.exclude(id__in=received).values_list("execution_key", flat=True)
+    )
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -2841,8 +2865,20 @@ def record_cleanup(
         if attempt.attempt_number < job.current_attempt_number:
             return job
         if retry_pending:
+            # Whatever ended the attempt, the retry runs only the calls it left without
+            # a result, as an in-run re-run runs only its chosen calls. With no result
+            # in, that is every call. A build retries whole.
+            missing = executions_without_result(job, attempt.attempt_number)
+            if missing:
+                job.payload = {
+                    **job.payload,
+                    "metadata": {
+                        **(job.payload.get("metadata") or {}),
+                        RERUN_EXECUTION_KEYS: missing,
+                    },
+                }
             job.state = HostedHarnessJob.State.RETRY_WAIT
-            job.save(update_fields=["state", "updated_at"])
+            job.save(update_fields=["state", "payload", "updated_at"])
             return job
         snapshot_missing = (
             job.environment_id is None

@@ -31,8 +31,10 @@ from simulate.models import (
 )
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_usage import harness_consumption, record_harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     begin_scenarios,
@@ -74,6 +76,7 @@ from simulate.services.hosted_harness_gateway import (
     resolve_authored_connector,
     resolve_platform_simulator_secrets,
 )
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
     SandboxNotFoundError,
@@ -2637,9 +2640,10 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
         attempt1 = gateway.launch(job, endpoint_base_url="https://platform.example.com")
     assert attempt1.attempt_number == 1
     monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 2, "logs": "boom"})
-    assert gateway.reconcile_completed(attempt1).state == (
-        HostedHarnessJob.State.RETRY_WAIT
-    )
+    retried = gateway.reconcile_completed(attempt1)
+    assert retried.state == HostedHarnessJob.State.RETRY_WAIT
+    # A build's product is its bundle, not call results: it retries whole.
+    assert "rerun_execution_keys" not in retried.payload["metadata"]
 
     # Relaunch a fresh attempt; register_attempt supersedes attempt 1.
     with acquire:
@@ -3241,6 +3245,207 @@ def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_ou
     assert calls["scenario-2:0"].ended_reason == job.failure["message"]
     # The Run is not failed: it is scored from the call that has its result, as after
     # an in-run re-run.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+# The losses the platform retries, by the failure code each records on the attempt.
+_LOSSES = {
+    "guest_crashed": {"exit_code": 2, "logs": "boom", "process_logs": ""},
+    "evidence_undeliverable": {"exit_code": 4, "logs": "", "process_logs": ""},
+    "sandbox_disappeared": SandboxNotFoundError("sandbox not found", status_code=404),
+    "sandbox_unreachable": SandboxProviderError("toolbox unavailable", status_code=502),
+}
+
+
+def _lost_by(monkeypatch, code: str) -> HostedHarnessGateway:
+    """A gateway whose guest's attempt ends in the loss that records ``code``."""
+    gateway, _ = _exited_cleanly(monkeypatch)
+    loss = _LOSSES[code]
+
+    def inspect(_attempt):
+        if isinstance(loss, Exception):
+            raise loss
+        return loss
+
+    monkeypatch.setattr(gateway, "inspect", inspect)
+    return gateway
+
+
+def _dispatched(job: HostedHarnessJob) -> list[str]:
+    """The executions launch sends the job's next guest."""
+    job.refresh_from_db()
+    manifest = scope_dispatch_to_rerun(job.payload)["metadata"]["execution_manifest"]
+    return [entry["execution_key"] for entry in manifest]
+
+
+def _run_calls(attempt: HostedHarnessAttempt, tokens: dict[str, int]) -> None:
+    """What a guest does with the calls it is sent: report each call's usage and deliver
+    each call's result through the platform's own receipt ingestion."""
+    now = timezone.now().isoformat()
+    record_harness_usage(
+        attempt,
+        {
+            "schema_version": "futureagi.harness-usage.v1",
+            "operation": "report",
+            "records": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "action": "text_call",
+                    "scenario_key": key,
+                    "amount": amount,
+                    "funding": "platform",
+                    "occurred_at": now,
+                    "outcome": "completed",
+                }
+                for key, amount in tokens.items()
+            ],
+        },
+        emit=False,
+    )
+    for key in tokens:
+        execution = HostedHarnessExecution.no_workspace_objects.select_related(
+            "source_scenario"
+        ).get(job_id=attempt.job_id, execution_key=key)
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(attempt.job_id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "scenario_key": key,
+            "scenario_id": str(execution.source_scenario.scenario_id),
+            "scenario_attempt": attempt.attempt_number,
+            "world_index": None,
+            "status": "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": {"started_at": now, "ended_at": now, "duration_ms": 1000},
+            "failure": None,
+        }
+        body["digest"] = canonical_digest(body)
+        ingest_result_receipt(attempt, body, replay_usage=False)
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retry_after_a_loss_runs_only_the_calls_without_a_result(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-loss-{code}", receipts=1)
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == code
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    # The call that already has its result is not run again.
+    assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+def test_a_retry_after_a_loss_with_no_result_in_runs_every_call(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-loss-nothing-in", receipts=0)
+
+    job = _lost_by(monkeypatch, "guest_crashed").reconcile_completed(attempt)
+
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    assert _dispatched(job) == ["scenario-1:0", "scenario-2:0"]
+
+
+@pytest.mark.django_db
+def test_a_call_with_a_result_is_charged_once_across_a_crash_retry(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-loss-charged-once", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The retry's guest runs what it is sent, and every call it runs is charged.
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # The billed events are built from the same records: the first call's 100 tokens
+    # once, the second call's 10.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("attempts", [2, 1], ids=["retry-left", "retry-spent"])
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_loss_after_every_result_is_in_keeps_the_scored_run(
+    organization, monkeypatch, code, attempts
+):
+    attempt = _delivered_run(organization, f"run-all-in-{code}-{attempts}", receipts=2)
+    payload = attempt.job.payload
+    HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
+        payload={
+            **payload,
+            "retry": {**payload["retry"], "max_infrastructure_attempts": attempts},
+        }
+    )
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Nothing is relaunched, so no call runs or is charged a second time, and the
+    # attempt ends as the platform's conclusion, as when only its terminal event is lost.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+def test_a_crash_retry_that_runs_out_scores_the_run_from_its_calls(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-loss-spent", receipts=1)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    gateway.reconcile_completed(first)
+    # The retry, the last the budget allows, crashes before the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "guest_crashed"
+    statuses = dict(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "execution_key", "call_execution__status"
+        )
+    )
+    assert statuses == {
+        "scenario-1:0": CallExecution.CallStatus.COMPLETED,
+        "scenario-2:0": CallExecution.CallStatus.FAILED,
+    }
+    # As after an in-run re-run, the Run is scored from the call that has its result.
     job.test_execution.refresh_from_db()
     assert job.test_execution.status == "evaluating"
 
