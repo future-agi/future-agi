@@ -78,7 +78,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Built-in `GITHUB_TOKEN` and Actions permissions | Provided by GitHub; explicit least-privilege job permissions | Allow the workflow's stated read/write scopes, including `statuses: write` in the prepare job (it posts the reservation status) and `statuses: read` in the `approve-and-merge` job. No Administration permission or protection-bypass role is needed or granted. The workflow token never approves, so turn **off** “Allow GitHub Actions to create and approve pull requests” (see [Approver App and owner settings](#approver-app-and-owner-settings)). An organisation-level “off” overrides the repository setting |
 | Approver App, environment `pr-autopilot`, variable `AUTOPILOT_APPROVER_CLIENT_ID`, secret `AUTOPILOT_APPROVER_PRIVATE_KEY` | Not created | The owner creates them as described in [Approver App and owner settings](#approver-app-and-owner-settings). Without them the token step in the `approve-and-merge` job fails. The review outcome is already recorded by then. Nothing is approved or merged, and the bot posts one note per head on the PR |
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
-| `dev` protection / active org and repository branch rules | Read, never changed by this code | Enable an active branch ruleset that targets `dev` only, with at least one required status check and strict up-to-date enforcement; preserve existing classic requirements. Do not put the strict rule in organisation ruleset 2289447 or any ruleset that also covers `main`: `main` must not require up-to-date branches, because the release autopilot merges a release PR that is behind `main` (`docs/release-autopilot.md`). Classic-only strictness cannot be verified with `GITHUB_TOKEN`, so it is not sufficient. An active `pull_request` rule must also dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 11 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one |
+| `dev` protection / active org and repository branch rules | Read, never changed by this code | No new ruleset is needed for required checks. `dev` does not require up-to-date branches today (classic protection, strict off), and the autopilot does not need it to: it checks itself that the PR head contains the live `dev` tip (item 1 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)). So people's PRs into `dev` keep merging without an "Update branch" and a CI re-run after each merge. Do not add a strict rule for the autopilot's sake. A strict rule covers every PR into `dev`: after each merge, every other open PR would need an update and a new CI run, including the E2E job (66 to 89 minutes on `dev`) for PRs that touch the app. An active `pull_request` rule must dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 12 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one. Merge queues and required-workflow rules on `dev` stop the autopilot |
 | Required status checks | Policy minimum: `Backend Tests Pass`, union all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
@@ -397,17 +397,19 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
 3. It reads classic check contexts through GraphQL `Ref.refUpdateRule`, the
    non-admin protection view, and applicable active rules through
    `GET /repos/{owner}/{repo}/rules/branches/dev`. Required checks are the union
-   of those and `Backend Tests Pass`, never a replacement list. The non-admin
-   view has **no classic strictness field**; the administrative
-   `branchProtectionRule` view is deliberately not used. An active ruleset with
-   strict required checks must supply positive up-to-date-enforcement evidence.
+   of those and the policy's minimum, never a replacement list. The non-admin
+   view has no classic strictness field, and the controller does not need one:
+   whether `dev` requires up-to-date branches is not read. The controller
+   proves with the compare API that the PR head contains the live `dev` tip,
+   at reservation, at each recheck, and again as the last read before the
+   merge call (item 7).
    From the same rules call, an active `pull_request` rule must have
    `dismiss_stale_reviews_on_push`. The bot's approval names one head, but
    GitHub counts it for the PR, so only that setting stops a later push from
    being merged on it. It acts only on a push after the approval. For a push
    that lands while the approval is being posted, the controller withdraws
-   its own approval (item 6). Classic-only protection or inaccessible evidence stops
-   automation. Check
+   its own approval (item 6). A missing stale-approval rule or inaccessible
+   evidence stops automation. Check
    runs and legacy commit statuses are read with their separate permissions
    (`checks` and `statuses`). The newest result for each
    check must be `success` on the exact head SHA. The expected integration ID is
@@ -502,7 +504,21 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    running; the required checks were already verified above), then calls
    the merge API with the expected head SHA and `merge_method: merge`. GitHub
    remains the final authority for branch protection; no bypass token or
-   `--admin` equivalent is used. If the state is `blocked` right after the
+   `--admin` equivalent is used.
+
+   `dev` does not require up-to-date branches, so GitHub would merge a head
+   that is behind `dev`. The last read before the merge call is therefore the
+   `dev` tip and a compare with the head. If the head no longer contains the
+   tip, the run stops with "head or dev base changed" and merges nothing.
+   The approval stays, because the head did not change. The next run finds
+   the PR behind `dev` and waits until the branch is updated; that push
+   dismisses the approval and the new head is reviewed again. Two gaps
+   remain. If `dev` moves in the moment between that read and the merge
+   call, the PR merges one merge behind `dev`; the post-merge dispatches
+   then run CI on the combined `dev` tip. And while the approval stays on a
+   PR that fell behind `dev`, non-strict protection lets a person, the
+   author included, merge it by hand on that approval without updating the
+   branch, as with any person's approval today. If the state is `blocked` right after the
    approval, the run fails and the next sweep tries again, because GitHub may
    still be catching up. If it is still `blocked` when the approval already
    existed, a rule needs something the autopilot cannot give (a code-owner
@@ -525,8 +541,9 @@ repository-wide. Normal protection requirements still apply to every merge.
 
 GitHub's merge API atomically enforces the expected head and its branch rules.
 It cannot atomically compare a label or working-hours variable. Mutable PR
-metadata is read last before each write, strict protection covers base/check
-races, and a hold/cancellation should be used for an immediate operational stop.
+metadata is read last before each write, the `dev` tip is read last before the
+merge call (item 7), and a hold/cancellation should be used for an immediate
+operational stop.
 Variables are an Actions run snapshot, not a live external kill-switch service.
 
 ## AI review contract and bounded retries
@@ -647,7 +664,8 @@ blocked one.
   the round-two review offered.
 - Merging dev into the branch without changing the author's own diff gets a
   fresh review on the new base at no cost to the diff budget. This matters
-  because `dev` requires branches to be up to date and moves often.
+  because the autopilot merges only a branch that contains the live `dev`
+  tip, and `dev` moves often.
 - At most **three different diffs** and **nine attempts** per PR are reviewed,
   counted from the union of comments, reservation statuses and check runs.
   After that the controller
@@ -828,8 +846,9 @@ A merged change must be reverted through the usual reviewed process.
 Suggested rollout:
 
 1. Human-review these HIGH-risk CI/policy changes. Confirm branch protection,
-   an active strict-check ruleset, a `pull_request` rule that dismisses stale
-   approvals on push, merge-commit support and current-head check SHAs. Before
+   a `pull_request` rule that dismisses stale approvals on push, no merge
+   queue or required-workflow rule on `dev`, merge-commit support and
+   current-head check SHAs. Before
    this workflow reaches `main`, and before 2 Dec 2026, the owner adds the
    Actions event policy that allows `pull_request_target` for
    `.github/workflows/low-risk-pr-autopilot.yml`, and completes the owner
@@ -839,8 +858,9 @@ Suggested rollout:
    before any eligible real PR can merge. Rehearse with **exactly** each job's
    declared `GITHUB_TOKEN` permissions, not a personal/admin token: the GraphQL
    `refUpdateRule` query, active branch rules, check runs and commit statuses must
-   all succeed. Confirm missing-scope/error cases deny automation, classic-only
-   strictness is rejected, and a partial AI-job rerun makes no new model call.
+   all succeed. Confirm missing-scope/error cases deny automation, a `dev`
+   without the stale-approval rule is rejected, and a partial AI-job rerun
+   makes no new model call.
    Also confirm these GitHub behaviors, which development could not observe:
    - `actions/runs/{id}/attempts/1/jobs` lists the `Review reserved` step and
      the outcome marker step with their rendered names; the run object of a
@@ -921,7 +941,8 @@ failures and the HTTP code on `GitHub.request` errors, clearing a superseded
 escalation, pusher trust and the `branch_creation` row, dismissed approvals,
 the compare-only behind-dev rule, the sweep's
 dispatch filter and the workflow's runtime partial-rerun guard,
-approval/merge races (including holds during audit/duplicate-review reads), audit
+approval/merge races (including holds during audit/duplicate-review reads, and `dev`
+moving just before the merge call), audit
 ordering and dispatch selection. It also covers approvals only by the approver
 App (a missing or unsafe identity, a refusal or another login approves
 nothing and posts one note per head; the workflow gives the key only to the

@@ -983,11 +983,10 @@ def protection(api, policy):
         raise PolicyError("dev branch protection evidence missing")
     classic = ref["refUpdateRule"]
     requirements = {name: None for name in policy["required_checks"]}
-    # refUpdateRule is the non-admin view. It exposes contexts, but NOT classic
-    # strictness. GITHUB_TOKEN cannot read the admin-only branchProtectionRule.
-    # Require positive strictness evidence from an active ruleset instead; never
-    # infer it from mergeability, contexts alone, or an administrator's variable.
-    strict = False
+    # refUpdateRule is the non-admin view: it exposes contexts, not classic
+    # strictness. Whether dev requires up-to-date branches is not needed: the
+    # controller proves through the compare API that the PR head contains the
+    # live dev tip (current_base), and does so last of all just before merging.
     # The bot's approval names one head, but GitHub counts it for the PR. Only
     # an active rule that dismisses stale approvals on push stops a later push
     # from being merged on it, by a person, after the bot approved.
@@ -1003,10 +1002,6 @@ def protection(api, policy):
     for rule in api.pages("rules/branches/dev"):
         if rule["type"] == "required_status_checks":
             params = rule["parameters"]
-            strict = strict or (
-                params.get("strict_required_status_checks_policy") is True
-                and bool(params["required_status_checks"])
-            )
             for check in params["required_status_checks"]:
                 name = check["context"]
                 identity = check.get("integration_id")
@@ -1023,11 +1018,6 @@ def protection(api, policy):
                 "required workflow or merge queue rules need a separate integration"
             )
     requirements.pop(policy["review_check"], None)
-    if not strict:
-        raise PolicyError(
-            "an active dev ruleset with strict required checks is needed; "
-            "classic strictness is not visible to GITHUB_TOKEN"
-        )
     if not stale_dismissed:
         raise PolicyError(
             "an active dev ruleset must dismiss stale approvals on push; "
@@ -2013,6 +2003,13 @@ def merge(api, policy, settings, context, approver):
             )
         # Plan the follow-ups before merging, so an API error afterwards cannot lose them.
         plan_files = api.pages(f"pulls/{number}/files")
+        # The last read before the merge call. dev does not require up-to-date
+        # branches, so GitHub would merge a head that is behind dev: check
+        # here that the head still contains the live dev tip. If dev moves in
+        # the moment after this read, the PR merges one merge behind dev, and
+        # the post-merge dispatches below test the combined dev tip.
+        if current_base(api, pr) != context["base"]:
+            raise PolicyError("head or dev base changed; fresh evaluation is required")
         # The merge is refused (409) if the branch moved, even while the PR
         # object still shows the old head.
         response = api.request(

@@ -194,17 +194,14 @@ class FakeGitHub:
         # Legacy statuses on the head, and statuses posted per commit (newest first).
         self.statuses = []
         self.commit_statuses = {}
+        # dev's live shape (read-only check, 12 Nov 2026): classic protection,
+        # not strict, plus organisation ruleset 2289447, whose only rule on
+        # dev is this pull_request rule. No ruleset requires status checks.
         self.rules = [
             {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [{"context": "Backend Tests Pass"}],
-                },
-            },
-            # dev's organisation pull_request rule (read-only check, 11 Nov).
-            {
                 "type": "pull_request",
+                "ruleset_source_type": "Organization",
+                "ruleset_id": 2289447,
                 "parameters": {
                     "required_approving_review_count": 1,
                     "dismiss_stale_reviews_on_push": True,
@@ -213,7 +210,7 @@ class FakeGitHub:
             },
         ]
         self.classic_present = True
-        self.classic_checks = ["Backend Tests Pass"]
+        self.classic_checks = ["Backend Tests Pass", "E2E Tests Pass"]
         self.requests = []
         self.after_approval = None
         # Workflow runs by ID, and the jobs of each (run ID, attempt).
@@ -819,46 +816,48 @@ class EvidenceTests(unittest.TestCase):
             )
         )
 
-    def test_dynamic_required_checks_and_strict_protection(self):
+    def test_required_checks_are_the_union_of_policy_classic_and_ruleset_checks(self):
         api = FakeGitHub()
         api.classic_checks += ["extra-classic", POLICY["review_check"]]
-        api.rules = [
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [
-                        {"context": "extra-org", "integration_id": 77}
-                    ],
+        # A ruleset's strictness is not read: strict or not, the same union.
+        for strict in (True, False):
+            api.rules = [
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "strict_required_status_checks_policy": strict,
+                        "required_status_checks": [
+                            {"context": "extra-org", "integration_id": 77}
+                        ],
+                    },
                 },
-            },
-            FakeGitHub().rules[1],
-        ]
-        names = risk.protection(api, POLICY)
-        self.assertEqual(
-            names, {"Backend Tests Pass": None, "E2E Tests Pass": None, "extra-classic": None, "extra-org": 77}
-        )
+                FakeGitHub().rules[0],
+            ]
+            with self.subTest(strict=strict):
+                self.assertEqual(
+                    risk.protection(api, POLICY),
+                    {"Backend Tests Pass": None, "E2E Tests Pass": None, "extra-classic": None, "extra-org": 77},
+                )
         api.rules = []
-        with self.assertRaises(risk.PolicyError):
+        with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
             risk.protection(api, POLICY)
-        api.rules = [{"type": "merge_queue"}]
-        with self.assertRaises(risk.PolicyError):
-            risk.protection(api, POLICY)
+        for kind in ("merge_queue", "workflows", "required_workflows"):
+            api.rules = [{"type": kind, "parameters": {}}, FakeGitHub().rules[0]]
+            with self.subTest(kind=kind), self.assertRaisesRegex(
+                risk.PolicyError, "required workflow or merge queue"
+            ):
+                risk.protection(api, POLICY)
 
-    def test_strict_flag_without_any_protected_check_is_not_sufficient(self):
+    def test_the_policy_minimum_applies_when_the_branch_requires_no_check(self):
         api = FakeGitHub()
         api.classic_checks = []
-        api.rules = [
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [],
-                },
-            }
-        ]
-        with self.assertRaises(risk.PolicyError):
-            risk.protection(api, POLICY)
+        self.assertEqual(
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+        )
+        api.classic_present = False
+        self.assertEqual(
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+        )
 
     def test_unknown_protection_or_api_access_never_passes(self):
         api = FakeGitHub()
@@ -887,9 +886,9 @@ class EvidenceTests(unittest.TestCase):
         # The same rules call: an active pull_request rule with the setting.
         self.assertEqual(risk.protection(FakeGitHub(), POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
         for change in (
-            lambda rules: rules[1]["parameters"].update(dismiss_stale_reviews_on_push=False),
-            lambda rules: rules[1]["parameters"].pop("dismiss_stale_reviews_on_push"),
-            lambda rules: rules.pop(1),
+            lambda rules: rules[0]["parameters"].update(dismiss_stale_reviews_on_push=False),
+            lambda rules: rules[0]["parameters"].pop("dismiss_stale_reviews_on_push"),
+            lambda rules: rules.pop(0),
         ):
             api = FakeGitHub()
             change(api.rules)
@@ -897,22 +896,22 @@ class EvidenceTests(unittest.TestCase):
                 risk.protection(api, POLICY)
         # A second pull_request rule with the setting is enough.
         api = FakeGitHub()
-        api.rules[1]["parameters"]["dismiss_stale_reviews_on_push"] = False
+        api.rules[0]["parameters"]["dismiss_stale_reviews_on_push"] = False
         api.rules.append({"type": "pull_request", "parameters": {"dismiss_stale_reviews_on_push": True}})
         self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
 
-    def test_classic_contexts_alone_cannot_establish_strictness(self):
+    def test_todays_non_strict_classic_protection_is_enough(self):
+        # dev today: classic contexts, strict false, and only the organisation
+        # pull_request rule. No ruleset with strict required checks is needed.
         api = FakeGitHub()
+        self.assertEqual(
+            risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None}
+        )
+        self.assertFalse(any(rule["type"] == "required_status_checks" for rule in api.rules))
+        # Classic contexts without the stale-approval rule still stop it.
         api.rules = []
-        with self.assertRaisesRegex(risk.PolicyError, "active dev ruleset"):
+        with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
             risk.protection(api, POLICY)
-        api = FakeGitHub()
-        api.rules[0]["parameters"]["strict_required_status_checks_policy"] = False
-        with self.assertRaises(risk.PolicyError):
-            risk.protection(api, POLICY)
-        api = FakeGitHub()
-        api.classic_present = False
-        self.assertEqual(risk.protection(api, POLICY), {"Backend Tests Pass": None, "E2E Tests Pass": None})
 
     def test_missing_or_invalid_classic_contexts_are_not_ignored(self):
         api = FakeGitHub()
@@ -2516,6 +2515,56 @@ class ControllerTests(unittest.TestCase):
                     self.assertEqual(review["state"], "APPROVED")
                 self.assertFalse(self.not_withdrawn_notes())
 
+    def move_dev_while_planning(self):
+        """dev gains a commit the PR lacks while the merge step reads the files
+        for its follow-ups: after every other recheck, just before merging."""
+        original = self.api.pages
+
+        def pages(route, key=None):
+            rows = original(route, key)
+            if route == "pulls/42/files" and self.api.reviews:
+                reads[0] += 1
+                # The second read after the approval is the follow-up plan;
+                # the first is the recheck's snapshot.
+                if reads[0] == 2:
+                    self.api.dev_tip = OTHER
+            return rows
+
+        reads = [0]
+        self.api.pages = pages
+
+    def test_the_dev_tip_is_read_last_before_the_merge_call(self):
+        context = self.passing_review()
+        risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        routes = [(method, route) for method, route, _ in self.api.requests]
+        put = routes.index(("PUT", "pulls/42/merge"))
+        last_files = max(i for i, call in enumerate(routes[:put]) if call == ("GET", "pulls/42/files"))
+        # The plan is read, then the dev tip and the compare, then the merge.
+        self.assertEqual(
+            [route.split("/")[0] for _, route in routes[last_files + 1 : put]],
+            ["git", "compare"],
+        )
+
+    def test_dev_moving_after_the_last_recheck_stops_the_merge(self):
+        context = self.passing_review()
+        self.move_dev_while_planning()
+        with self.assertRaisesRegex(risk.PolicyError, "head or dev base changed"):
+            risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+        self.assertFalse(self.api.writes("pulls/42/merge"))
+        self.assertFalse(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
+        # Same head: the approval stays. The PR is now behind dev, so the next
+        # run waits until the branch is updated, which dismisses the approval.
+        [review] = self.api.reviews
+        self.assertEqual(review["state"], "APPROVED")
+        self.assertFalse(self.api.approver.dismissals())
+        os.environ["POLICY_SHA"] = os.environ["GITHUB_SHA"] = OTHER
+        reserved = len(self.reservations())
+        self.assertEqual(self.prepare(), "")
+        self.assertEqual(len(self.reservations()), reserved)
+        self.summary.assert_called_with(
+            "Waiting: the branch is behind dev; update it from dev to continue."
+        )
+
     def not_withdrawn_notes(self):
         return [c["body"] for c in self.api.comments if c["body"].startswith(risk.NOT_WITHDRAWN_MARKER)]
 
@@ -2944,7 +2993,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_no_stale_approval_dismissal_on_dev_reserves_and_approves_nothing(self):
         context = self.passing_review()
-        self.api.rules[1]["parameters"]["dismiss_stale_reviews_on_push"] = False
+        self.api.rules[0]["parameters"]["dismiss_stale_reviews_on_push"] = False
         with self.assertRaisesRegex(risk.PolicyError, "dismiss stale approvals"):
             risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.api.approver.calls)
