@@ -803,7 +803,15 @@ INTERACTIVE_READ_SETTING_SPECS = {
 
 # Deployment rollout switches use bounded integers so the existing settings
 # loader validates them at startup: 0 is off, 1 is on. These are not plan gates.
-METRICS_FEATURE_SETTING_SPECS = _specs((("METRICS_ENABLED", 0, 0, 1),))
+# METRICS_BACKFILL_MAX_SPANS is the largest project (spans in the 90-day
+# history window) that still gets a history backfill for a new metric version;
+# larger projects start with no history and fill forward from enrollment.
+METRICS_FEATURE_SETTING_SPECS = _specs(
+    (
+        ("METRICS_ENABLED", 0, 0, 1),
+        ("METRICS_BACKFILL_MAX_SPANS", 150_000, 1, 10_000_000),
+    )
+)
 
 RUNTIME_NUMERIC_SETTING_SPECS = {
     **METRICS_FEATURE_SETTING_SPECS,

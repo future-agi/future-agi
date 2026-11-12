@@ -291,6 +291,13 @@ class DerivedMetricVersion(models.Model):
         COMPLETE = "complete"
         FAILED = "failed"
 
+    class HistoryMode(models.TextChoices):
+        # Decided once, when the version would enter backfill. NULL is a legacy
+        # or not-yet-decided version and behaves exactly like HISTORY.
+        HISTORY = "history"
+        # Start with no history: the project was above the backfill size limit.
+        FORWARD = "forward"
+
     # Kinds a user-level metric may use, with the per-user rules each allows.
     USER_LEVEL_RULES = {
         Kind.SHARE: (UserRule.ANY, UserRule.EVERY),
@@ -325,6 +332,8 @@ class DerivedMetricVersion(models.Model):
             "backfill_days_total",
             "backfill_updated_at",
             "activated_at",
+            "history_mode",
+            "coverage_start",
         }
     )
 
@@ -368,6 +377,12 @@ class DerivedMetricVersion(models.Model):
     backfill_days_done = models.PositiveIntegerField(default=0)
     backfill_days_total = models.PositiveIntegerField(default=0)
     backfill_updated_at = models.DateTimeField(null=True, blank=True)
+    # FORWARD versions skip the history backfill: values exist only for units
+    # starting at or after coverage_start (the version's enrollment time).
+    history_mode = models.CharField(
+        max_length=16, choices=HistoryMode.choices, null=True, blank=True
+    )
+    coverage_start = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField(null=True, blank=True)
     # Permanent capture fence; only the lifecycle protocol may set it.
     pins_revoked_at = models.DateTimeField(null=True, blank=True)

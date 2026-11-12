@@ -8,6 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { formatMetricTime, formatRelativeMetricTime } from "./metricTime";
+import { forwardCoverageCopy } from "./copy";
 
 import { metricReadMessage } from "./metricPageValues";
 
@@ -56,8 +57,22 @@ export default function MetricStatusLine({
     done <= total;
   const progressing = hasProgress && done < total;
   const failed = definition?.backfill_status === "failed";
+  // Started with no history: say where values begin instead of a progress bar.
+  const historyMode = provenance?.history_mode ?? definition?.history_mode;
+  const coverageStart =
+    provenance?.coverage_start ?? definition?.coverage_start;
+  const forward = historyMode === "forward" && Boolean(coverageStart);
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+      {forward && (
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          data-testid="metric-coverage"
+        >
+          {forwardCoverageCopy(coverageStart)}
+        </Typography>
+      )}
       {failed && (
         <Alert severity="warning">
           History recalculation failed. Previously committed values have not

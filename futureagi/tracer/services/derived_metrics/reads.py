@@ -184,6 +184,8 @@ def provenance(manifest, definition):
         "updated_at": manifest.published_by.committed_at,
         "backfill_days_done": definition.backfill_days_done,
         "backfill_days_total": definition.backfill_days_total,
+        "history_mode": definition.history_mode,
+        "coverage_start": definition.coverage_start,
     }
 
 
@@ -364,6 +366,15 @@ def point(row, definition):
 
 def window_is_calculated(definition, window):
     """A completed bounded backfill does not prove earlier windows were empty."""
+    from tracer.services.derived_metrics.backfill import forward_coverage_start
+
+    coverage = forward_coverage_start(definition)
+    if coverage is not None:
+        # Start with no history: values exist from the coverage start's own
+        # 15-minute bucket onward, the bucket an effective window floors to.
+        return window["window_start"] >= coverage.replace(
+            minute=coverage.minute // 15 * 15, second=0, microsecond=0
+        )
     cursor = getattr(definition, "backfill_cursor", None) or {}
     if not cursor.get("start"):
         return True  # legacy versions have no bounded-backfill cursor

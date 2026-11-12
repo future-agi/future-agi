@@ -42,6 +42,7 @@ import {
   useRefreshMetric,
 } from "./api";
 import {
+  coverageWindow,
   formatMetricClock,
   localTime,
   localTimeZone,
@@ -178,7 +179,10 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
     identity?.definition?.level === "user" ||
     (!identity?.definition && identity?.draft_definition?.level === "user");
   const scopeWithProject = { ...scope, projectId: identity?.project_id };
-  const readKey = `${definitionId}:${window.window_start}:${window.window_end}:${readRevision}`;
+  // A metric that started with no history is read from its coverage start,
+  // so the values, the trend and a snapshot all begin where values exist.
+  const readWindow = coverageWindow(window, identity?.definition);
+  const readKey = `${definitionId}:${readWindow.window_start}:${readWindow.window_end}:${readRevision}`;
   const summary = definitionSummary(
     identity?.definition || identity?.draft_definition,
   );
@@ -274,7 +278,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             <SaveSnapshot
               metric={identity}
               scope={scopeWithProject}
-              window={window}
+              window={readWindow}
               canWrite={canWrite}
               onSaved={() => {
                 setTab("History");
@@ -587,7 +591,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             key={readKey}
             metric={metric}
             scope={scopeWithProject}
-            window={window}
+            window={readWindow}
             windowLabel={windowLabel}
             onViewHistory={() => setTab("History")}
           />
@@ -597,7 +601,7 @@ function WorkspaceMetricDetail({ scope, metricId, canWrite }) {
             key={readKey}
             metric={metric}
             scope={scopeWithProject}
-            window={window}
+            window={readWindow}
           />
         )}
         {tab === "History" && (

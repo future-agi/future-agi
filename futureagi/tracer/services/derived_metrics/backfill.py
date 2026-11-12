@@ -15,6 +15,9 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
@@ -45,6 +48,174 @@ MAX_CHUNKS_PER_PASS = 3
 # Start no further chunk once a pass has run this long (reservation liveness).
 PASS_SOFT_SECONDS = 20
 PAGE_SIZE = 1000
+DEFAULT_MAX_BACKFILL_SPANS = 150_000
+HISTORY = DerivedMetricVersion.HistoryMode.HISTORY
+FORWARD = DerivedMetricVersion.HistoryMode.FORWARD
+
+
+def max_backfill_spans():
+    """Largest project (spans in the history window) that still backfills."""
+    value = getattr(settings, "METRICS_BACKFILL_MAX_SPANS", DEFAULT_MAX_BACKFILL_SPANS)
+    if type(value) is not int or value < 1:
+        raise ImproperlyConfigured("METRICS_BACKFILL_MAX_SPANS must be positive")
+    return value
+
+
+def history_days(retention_days):
+    """The bounded history window: 90 days, or less under a shorter retention."""
+    return (
+        min(MAX_HISTORY_DAYS, retention_days)
+        if retention_days > 0
+        else MAX_HISTORY_DAYS
+    )
+
+
+def history_window_spans(analytics, project_id, *, now, retention_days, limit):
+    """Physical span rows in [now - window, now), counted only up to limit + 1.
+
+    The LIMIT stops the read once the answer (above the limit or not) is known,
+    so the cost does not grow with the project. Only the project and partition
+    keys are filtered: no GROUP BY, no collapse and no full scan. Unmerged
+    revisions can count twice; that only errs towards starting with no history.
+    """
+    end = changes.utc(now)
+    start = end - timedelta(days=history_days(retention_days))
+    rows = changes.read(
+        analytics,
+        """SELECT count() AS spans FROM (
+            SELECT 1 FROM spans
+            PREWHERE project_id = toUUID(%(size_project)s)
+                AND start_time >= toDateTime64(%(size_start)s, 6, 'UTC')
+                AND start_time < toDateTime64(%(size_end)s, 6, 'UTC')
+            LIMIT %(size_cap)s
+        )""",
+        {
+            "size_project": str(project_id),
+            "size_start": start.strftime("%Y-%m-%d %H:%M:%S"),
+            "size_end": end.strftime("%Y-%m-%d %H:%M:%S"),
+            "size_cap": limit + 1,
+        },
+        changes.MetricReadBudget(),
+        settings=changes._block_settings(limit + 1),
+    )
+    return int(rows[0]["spans"])
+
+
+def forward_coverage_start(definition):
+    """coverage_start of a forward-only version; None means full history."""
+    if getattr(definition, "history_mode", None) != FORWARD:
+        return None
+    coverage = getattr(definition, "coverage_start", None)
+    if coverage is None:
+        raise MetricStateConflict("forward-only version has no coverage start")
+    return changes.utc(coverage)
+
+
+def forward_floor(definitions):
+    """Earliest coverage start when EVERY working version is forward-only.
+
+    A repair or overflow sweep for such a project only needs [floor, ceiling):
+    no version computes a unit that starts earlier. Any history (or legacy,
+    undecided) version keeps the full retained-history sweep.
+    """
+    starts = [forward_coverage_start(d) for d in definitions]
+    if not starts or any(start is None for start in starts):
+        return None
+    return min(starts)
+
+
+def _undecided(project_id):
+    """Pending versions with no progress yet: they are about to enter backfill."""
+    return pending_versions(project_id).filter(
+        history_mode__isnull=True,
+        backfill_status=DerivedMetricVersion.BackfillStatus.PENDING,
+        backfill_cursor__isnull=True,
+    )
+
+
+def enter_backfill(lease, analytics, *, retention_days, limit=None):
+    """Choose history or "start with no history" for versions entering backfill.
+
+    Runs inside the writer's fenced pass, for the first enrollment and for every
+    later version. The project size is measured once, cheaply and bounded; at
+    most ``limit`` spans in the history window keeps today's backfill. Above it
+    each version is forward-only: it records coverage_start (its enrollment
+    time, never after this pass), activates without a history backfill and is
+    computed only from coverage_start onward. A fresh forward-only project's
+    change watermarks start at that time instead of the epoch, so the first
+    discovery reads new arrivals only. Returns {version id: history mode}.
+    """
+    project_id = lease.project_id
+    if not _undecided(project_id).exists():
+        return {}
+    limit = max_backfill_spans() if limit is None else limit
+    now = lease.clock()
+    size = history_window_spans(
+        analytics,
+        project_id,
+        now=now,
+        retention_days=retention_days(),
+        limit=limit,
+    )
+    mode = FORWARD if size > limit else HISTORY
+    from tracer.services.derived_metrics.errors import MetricInputError
+    from tracer.services.derived_metrics.spec import require_computable
+
+    decided = {}
+    with transaction.atomic():
+        state = MetricProjectRefresh._locked(project_id, **lease.check())
+        for definition in _undecided(project_id).select_for_update(of=("self",)):
+            try:
+                require_computable(definition)
+            except MetricInputError:
+                # A legacy recipe that cannot be calculated stays undecided and
+                # fails in the existing backfill path, exactly as before.
+                continue
+            if mode == HISTORY:
+                # Today's history backfill, unchanged: no progress token moves.
+                DerivedMetricVersion.objects.filter(id=definition.id).update(
+                    history_mode=HISTORY
+                )
+                decided[str(definition.id)] = HISTORY
+                continue
+            coverage = min(changes.utc(definition.created_at), changes.utc(now))
+            # Moving the progress token fences any sealed initial intent that
+            # still expects this version's empty, pending progress.
+            DerivedMetricVersion.objects.filter(id=definition.id).update(
+                history_mode=FORWARD,
+                coverage_start=coverage,
+                backfill_status=DerivedMetricVersion.BackfillStatus.COMPLETE,
+                backfill_cursor=None,
+                backfill_days_done=0,
+                backfill_days_total=0,
+                backfill_updated_at=_progress_time(definition.backfill_updated_at, now),
+            )
+            DerivedMetric.activate_version(
+                definition.metric_id,
+                definition.id,
+                expected_active_id=definition.metric.active_version_id,
+                now=now,
+            )
+            decided[str(definition.id)] = FORWARD
+        working = working_definitions(project_id)
+        floor = forward_floor(working)
+        if (
+            floor is not None
+            and state.head_manifest_id is None
+            and not any(
+                getattr(state, field) for field in MetricProjectRefresh.MONOTONE_FIELDS
+            )
+        ):
+            # Nothing was ever published or consumed, and no version needs
+            # history: discovery starts at enrollment, never at the epoch.
+            start = changes.ns(floor)
+            MetricProjectRefresh.objects.filter(pk=state.pk).update(
+                **dict.fromkeys(MetricProjectRefresh.MONOTONE_FIELDS, start)
+            )
+        MetricProjectRefresh.objects.filter(pk=state.pk).update(
+            pending_backfill=pending_versions(project_id).exists()
+        )
+    return decided
 
 
 def pending_versions(project_id):
@@ -558,11 +729,7 @@ def discharge_omission_debts(project_id, *, now):
 
 
 def _initial_cursor(definition, *, now, retention_days):
-    days = (
-        min(MAX_HISTORY_DAYS, retention_days)
-        if retention_days > 0
-        else MAX_HISTORY_DAYS
-    )
+    days = history_days(retention_days)
     return {
         "schema": 1,
         "start": (now - timedelta(days=days)).isoformat(),
@@ -996,24 +1163,38 @@ def merge_changes(*batches):
 def incremental_changes(analytics, writer, head, definitions, *, now):
     definitions = list(definitions)
     state = MetricProjectRefresh.for_project(writer.lease.project_id)
-    batch = changes.discover_changes(
-        analytics,
-        org_id=writer.org_id,
-        project_id=writer.lease.project_id,
-        committed_attempts=[str(a) for _, a in head.allowed_attempts()] if head else [],
-        watermark_ns=state.watermark_ns,
-        eval_watermark_ns=state.eval_watermark_ns,
-        remap_cursor_ns=state.remap_cursor_ns,
-        ceiling=now,
-        eval_config_ids=sorted(
-            {
-                str(item["config_id"])
-                for d in definitions
-                for item in d.inputs
-                if item.get("source") == "eval" and item.get("config_id")
-            }
-        ),
-    )
+    try:
+        batch = changes.discover_changes(
+            analytics,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            committed_attempts=[str(a) for _, a in head.allowed_attempts()]
+            if head
+            else [],
+            watermark_ns=state.watermark_ns,
+            eval_watermark_ns=state.eval_watermark_ns,
+            remap_cursor_ns=state.remap_cursor_ns,
+            ceiling=now,
+            eval_config_ids=sorted(
+                {
+                    str(item["config_id"])
+                    for d in definitions
+                    for item in d.inputs
+                    if item.get("source") == "eval" and item.get("config_id")
+                }
+            ),
+        )
+    except changes.arrivals.ContinuousCandidateOverflow:
+        raise
+    except changes.arrivals.ContinuousCandidateReadError as exc:
+        if not changes.memory_limit_exceeded(exc):
+            raise
+        # Too many changed keys to buffer is the same condition as the key cap:
+        # take the durable, paged fallback instead of failing this window on
+        # every retry. Discovery ran once; no fallback re-runs it in this pass.
+        raise changes.arrivals.ContinuousCandidateOverflow(
+            "metric discovery exceeded its memory budget"
+        ) from exc
     work_units = len(batch.units)
     if any(getattr(d, "level", None) == "span" for d in definitions):
         # Span refreshes materialize source identities, not just their owners.
@@ -1559,6 +1740,10 @@ class BackfillRunner:
         state = MetricProjectRefresh.for_project(writer.lease.project_id)
         head = state.head_manifest
         committed = [str(a) for _, a in head.allowed_attempts()] if head else []
+        definitions = working_definitions(writer.lease.project_id)
+        # A forward-only project sweeps [earliest coverage start, now) only:
+        # never the epoch or the 90-day window it chose not to backfill.
+        floor = forward_floor(definitions)
         page = changes.reconcile_page(
             self.analytics,
             org_id=writer.org_id,
@@ -1569,11 +1754,13 @@ class BackfillRunner:
                 changes.ReconciliationCheckpoint.from_dict(state.reconciliation_cursor)
                 if state.reconciliation_cursor
                 else None,
-                cutoff=cutoff,
+                cutoff=max(v for v in (cutoff, floor) if v is not None)
+                if cutoff or floor
+                else None,
             ),
             page_size=self.page_size,
+            floor=floor,
         )
-        definitions = working_definitions(writer.lease.project_id)
         incremental = changes.ChangeBatch((), (), (), (), (), {})
         if not skip_incremental:
             try:
@@ -1623,7 +1810,7 @@ class BackfillRunner:
             batch,
             definitions,
             self.scope,
-            start=changes.EPOCH,
+            start=changes.EPOCH if floor is None else floor,
             end=now,
             as_of=now,
             purpose="repair",

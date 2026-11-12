@@ -1383,6 +1383,8 @@ class RefreshWriter:
         )
         if len(ids) > MAX_PASS_UNITS:
             raise ValueError("replacement owner set exceeds pass cap")
+        from tracer.services.derived_metrics.backfill import forward_coverage_start
+
         if any(d.level == "span" for d in definitions):
             from tracer.services.derived_metrics.span_evidence import (
                 freeze_span_fields,
@@ -1391,6 +1393,7 @@ class RefreshWriter:
             self._span_dirty_keys(attempt, change, head, source_ids)
             for definition in definitions:
                 if definition.level == "span":
+                    coverage = forward_coverage_start(definition)
                     freeze_span_fields(
                         self,
                         attempt,
@@ -1398,7 +1401,11 @@ class RefreshWriter:
                         definition,
                         scope,
                         as_of=as_of,
-                        cutoff=cutoff,
+                        # A forward-only span version owns no span that starts
+                        # before its coverage start (nor beyond retention).
+                        cutoff=cutoff
+                        if coverage is None
+                        else max(v for v in (cutoff, coverage) if v is not None),
                     )
             if any(d.level == "conversation" for d in definitions):
                 owners = self._unowned_span_sessions(attempt, head, ids)
@@ -1579,6 +1586,20 @@ class RefreshWriter:
                             # Surviving young members alone cannot distinguish
                             # physical pruning from an authoritative deletion.
                             raise MetricAdmissionUnproven("metric_admission_unproven")
+                    coverage = forward_coverage_start(definition)
+                    if coverage is not None:
+                        # Start with no history: a forward-only version owns
+                        # only units starting at or after its coverage start.
+                        # An EXISTING field still gets its replacement (moved
+                        # or deleted), so no committed value goes stale.
+                        query = (
+                            f"SELECT * FROM ({query}) WHERE unit_start >= "
+                            "toDateTime64(%(forward_coverage_start)s, 6, 'UTC') "
+                            f"OR unit_id IN (SELECT unit_id FROM ({old_sql}) WHERE {where})"
+                        )
+                        params = merge_bindings(
+                            params, old_params, {"forward_coverage_start": coverage}
+                        )
                     if inherited_floor and self._unproven_source_admission(
                         head,
                         source_page,

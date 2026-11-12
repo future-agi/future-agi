@@ -220,6 +220,8 @@ class DerivedMetricVersionSerializer(serializers.ModelSerializer):
             "backfill_status",
             "backfill_days_done",
             "backfill_days_total",
+            "history_mode",
+            "coverage_start",
             "activated_at",
             "needs_rebuild",
             "created_at",
@@ -773,6 +775,12 @@ class MetricReadProvenanceSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(allow_null=True)
     backfill_days_done = serializers.IntegerField(min_value=0)
     backfill_days_total = serializers.IntegerField(min_value=0)
+    history_mode = serializers.ChoiceField(
+        choices=["history", "forward"],
+        allow_null=True,
+        help_text="forward: started with no history; values exist from coverage_start",
+    )
+    coverage_start = serializers.DateTimeField(allow_null=True)
 
 
 class MetricEffectiveWindowSerializer(serializers.Serializer):

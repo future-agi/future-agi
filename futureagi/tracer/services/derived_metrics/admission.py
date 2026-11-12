@@ -750,6 +750,12 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
                 next_due_at=lease.clock()
             )
         analytics = NativeMetricAnalytics(client, lease=lease)
+        # Every version decides history vs "start with no history" before it
+        # can enter backfill; forward-only versions activate here, so a large
+        # project never starts a history sweep for them.
+        backfill.enter_backfill(
+            lease, analytics, retention_days=lambda: policy(scope.organization)
+        )
         runner = backfill.BackfillRunner(
             writer, analytics, scope, exhaustive_initial=True
         )

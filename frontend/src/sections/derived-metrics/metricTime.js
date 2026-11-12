@@ -96,6 +96,20 @@ export function metricWindow(days, now = new Date()) {
   };
 }
 
+/** A metric that started with no history (history_mode "forward") has values
+ * only from its coverage_start. Reads start there instead of asking for a
+ * window that was never calculated. A window wholly before coverage_start is
+ * kept as chosen, so the server can say it is not calculated.
+ */
+export function coverageWindow(window, definition) {
+  if (definition?.history_mode !== "forward") return window;
+  const from = metricDate(definition.coverage_start);
+  const start = metricDate(window?.window_start);
+  const end = metricDate(window?.window_end);
+  if (!from || !start || start >= from || (end && from >= end)) return window;
+  return { ...window, window_start: from.toISOString() };
+}
+
 const BUCKET_MS = 15 * 60000;
 
 /** The window the server reads or saves for a request: both ends rounded down

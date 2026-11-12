@@ -1874,6 +1874,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "history_window_spans": filed(
+            ROW_DRIVEN,
+            why=(
+                "enter_backfill counts the refresh row's project spans, capped at "
+                "the size limit, to choose history or forward-only. The count is "
+                "not authorization; it shares the admission repair dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "version_coverage_page": filed(
             ROW_DRIVEN,
             why=(

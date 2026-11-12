@@ -12,6 +12,7 @@ import {
   within,
 } from "src/utils/test-utils";
 import MetricDetailPage from "../MetricDetailPage";
+import { formatMetricTime } from "../metricTime";
 import { metric, kpi, trend, driver, field } from "./metricPageFixtures";
 
 const mock = vi.hoisted(() => ({
@@ -1587,4 +1588,45 @@ it("moves the header with the panel when a poll finds the calculation running, w
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("starts a forward-only metric's KPI, trend and chart at its coverage start and says why", async () => {
+  // Two days ago, inside the default 7-day window.
+  const coverage = new Date(Date.now() - 2 * 86400000).toISOString();
+  const forward = { history_mode: "forward", coverage_start: coverage };
+  responses.detail = structuredClone({
+    ...metric,
+    definition: { ...metric.definition, ...forward },
+  });
+  const effective = {
+    ...kpi.effective_window,
+    window_start: coverage,
+    window_end: new Date().toISOString(),
+  };
+  responses.kpi = {
+    ...structuredClone(kpi),
+    previous: null,
+    delta: null,
+    provenance: { ...kpi.provenance, ...forward },
+    effective_window: effective,
+  };
+  responses.trend = {
+    ...structuredClone(trend),
+    provenance: { ...trend.provenance, ...forward },
+    effective_window: effective,
+  };
+  mount();
+  expect(await screen.findByTestId("metric-hero")).toHaveTextContent("≈ 62%");
+  // The reads begin where values exist, not 7 days back.
+  for (const kind of ["kpi", "trend"]) {
+    const [, config] = calls(kind).at(-1);
+    expect(config.params.window_start).toBe(coverage);
+    expect(Date.parse(config.params.window_end)).toBeGreaterThan(
+      Date.parse(coverage),
+    );
+  }
+  expect(screen.getByTestId("metric-coverage")).toHaveTextContent(
+    `Values from ${formatMetricTime(coverage)}. History isn't computed for projects this large yet.`,
+  );
+  expect(screen.getByText("Previous period unavailable")).toBeVisible();
 });

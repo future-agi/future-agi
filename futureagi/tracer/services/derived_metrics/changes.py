@@ -25,9 +25,15 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from clickhouse_driver.errors import ErrorCodes
+
 from tracer.selectors.eval_tasks import continuous_candidates as arrivals
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-from tracer.services.clickhouse.read_budget import ReadDeadline, WallCappedAnalytics
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    WallCappedAnalytics,
+    _clickhouse_error_code,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     NIL_UUID,
     bounded_survivor_map_subquery,
@@ -57,6 +63,21 @@ SOURCE_ORDER = (
 
 class MetricChangeReadError(arrivals.ContinuousCandidateReadError):
     """A complete metric discovery proposal could not be proved."""
+
+
+def memory_limit_exceeded(exc: BaseException) -> bool:
+    """Whether a wrapped read failed on ClickHouse's memory cap (Code 241).
+
+    Timeouts and every other read failure stay failures: only the memory cap
+    is evidence that the window holds more keys than one pass can buffer.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if _clickhouse_error_code(exc) == ErrorCodes.MEMORY_LIMIT_EXCEEDED:
+            return True
+        exc = exc.__cause__
+    return False
 
 
 class MetricReadBudget(arrivals._ReadBudget):
@@ -733,13 +754,24 @@ class ReconciliationPage:
     checkpoint: ReconciliationCheckpoint
 
 
-def _source_days(analytics, params, budget):
+def _floor_value(floor):
+    return utc(floor).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _source_days(analytics, params, budget, floor=None):
+    # A floor prunes whole start_time partitions: a forward-only sweep never
+    # reads the days before its coverage start.
+    bound = (
+        ""
+        if floor is None
+        else "AND start_time >= toDateTime64(%(source_floor)s, 6, 'UTC')"
+    )
     rows = read(
         analytics,
-        """SELECT toString(toDate(min(start_time))) AS first_day,
+        f"""SELECT toString(toDate(min(start_time))) AS first_day,
             toString(toDate(max(start_time))) AS last_day, count() AS source_rows
-        FROM spans PREWHERE project_id = toUUID(%(project_id)s)""",
-        params,
+        FROM spans PREWHERE project_id = toUUID(%(project_id)s) {bound}""",
+        params if floor is None else {**params, "source_floor": _floor_value(floor)},
         budget,
     )
     if not rows or not int(rows[0]["source_rows"]):
@@ -759,12 +791,13 @@ def _source_key_values(row) -> tuple[str, ...]:
     )
 
 
-def _source_page(analytics, params, budget, cp, page_size):
+def _source_page(analytics, params, budget, cp, page_size, floor=None):
     """One page of physical span keys in sorting-key order within single days.
 
     Returns (keys, rows read, next day, next after, phase finished). Every
     statement is scoped to one toDate(start_time) partition, so read-in-order
-    stops after about one page instead of reading the project.
+    stops after about one page instead of reading the project. A floor also
+    bounds the first day: nothing before it is nominated.
     """
     day, last_day, after = cp.day, cp.last_day, cp.after
     keys: dict[SourceKey, None] = {}
@@ -772,9 +805,12 @@ def _source_page(analytics, params, budget, cp, page_size):
     for _ in range(MAX_DAYS_PER_PAGE):
         remaining = page_size - scanned
         start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        floored = floor is not None and utc(floor) > start
         query_params = {
             **params,
-            "day_start": start.strftime("%Y-%m-%d %H:%M:%S"),
+            "day_start": _floor_value(floor)
+            if floored
+            else start.strftime("%Y-%m-%d %H:%M:%S"),
             "day_end": (start + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
             "page_limit": remaining,
         }
@@ -856,6 +892,7 @@ def reconcile_page(
     checkpoint: ReconciliationCheckpoint | None = None,
     page_size: int = 1000,
     budget: MetricReadBudget | None = None,
+    floor: datetime | None = None,
 ) -> ReconciliationPage:
     """Repair ALL retained keys, also used for initial dependency backfill.
 
@@ -863,6 +900,9 @@ def reconcile_page(
     this is what repairs eval arrivals delayed beyond the overlap. New keys
     appearing behind a keyset are visited on the next complete pass. No
     retention/date cutoff, source version minimum or sampling is applied.
+    ``floor`` is only for projects whose every version is forward-only: their
+    source sweep visits start_time >= floor, since no version owns an earlier
+    unit. Committed dependency/lifecycle phases are unchanged.
     """
     if not 1 <= page_size <= MAX_KEYS:
         raise ValueError("invalid metric reconciliation page size")
@@ -883,7 +923,7 @@ def reconcile_page(
     scanned = 0
     divergent_only = False
     if phase == "sources" and day is None:
-        days = _source_days(analytics, params, budget)
+        days = _source_days(analytics, params, budget, floor)
         if days is None:
             phase = "dependencies"
         else:
@@ -891,7 +931,7 @@ def reconcile_page(
     if phase == "sources":
         progress = replace(cp, day=day, last_day=last_day)
         source_keys, scanned, day, after, finished = _source_page(
-            analytics, params, budget, progress, page_size
+            analytics, params, budget, progress, page_size, floor
         )
         if finished:
             phase, day, last_day = "dependencies", None, None

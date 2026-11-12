@@ -1,3 +1,5 @@
+import { formatMetricTime } from "./metricTime";
+
 /** Semantic copy, not example measurements. Missing inputs never mean zero. */
 export const metricCopy = {
   noValue: "No value",
@@ -49,6 +51,10 @@ const intervalReasons = {
   unstable_variance: "insufficient support for a reliable interval",
   not_computed: "not computed",
 };
+
+/** A metric on a project above the backfill size limit starts with no history. */
+export const forwardCoverageCopy = (coverageStart) =>
+  `Values from ${formatMetricTime(coverageStart)}. History isn't computed for projects this large yet.`;
 
 export function noValueCopy(reason) {
   return Object.hasOwn(noValueReasons, reason)

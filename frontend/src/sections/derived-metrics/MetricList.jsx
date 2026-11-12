@@ -26,6 +26,7 @@ import {
   useMetricProjectNames,
 } from "./useMetricProjectNames";
 import {
+  coverageWindow,
   formatMetricTime,
   formatMetricWindow,
   formatRelativeMetricTime,
@@ -67,7 +68,8 @@ function MetricReadCell({ metric, scope, window, freshness = false }) {
     metricId: metric.id,
     // current_version can be a newer draft; reads pin the ACTIVE definition.
     version: metric.definition?.version,
-    params: window,
+    // A metric that started with no history is read from its coverage start.
+    params: window && coverageWindow(window, metric.definition),
     enabled: Boolean(metric.definition && window),
   });
   if (!metric.definition) {
