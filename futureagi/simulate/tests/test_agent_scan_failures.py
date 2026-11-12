@@ -11,9 +11,13 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
-from simulate.models import AgentScan
+from simulate.models import AgentDefinition, AgentScan
 from simulate.services import agent_reading_sandbox
-from simulate.services.agent_connect import connect_lock_name
+from simulate.services.agent_connect import (
+    connect_agent,
+    connect_lock_name,
+    start_scan,
+)
 from simulate.services.agent_reading_sandbox import (
     SCAN_TIMED_OUT,
     SCAN_UNAVAILABLE,
@@ -21,6 +25,7 @@ from simulate.services.agent_reading_sandbox import (
     expire_stale_scan,
     fail_scan,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tasks.agent_scans import SCAN_DEADLINE_SECONDS, scan_agent_source
 from simulate.temporal.activities import agent_version as activities
 
@@ -29,6 +34,23 @@ pytestmark = pytest.mark.django_db
 run_scan = scan_agent_source._original_func
 
 SCAN = "/simulate/agents/scan/"
+CONNECT = "/simulate/agents/connect/"
+COMMIT = "a" * 40
+IN_A_FOLDER = {
+    "kind": "github",
+    "repository": "acme/agent",
+    "ref": "main",
+    "commit_sha": COMMIT,
+    "subfolder": "agents/support",
+}
+PRIVATE_UNCONNECTED = {
+    "kind": "github",
+    "repository": "acme/agent",
+    "ref": "main",
+    "commit_sha": COMMIT,
+    "visibility": "private",
+    "installation_id": "4242",
+}
 
 
 @pytest.fixture
@@ -97,6 +119,60 @@ class TestReadingSwitch:
 
         assert refused.value.code == "reading_unavailable"
         assert AgentDefinition.objects.count() == before
+
+
+def _connect(organization, workspace, user, source):
+    connect_agent(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=source,
+        name="Harbor",
+    )
+
+
+def _scan(organization, workspace, user, source):
+    start_scan(organization=organization, workspace=workspace, user=user, source=source)
+
+
+class TestSourceChecks:
+    @pytest.fixture(autouse=True)
+    def reading_on(self, settings):
+        settings.HARNESS_AGENT_READING_ENABLED = True
+        settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = False
+
+    @pytest.mark.parametrize("start", [_connect, _scan], ids=["connect", "scan"])
+    @pytest.mark.parametrize(
+        ("source", "code"),
+        [
+            (IN_A_FOLDER, "subfolder_unsupported"),
+            (PRIVATE_UNCONNECTED, "github_installation_not_connected"),
+        ],
+        ids=["folder", "private"],
+    )
+    def test_a_refused_source_makes_no_agent_and_no_scan(
+        self, organization, workspace, user, start, source, code
+    ):
+        agents = AgentDefinition.objects.count()
+
+        with pytest.raises(HostedHarnessError) as refused:
+            start(organization, workspace, user, dict(source))
+
+        assert refused.value.code == code
+        assert refused.value.status_code == 422
+        assert AgentDefinition.objects.count() == agents
+        assert not AgentScan.objects.exists()
+
+    def test_the_connect_api_refuses_a_folder(self, auth_client):
+        agents = AgentDefinition.objects.count()
+
+        response = auth_client.post(
+            CONNECT, {**IN_A_FOLDER, "name": "Harbor"}, format="json"
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "subfolder_unsupported"
+        assert AgentDefinition.objects.count() == agents
 
 
 class TestStuckScans:
