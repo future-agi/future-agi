@@ -10,7 +10,10 @@ import json
 import os
 import re
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -454,13 +457,22 @@ class GitEvidenceTests(unittest.TestCase):
             policy.release_environment(version, **kwargs)
         return output.read_text()
 
+    def guard_count(self):
+        """The previous release and the count since it, from the newest job summary."""
+        line = [line for line in (self.root / "summary").read_text().splitlines()
+                if line.startswith("Previous release:")][-1]
+        match = re.fullmatch(r"Previous release: `(.*)`; migration or schema files since it: "
+                             r"([0-9]+|unknown)\. The tag commit is on a reviewed branch\.", line)
+        return match[1], match[2]
+
     def test_reachable_tag_and_no_additions_are_auto(self):
         text = self.release()
         self.assertIn("environment=production-auto\n", text)
-        self.assertIn("migrations=0\n", text)
-        # The previous shipped release is the baseline the bump commit carries.
-        self.assertIn("baseline=v1.0.0\n", text)
+        self.assertEqual(self.guard_count(), ("v1.0.0", "0"))
         self.assertIn(f"tag_sha={self.sha}\n", text)
+        # The guard's count only picks the environment. The bump counts again
+        # from what deployment main runs, so the guard exports neither value.
+        self.assertEqual(sorted(line.split("=", 1)[0] for line in text.splitlines()), ["environment", "tag_sha"])
 
     def test_non_main_tag_is_refused_even_when_manual(self):
         self.git("checkout", "-b", "unreviewed")
@@ -495,7 +507,8 @@ class GitEvidenceTests(unittest.TestCase):
             self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
             text = self.release()
         self.assertIn("environment=Production", text)
-        self.assertIn("migrations=unknown", text)
+        # v1.1.0's previous release, v1.0.0, did not ship, so the count is unknown.
+        self.assertEqual(self.guard_count(), ("v1.0.0", "unknown"))
         for error in (RuntimeError("api"), KeyError("jobs"), ValueError("json"), TypeError("shape")):
             with self.subTest(error=type(error).__name__), patch.object(policy, "published", side_effect=error):
                 self.assertEqual(policy.migration_evidence("v1.2.0", self.sha), ("v1.1.0", None))
@@ -549,7 +562,7 @@ class GitEvidenceTests(unittest.TestCase):
         sha = self.git("rev-parse", "HEAD").strip()
         text = self.release(version="v1.2.0", sha=sha)
         self.assertIn("environment=production-auto\n", text)
-        self.assertIn("migrations=0\n", text)
+        self.assertEqual(self.guard_count()[1], "0")
         self.write("futureagi/tracer/services/clickhouse/v2/schema/028_x.sql")
         self.commit()
         self.git("tag", "v1.3.0")
@@ -557,7 +570,7 @@ class GitEvidenceTests(unittest.TestCase):
         sha = self.git("rev-parse", "HEAD").strip()
         text = self.release(version="v1.3.0", sha=sha)
         self.assertIn("environment=Production\n", text)
-        self.assertIn("migrations=1\n", text)
+        self.assertEqual(self.guard_count()[1], "1")
 
     def test_grouping_schema_in_python_keeps_review_and_other_grouping_code_stays_auto(self):
         self.write("futureagi/tracer/services/grouping/clusterer.py")
@@ -572,7 +585,7 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         text = self.release(version="v1.3.0", sha=self.git("rev-parse", "HEAD").strip())
         self.assertIn("environment=Production\n", text)
-        self.assertIn("migrations=1\n", text)
+        self.assertEqual(self.guard_count()[1], "1")
 
     def test_added_ee_and_oss_files_count_but_modified_and_init_do_not(self):
         self.write("futureagi/app/migrations/0001_initial.py", "modified\n")
@@ -610,7 +623,7 @@ class GitEvidenceTests(unittest.TestCase):
         self.git("tag", "-d", "v1.0.0")
         text = self.release()
         self.assertIn("environment=Production", text)
-        self.assertIn("migrations=unknown", text)
+        self.assertEqual(self.guard_count(), ("unknown", "unknown"))
 
     def test_diff_failure_is_manual_not_zero(self):
         with patch.object(policy, "migration_evidence", side_effect=RuntimeError("unavailable")):
@@ -628,6 +641,47 @@ class GitEvidenceTests(unittest.TestCase):
             with self.subTest(version=version), patch.object(policy, "git") as git, self.assertRaises(ValueError):
                 policy.release_environment(version)
             git.assert_not_called()
+
+    def migrations_since_command(self, pinned, version):
+        result = subprocess.run([sys.executable, str(Path(policy.__file__).resolve()), "migrations-since",
+                                 "--from", pinned, "--to", version], cwd=self.root, text=True,
+                                capture_output=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, check=True)
+        return result.stdout
+
+    def test_migrations_since_counts_from_the_release_main_runs_across_a_skipped_release(self):
+        self.write("futureagi/app/migrations/0002_new.py")
+        self.commit()
+        self.git("tag", "v1.2.0")
+        self.write("README.txt", "changed\n")
+        self.commit()
+        self.git("tag", "-a", "v1.3.0", "-m", "synthetic annotated release")
+        # Deployment main still runs v1.1.0: the skipped v1.2.0's migration counts.
+        self.assertEqual(policy.migrations_since("v1.1.0", "v1.3.0"), 1)
+        self.assertEqual(policy.migrations_since("v1.2.0", "v1.3.0"), 0)
+        self.assertEqual(policy.migrations_since("v1.0.0", "v1.1.0"), 0)
+        # The command prints only the count: the bump step reads stdout.
+        self.assertEqual(self.migrations_since_command("v1.1.0", "v1.3.0"), "1\n")
+        self.assertEqual(self.migrations_since_command("v1.2.0", "v1.3.0"), "0\n")
+
+    def test_migrations_since_is_unknown_unless_both_are_ordered_release_tags_on_one_history(self):
+        self.git("checkout", "-b", "side", "v1.0.0")
+        self.write("futureagi/app/migrations/0009_side.py")
+        self.commit()
+        self.git("tag", "v1.0.5")
+        self.git("checkout", "main")
+        self.git("tag", "v1.1.0-rc.1")
+        for pinned, version in (("v1.1.0", "v1.0.0"), ("v1.1.0", "v1.1.0"), ("v1.0.5", "v1.1.0"),
+                                ("v1.0.9", "v1.1.0"), ("v1.0.0", "v1.9.0"), ("v1.0.0", "v1.1.0-rc.1"),
+                                ("unknown", "v1.1.0"), ("", "v1.1.0"), (None, "v1.1.0"), ("v01.0.0", "v1.1.0"),
+                                ("main", "v1.1.0"), ("v1.0.0", None), ("v1.0.0\nv1.0.0", "v1.1.0")):
+            with self.subTest(pinned=pinned, version=version):
+                self.assertIsNone(policy.migrations_since(pinned, version))
+        self.assertEqual(self.migrations_since_command("v1.0.5", "v1.1.0"), "unknown\n")
+        self.assertEqual(self.migrations_since_command("unknown", "v1.1.0"), "unknown\n")
+        # A failed diff is unknown, never zero.
+        with patch.object(policy, "count_migrations", side_effect=RuntimeError("release Git evidence unavailable")):
+            self.assertIsNone(policy.migrations_since("v1.0.0", "v1.1.0"))
+        self.assertEqual(policy.migrations_since("v1.0.0", "v1.1.0"), 0)
 
 
 class PublishedTests(unittest.TestCase):
@@ -1335,8 +1389,10 @@ class WorkflowContractTests(unittest.TestCase):
 
         steps = yaml.safe_load(self.RELEASE.read_text())["jobs"]["bump-deployment"]["steps"]
         step = next(step for step in steps if step.get("name") == "Open bump PR")
-        self.assertEqual(step["env"]["MIGRATIONS"], "${{ needs.guard.outputs.migrations }}")
-        self.assertEqual(step["env"]["MIGRATION_BASELINE"], "${{ needs.guard.outputs.migration-baseline }}")
+        # Both come from the count step, which reads what deployment main runs;
+        # the guard's count since the previous shipped release is not used here.
+        self.assertEqual(step["env"]["MIGRATIONS"], "${{ steps.baseline.outputs.migrations }}")
+        self.assertEqual(step["env"]["MIGRATION_BASELINE"], "${{ steps.baseline.outputs.pinned }}")
         self.assertNotIn("${{", step["run"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1448,6 +1504,334 @@ class WorkflowContractTests(unittest.TestCase):
         for line in lines:
             with self.subTest(line=line):
                 self.assertRegex(line, r"^(- )?uses: [A-Za-z0-9-]+/[A-Za-z0-9-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$")
+
+    def test_bump_job_actions_are_pinned_to_commits_with_version_comments(self):
+        job = self.RELEASE.read_text().split("  bump-deployment:\n", 1)[1]
+        lines = [line.strip() for line in job.splitlines() if re.match(r"\s*(- )?uses:", line)]
+        # The job holds the release-bot token, persisted in the deployment checkout.
+        self.assertEqual(len(lines), 8)
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertRegex(line, r"^(- )?uses: [A-Za-z0-9-]+/[A-Za-z0-9-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$")
+
+    def test_guard_exports_no_count_and_the_bump_reads_history_it_counts_over(self):
+        import yaml
+
+        workflow = yaml.safe_load(self.RELEASE.read_text())
+        self.assertEqual(set(workflow["jobs"]["guard"]["outputs"]),
+                         {"version", "channel", "components", "environment", "tag-sha"})
+        self.assertNotIn("needs.guard.outputs.migration", self.RELEASE.read_text())
+        steps = workflow["jobs"]["bump-deployment"]["steps"]
+        platform = next(step for step in steps if step.get("with", {}).get("path") == "platform")
+        self.assertEqual(platform["with"], {"path": "platform", "sparse-checkout": "scripts",
+                                            "fetch-depth": 0, "filter": "blob:none"})
+        # The deployment repository's test-release-digest-bump.py picks steps by
+        # these names and reads COMMON_PATHS from the job env.
+        self.assertEqual(len([step for step in steps if step.get("name", "").startswith("Bump platform tags")]), 1)
+        self.assertEqual(len([step for step in steps if step.get("id") == "catalog-images"]), 1)
+
+
+def yq_stub(directory):
+    """A stand-in for mikefarah yq v4 that accepts only the expressions the bump job uses."""
+    script = directory / "yq_stub.py"
+    script.write_text(r"""
+import os, re, sys
+import yaml
+
+PATH = r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
+args = sys.argv[1:]
+in_place = args[:1] == ["-i"]
+expression, name = args[1:] if in_place else args
+with open(name, encoding="utf-8") as stream:
+    document = yaml.safe_load(stream)
+if not in_place:
+    if not re.fullmatch(PATH, expression):
+        sys.exit(98)
+    node = document
+    for key in expression[1:].split("."):
+        node = node.get(key) if isinstance(node, dict) else None
+    if node is None:
+        print("null")
+    elif isinstance(node, bool):
+        print(str(node).lower())
+    elif isinstance(node, (dict, list)):
+        print(yaml.safe_dump(node, sort_keys=False), end="")
+    else:
+        print(node)
+    sys.exit(0)
+for assignment in expression.split(" | "):
+    match = re.fullmatch(r'(?P<path>' + PATH + r') = (?:"(?P<text>[^"\\]*)"|strenv\((?P<env>[A-Z_]+)\))', assignment)
+    if not match:
+        sys.exit(98)
+    *parents, last = match["path"][1:].split(".")
+    node = document
+    for key in parents:
+        node = node.setdefault(key, {})
+    node[last] = match["text"] if match["env"] is None else os.environ[match["env"]]
+with open(name, "w", encoding="utf-8") as stream:
+    yaml.safe_dump(document, stream, sort_keys=False)
+""")
+    return script
+
+
+class BumpJobTests(unittest.TestCase):
+    """Run the real bump-deployment steps, in order, on producer-shaped synthetic values.
+
+    The count, bump and verify steps run with real git (a blob-less clone of a
+    synthetic product history whose origin is then deleted, so no file contents
+    can be fetched) and with real yq when it is on PATH, else a stub. Only the
+    final step's git and gh are stubs; nothing leaves the machine.
+    """
+
+    RELEASE = WorkflowContractTests.RELEASE
+    VERSION = "v1.2.3"
+    BACKEND, COLLECTOR, WORKER, OLD = ("sha256:" + c * 64 for c in "abcd")
+    MIRROR = "us-east5-docker.pkg.dev/futureagiprimary/dockerhub-mirror/"
+    STEPS = ("Count migrations since the release deployment main runs", "Bump platform tags and digests",
+             "Verify no platform image was left behind", "Open bump PR")
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+
+        cls.job = yaml.safe_load(cls.RELEASE.read_text())["jobs"]["bump-deployment"]
+        cls.paths = cls.job["env"]["COMMON_PATHS"].split()
+        cls.temp = tempfile.TemporaryDirectory()
+        root = Path(cls.temp.name)
+        origin = root / "origin"
+        scripts = Path(__file__).resolve().parent
+
+        def git(*args, cwd=origin):
+            subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                            "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", *args],
+                           cwd=cwd, check=True, capture_output=True, text=True)
+
+        def commit(path, tag):
+            (origin / path).parent.mkdir(parents=True, exist_ok=True)
+            # Distinct contents, so no counted file shares a blob with a checked-out one.
+            (origin / path).write_text(f"synthetic {path}\n")
+            git("add", ".")
+            git("commit", "-m", "synthetic history")
+            git("tag", tag)
+
+        origin.mkdir()
+        git("init", "-b", "main")
+        for name in ("release_autopilot.py", "verify-platform-image-tags.py"):
+            (origin / "scripts").mkdir(exist_ok=True)
+            (origin / "scripts" / name).write_text((scripts / name).read_text())
+        commit("futureagi/app/migrations/0001_initial.py", "v1.2.1")
+        # A release on a side branch is not on the bumped release's history.
+        git("checkout", "-b", "side")
+        commit("futureagi/app/migrations/0001_side.py", "v1.2.0")
+        git("checkout", "main")
+        commit("futureagi/app/migrations/0002_new.py", "v1.2.2")
+        commit("README.txt", cls.VERSION)
+        git("config", "uploadpack.allowFilter", "true")
+        # The job's checkout: all history and tags, no file contents, sparse scripts/.
+        cls.platform = root / "work-template" / "platform"
+        git("clone", "--quiet", "--filter=blob:none", "--no-checkout", f"file://{origin}", str(cls.platform), cwd=root)
+        git("sparse-checkout", "set", "scripts", cwd=cls.platform)
+        git("checkout", "--quiet", cls.VERSION, cwd=cls.platform)
+        shutil.rmtree(origin)
+        # No migration file's contents were fetched, and none can be now.
+        objects = subprocess.run(["git", "rev-list", "--objects", "--missing=print", "--all"], cwd=cls.platform,
+                                 check=True, capture_output=True, text=True).stdout.splitlines()
+        cls.missing = sum(line.startswith("?") for line in objects)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def values(self, tags, region):
+        """Only the 12 path-list tags plus the three digests and the repositories the job checks."""
+        document = {}
+        for path, tag in zip(self.paths, tags):
+            node = document
+            *parents, last = path[1:].split(".")
+            for key in parents:
+                node = node.setdefault(key, {})
+            node[last] = tag
+        mirror = self.MIRROR if region == "us" else ""
+        document["backend"] = {"image": {"repository": mirror + "futureagi/future-agi-ee", "digest": self.OLD}}
+        document["fiCollector"] = {"image": {"repository": mirror + "futureagi/fi-collector", "digest": self.OLD}}
+        document["errorFeed"]["image"].update({"repository": "futureagi/omega-error-feed-worker", "digest": self.OLD})
+        return document
+
+    def run_job(self, eu_tags, us_tags, yq, steps=STEPS):
+        """The steps in workflow order; returns step outputs, logs, commit, PR body and values."""
+        import yaml
+
+        selected, steps = steps, {step.get("name"): step for step in self.job["steps"]}
+        order = [step.get("name") for step in self.job["steps"]]
+        self.assertEqual([name for name in order if name in self.STEPS], list(self.STEPS))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work = root / "work"
+            shutil.copytree(self.platform.parent, work, symlinks=True)
+            for region, tags in (("eu", eu_tags), ("us", us_tags)):
+                path = work / region / "gcp/deployment/values.yaml"
+                path.parent.mkdir(parents=True)
+                path.write_text(yaml.safe_dump(self.values(tags, region), sort_keys=False))
+            tools, stubs = root / "tools", root / "stubs"
+            tools.mkdir()
+            stubs.mkdir()
+            (tools / "python3").write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n")
+            if yq is None:
+                (tools / "yq").write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} "
+                                          f"{shlex.quote(str(yq_stub(root)))} \"$@\"\n")
+            else:
+                (tools / "yq").symlink_to(yq)
+            log = root / "calls.jsonl"
+            stub = ("#!/usr/bin/env python3\nimport json, os, sys\n"
+                    "with open(os.environ['STUB_LOG'], 'a') as log:\n"
+                    "    log.write(json.dumps([os.path.basename(sys.argv[0])] + sys.argv[1:]) + '\\n')\n"
+                    "sys.exit(1 if sys.argv[1:2] == ['diff'] else 0)\n")
+            for name in ("git", "gh"):
+                (stubs / name).write_text(stub)
+            for path in (*tools.iterdir(), *stubs.iterdir()):
+                if not path.is_symlink():
+                    path.chmod(0o755)
+            known = {"${{ needs.guard.outputs.version }}": self.VERSION,
+                     "${{ needs.resolve-sdk.outputs.sdk_version }}": "",
+                     "${{ needs.resolve-sdk.outputs.sdk_wheel_sha256 }}": "",
+                     "${{ needs.release-worker.outputs.digest }}": self.WORKER,
+                     "${{ needs.release-worker.outputs.source_sha }}": SHA,
+                     "${{ steps.catalog-images.outputs.backend_digest }}": self.BACKEND,
+                     "${{ steps.catalog-images.outputs.collector_digest }}": self.COLLECTOR,
+                     "${{ steps.app-token.outputs.token }}": "synthetic-token"}
+
+            def resolve(mapping):
+                env = {}
+                for key, value in (mapping or {}).items():
+                    value = str(value)
+                    for expression in re.findall(r"\$\{\{.*?\}\}", value):
+                        self.assertIn(expression, known, f"{key} uses an expression this test does not know")
+                        value = value.replace(expression, known[expression])
+                    env[key] = value
+                return env
+
+            # A step inherits the runner's environment; user Git config is ignored.
+            base = {**os.environ, "HOME": temp, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GH_CONFIG_DIR": str(root), "STUB_LOG": str(log), **resolve(self.job["env"])}
+            outputs, logs = {}, {}
+            for name in selected:
+                step = steps[name]
+                self.assertNotIn("${{", step["run"])
+                output = root / f"output-{len(logs)}"
+                output.touch()
+                path = [tools, stubs] if name == "Open bump PR" else [tools]
+                env = {**base, **resolve(step.get("env")), "GITHUB_OUTPUT": str(output),
+                       "PATH": os.pathsep.join([*map(str, path), os.environ.get("PATH", "")])}
+                script = root / "step.sh"
+                script.write_text(step["run"])
+                # GitHub's own invocations: shell: bash, or the default bash -e.
+                shell = (["bash", "--noprofile", "--norc", "-eo", "pipefail"] if step.get("shell") == "bash"
+                         else ["bash", "-e"])
+                result = subprocess.run([*shell, str(script)], cwd=work, env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, f"{name}: {result.stdout}{result.stderr}")
+                logs[name] = result.stdout + result.stderr
+                values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                if step.get("id"):
+                    outputs[step["id"]] = values
+                    known.update({f"${{{{ steps.{step['id']}.outputs.{key} }}}}": value
+                                  for key, value in values.items()})
+            calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            files = {region: yaml.safe_load((work / region / "gcp/deployment/values.yaml").read_text())
+                     for region in ("eu", "us")}
+        result = {"outputs": outputs, "logs": logs, "values": files}
+        if calls:
+            commit = next(call for call in calls if call[:2] == ["git", "commit"])
+            create = next(call for call in calls if call[:3] == ["gh", "pr", "create"])
+            result["paragraphs"] = [commit[index + 1] for index, arg in enumerate(commit) if arg == "-m"]
+            result["body"] = create[create.index("--body") + 1]
+        return result
+
+    def yq_variants(self):
+        """The stub always; real yq too when it is on PATH (GitHub's Ubuntu runners have it)."""
+        real = shutil.which("yq")
+        return [None] + ([real] if real else [])
+
+    def run_each(self, eu_tags, us_tags=None, steps=STEPS):
+        results = [self.run_job(eu_tags, eu_tags if us_tags is None else us_tags, yq, steps)
+                   for yq in self.yq_variants()]
+        for other in results[1:]:
+            # Real yq and the stub agree on what the job writes.
+            for key in ("outputs", "paragraphs", "body", "values"):
+                self.assertEqual(other.get(key), results[0].get(key), key)
+        return results[0]
+
+    def assert_lines(self, result, migrations, baseline):
+        self.assertEqual(result["paragraphs"], [f"chore(release): bump platform images to {self.VERSION}",
+                                                f"Migrations: {migrations} new files",
+                                                f"Migration baseline: {baseline}"])
+        lines = result["body"].splitlines()
+        self.assertEqual([line for line in lines if line.startswith("Migration")],
+                         [f"Migrations: {migrations} new files", f"Migration baseline: {baseline}"])
+
+    def test_the_fixture_is_producer_shaped(self):
+        # The three synthetic migration files exist only as names in trees.
+        self.assertEqual(self.missing, 3)
+        self.assertEqual(len(self.paths), 12)
+        self.assertNotIn(".backend.image.tag", self.paths)
+        self.assertNotIn(".fiCollector.image.tag", self.paths)
+        self.assertIn(".errorFeed.image.tag", self.paths)
+
+    def test_a_skipped_release_is_counted_from_the_version_main_runs(self):
+        # Main runs v1.2.1; v1.2.2 (never deployed) added a migration and v1.2.3
+        # added none. The guard's count since v1.2.2 would be 0.
+        result = self.run_each(["v1.2.1"] * 12)
+        self.assertEqual(result["outputs"]["baseline"], {"pinned": "v1.2.1", "migrations": "1"})
+        self.assert_lines(result, "1", "v1.2.1")
+
+    def test_a_migration_free_release_from_the_version_main_runs_is_zero(self):
+        result = self.run_each(["v1.2.2"] * 12)
+        self.assertEqual(result["outputs"]["baseline"], {"pinned": "v1.2.2", "migrations": "0"})
+        self.assert_lines(result, "0", "v1.2.2")
+        # The bump wrote all 12 tags and the 3 digests, kept the regional
+        # repositories, and added no backend tag.
+        for region, values in result["values"].items():
+            with self.subTest(region=region):
+                expected = self.values([self.VERSION] * 12, region)
+                expected["backend"]["image"]["digest"] = self.BACKEND
+                expected["fiCollector"]["image"]["digest"] = self.COLLECTOR
+                expected["errorFeed"]["image"]["digest"] = self.WORKER
+                self.assertEqual(values, expected)
+                self.assertNotIn("tag", values["backend"]["image"])
+
+    def test_tags_that_disagree_or_are_not_a_release_give_unknown_and_are_not_printed(self):
+        mixed = ["v1.2.2"] * 12
+        mixed[self.paths.index(".embedding.image.tag")] = "v1.1.7"
+        # One hand-set tag in one region: the whole job, down to the commit.
+        result = self.run_each(["v1.2.2"] * 12, mixed)
+        self.assertEqual(result["outputs"]["baseline"], {"pinned": "unknown", "migrations": "unknown"})
+        self.assert_lines(result, "unknown", "unknown")
+        logs = [result["logs"][self.STEPS[0]]]
+        # The count step alone for tags that agree but are not a plain release.
+        for tag in ("latest", "v1.2.2-hotfix", "v01.2.2", "1.2.2"):
+            with self.subTest(tag=tag):
+                result = self.run_each([tag] * 12, steps=self.STEPS[:1])
+                self.assertEqual(result["outputs"]["baseline"], {"pinned": "unknown", "migrations": "unknown"})
+                logs.append(result["logs"][self.STEPS[0]])
+        for log in logs:
+            for value in ("v1.1.7", "latest", "hotfix", "v01.2.2", "1.2.2", self.OLD, "omega-error-feed-worker"):
+                self.assertNotIn(value, log)
+
+    def test_a_pinned_release_not_on_this_history_or_not_in_this_repository_counts_unknown(self):
+        # v1.2.0 is on a side branch: the whole job, down to the commit. The
+        # baseline still names what main runs; only the count is unknown.
+        result = self.run_each(["v1.2.0"] * 12)
+        self.assertEqual(result["outputs"]["baseline"], {"pinned": "v1.2.0", "migrations": "unknown"})
+        self.assert_lines(result, "unknown", "v1.2.0")
+        # Missing here, equal to the release, and newer than it: the count step alone.
+        for pinned in ("v1.1.9", self.VERSION, "v1.2.4"):
+            with self.subTest(pinned=pinned):
+                result = self.run_each([pinned] * 12, steps=self.STEPS[:1])
+                self.assertEqual(result["outputs"]["baseline"], {"pinned": pinned, "migrations": "unknown"})
+
+    def test_the_count_step_runs_before_the_bump_rewrites_the_tags(self):
+        order = [step.get("name") for step in self.job["steps"]]
+        self.assertLess(order.index(self.STEPS[0]), order.index(self.STEPS[1]))
+        self.assertEqual(self.job["steps"][order.index(self.STEPS[0])].get("id"), "baseline")
 
 
 if __name__ == "__main__":

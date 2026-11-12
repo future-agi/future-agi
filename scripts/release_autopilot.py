@@ -707,12 +707,39 @@ def migration_evidence(version, sha):
         shipped = False
     if not shipped:
         return last, None
+    return last, count_migrations(f"refs/tags/{last}", sha)
+
+
+def count_migrations(base, head):
+    """Migration and schema files that differ between two commits (see is_migration)."""
     # --no-renames treats files moved into a migration directory as additions.
     # NUL delimiting prevents unusual filenames from hiding migration files.
-    # Additions, edits and deletions all count as schema changes.
+    # Additions, edits and deletions all count as schema changes. Names come
+    # from trees only, so a clone without file contents is enough.
     changed = git("diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACDMRT",
-                  f"refs/tags/{last}..{sha}", "--", "futureagi/", "ee/")
-    return last, sum(is_migration(path) for path in changed.split("\0") if path)
+                  f"{base}..{head}", "--", "futureagi/", "ee/")
+    return sum(is_migration(path) for path in changed.split("\0") if path)
+
+
+def migrations_since(pinned, version):
+    """Migration and schema files from the release deployment main runs to `version`.
+
+    The deployment bump writes this count. It starts at what main runs, not at
+    the previous release, so it also covers a release whose bump never merged.
+    None means unknown: either value is not a stable tag in this repository,
+    `pinned` is not lower than `version`, or it is not an ancestor of it.
+    """
+    old, new = version_tuple(pinned or ""), version_tuple(version or "")
+    if old is None or new is None or old >= new:
+        return None
+    try:
+        base = git("rev-parse", "--verify", "--quiet", f"refs/tags/{pinned}^{{commit}}")
+        head = git("rev-parse", "--verify", "--quiet", f"refs/tags/{version}^{{commit}}")
+        if not SHA.fullmatch(base) or not SHA.fullmatch(head) or not reachable(base, head):
+            return None
+        return count_migrations(base, head)
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return None
 
 
 def environment_decision(enabled, event, ref, version, count, actor=None, triggering_actor=None, attempt=None):
@@ -767,8 +794,8 @@ def release_environment(version, expected_sha=None, approved_environment=None):
                                                os.environ.get("GITHUB_TRIGGERING_ACTOR"),
                                                os.environ.get("GITHUB_RUN_ATTEMPT"))
     summary(f"Release approval: `{environment}` for `{version}` at `{sha}`. {reason}.\n\n"
-            f"Migration baseline: `{last or 'unknown'}`; new files: {count if count is not None else 'unknown'}. "
-            "The tag commit is on a reviewed branch.")
+            f"Previous release: `{last or 'unknown'}`; migration or schema files since it: "
+            f"{count if count is not None else 'unknown'}. The tag commit is on a reviewed branch.")
     if approved_environment is not None:
         if approved_environment not in {"Production", "production-auto"}:
             raise ValueError("invalid approved environment")
@@ -778,21 +805,26 @@ def release_environment(version, expected_sha=None, approved_environment=None):
             summary("Release refused: automatic approval no longer applies to this run. "
                     "Use Re-run all jobs so the guard selects Production review.")
             raise RuntimeError("automatic approval is no longer safe; re-run all jobs for human review")
-    # The baseline goes into the deployment bump commit, whose autopilot merges a
-    # zero-count bump only when main still runs exactly this release.
-    outputs(environment=environment, migrations=count if count is not None else "unknown",
-            baseline=last if last and version_tuple(last) is not None else "unknown", tag_sha=sha)
+    # This count only picks the approval environment. The deployment bump
+    # counts again from the release deployment main runs (migrations-since).
+    outputs(environment=environment, tag_sha=sha)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["check", "merge", "environment"])
+    parser.add_argument("command", choices=["check", "merge", "environment", "migrations-since"])
     parser.add_argument("--version")
     parser.add_argument("--expected-sha")
     parser.add_argument("--approved-environment")
+    parser.add_argument("--from", dest="pinned", help="migrations-since: the release deployment main runs")
+    parser.add_argument("--to", dest="target", help="migrations-since: the release being bumped to")
     args = parser.parse_args()
     try:
-        if args.command == "environment":
+        if args.command == "migrations-since":
+            # The bump step reads stdout, so it carries only the count or "unknown".
+            count = migrations_since(args.pinned, args.target)
+            print("unknown" if count is None else count)
+        elif args.command == "environment":
             release_environment(args.version or "", args.expected_sha, args.approved_environment)
         else:
             autopilot(merge=args.command == "merge")

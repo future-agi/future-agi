@@ -410,75 +410,81 @@ The policy applies to the supported stable, beta and rc tag-push events; their
 existing component/channel restrictions remain unchanged. The hours/weekend
 switches limit PR merges, not the image run already triggered by a tag. **Every manual
 `workflow_dispatch`, including a bump-only retry, still requires Production
-review.** A job summary records the chosen environment, reason, tag SHA,
-baseline and migration count.
+review.** A job summary records the chosen environment, reason, tag SHA, the
+previous release and the count since it. That count only picks the
+environment; the bump PR carries its own count, described next.
 
-**The bump PR's migration line.** The `bump-deployment` job writes the count
-into the deployment bump commit, as the commit message's second paragraph, and
-into the bump PR body. Both carry exactly one line:
+**The bump PR's migration lines.** The `bump-deployment` job counts again,
+from the release deployment `main` runs, and writes two lines into the
+deployment bump commit and the bump PR body:
 
 ```text
 Migrations: 0 new files
-```
 
-The number is a non-negative integer, or the word `unknown` when the baseline
-or diff is unavailable. The step reads the count from its `env`, not by
-expression expansion inside the script, and writes `unknown` for anything that
-is not a plain count, never `0`.
-
-A third paragraph names the release the count starts from, the previous
-shipped release:
-
-```text
 Migration baseline: v1.58.0
 ```
 
-It is a plain `vX.Y.Z` tag, or `unknown` for anything else; the step reads it
-from its `env` too. The PR body carries the same line.
+- **Baseline.** Before it rewrites any tag, the step "Count migrations since
+  the release deployment main runs" reads the 12 image tags in the job's
+  `COMMON_PATHS` list from both `eu/gcp/deployment/values.yaml` and
+  `us/gcp/deployment/values.yaml` of the deployment checkout. If all 24 are
+  the same plain `vX.Y.Z`, that is the baseline. Otherwise the baseline is
+  `unknown`. Only those tags are read. None is printed unless all of them
+  agree. The backend and collector have no tag there; they are pinned by
+  digest.
+- **Count.** `release_autopilot.py migrations-since --from <baseline> --to
+  <version>` counts migration and schema files from the baseline tag to the
+  release tag, with the rules in step 3 above. It prints the count or
+  `unknown`. The count is `unknown` when the baseline is unknown, either tag is
+  missing from this repository, the baseline is not lower than the release, or
+  the baseline is not an ancestor of the release. The job's checkout of this
+  repository fetches all history and tags but no file contents
+  (`fetch-depth: 0`, `filter: blob:none`). The count reads only file names
+  from trees.
+- **Commit and PR body.** The count is the commit message's second paragraph
+  and the baseline is the third. The PR body carries the same two lines. The
+  `Open bump PR` step reads both from its `env`, never by expression expansion
+  inside the script. It writes `unknown` for anything that is not a plain
+  count or a plain `vX.Y.Z` tag, never `0`.
+- **The guard's count is not used here.** The guard counts since the previous
+  shipped release, and that count only picks the approval environment. The
+  bump's count starts at what deployment `main` runs. So a release whose bump
+  never opened, was closed or has not merged yet is counted in the next bump.
 
 The deployment repository's bot autopilot (`docs/bot-pr-autopilot.md` in
 `future-agi/deployment`) reads the head commit message of a release-bump PR.
 It allows the PR only if exactly one whole line equals
-`Migrations: 0 new files`. Any other count, `unknown`, a missing line or
-duplicate lines give the waiting reason `release-has-migrations`. It also
-requires exactly one `Migration baseline:` line whose version is the backend
-image tag deployment main runs now, in every values file; otherwise the PR
-waits at `migration-baseline-mismatch`. A zero count says nothing about
-releases between what main runs and the baseline, for example a skipped
-release whose bump was closed or never opened. Neither reason is a pause, so
-an earlier autopilot approval is withdrawn. Sandbox-pin PRs are unaffected. The commit is used rather than the PR body because the
-autopilot already ties the head commit to the release-bot key; anyone with
-write access can edit a PR body.
+`Migrations: 0 new files`; otherwise it waits at `release-has-migrations`. It
+also requires exactly one whole `Migration baseline: vX.Y.Z` line, at least
+one changed `*.image.tag` in every changed values file, and that every
+changed `*.image.tag` was that version before the bump; otherwise it waits at
+`migration-baseline-mismatch`. A tag set by hand on deployment `main` makes
+the baseline `unknown`, so that bump waits for a person. Sandbox-pin PRs are
+unaffected. The commit is used rather than the PR body because the autopilot
+already ties the head commit to the release-bot key; anyone with write access
+can edit a PR body. How it treats several open bumps is described there.
+
+On real tags, the count from each release to the next, v1.47.1 to v1.58.0, is
+4, 1, 2, 5, 2, 6, 0, 1, 0, 1, 3 and 2 (read-only, 11 Nov). From v1.55.0 to
+v1.58.0 in one step it is 6.
 
 - **Older releases.** A tag push runs the workflow file at the tag. Bump PRs
-  from releases cut before this change carry no line and therefore wait for a
-  person. Every bump PR waits until a release is cut from a tag that contains
-  this change.
+  from releases cut before this change carry no lines and therefore wait for
+  a person. Every bump PR waits until a release is cut from a tag that
+  contains this change.
 - **Retries.** A `components=bump` dispatch from `main` (or from any ref that
-  contains this change) regenerates the bump branch from deployment `main` and
-  force-pushes a new commit, so its commit carries the line with the count the
-  retry's guard computed. A dispatch from an older release tag runs that tag's
-  workflow and writes no line. An already-open PR's body is
-  not edited, as before.
-- **For the `Production` approver.** A release with a positive or unknown count
-  still publishes its images once approved, but its bump PR then waits. If the
-  release changes ClickHouse schema, apply the schema first, then merge the
-  bump PR by hand. Django migrations are also stopped at deploy time by the
+  contains this change) regenerates the bump branch from deployment `main`,
+  reads the baseline from it again and counts again. It force-pushes a new
+  commit with both lines. A dispatch from an older release tag runs that
+  tag's workflow and writes no lines. An already-open PR's body is not
+  edited, as before.
+- **For the `Production` approver.** A release with a positive or unknown
+  count still publishes its images once approved, but its bump PR then waits.
+  If the release changes ClickHouse schema, apply the schema first, then merge
+  the bump PR by hand. Django migrations are also stopped at deploy time by the
   deployment's `migrate --check`; the operator then applies them with the
   procedure in `future-agi/deployment`'s `docs/auto-deploy.md`, "Applying
   migrations after a failed check".
-- **Older bumps.** While an older release's bump PR that does not clear
-  migrations is open, the deployment autopilot keeps it open and newer bumps
-  wait at `older-release-has-migrations`. A hold label does not release them;
-  a person merges or closes the older PR. Whoever closes it unmerged also
-  holds the newer bump with `autopilot-hold`, because the newer count does not
-  cover the older release's files. If a release with migrations never got a
-  bump PR, the next bump is held the same way. The count is taken against the
-  previous shipped release, not against the version deployment `main` pins.
-- **Cost.** A release whose baseline is unknown but which changes no schema
-  also needs a hand merge. About 6 of the last 39 releases had an unknown
-  baseline (review measurement, 11 Nov). Holding the bump PR keeps deployment
-  `main` deployable for other changes.
 
 This count is source evidence from this repository, not proof of the deployed
 database state or evidence about independently changed external EE code. The
@@ -547,10 +553,16 @@ installing `PyYAML==6.0.3`, including Git histories, every merge predicate,
 case-insensitive holds before/after approval, content/mode/version rejection,
 immutable Git API evidence, current-SHA status handling, transaction rechecks,
 idempotent audit/approval, approver App identity, refused merges, environment
-decisions, the workflow's job split and action pins, and the bump step itself:
-its script runs against stub `git` and `gh` commands to check the commit
-message and PR body it would write. Run workload tests only in E2B or CI, not
-on the shared development host.
+decisions, the release-branch push check, the workflow's job split and action
+pins, and the bump job itself. Its count, bump, verify and `Open bump PR`
+steps run in workflow order on synthetic values files shaped like the
+producer's: only the 12 `COMMON_PATHS` tags, the three digests and the
+repositories the step checks. The count runs real `git` over a blob-less clone
+of a synthetic history whose origin is deleted, so no file contents can be
+fetched. The steps use real `yq` when it is on `PATH` (GitHub's Ubuntu runners
+have it) and also a stub that accepts only the job's expressions; both must
+write the same files and lines. Only the last step's `git` and `gh` are stubs.
+Run workload tests only in E2B or CI, not on the shared development host.
 
 **CI wiring:** the `Release script checks` workflow
 (`.github/workflows/worker-release-checks.yml`) installs `PyYAML==6.0.3` and runs
@@ -566,17 +578,21 @@ Adding those paths to the filter closes the gap.
 The `release-images.yml` diff is deliberately limited:
 
 - Header/approval comments describe the optional review path.
-- Guard outputs and new post-guard steps expose ancestry, environment and count.
+- Guard outputs and new post-guard steps expose ancestry and environment.
 - `approve.environment` consumes the guard's decision, with new post-guard steps
   revalidating it after the wait. Both original inline guard scripts are unchanged.
-- The `Open bump PR` step reads the count from its `env`, writes `unknown` for
-  anything that is not a plain count, and adds the migration line to the bump
-  commit message (second paragraph) and to the PR body.
+- In `bump-deployment`, every action is pinned to a commit SHA with its version
+  in a comment, this repository's checkout fetches history and tags without
+  file contents, a new step reads the baseline and counts, and `Open bump PR`
+  writes the two lines from its `env`.
 
-All jobs from `build` onward, apart from that step, are byte-identical to the
-base. Image builds, version/channel validation, digest/size checks, SDK/worker
-releases, EE/docs dispatches, aliases, retries and bump-PR creation semantics are
-not refactored.
+All jobs from `build` to `size-report` are byte-identical to the base. The
+steps of `bump-deployment` that the deployment repository's
+`tests/test-release-digest-bump.py` runs (the step whose name starts with
+"Bump platform tags" and the step `catalog-images`) and its `COMMON_PATHS`
+list are unchanged. Image builds, version/channel validation, digest/size
+checks, SDK/worker releases, EE/docs dispatches, aliases, retries and bump-PR
+creation semantics are not refactored.
 
 Synthetic tests cannot prove GitHub environment review behaviour, App identity
 permissions, branch-protection enforcement, schedule delivery, real check names
