@@ -183,10 +183,26 @@ type Delta struct {
 }
 
 type ToolCallDelta struct {
-	Index    int           `json:"index"`
-	ID       string        `json:"id,omitempty"`
-	Type     string        `json:"type,omitempty"`
-	Function *FunctionCall `json:"function,omitempty"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *FunctionCallDelta `json:"function,omitempty"`
+}
+
+// FunctionCallDelta is the function part of one streamed tool-call delta.
+//
+// It is not FunctionCall: a complete call always has a name, but a stream
+// sends the name once, on the first delta of a call, and every later delta
+// carries only an arguments fragment. Name is omitempty so that an
+// arguments-only delta goes out without a "name" key, as OpenAI sends it.
+// Writing "name":"" instead tells a client that accumulates the call that its
+// name is now empty, and the call is lost.
+//
+// Arguments is not omitempty: the first delta of a call carries
+// "arguments":"" in the OpenAI shape, and clients append it either way.
+type FunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments"`
 }
 
 // ModelObject represents a model in the /v1/models response.

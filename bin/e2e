@@ -17,9 +17,12 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
   -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p "${E2E_COMPOSE_PROJECT:-futureagi-e2e}")
 # Dedicated-executor service selection reused from the existing executor harness.
-# No serving; keep the general and exact-aggregation workers and real sandbox.
-# Completed one-shot dependencies gate the app; failed jobs are never retried.
-SERVICES=(frontend backend worker worker-exact-aggregation code-executor link-canary link-worker-canary
+# No serving; general ALL_QUEUES worker plus dedicated exact-aggregation and SQL
+# workers, and the real sandbox. The generic worker deliberately excludes both
+# admission-bound queues. PeerDB is included through the same bootstrap graph as
+# OSS. Completed one-shot dependencies gate the application; the harness never
+# recreates failed jobs.
+SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench code-executor link-canary link-worker-canary
   postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
