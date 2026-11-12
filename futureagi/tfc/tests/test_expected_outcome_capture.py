@@ -11,9 +11,9 @@ import sentry_sdk
 from django.core.exceptions import ObjectDoesNotExist
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
-from sentry_sdk.transport import Transport
 
 from tfc.logging.sentry import _get_before_send
+from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "ee.agenthub.explanation_agent.exp_agent"
 EXPECTED = {
@@ -77,30 +77,12 @@ def test_downstream_http_errors_are_actionable(status):
     assert _get_before_send()({}, {"exc_info": (type(exc), exc, None)}) is not None
 
 
-class EnvelopeTransport(Transport):
-    def __init__(self):
-        super().__init__()
-        self.events = []
-
-    def capture_envelope(self, envelope):
-        for item in envelope.items:
-            if item.headers.get("type") == "event":
-                self.events.append(item.payload.json)
-
-
 @pytest.fixture
 def transport():
-    transport = EnvelopeTransport()
-    with sentry_sdk.init(
-        dsn="https://public@example.test/1",
-        transport=transport,
-        default_integrations=False,
-        integrations=[
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-            DedupeIntegration(),
-        ],
-        before_send=_get_before_send(),
-    ):
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        DedupeIntegration(),
+    ) as transport:
         yield transport
 
 
@@ -182,7 +164,6 @@ def test_invalid_host_header_is_not_an_issue_but_other_security_failures_are(
 def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
     transport,
 ):
-    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
     try:
         raise ValueError("Could not deserialize key data.")
     except ValueError as error:
@@ -212,7 +193,6 @@ def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
 
 def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):
     pytest.importorskip("litellm")
-    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
     from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
 
     service_account = {

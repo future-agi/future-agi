@@ -3,7 +3,6 @@
 import logging
 
 import pytest
-import sentry_sdk
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -11,8 +10,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 from integrations.services.credentials import CredentialManager
-from tfc.logging.sentry import _get_before_send
-from tfc.tests.test_expected_outcome_capture import EnvelopeTransport
+from tfc.tests.sentry_capture import sentry_capture
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
@@ -45,18 +43,11 @@ def test_rotate_rejects_non_object_json_without_server_error(
     original_rotation = credential.last_rotated_at
     auth_client.raise_request_exception = False
     caplog.clear()
-    transport = EnvelopeTransport()
-    with sentry_sdk.init(
-        dsn="https://public@example.test/1",
-        transport=transport,
-        default_integrations=False,
-        integrations=[
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-            DedupeIntegration(),
-            DjangoIntegration(),
-        ],
-        before_send=_get_before_send(),
-    ):
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        DedupeIntegration(),
+        DjangoIntegration(),
+    ) as transport:
         response = auth_client.post(
             f"/agentcc/provider-credentials/{credential.pk}/rotate/",
             data=raw_body,

@@ -7,12 +7,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote
 
 import pytest
-import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from accounts import utils
-from tfc.logging.sentry import _get_before_send
-from tfc.tests.test_expected_outcome_capture import EnvelopeTransport
+from tfc.tests.sentry_capture import sentry_capture
 
 pytestmark = pytest.mark.integration
 
@@ -58,16 +56,9 @@ def crm_receiver(settings, monkeypatch):
 
 @pytest.fixture
 def sentry_transport():
-    transport = EnvelopeTransport()
-    with sentry_sdk.init(
-        dsn="https://public@example.test/1",
-        transport=transport,
-        default_integrations=False,
-        integrations=[
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
-        ],
-        before_send=_get_before_send(),
-    ):
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+    ) as transport:
         yield transport
 
 

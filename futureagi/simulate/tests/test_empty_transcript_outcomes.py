@@ -3,7 +3,6 @@
 import logging
 
 import pytest
-import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from simulate.models import CallExecution
@@ -11,8 +10,7 @@ from simulate.tests.test_transcript_and_branch_analysis_rendering import (
     _create_voice_call_execution,
     _seed_transcripts,
 )
-from tfc.logging.sentry import _get_before_send
-from tfc.tests.test_expected_outcome_capture import EnvelopeTransport
+from tfc.tests.sentry_capture import sentry_capture
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
@@ -44,16 +42,9 @@ def test_empty_transcripts_are_quiet(
     call.status = state
     call.save(update_fields=["provider_call_data", "status"])
     caplog.clear()
-    transport = EnvelopeTransport()
-    with sentry_sdk.init(
-        dsn="https://public@example.test/1",
-        transport=transport,
-        default_integrations=False,
-        integrations=[
-            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
-        ],
-        before_send=_get_before_send(),
-    ):
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+    ) as transport:
         response = auth_client.get(transcript_path(call, endpoint))
     assert response.status_code == 200, response.content
     body = response.json()
