@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useContext } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -17,7 +17,8 @@ vi.mock("src/utils/logger", () => ({
   },
 }));
 
-import { WebSocketProvider } from "./use-socket";
+import logger from "src/utils/logger";
+import { WebSocketContext, WebSocketProvider } from "./use-socket";
 
 const sockets = [];
 class Socket {
@@ -40,6 +41,10 @@ class Socket {
   removeEventListener(type) {
     delete this.listeners[type];
   }
+  emit(type, event = {}) {
+    if (type === "close" || type === "error") this.readyState = Socket.CLOSED;
+    this.listeners[type]?.(event);
+  }
 }
 
 beforeEach(() => {
@@ -53,7 +58,24 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.clearAllMocks();
 });
+
+const context = { current: null };
+function CaptureContext() {
+  context.current = useContext(WebSocketContext);
+  return null;
+}
+const tree = () => (
+  <WebSocketProvider>
+    <CaptureContext />
+  </WebSocketProvider>
+);
+const waitLongerThanEveryBackoff = () =>
+  act(() => {
+    vi.advanceTimersByTime(10 * 60 * 1000);
+  });
 
 it("binds the socket to user-info's selected organization and reconnects on change", () => {
   const { rerender } = render(
@@ -82,4 +104,71 @@ it("binds the socket to user-info's selected organization and reconnects on chan
   expect(new URL(sockets[1].url).searchParams.get("organization_id")).toBe(
     state.user.organization.id,
   );
+});
+
+it.each([4001, 4002, 4003])(
+  "does not reconnect after the server closes with authorization code %i",
+  (code) => {
+    vi.useFakeTimers();
+    render(tree());
+    expect(sockets).toHaveLength(1);
+    act(() => {
+      sockets[0].emit("open");
+      sockets[0].emit("close", { code });
+    });
+    waitLongerThanEveryBackoff();
+    // Heartbeat, a component send and a network change must not retry either.
+    act(() => {
+      expect(context.current.sendMessage({ type: "subscribe" })).toBe(false);
+      window.dispatchEvent(new Event("online"));
+    });
+    waitLongerThanEveryBackoff();
+    expect(sockets).toHaveLength(1);
+    expect(logger.error).not.toHaveBeenCalled();
+  },
+);
+
+it("opens a fresh socket when the refused credential is replaced", () => {
+  vi.useFakeTimers();
+  const { rerender } = render(tree());
+  act(() => {
+    sockets[0].emit("open");
+    sockets[0].emit("close", { code: 4002 });
+  });
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(1);
+  act(() => {
+    state.user = { ...state.user, accessToken: "synthetic-token-2" };
+    rerender(tree());
+  });
+  expect(sockets).toHaveLength(2);
+  expect(new URL(sockets[1].url).searchParams.get("token")).toBe(
+    "synthetic-token-2",
+  );
+});
+
+it("does not open a socket for a session without an organization", () => {
+  vi.useFakeTimers();
+  state.user = {
+    accessToken: "synthetic-token",
+    organization: null,
+    requires_org_setup: true,
+  };
+  render(tree());
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(0);
+});
+
+it("still reconnects after an abnormal drop of an open socket", () => {
+  vi.useFakeTimers();
+  render(tree());
+  act(() => {
+    sockets[0].emit("open");
+    sockets[0].emit("error");
+    sockets[0].emit("close", { code: 1006 });
+  });
+  act(() => {
+    vi.advanceTimersByTime(5000);
+  });
+  expect(sockets).toHaveLength(2);
 });
